@@ -127,8 +127,14 @@ jobs:
     permissions:
       id-token: write
     steps:
+      # the wheels and the sdist only, not the documentation for Pages
       - uses: actions/download-artifact@v4
         with:
+          pattern: wheels-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1

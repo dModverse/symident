@@ -1102,6 +1102,9 @@ def test_fractional_power_of_a_positive_parameter():
     ({"x": "-k*sqrt(1 + x^2)"}, {"y": "x"}, {"x": "0"}, (1, 1)),
     ({"x": "-k*asinh(x) + c"}, {"y": "x"}, {"x": "0"}, (2, 2)),
     ({"x": "-sqrt(a + b)*x"}, {"y": "x"}, None, (2, 3)),
+    ({"x": "-k*log(x, 3)"}, {"y": "x"}, None, (2, 2)),
+    ({"x": "-k*x + a*atan2(x, 2)"}, {"y": "x"}, None, (3, 3)),
+    ({"x": "-k*atanh(x/(1 + x))"}, {"y": "x"}, None, (2, 2)),
 ])
 def test_elementary_functions_agree_with_the_symbolic_engine(odes, obs, trafo, rank_dim):
     mod = detect(odes, obs, trafo=trafo)

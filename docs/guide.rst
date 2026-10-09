@@ -69,11 +69,11 @@ Right-hand sides, observables, initial values and event values are built from ``
 
 ==============================  ===========================================================
 Exponential and logarithm       ``exp``, ``exp10``, ``b^x`` with a positive rational ``b``,
-                                ``log``, ``ln``, ``log2``, ``log10``
+                                ``log``, ``ln``, ``log2``, ``log10``, ``log(x, b)``
 Roots and powers                ``sqrt``, rational powers such as ``x^(1/2)``, free
                                 exponents ``x^n`` with a parameter ``n``
 Trigonometric                   ``sin``, ``cos``, ``tan``, ``cot``, ``sec``, ``csc``,
-                                ``asin``, ``acos``, ``atan``
+                                ``asin``, ``acos``, ``atan``, ``atan2``
 Hyperbolic                      ``sinh``, ``cosh``, ``tanh``, ``coth``, ``sech``, ``csch``,
                                 ``asinh``, ``acosh``
 Switches                        ``piecewise``, ``ifelse``, ``Heaviside``, ``sign``,

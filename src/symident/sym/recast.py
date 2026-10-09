@@ -975,6 +975,9 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken):
         if not found:
             break
         vals = [e.xreplace(found) for e in vals]
+    # a leaf can cancel, as log(1 + x) in atanh(x/(1 + x)); one in no value is no coordinate
+    used = set().union(*(spy.sympify(e).free_symbols for e in vals))
+    atoms = [a for a in atoms if a['V'] in used]
     # pi and e left by an evaluated function value are transcendental constants
     vals = [e.xreplace({c: const_leaf(c) for c in e.atoms(spy.NumberSymbol) if c in (spy.pi, spy.E)})
             for e in vals]

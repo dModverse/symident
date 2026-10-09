@@ -5,4 +5,4 @@ from .install import install_msolve
 from .options import reconst_control
 
 __all__ = ["Model", "Symmetries", "Symmetry", "Reduction", "detect", "reduce", "reconst_control", "install_msolve"]
-__version__ = "0.9.1"
+__version__ = "0.9.2"

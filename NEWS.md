@@ -1,3 +1,9 @@
+# symident 0.9.2
+
+* `log(x, b)` and `atan2(y, x)` parse: the commas between the arguments were dropped.
+* `atanh()` of an argument whose logarithms cancel in part, such as `atanh(x/(1 + x))`,
+  no longer stops with a `KeyError`.
+
 # symident 0.9.1
 
 * Wheels for Python 3.14.

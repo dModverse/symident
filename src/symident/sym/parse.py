@@ -20,7 +20,7 @@ def _as_list(x):
 
 
 def _clean(line):
-    return line.replace('"', '').replace(',', '').replace('^', '**').strip()
+    return line.replace('"', '').replace('^', '**').strip()
 
 
 def _build_symbol_table(all_lines):
