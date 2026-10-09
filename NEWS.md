@@ -1,3 +1,11 @@
+# symident 0.9.1
+
+* Wheels for Python 3.14.
+* Linux wheels are built on manylinux_2_28 and need glibc 2.28 or newer; on the older
+  manylinux2014 base, installing the wheel built SciPy from source.
+* The tests pass on Windows: they read their data as UTF-8, and the msolve tests that run a
+  shell script are skipped there.
+
 # symident 0.9.0
 
 First release.

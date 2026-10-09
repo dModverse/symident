@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "symident"
-version = "0.9.0"
+version = "0.9.1"
 description = "Structural identifiability of ODE models by Lie symmetries over finite fields"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,6 +25,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
@@ -46,17 +47,18 @@ cmake.build-type = "Release"
 sdist.exclude = ["tests/data", "tests/golden"]
 
 [tool.cibuildwheel]
-build = "cp310-* cp311-* cp312-* cp313-*"
-skip = ["*-musllinux_*", "*-win32"]
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = ["*-musllinux_*", "*-win32", "*-manylinux_i686"]
 # SciPy ships no wheels for manylinux2014 any more; the test install would build it
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
 test-requires = ["pytest", "pytest-xdist"]
-test-command = 'pytest -q -n 2 -m "not slow" {project}/tests'
+# the full suite on the oldest and the newest Python; the wheels of all are built
+test-skip = "cp311-* cp312-* cp313-*"
+test-command = 'pytest -q -n auto {project}/tests'
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: runs for minutes; deselect with -m 'not slow'"]
 
 [tool.ruff]
 line-length = 120

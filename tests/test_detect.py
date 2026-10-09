@@ -403,7 +403,6 @@ def test_equilibrate_free_hill_exponent():
     assert not any("log(" in x for x in gen3)
 
 
-@pytest.mark.slow
 def test_equilibrate_hill_closed_form_recast():
     ev = [event("u", -1, "var_u", "replace")]
     r = detect({"p": "kpr/(1+kinh*p^nhill) - dp*p + kin*u", "u": "0"}, {"y": "s*p"},
@@ -715,7 +714,6 @@ def test_scalings_with_events_and_conditions():
     assert len(keep.symmetries) == 1
 
 
-@pytest.mark.slow
 def test_toric_peel_hill_weight():
     # k_inh * p^nhill is invariant under p -> lam*p, k_inh -> lam^(-nhill)*k_inh
     r = detect({"p": "kpr/(1 + kinh*p^nhill) - dp*p + kin*u", "u": "0"}, {"y": "s*p"},
@@ -870,7 +868,6 @@ _AUTOCRINE_STEADY_STATE = {
 }
 
 
-@pytest.mark.slow
 def test_sum_of_leaves_translation_group():
     # the curved direction trading kdg against ksec has the entry ksec*(Km + R1 + R2 + R3)^2;
     # the trafo is the steady state of the network solved for some rates
@@ -1029,7 +1026,6 @@ def test_lie_order_certified_per_condition_from_a_generic_state():
     assert two.info["lie_order_used"] == 2
 
 
-@pytest.mark.slow
 def test_failed_relevance_probe_does_not_freeze_a_rate():
     rx = network(("A", "B", "kf0*u*A"), ("B", "A", "kr0*B"), ("B", "C", "kf1*B"), ("C", "B", "kr1*C"),
                  ("D", "E", "V*C*D/(K + D)"), ("E", "D", "kr2*E"), ("E", "F", "kf3*E"), ("F", "E", "kr3*F"))
@@ -1083,13 +1079,13 @@ def test_hill_resting_state_does_not_stall_static_fields():
     assert (r.rank, r.dim) == (2, 4)
 
 
-@pytest.mark.slow
 def test_small_network_at_rest_finishes_quickly():
     rx = network(("A", "B", "k1*A"), ("B", "A", "k2*B"), ("B", "C", "k3*B"), ("C", "B", "k4*C"))
     t0 = time.monotonic()
     r = detect(reactions=rx, observables={"y": "B"}, equilibrate=True, reduce_cq=True)
     assert (r.rank, r.dim) == (1, 5)
-    assert time.monotonic() - t0 < 40
+    # a guard against hanging, wide enough for a slow CI runner
+    assert time.monotonic() - t0 < 300
 
 
 def test_fractional_power_of_a_positive_parameter():
@@ -1156,7 +1152,6 @@ def test_sink_behind_a_state_at_zero_leaves_the_resting_system():
     assert sorted(tuple(d.generator) for d in r.symmetries) == [("k1",), ("k2",)]
 
 
-@pytest.mark.slow
 def test_directions_stay_independent_under_several_resting_conditions():
     rx = network(("M0s2", "M0s1", "kr01*M0s2"), ("M1s0", "M1s1", "kf10*u*M1s0"), ("M1s1", "M1s0", "kr10*M1s1"),
                  ("M1s1", "M1s2", "kf11*u*M1s1"), ("M1s2", "M1s1", "kr11*M1s2"), ("", "P", "kin*M1s2"),

@@ -18,7 +18,7 @@ def cache_dir():
     if os.environ.get("SYMIDENT_CACHE"):
         return os.environ["SYMIDENT_CACHE"]
     if sys.platform == "darwin":
-        return os.path.expanduser("~/Library/Caches/symident")
+        return os.path.join(os.path.expanduser("~"), "Library", "Caches", "symident")
     if sys.platform == "win32":
         return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "symident", "cache")
     return os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "symident")

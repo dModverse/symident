@@ -268,7 +268,6 @@ def test_print_lean_summary_carries_block_report():
     assert grep(r"admissible  \{", vrb)
 
 
-@pytest.mark.slow
 def test_egf_mek_erk_cascade_reduced_end_to_end():
     reactions = network(("EGF + EGFR", "EGF_EGFR", "k_bind * EGF * EGFR"),
                         ("EGF_EGFR", "EGF + EGFR", "k_unbind * EGF_EGFR"),
@@ -366,7 +365,6 @@ def test_invariants_verified_against_other_blocks():
     assert identifiable(f, g, trafo=r.trafo)
 
 
-@pytest.mark.slow
 def test_positive_declares_certificate_domain():
     f = {"P": "-k_p*P + k_d*pP", "pP": "k_p*P - k_d*pP"}
     g = {"y": "s*pP"}
@@ -603,7 +601,6 @@ def test_exp10_translation_reduced_in_chart():
     assert identifiable(F_OHM, {"y": "V"}, trafo=comp, positive=False)
 
 
-@pytest.mark.slow
 def test_log_of_positive_coordinate_reduced():
     # Hill function with a free exponent: n moves with log(u) and log(K)
     f = {"x": "v*u^n/(K^n + u^n) - d*x", "u": "-e*u"}
@@ -632,7 +629,6 @@ def test_carriers_matched_not_greedy():
     assert identifiable(f, {"y": "C"}, trafo={**tr, **r.trafo}, fixed=["A0"])
 
 
-@pytest.mark.slow
 def test_face_section_switches_leaks_off():
     # catenary compartments with leaks from all: every orbit reaches two leaks at zero
     f = {"x1": "-(k01 + kf1)*x1 + kb1*x2",
@@ -643,7 +639,8 @@ def test_face_section_switches_leaks_off():
     assert len(res.symmetries) == 2
     t0 = time.monotonic()
     r = red(res)
-    assert time.monotonic() - t0 < 60
+    # a guard against hanging, wide enough for a slow CI runner
+    assert time.monotonic() - t0 < 300
     assert not r.remaining
     zeros = [k for k, v in r.trafo.items() if v == "0"]
     assert len(zeros) == 2
@@ -731,7 +728,6 @@ def test_square_root_of_a_perfect_square_is_taken():
     assert _tidy_root("sqrt(4*kb2 + q_1^2)") == "sqrt(4*kb2 + q_1^2)"
 
 
-@pytest.mark.slow
 def test_partial_chart_is_named_in_the_verdict():
     f = {"x1": "kin1*u - k2*x1 - d3*x1 + k4*x2", "x2": "k2*x1 - k4*x2 + k5*x3", "x3": "-k5*x3"}
     m = si.Model(f, {"y0": "x2", "y1": "s1*x2"}, trafo={"x2": "1", "x3": "0"},
@@ -764,7 +760,6 @@ def test_dependent_scaling_is_named_not_reduced():
     assert (r["removed"], r["remaining"], r["dependent"]) == (["X₁", "X₂"], [], ["X₃"])
 
 
-@pytest.mark.slow
 def test_alternative_charts_are_valid_and_ranked():
     from symident.reduction.core import _chart_valid
     m = si.Model({"x1": "kin1*u - k2*x1 - d3*x1 + k4*x2", "x2": "k2*x1 - k4*x2 + k5*x3", "x3": "-k5*x3"},

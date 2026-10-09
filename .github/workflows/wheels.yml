@@ -21,7 +21,7 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-15-intel, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
-      - uses: pypa/cibuildwheel@v2.23
+      - uses: pypa/cibuildwheel@v3.4.1
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
@@ -41,6 +41,8 @@ jobs:
   # install_msolve() and runs the tests that need it
   distro:
     needs: wheels
+    # runs when another platform's wheels failed; it needs only the ubuntu-latest wheel
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -70,11 +72,11 @@ jobs:
         if: startsWith(matrix.image, 'fedora')
         run: /opt/venv/bin/python -c "import symident; symident.install_msolve(ask=False, jobs=4)"
       - name: Tests
-        run: cd /tmp && /opt/venv/bin/python -m pytest -q -n 2 -m "not slow" "$GITHUB_WORKSPACE/tests"
+        run: cd /tmp && /opt/venv/bin/python -m pytest -q -n auto "$GITHUB_WORKSPACE/tests"
 
   # a source install on Fedora's own Python and compilers, as dMod2's CI installs it
   fedora:
-    name: fedora (source)
+    name: fedora
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
@@ -87,7 +89,7 @@ jobs:
           /opt/venv/bin/pip install --upgrade pip pytest pytest-xdist
           /opt/venv/bin/pip install .
       - name: Tests
-        run: cd /tmp && /opt/venv/bin/python -m pytest -q -n 2 -m "not slow" "$GITHUB_WORKSPACE/tests"
+        run: cd /tmp && /opt/venv/bin/python -m pytest -q -n auto "$GITHUB_WORKSPACE/tests"
 
   # the documentation as HTML, built on every run and deployed to Pages from master
   docs:

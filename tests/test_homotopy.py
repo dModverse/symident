@@ -88,7 +88,6 @@ def test_homotopy_replaces_linear_resting_states(monkeypatch):
         assert d["type"] == "general" and _same(d["vector"], w)
 
 
-@pytest.mark.slow
 def test_homotopy_closes_what_the_other_routes_leave_open():
     def general(hom):
         r = symmetry_detection(**SAT, equilibrate=True, reconstruct=True,

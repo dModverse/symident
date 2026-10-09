@@ -11,6 +11,9 @@ from symident import install
 
 GOOD = "[0, [65521, 2, 3, [36, 0, 65514, 1]]]:"
 
+# the fake msolve is a shell script, which Windows cannot run
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="runs a shell script")
+
 
 def fake_msolve(path, version="0.10.1", answer=GOOD):
     # a script that answers the test system of msolve_check and reports `version`
@@ -46,6 +49,7 @@ def test_cache_dir_per_platform(monkeypatch):
     assert install.cache_dir() == os.path.join("/lad", "symident", "cache")
 
 
+@posix_only
 def test_msolve_check(tmp_path):
     assert install.msolve_check(None) is None
     assert install.msolve_check(str(tmp_path / "missing")) is None
@@ -53,6 +57,7 @@ def test_msolve_check(tmp_path):
     assert install.msolve_check(fake_msolve(str(tmp_path / "b" / "msolve"), answer="[1]")) is None
 
 
+@posix_only
 def test_find_msolve_order(monkeypatch, tmp_path):
     assert install.find_msolve() == (None, None)
     # PATH: only a tested version is taken
@@ -91,6 +96,7 @@ def test_install_msolve_preconditions(monkeypatch, platform, have, match):
 
 
 def test_install_msolve_declined(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sys, "platform", "linux")
     tools(monkeypatch, {"curl", "make", "m4"})
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     assert install.install_msolve(dir=str(tmp_path / "d"), ask=True, jobs=1) is None
@@ -112,6 +118,7 @@ def stub_build(monkeypatch, returncode=0, working=True):
     monkeypatch.setattr(install.subprocess, "run", run)
 
 
+@posix_only
 def test_install_msolve_builds_into_the_cache(monkeypatch, tmp_path, capsys):
     tools(monkeypatch, {"curl", "make", "m4"})
     stub_build(monkeypatch)
@@ -123,6 +130,7 @@ def test_install_msolve_builds_into_the_cache(monkeypatch, tmp_path, capsys):
     assert install.find_msolve() == (expected, "cache")
 
 
+@posix_only
 @pytest.mark.parametrize("returncode, working, match", [
     (1, True, "the msolve build failed"),
     (0, False, "produced no working msolve"),

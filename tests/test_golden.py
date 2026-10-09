@@ -13,14 +13,11 @@ DET = sorted(glob.glob(os.path.join(HERE, "data", "golden", "detect", "*.json"))
 RED = sorted(glob.glob(os.path.join(HERE, "data", "golden", "reduce", "*.json")))
 MSOLVE = find_msolve()[0] is not None
 NEEDS_MSOLVE = {"test-symmetryDetection_151_symmetryDetection.json"}
-# cases of ten seconds and more, run only without -m "not slow"
-SLOW = {"test-symmetryReduction_087_symmetryDetection", "test-symmetryReduction_033_symmetryReduction",
-        "test-symmetryReduction_035_symmetryReduction", "test-symmetryReduction_036_symmetryReduction"}
 
 
 def cases(paths):
     names = [os.path.basename(p)[:-5] for p in paths]
-    return [pytest.param(p, id=n, marks=[pytest.mark.slow] if n in SLOW else []) for p, n in zip(paths, names)]
+    return [pytest.param(p, id=n) for p, n in zip(paths, names)]
 
 
 @pytest.mark.parametrize("path", cases(DET))
