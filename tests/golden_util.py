@@ -56,7 +56,7 @@ def options_of(g):
 
 
 def load(path):
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 

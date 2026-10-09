@@ -1,6 +1,6 @@
 # Wheels for Linux (manylinux x86_64 and aarch64), macOS (x86_64 and arm64) and Windows,
-# the sdist, and tests of the Linux wheel on Fedora and Debian; uploaded to PyPI only when
-# a release is published. The documentation goes to GitHub Pages from master.
+# the sdist, tests of the Linux wheel on Fedora and Debian, and a source build on Fedora;
+# uploaded to PyPI only when a release is published. Documentation goes to Pages from master.
 name: wheels
 
 on:
@@ -69,6 +69,23 @@ jobs:
       - name: Build msolve
         if: startsWith(matrix.image, 'fedora')
         run: /opt/venv/bin/python -c "import symident; symident.install_msolve(ask=False, jobs=4)"
+      - name: Tests
+        run: cd /tmp && /opt/venv/bin/python -m pytest -q -n 2 -m "not slow" "$GITHUB_WORKSPACE/tests"
+
+  # a source install on Fedora's own Python and compilers, as dMod2's CI installs it
+  fedora:
+    name: fedora (source)
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install Python and the compilers
+        run: dnf install -y --setopt=install_weak_deps=False python3 python3-devel python3-pip gcc-c++ cmake
+      - uses: actions/checkout@v5
+      - name: Install from source
+        run: |
+          python3 -m venv /opt/venv
+          /opt/venv/bin/pip install --upgrade pip pytest pytest-xdist
+          /opt/venv/bin/pip install .
       - name: Tests
         run: cd /tmp && /opt/venv/bin/python -m pytest -q -n 2 -m "not slow" "$GITHUB_WORKSPACE/tests"
 

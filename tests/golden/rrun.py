@@ -14,7 +14,7 @@ from golden_util import kw_of, obj_of
 from symident.reduction import symmetry_reduction  # noqa: E402
 
 for path in sys.argv[1:]:
-    g = json.load(open(path))
+    g = json.load(open(path, encoding="utf-8"))
     name = os.path.basename(path)
     t0 = time.monotonic()
     try:

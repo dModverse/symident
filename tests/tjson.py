@@ -39,5 +39,5 @@ def tdec(o):
 
 
 def tload(path):
-    with gzip.open(path, "rt") as f:
+    with gzip.open(path, "rt", encoding="utf-8") as f:
         return tdec(json.load(f))

@@ -48,6 +48,9 @@ sdist.exclude = ["tests/data", "tests/golden"]
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-*"
 skip = ["*-musllinux_*", "*-win32"]
+# SciPy ships no wheels for manylinux2014 any more; the test install would build it
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 test-requires = ["pytest", "pytest-xdist"]
 test-command = 'pytest -q -n 2 -m "not slow" {project}/tests'
 
