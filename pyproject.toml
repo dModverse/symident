@@ -1,0 +1,64 @@
+[build-system]
+requires = ["scikit-build-core>=0.11", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "symident"
+version = "0.9.0"
+description = "Structural identifiability of ODE models by Lie symmetries over finite fields"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Simon Beyer", email = "simon.beyer@fdm.uni-freiburg.de" }]
+keywords = ["structural identifiability", "Lie symmetries", "ODE models", "systems biology",
+            "finite fields", "reparametrisation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = ["numpy>=1.24", "sympy>=1.12", "scipy>=1.11"]
+
+[project.urls]
+Homepage = "https://github.com/dModverse/symident"
+Documentation = "https://dmodverse.github.io/symident/"
+Source = "https://github.com/dModverse/symident"
+Issues = "https://github.com/dModverse/symident/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-xdist"]
+docs = ["sphinx>=8", "numpydoc", "pydata-sphinx-theme", "myst-parser"]
+
+[tool.scikit-build]
+wheel.packages = ["src/symident"]
+cmake.build-type = "Release"
+sdist.exclude = ["tests/data", "tests/golden"]
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-*"
+skip = ["*-musllinux_*", "*-win32"]
+test-requires = ["pytest", "pytest-xdist"]
+test-command = 'pytest -q -n 2 -m "not slow" {project}/tests'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: runs for minutes; deselect with -m 'not slow'"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N8"]
+ignore = ["E741", "N802", "N803", "N806", "B905", "UP031", "B023"]

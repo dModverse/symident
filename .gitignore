@@ -1,0 +1,16 @@
+build/
+*.so
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.cmake/
+CMakeFiles/
+CMakeCache.txt
+CMakeInit.txt
+cmake_install.cmake
+build.ninja
+.ninja_*
+.skbuild-info.json
+.ruff_cache/
+docs/_build/
+docs/generated/

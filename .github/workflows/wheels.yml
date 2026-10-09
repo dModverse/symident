@@ -1,0 +1,115 @@
+# Wheels for Linux (manylinux x86_64 and aarch64), macOS (x86_64 and arm64) and Windows,
+# the sdist, and tests of the Linux wheel on Fedora and Debian; uploaded to PyPI only when
+# a release is published. The documentation goes to GitHub Pages from master.
+name: wheels
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  wheels:
+    name: wheels ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15-intel, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pypa/cibuildwheel@v2.23
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: pipx run build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # the manylinux wheel on the distributions' own Python; Fedora also builds msolve with
+  # install_msolve() and runs the tests that need it
+  distro:
+    needs: wheels
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["fedora:latest", "debian:stable"]
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install Python and build tools
+        run: |
+          if command -v dnf >/dev/null; then
+            dnf install -y --setopt=install_weak_deps=False python3 python3-pip gcc make m4 curl xz tar
+          else
+            apt-get update && apt-get install -y --no-install-recommends \
+              python3 python3-venv ca-certificates
+          fi
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-ubuntu-latest
+          path: wheelhouse
+      - name: Install the wheel
+        run: |
+          python3 -m venv /opt/venv
+          /opt/venv/bin/pip install --upgrade pip pytest pytest-xdist
+          /opt/venv/bin/pip install --only-binary=:all: --find-links wheelhouse symident
+      - name: Build msolve
+        if: startsWith(matrix.image, 'fedora')
+        run: /opt/venv/bin/python -c "import symident; symident.install_msolve(ask=False, jobs=4)"
+      - name: Tests
+        run: cd /tmp && /opt/venv/bin/python -m pytest -q -n 2 -m "not slow" "$GITHUB_WORKSPACE/tests"
+
+  # the documentation as HTML, built on every run and deployed to Pages from master
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install ".[docs]"
+      - run: sphinx-build -W -b html docs docs/_build/html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+  pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: docs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  publish:
+    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: [wheels, sdist, distro]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

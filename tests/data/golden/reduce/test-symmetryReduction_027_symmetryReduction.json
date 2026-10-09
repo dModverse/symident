@@ -1,0 +1,1 @@
+{"name":"test-symmetryReduction_027_symmetryReduction","object":{"method":"observability","identifiable":true,"gauge":null,"info":{"coordinates":["x","k"],"modelExprs":["-k*x","x"]},"symmetries":[]},"args":{},"elapsed":0.000365972518920898,"result":{"trafo":null,"removed":null,"remaining":null,"blocks":[]}}
