@@ -15,13 +15,14 @@ verified at fresh primes.
 ## Installation
 
 ```sh
-pip install git+https://github.com/dModverse/symident
+pip install symident
 ```
 
-This builds from source and needs a C++17 compiler and CMake; with OpenMP the kernel runs
-on several threads. Once symident is on PyPI, `pip install symident` installs a wheel.
-Wheels are built for Linux (x86_64, aarch64; tested on Ubuntu, Debian and Fedora), macOS
-(x86_64, arm64) and Windows (x86_64).
+Wheels are built for Linux (x86_64, aarch64, glibc 2.28 or newer; tested on Ubuntu, Debian
+and Fedora), macOS (x86_64, arm64) and Windows (x86_64), for Python 3.10 to 3.14. Elsewhere
+pip builds from source, which needs a C++17 compiler and CMake; with OpenMP the kernel runs
+on several threads. The development version installs with
+`pip install git+https://github.com/dModverse/symident`.
 
 Steady-state analyses (`equilibrate=True`) whose resting state is a coupled nonlinear
 polynomial system use [msolve](https://msolve.lip6.fr). On Linux and macOS
