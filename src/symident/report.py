@@ -81,7 +81,7 @@ def _labels(syms):
                                       for k in range(len(syms))]
 
 
-def generators_lines(res, verbose=False, width=None, show_route=False):
+def generators_lines(res, verbose=False, width=None):
     """Report lines of the generators, grouped by type."""
     width = _width(width)
     syms, labels = _labels(res["symmetries"])
@@ -105,8 +105,6 @@ def generators_lines(res, verbose=False, width=None, show_route=False):
             continue
         out.append(lead.rstrip())
         out += format_generator(d.get("display") or d["generator"], ind, width)
-        if show_route and d.get("route") and d["type"] != "scaling":
-            out.append(f"{ind}closed form: {d['route']}")
         out.append("")
     return out
 
@@ -151,7 +149,7 @@ def result_lines(res, verbose=False, width=None, fixing=False):
                f"{plural(n, 'non-identifiable direction', 'non-identifiable directions')}", ""]
     else:
         out = [f"Result:  {plural(n, 'scaling symmetry', 'scaling symmetries')} (exact integer kernel)", ""]
-    out += generators_lines(res, verbose, width, show_route=fixing)
+    out += generators_lines(res, verbose, width)
     if fixing:
         out += reduction_hint_lines(res, width)
     return out
@@ -269,41 +267,92 @@ def red_chart_lines(x, width, domain="positive orthant"):
     return out
 
 
-def red_section_lines(x, width, domain="positive orthant"):
-    """Report lines of the section of each reduced block with its reason."""
+DETAIL_CALL = "summary(detailed=True)"
+
+
+def _section_rows(x):
     rows = []
     for b in x["blocks"]:
         if b["status"] != "reduced":
             continue
-        curved = b["type"] == "curved"
-        if b.get("face"):
+        if b.get("section"):
             what = ", ".join(b["section"])
-            why = (f"face: every orbit in the {domain} reaches it exactly once, with every other "
-                   "coordinate positive. A face is tried first: it switches rates off, and each "
-                   "remaining coordinate of the block becomes the q_<k> that holds the value it takes there")
-        elif b.get("section"):
-            what = ", ".join(b["section"])
-            why = "balance: the ratio is strictly monotone along every orbit, so each orbit meets it exactly once"
         elif b.get("transversal"):
             pins = b.get("pins") or {}
             what = ", ".join(f"{t} = {pins.get(t, '1')}" for t in b["transversal"])
-            if not curved:
-                why = "pin: a scaling orbit is a ray, so any positive value meets it exactly once"
-            elif b.get("coverage") == "partial":
-                why = "pin: reached by the orbits whose carriers are positive; the chart covers only those"
-            else:
-                why = ("pin: every orbit reaches this value (each solved entry is certified positive "
-                       "for every admissible outer value)")
         else:
             continue
-        rows.append(("{" + ", ".join(b["labels"]) + "}", what, why))
+        rows.append(("{" + ", ".join(b["labels"]) + "}", what, b))
+    return rows
+
+
+def _section_reason(b, what, domain):
+    labs = ", ".join(b["labels"])
+    moved = ", ".join(b.get("support") or [])
+    if b["type"] == "scaling":
+        t = ", ".join(b.get("transversal") or [])
+        return [f"{labs} rescales {moved}: along an orbit each is multiplied by a power of one "
+                f"factor λ > 0, and {t} by a nonzero power. {what} therefore holds at exactly one λ."]
+    out = [f"{labs} moves {moved}. Constant along each orbit:"]
+    inv = b.get("survivor_meaning") or {}
+    out += [("  ", k, v) for k, v in inv.items()]
+    sec = set(b.get("section") or [])
+    pins = b.get("pins") or {}
+    pt = {k: v for k, v in pins.items() if f"{k} = {v}" not in sec}
+    real = [k for k, v in (b.get("carrier_domain") or {}).items() if v == "real"]
+    if b.get("face"):
+        out.append(f"A section that sets coordinates to 0 is preferred: each other coordinate then "
+                   f"becomes one of the invariants. With {what} the invariants give")
+    elif b.get("section"):
+        out.append(f"Setting coordinates to 0 gives no point with all others positive on every orbit. "
+                   f"The ratio of the two sides of {what} changes in one direction only along "
+                   f"each orbit ({labs} applied to its logarithm has a fixed sign), so the orbit meets "
+                   f"{what} at most once. With {what} the invariants give")
+    else:
+        out.append(f"Neither setting coordinates to 0 nor a ratio of them gives a section. With {what} "
+                   f"the invariants give")
+    out += [("  ", k, v) for k, v in pt.items()]
+    if b.get("coverage") == "partial":
+        out.append(f"These values are positive only where {', '.join(real)} > 0; orbits with other "
+                   f"values of {', '.join(real)} do not reach {what} inside the {domain}.")
+    else:
+        out.append(f"The invariants determine these values uniquely, and they are positive for all "
+                   f"values of the invariants. So every orbit in the {domain} contains "
+                   f"exactly one point with {what}.")
+    if "square root" in (b.get("gauge_note") or ""):
+        out.append("Of the two roots, the positive one is taken.")
+    return out
+
+
+def red_section_lines(x, width, domain="positive orthant", detailed=False, detail_call=DETAIL_CALL):
+    """Report lines of the section of each reduced block; with `detailed`, why it was chosen."""
+    rows = _section_rows(x)
     if not rows:
         return []
-    out = ["", "Sections: the invariants name each orbit, the chart takes one point on it"]
-    ind = "      "
-    for r in rows:
-        out.append(f"  {r[0]}  {r[1]}")
-        out.append(textwrap.fill(r[2], width=max(40, width), initial_indent=ind, subsequent_indent=ind))
+    if not detailed:
+        w = max(len(r[0]) for r in rows)
+        out = ["", "Sections:"] + [f"  {r[0].ljust(w)}  {r[1]}" for r in rows]
+        if detail_call:
+            out.append(f"  {detail_call} explains each section.")
+        return out
+    ind = "    "
+    out = ["", "Sections", textwrap.fill(
+        "A direction is removed by choosing one point on each of its orbits. The invariants are "
+        "constant along an orbit and become the new parameters; the section is the equation that "
+        "picks the point.", width=max(40, width), initial_indent="  ", subsequent_indent="  ")]
+    for lab, what, b in rows:
+        out += ["", f"  {lab}  {what}"]
+        pend = []
+        for item in _section_reason(b, what, domain) + [None]:
+            if isinstance(item, tuple):
+                pend.append(item)
+                continue
+            if pend:
+                out += _pairs([p[1] for p in pend], [p[2] for p in pend], width, ind + "  ")
+                pend = []
+            if item is not None:
+                out.append(textwrap.fill(item, width=max(40, width), initial_indent=ind,
+                                         subsequent_indent=ind))
     return out
 
 
@@ -332,12 +381,13 @@ def red_zero_lines(x, width):
     return out
 
 
-def reduction_lines(x, width=None):
+def reduction_lines(x, width=None, detail_call=DETAIL_CALL):
     """Report lines of the reduction result."""
     width = _width(width)
     if not x["removed"] and not x["remaining"]:
         return ["Nothing to reduce."]
-    out = [red_verdict(x)] + red_chart_lines(x, width) + red_section_lines(x, width) + red_zero_lines(x, width)
+    out = [red_verdict(x)] + red_chart_lines(x, width) + \
+        red_section_lines(x, width, detail_call=detail_call) + red_zero_lines(x, width)
     for b in x["blocks"]:
         if b["status"] in ("reduced", "fixed"):
             continue
@@ -352,13 +402,13 @@ def reduction_lines(x, width=None):
 
 
 def _verbose_family_lines(fam, ind, width):
-    """The admissible gauges, the matroid rows and the gauge note of a block."""
+    """The possible choices, the matroid rows and the gauge note of a block."""
     def wrap(lead, items, sep=", "):
         return textwrap.fill(lead + sep.join(items), width=max(40, width), initial_indent=ind,
                              subsequent_indent=ind + " " * len(lead))
     out = []
     if fam.get("admissible") is not None:
-        out.append(wrap("admissible  ", ["{" + ",".join(T) + "}" for T in fam["admissible"]]))
+        out.append(wrap("choices  ", ["{" + ",".join(T) + "}" for T in fam["admissible"]]))
     for r in fam.get("matroid") or []:
         out.append(wrap("pick one of  ", list(r)))
     if fam.get("gauge_note") is not None:
@@ -366,7 +416,7 @@ def _verbose_family_lines(fam, ind, width):
     return out
 
 
-def reduction_summary_lines(x, verbose=False, width=None):
+def reduction_summary_lines(x, verbose=False, width=None, detailed=False, detail_call=DETAIL_CALL):
     """The reduction report: header, verdict, chart, sections and one entry per block."""
     width = _width(width)
     bar = "-" * 60
@@ -374,8 +424,10 @@ def reduction_summary_lines(x, verbose=False, width=None):
     out = [bar, f"reduce  |  directions: {n_dir}", bar]
     if not n_dir:
         return out + ["Nothing to reduce."]
-    out += [red_verdict(x)] + red_chart_lines(x, width) + red_section_lines(x, width) + red_zero_lines(x, width)
+    out += [red_verdict(x)] + red_chart_lines(x, width) + \
+        red_section_lines(x, width, detailed=detailed, detail_call=detail_call) + red_zero_lines(x, width)
     out += ["", "Blocks"]
+    rows = []
     for b in x["blocks"]:
         fam = next((f for f in x.get("family") or [] if f["labels"] == b["labels"]), {})
         kind = b.get("kind") or b["type"]
@@ -387,29 +439,40 @@ def reduction_summary_lines(x, verbose=False, width=None):
             gauge.append(f"fixed removed {k} direction{'' if k == 1 else 's'}" +
                          (f" (redundant: {', '.join(b['redundant_fixed'])})" if b.get("redundant_fixed") else ""))
         if b.get("section"):
-            gauge.append("section " + ", ".join(b["section"]))
+            gauge.append(", ".join(b["section"]))
         elif b.get("transversal"):
             pins = b.get("pins") or {}
-            gauge.append("transversal " + ", ".join(f"{t} = {pins.get(t, '1')}" for t in b["transversal"]))
+            gauge.append(", ".join(f"{t} = {pins.get(t, '1')}" for t in b["transversal"]))
         if fam.get("admissible") is not None:
-            gauge.append(f"{len(fam['admissible'])} admissible")
+            n = len(fam["admissible"])
+            if b.get("transversal") and not b.get("section"):
+                gauge[-1] += f" (one of {n} choices)" if n > 1 else " (the only choice)"
+            else:
+                gauge.append(f"{n} choice{'' if n == 1 else 's'}")
         elif fam.get("matroid") is not None:
             gauge.append(f"matroid of {len(fam['matroid'])} row{'' if len(fam['matroid']) == 1 else 's'}")
         full = b["status"] not in ("reduced", "fixed") or verbose
         st = b.get("stage")
-        out.append(f"  {{{', '.join(b['labels'])}}} {kind}, {b['status']}" +
-                   (f" [{st}]" if st and st not in ("transversal", "fixed", "none") else "") +
-                   (" | " + ", ".join(gauge) if gauge else ""))
+        head = (f"{kind}, {b['status']}" +
+                (f" [{st}]" if st and st not in ("transversal", "fixed", "none") else ""))
         ind = "      "
+        more = []
         if b.get("module_combos"):
-            out.append(ind + "module reduction  " + ";  ".join(b["module_combos"]))
+            more.append(ind + "module reduction  " + ";  ".join(b["module_combos"]))
         if b.get("invariants") and full:
-            out.append(ind + "invariants  " + ", ".join(b["invariants"]))
+            more.append(ind + "invariants  " + ", ".join(b["invariants"]))
         if b.get("reason"):
-            out.append(textwrap.fill("reason  " + b["reason"], width=max(40, width),
-                                     initial_indent=ind, subsequent_indent=ind + "        "))
+            more.append(textwrap.fill("reason  " + b["reason"], width=max(40, width),
+                                      initial_indent=ind, subsequent_indent=ind + "        "))
         if verbose:
-            out += _verbose_family_lines(fam, ind, width)
+            more += _verbose_family_lines(fam, ind, width)
+        rows.append(("{" + ", ".join(b["labels"]) + "}", head, ", ".join(gauge), more))
+    if rows:
+        wl = max(len(r[0]) for r in rows)
+        wh = max(len(r[1]) for r in rows)
+    for lab, head, gauge, more in rows:
+        out.append((f"  {lab.ljust(wl)}  {head.ljust(wh)}" + (f"  | {gauge}" if gauge else "")).rstrip())
+        out += more
     if x["remaining"]:
         out += ["", textwrap.fill(f"Remaining: {', '.join(x['remaining'])} | options: a structural "
                                   "assumption, a separating experiment, or prediction profiles.",

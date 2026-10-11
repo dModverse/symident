@@ -242,7 +242,7 @@ Options of :func:`~symident.detect`:
    threads and worker processes.
 
 ``summary()`` adds how the result was obtained: the Lie order, whether the saturation is
-certified, the gauge and the route of each closed form. The raw result is available with
+certified and the gauge. The raw result is available with
 ``to_dict()``, each direction as a :class:`~symident.Symmetry`.
 
 Reduction
@@ -274,20 +274,19 @@ new parameter ``q_1, q_2, ...``:
      q_2 = k1*kb/(k1 + kl)
      q_3 = k1*kin/(k1 + kl)
 
-   Sections: the invariants name each orbit, the chart takes one point on it
+   Sections:
      {X₁}  s = 1
-         pin: a scaling orbit is a ray, so any positive value meets it exactly once
      {X₂}  kl = 0
-         face: every orbit in the positive orthant reaches it exactly once, with
-         every other coordinate positive. A face is tried first: it switches rates
-         off, and each remaining coordinate of the block becomes the q_<k> that
-         holds the value it takes there
+     summary(detailed=True) explains each section.
 
 The reduced model fixes the scale at ``s = 1`` and moves all outflow of ``x1`` into the
 conversion, ``kl = 0``. Its parameters are the identifiable combinations found above:
 ``q_1`` is the total outflow rate of ``x1``, ``q_2`` and ``q_3`` are the basal and the
 stimulated flux into ``x2``, each in units of the measured signal. ``k2`` is identifiable
 and stays as it is.
+
+A section is the equation that picks one point on each orbit.
+``red.summary(detailed=True)`` explains each section.
 
 ``red.trafo`` holds the transformation as a dict of strings, ready to be composed with
 the model's parameters:

@@ -1,3 +1,11 @@
+# symident 0.9.3
+
+* The reduction report lists each section as its equation. `summary(detailed=True)`
+  explains each section.
+* The summary no longer shows how a closed form was found.
+* The block lines of `summary()` are aligned in columns and show the section as its
+  equation, with the number of possible choices.
+
 # symident 0.9.2
 
 * `log(x, b)` and `atan2(y, x)` parse: the commas between the arguments were dropped.

@@ -255,8 +255,9 @@ def test_print_lean_summary_carries_block_report():
     # one line per block; a reduced block repeats no invariants and no certificate
     rep = lines(r.summary())
     assert grep(r"^Blocks$", rep)
-    assert grep(r"\{X[^}]+\} scaling, reduced \| transversal ktl = 1", rep)
-    assert grep("admissible", rep)
+    assert grep(r"\{X[^}]+\}  scaling, reduced +\| ktl = 1 \(one of \d+ choices\)", rep)
+    assert not grep("transversal|section ", rep)
+    assert not grep("admissible", rep)
     assert not grep(r"ktx\*ktl", rep)
     assert not grep(r"invariants  |certificate|certified", rep)
     assert len(rep) < 20
@@ -265,7 +266,7 @@ def test_print_lean_summary_carries_block_report():
     assert grep("invariants  ", vrb)
     assert not grep(r"\[transversal certified|\[verified", vrb)
     assert len(vrb) > len(rep)
-    assert grep(r"admissible  \{", vrb)
+    assert grep(r"choices  \{", vrb)
 
 
 def test_egf_mek_erk_cascade_reduced_end_to_end():
@@ -335,7 +336,7 @@ def test_exponential_factor_invariant_solved_and_reported():
     assert any("exp stage skipped" in c for c in b0["certificates"])
     txt = lines(r.summary(verbose=True))
     assert grep(r"\[exp\]", txt)
-    assert grep("gauge pin", txt)
+    assert grep(r"gauge  \w+ = ", txt)
 
 
 def test_section_from_product_of_two_summand_balances():
@@ -398,7 +399,7 @@ def test_root_carrier_quadratic_invariant():
     r = red(obj)
     b = r.blocks[0]
     assert b["status"] == "reduced"
-    assert "gauge section" in b["gauge_note"]
+    assert b["gauge_note"].startswith(", ".join(b["section"]))
     assert "certified positive" in b["gauge_note"]
     assert all(re.search(r"sqrt|\^\(1/2\)", e) for e in r.trafo.values())
     z = {nm: ev(e, {"a": 1, "b": 1, "q_1": 9}) for nm, e in r.trafo.items()}
@@ -661,7 +662,8 @@ def test_face_section_switches_leaks_off():
     assert not any(v.startswith("q_") for v in others)
     out = lines(repr(r))
     assert grep(r"^Sections:", out)
-    assert grep("face: every orbit", out)
+    assert grep(r"^  \{X.*\}  " + re.escape(", ".join(b["section"])) + "$", out)
+    assert grep("exactly one point with", lines(r.summary(detailed=True)))
 
 
 def test_summary_reports_once():

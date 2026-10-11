@@ -208,9 +208,8 @@ def scaling_block(W, cols, labels, fixed, allowed=None):
                survivor_meaning=tv["survivor_meaning"], Wres=Wres, Wcols=cols)
     if tv["T"] is not None:
         blk["status"] = "reduced"
-        blk["gauge_note"] = ("each transversal coordinate may be pinned to any nonzero constant "
-                             "(representative uses 1); the family ranges over all admissible "
-                             "transversals")
+        blk["gauge_note"] = ("each fixed coordinate may take any nonzero value (here 1); "
+                             "any of the listed choices works")
         blk["pins"] = {t: "1" for t in tv["T"]}
         blk["certificates"].append("transversal certified exactly: W[,T] invertible with "
                                    "integer W[,T]^-1 W")

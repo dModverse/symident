@@ -32,11 +32,11 @@ def test_generator_rows_wrap_at_the_width():
 
 
 def test_generators_grouped_scalings_first():
-    out = report.generators_lines(res([SUPP, GEN, SCAL]), verbose=True, width=80, show_route=True)
+    out = report.generators_lines(res([SUPP, GEN, SCAL]), verbose=True, width=80)
     assert out[:4] == ["Generators  X = Σᵢ η(i) ∂ᵢ", "", "Scalings:", "  X₁"]
     assert "General:" in out
     assert "  X₂  support only" in out and "      a, b" in out and "      reason: too large" in out
-    assert "      closed form: quadrature" in out
+    assert not any("closed form" in line for line in out)
     assert report.generators_lines(res([])) == []
 
 
@@ -97,3 +97,38 @@ def test_reduction_verdict():
     assert report.red_verdict(x) == ("Reduced 2 of 3 directions  (X₃ remaining); X₄ depends on the others; "
                                      "the chart of X₂ covers only part of the positive orthant.")
     assert report.red_verdict({"removed": ["X₁"], "remaining": []}) == "Reduced 1 of 1 direction."
+
+
+SEC = {"removed": ["X₁", "X₂", "X₃", "X₄"], "remaining": [], "blocks": [
+    {"labels": ["X₁"], "type": "scaling", "status": "reduced", "support": ["K", "P"],
+     "transversal": ["P"], "pins": {"P": "1"}},
+    {"labels": ["X₂"], "type": "curved", "status": "reduced", "support": ["kL", "kS"], "face": True,
+     "section": ["kL = 0"], "pins": {"kL": "0", "kS": "q_1"}, "survivor_meaning": {"q_1": "kL + kS"},
+     "coverage": "total"},
+    {"labels": ["X₃"], "type": "curved", "status": "reduced", "support": ["c", "k"], "face": False,
+     "section": ["c*k = 1"], "pins": {"k": "sqrt(q_2)"}, "survivor_meaning": {"q_2": "k/c"},
+     "coverage": "total", "gauge_note": "a solved entry contains a square root"},
+    {"labels": ["X₄"], "type": "curved", "status": "reduced", "support": ["a", "b"], "face": False,
+     "transversal": ["a"], "pins": {"a": "1", "b": "q_3"}, "survivor_meaning": {"q_3": "a - b"},
+     "coverage": "partial", "carrier_domain": {"q_3": "real"}}]}
+
+
+def test_sections_short_list_the_equations_and_point_to_the_details():
+    out = report.red_section_lines(SEC, 80)
+    assert out == ["", "Sections:", "  {X₁}  P = 1", "  {X₂}  kL = 0", "  {X₃}  c*k = 1", "  {X₄}  a = 1",
+                   "  summary(detailed=True) explains each section."]
+    assert report.red_section_lines(SEC, 80, detail_call="summary(x, detailed = TRUE)")[-1] == \
+        "  summary(x, detailed = TRUE) explains each section."
+    assert "explains each section." in " ".join(report.reduction_summary_lines(SEC, width=80))
+
+
+def test_sections_detailed_explain_each_choice():
+    txt = "\n".join(report.reduction_summary_lines(SEC, width=200, detailed=True))
+    assert "explains each section" not in txt
+    assert "X₁ rescales K, P" in txt and "P = 1 therefore holds at exactly one λ" in txt
+    assert "sets coordinates to 0 is preferred" in txt and "exactly one point with kL = 0" in txt
+    assert "      kS = q_1" in txt and "      q_1 = kL + kS" in txt
+    assert "c*k = 1 at most once" in txt and "the positive one is taken" in txt
+    assert "positive only where q_3 > 0" in txt
+    for word in ("face", "balance", "pin:", "orthant reaches it"):
+        assert word not in txt
