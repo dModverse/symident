@@ -262,7 +262,7 @@ def rational_invariants(preps, d_poly):
     den_c = [m for m, d in zip(moved, divisible) if d]
     if not den_c:
         return skip("rational stage skipped: no moved coordinate divides its own generator "
-                    "component (no admissible denominator)")
+                    "component (no usable denominator)")
     moved_idx = [vars_.index(m) for m in moved]
     T0 = mono_table(len(vars_), int(d_poly))
     keep0 = T0[:, moved_idx].sum(axis=1) > 0

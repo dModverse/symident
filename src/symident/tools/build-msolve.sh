@@ -28,8 +28,10 @@ step() { echo "==> $*" >&2; }
 step "GMP $GMP"
 fetch "https://ftp.gnu.org/gnu/gmp/gmp-$GMP.tar.xz" gmp.tar.xz
 tar xf gmp.tar.xz
-(cd "gmp-$GMP" && ./configure --prefix="$PREFIX" --disable-shared --enable-static \
-   --with-pic >&2 && make -j"$JOBS" >&2 && make install >&2)
+# generic build triples: the binary runs on every CPU of its architecture, not only on the
+# one that built it
+(cd "gmp-$GMP" && ./configure --build="$(sh ./configfsf.guess)" --prefix="$PREFIX" \
+   --disable-shared --enable-static --with-pic >&2 && make -j"$JOBS" >&2 && make install >&2)
 
 step "MPFR $MPFR"
 fetch "https://ftp.gnu.org/gnu/mpfr/mpfr-$MPFR.tar.xz" mpfr.tar.xz
@@ -40,9 +42,9 @@ tar xf mpfr.tar.xz
 step "FLINT $FLINT"
 fetch "https://github.com/flintlib/flint/releases/download/v$FLINT/flint-$FLINT.tar.gz" flint.tar.gz
 tar xzf flint.tar.gz
-(cd "flint-$FLINT" && ./configure --prefix="$PREFIX" --disable-shared --enable-static \
-   --with-pic --with-gmp="$PREFIX" --with-mpfr="$PREFIX" >&2 && make -j"$JOBS" >&2 &&
- make install >&2)
+(cd "flint-$FLINT" && ./configure --build="$(sh config/configfsf.guess)" --prefix="$PREFIX" \
+   --disable-shared --enable-static --with-pic --with-gmp="$PREFIX" --with-mpfr="$PREFIX" >&2 &&
+ make -j"$JOBS" >&2 && make install >&2)
 
 step "msolve $MSOLVE"
 fetch "https://github.com/algebraic-solving/msolve/archive/refs/tags/v$MSOLVE.tar.gz" msolve.tar.gz

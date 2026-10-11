@@ -456,12 +456,12 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                 gauge_val = list(dict.fromkeys(sol["pins"][g] for g in sol.get("gauge") or []))
                 b["coverage"] = sol.get("coverage")
                 b["carrier_domain"] = sol.get("carrier_domain")
-                notes = [("gauge section " + ", ".join(sol["section"])) if sol.get("section") is not None
-                         else f"gauge pin {', '.join(sol.get('gauge') or [])} = {', '.join(gauge_val)}"]
+                notes = [(", ".join(sol["section"])) if sol.get("section") is not None
+                         else f"{', '.join(sol.get('gauge') or [])} = {', '.join(gauge_val)}"]
                 notes.append(f"entries certified positive for positive carrier values only; a carrier that "
                              f"takes both signs leaves part of the {domain_name()} outside the chart"
                              if sol.get("coverage") == "partial" else
-                             "entries certified positive for every admissible outer value")
+                             "entries certified positive for every value of the invariants")
                 if sol.get("root_note"):
                     notes.append(sol["root_note"])
                 b["gauge_note"] = "; ".join(notes)

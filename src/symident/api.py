@@ -236,9 +236,9 @@ class Reduction:
     def __repr__(self):
         return "\n".join(report.reduction_lines(self._raw))
 
-    def summary(self, verbose=False):
-        """The verdict, the chart and one line per block."""
-        return _Text("\n".join(report.reduction_summary_lines(self._raw, verbose)))
+    def summary(self, verbose=False, detailed=False):
+        """The verdict, the chart and one line per block. `detailed` explains each section."""
+        return _Text("\n".join(report.reduction_summary_lines(self._raw, verbose, detailed=detailed)))
 
     def to_dict(self):
         """The raw reduction as nested dicts and lists."""
