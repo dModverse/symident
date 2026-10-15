@@ -49,7 +49,8 @@
 * `pi` is the number and cannot name a symbol. `==` and `!=` decide by identity. Names such
   as `N`, `S`, `E`, `I` or `beta` stay model symbols. A switch on parameters alone needs
   its side in `regimes`.
-* The printout reads `X = Σᵢ ξ(i) ∂ᵢ`, and the docs use the notation of the manuscript.
+* The printout reads `X = Σᵢ ξ(i) ∂ᵢ`; the docs write θ for the parameters and ξ for the
+  components of a generator.
 
 ## Reduction
 

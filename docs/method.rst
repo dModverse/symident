@@ -1,8 +1,6 @@
 Method
 ======
 
-The notation follows the accompanying manuscript.
-
 The model
 ---------
 
@@ -119,9 +117,11 @@ random point can only underestimate the generic rank, and it falls short with sm
 probability [Schwartz1980]_ [Zippel1979]_; the rank is confirmed at further primes and
 points.
 
-The rank grows with the order :math:`N` until it stops. Where the proof of the
-supplement applies, the order is proven *sufficient* per condition and segment: beyond it
-the rank provably does not grow, so the reported rank is the generic one and not a false
+The rank grows with the order :math:`N` until it stops. With the parameters fixed, the
+states through the start of a segment lie on a smallest invariant affine space, and on it
+the rows have a generic rank that no order exceeds [HermannKrener1977]_. Where the rows at
+the start reach this rank, the order is proven *sufficient* per condition and segment:
+beyond it the rank does not grow, so the reported rank is the generic one and not a false
 plateau. Where it does not apply, for example for large stacked systems or a non-affine
 invariant set, the order stops after a plateau of constant rank, and the result says that
 the Lie order is not proven sufficient. For the gap order :math:`M` the rows after a gap

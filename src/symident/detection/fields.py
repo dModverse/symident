@@ -1,5 +1,5 @@
-"""Gap series helpers, exact scalings, field analyses per regime and the Lie-order
-certificate (manuscript, Supplementary Note S3)."""
+"""Gap series helpers, exact scalings, field analyses per regime and the proof
+that the Lie order is sufficient."""
 
 import json
 import re
