@@ -1,6 +1,7 @@
 """The saturation guard: the rank checked past the reported Lie order."""
 
 from ... import state
+from ...errors import swallow
 from ...gfp import PRIMES
 from ..fields import rank_of
 from .context import ok as _ok
@@ -13,7 +14,8 @@ def saturation_guard(kcall, point0, nt_used, reported_rank, margin=None):
     P = PRIMES[0]
     try:
         r0 = kcall(point0, P, int(nt_used))
-    except Exception:
+    except Exception as exc:
+        swallow(exc, "saturation guard")
         r0 = None
     if not _ok(r0):
         return {"ok": None, "method": "saturation guard", "reason": "base point not re-evaluable"}
@@ -24,7 +26,8 @@ def saturation_guard(kcall, point0, nt_used, reported_rank, margin=None):
     def rank_at(k):
         try:
             rk = kcall(point0, P, int(nt_used + k))
-        except Exception:
+        except Exception as exc:
+            swallow(exc, "saturation guard")
             return None
         return int(rank_of(rk)) if _ok(rk) else None
     top = rank_at(margin)

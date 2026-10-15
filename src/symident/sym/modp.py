@@ -4,6 +4,7 @@ from fractions import Fraction
 
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, InapplicableError, sympy_fail
 from .parse import _as_list, _make_local_parse
 
 
@@ -96,7 +97,7 @@ _inv_mod_cache = {}
 
 
 def _inv_mod(a, p):
-    """Modular inverse of a mod p, memoised per (a, p): term-list denominators are
+    """Modular inverse of a mod p, memoized per (a, p): term-list denominators are
     a small fixed set. inv(0)=0 as with Fermat."""
     a %= p
     if a <= 1:
@@ -154,10 +155,13 @@ def eval_rational_mod(expr, names, vals, q):
     if not isinstance(vals, (list, tuple)):
         vals = [vals]
     local, parse = _make_local_parse([str(expr)] + [str(n) for n in names])
-    e = spy.together(spy.sympify(parse(str(expr))).subs(
-        {spy.Symbol(str(n)): spy.Integer(int(v))
-         for n, v in zip(names, vals)}))
+    e = spy.sympify(parse(str(expr)))
+    # decimals as the rationals they write: no float enters
+    e = e.xreplace({x: spy.Rational(str(x)) for x in e.atoms(spy.Float)})
+    e = spy.together(e.subs({spy.Symbol(str(n)): spy.Integer(int(v)) for n, v in zip(names, vals)}))
     num, den = spy.fraction(e)
+    if not (num.is_Integer and den.is_Integer):
+        raise InapplicableError(f"{expr} is not a rational number at the point")
     num, den = int(num), int(den) % q
     if den == 0:
         return None
@@ -170,7 +174,7 @@ _eval_batch_cache = {}
 def eval_rational_mod_batch(exprs, names, points, q):
     """Values of the rational expressions `exprs` (strings) at each integer point
     (rows of `points`, columns aligned with `names`), reduced modulo the prime q.
-    The lambdified expressions are memoised on (exprs, names), since compiling
+    The lambdified expressions are memoized on (exprs, names), since compiling
     dominates evaluation in the sampling loops; evaluation is exact (Fraction).
     Returns one list per point; -1 marks a vanishing denominator or a failure."""
     q = int(q)
@@ -188,7 +192,8 @@ def eval_rational_mod_batch(exprs, names, points, q):
         for ex in exprs:
             try:
                 fns.append(spy.lambdify(argsyms, parse(ex), modules="math"))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 fns.append(None)
         if len(_eval_batch_cache) > 512:
             _eval_batch_cache.clear()
@@ -202,7 +207,8 @@ def eval_rational_mod_batch(exprs, names, points, q):
             if f is not None:
                 try:
                     v = Fraction(f(*vals))
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     v = None
             if v is None or v.denominator % q == 0:
                 row.append(-1)
@@ -231,7 +237,8 @@ def eval_rational_batch(exprs, names, points):
         for ex in exprs:
             try:
                 fns.append(spy.lambdify(argsyms, parse(ex), modules="math"))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 fns.append(None)
         if len(_eval_batch_cache) > 512:
             _eval_batch_cache.clear()
@@ -245,7 +252,8 @@ def eval_rational_batch(exprs, names, points):
             if f is not None:
                 try:
                     v = Fraction(f(*vals))
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     v = None
             if v is None:
                 nrow.append("0")

@@ -2,6 +2,7 @@
 
 import sympy as spy
 
+from .liecert import kernel_exact, lie_certificate
 from .parse import _make_local_parse, _read_equations
 from .tape import _lie_reach
 
@@ -103,12 +104,19 @@ def observability_sympy_multi(model, observation, condition_subs=None, condition
     lo0 = max([k for k in first_ord if k >= 0] or [0])
     rows = []
     jets = [list(g_c) for (f_c, g_c, ic_c) in per_cond]     # order 0: the observables
-    prev, flat, order = -1, 0, 0
-    while True:
+
+    def next_order():
+        for ci, (f_c, _g_c, _ic_c) in enumerate(per_cond):
+            jets[ci] = [spy.expand(_lie_deriv(h, S, f_c)) for h in jets[ci]]
+
+    def add_rows():
         for ci, (_f_c, _g_c, ic_c) in enumerate(per_cond):
             for h in jets[ci]:
                 he = spy.sympify(h).subs(ic_c)             # evaluate at x(0) = ic_c
                 rows.append([spy.diff(he, zj) for zj in z])
+    prev, flat, order = -1, 0, 0
+    while True:
+        add_rows()
         rank = spy.Matrix(rows).rank()
         if rank == prev:
             flat = flat + 1 if order > lo0 else flat
@@ -118,19 +126,35 @@ def observability_sympy_multi(model, observation, condition_subs=None, condition
             break
         prev = rank
         order += 1
-        for ci, (f_c, _g_c, _ic_c) in enumerate(per_cond):
-            jets[ci] = [spy.expand(_lie_deriv(h, S, f_c)) for h in jets[ci]]
+        next_order()
 
+    # below full rank, the rows are taken up to the certified order past which no row adds
+    cert = {"order": None, "why": None}
+    if rank < nz:
+        cert = lie_certificate(per_cond, S, fixed_names, order)
+        while cert["order"] is not None and order < cert["order"]:
+            order += 1
+            next_order()
+            add_rows()
     M = spy.Matrix(rows)
     rank = M.rank()
-    non_id = []
+    non_id, vecs = [], []
     if rank < nz:
         for vec in M.nullspace():
             v = [spy.cancel(vec[i]) for i in range(nz)]
+            vecs.append(v)
             nz_i = [i for i in range(nz) if v[i] != 0]
             non_id.append({'support': sorted(znames[i] for i in nz_i),
                            'vector': {znames[i]: str(v[i]) for i in nz_i},
                            'type': 'general', 'closed_form': True})
-    return {'ok': True, 'rank': int(rank), 'dim': int(nz), 'lie_order': int(order),
-            'non_identifiable': non_id, 'identifiable': bool(rank >= nz),
-            'coordinates': znames}
+    out = {'ok': True, 'rank': int(rank), 'dim': int(nz), 'lie_order': int(order),
+           'non_identifiable': non_id, 'identifiable': bool(rank >= nz), 'coordinates': znames,
+           'lie_certified': cert["order"] is not None or rank >= nz, 'lie_certificate': cert["why"]}
+    # with the order certified, a vector that annihilates the rows identically is a symmetry
+    if cert["order"] is not None and non_id and kernel_exact(rows, vecs, z):
+        for d in non_id:
+            d['exact'] = True
+        out['rank_proven'], out['rank_proof'] = len(non_id), "Lie order proven sufficient, exact kernel"
+    out['systems'] = [([f"{X} = {e}" for X, e in zip(S, f_c)], [f"_y{i} = {e}" for i, e in enumerate(g_c)],
+                       [f"{X} = {ic_c[X]}" for X in S]) for (f_c, g_c, ic_c) in per_cond]
+    return out

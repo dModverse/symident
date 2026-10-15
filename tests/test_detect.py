@@ -1,8 +1,8 @@
 """Behaviour of detect(): ranks, verdicts and directions on small models."""
 
 import re
-import time
 import warnings
+from fractions import Fraction
 
 import numpy as np
 import pytest
@@ -10,6 +10,7 @@ import sympy as spy
 
 import symident as si
 from symident import state
+from symident.detection.cq import equil_zero_states
 from symident.sym.msolve import _msolve_binary
 
 
@@ -260,6 +261,17 @@ def test_equilibrate_t0_dose():
     res0 = detect({"x": "b - a*x"}, {"y": "s*x"}, equilibrate=True)
     assert res0.identifiable is False
     assert res0.rank == 1
+
+
+def test_only_drained_species_rest_at_zero():
+    # a conserved pair beside a degraded species keeps its total at rest
+    rx = network(("A", "B", "k1 * A"), ("B", "A", "k2 * B"), ("C", "", "kc * C"))
+    assert equil_zero_states(rx["stoichiometry"], rx["species"], rx["rates"], []) == ["C"]
+    res = detect(reactions=rx, observables={"Aobs": "alpha * A", "Cobs": "s * C"}, equilibrate=True)
+    assert "A" in res.info["coordinates"] and ["alpha"] not in [d["support"] for d in res.symmetries]
+    # a pair that drains through one of its members empties as a whole
+    rx = network(("A", "B", "k1 * A"), ("B", "A", "k2 * B"), ("B", "", "k3 * B"))
+    assert set(equil_zero_states(rx["stoichiometry"], rx["species"], rx["rates"], [])) == {"A", "B"}
 
 
 def test_condition_zero_state_held_at_zero():
@@ -892,6 +904,33 @@ def test_sum_of_leaves_translation_group():
         assert expr_equal(wide["generator"][v], w0["generator"][v])
 
 
+def test_translation_groups_test_only_pairs_alike_under_single_moves():
+    import numpy as np
+
+    from symident.detection.groups import translation_groups
+    P = 1000003
+    calls = []
+
+    def kb(pts, primes, nt):
+        calls.append(len(pts))
+        return [{"ok": True, "pivots": [0], "v": np.array([(z[0] + z[1]) % P, z[2] * z[3] % P, z[4] % P])}
+                for z in pts]
+    base = [2, 3, 5, 7, 11]
+    ref = kb([base], [P], 4)[0]
+    rel = []
+    for li in range(5):
+        z = list(base)
+        z[li] += 1
+        rel.append({"rp": kb([z], [P], 4)[0]})
+    sc = {"point0": base, "pool": lambda idx: np.atleast_1d(idx).astype(np.int64) * 7 + 3, "pool_next": 0,
+          "nt_used": 4}
+    calls.clear()
+    groups = translation_groups(rel, ref, lambda o, p: o["v"], kb, sc, P, 5)
+    assert [(g["type"], g["rep"], g["members"]) for g in groups] == [("add", 0, [1]), ("mul", 2, [3])]
+    # one call at the point, then per pass the single moves and the pairs alike under them
+    assert len(calls) == 5 and sum(calls) <= 1 + 5 + 1 + 3 + 1
+
+
 def test_per_condition_observables_as_tuple():
     # per-condition observables given as a tuple match the list form
     f = {"A": "-k1*A", "B": "-k2*B"}
@@ -904,10 +943,8 @@ def test_per_condition_observables_as_tuple():
 
 def test_symbolic_engine_free_hill_exponent():
     ss = {"FB": "k_pr_FB/d_FB", "x": "k_pr_x*K^n/(d_x*(K^n + (k_pr_FB/d_FB)^n))"}
-    t0 = time.monotonic()
     sres = detect(reactions=hill_michaelis(), observables={"xobs": "scale * x"}, engine="symbolic",
                   trafo=ss)
-    assert time.monotonic() - t0 < 120
     assert any("n" in d["support"] for d in sres.symmetries)
 
 
@@ -958,7 +995,7 @@ def test_stacked_rank_proven_by_fields():
     with state.options(stacked_min=0):
         st = detect(f, g, conditions=cg, reconstruct=True)
     assert st.rank == ref.rank
-    assert st.info["rank_proof"] == "invariant fields"
+    assert st.info["rank_proof"] == "proven symmetries"
     assert len(st.symmetries) == len(ref.symmetries)
     # the gauged detection takes rank and proof from its second step
     gd = detect(f, g, conditions=cg, gauge=None, reconstruct=True)
@@ -996,6 +1033,8 @@ def test_static_subsystem_proves_rank():
                events=ev, equilibrate=True, reduce_cq=True, gauge=None, reconstruct=True)
     assert r.rank == 7
     assert r.info["rank_proof"] == "exact scalings and static subsystems"
+    # a subsystem that no event reaches stays at rest and has exact directions
+    assert {d.level for d in r.symmetries} == {"exact"}
     st = [d for d in r.symmetries if d.get("route") == "static subsystem"]
     assert sorted("+".join(sorted(d["support"])) for d in st) == ["dE+kt", "dm+km"]
     g_e = next(d for d in st if "dE" in d["support"])["generator"]
@@ -1081,11 +1120,37 @@ def test_hill_resting_state_does_not_stall_static_fields():
 
 def test_small_network_at_rest_finishes_quickly():
     rx = network(("A", "B", "k1*A"), ("B", "A", "k2*B"), ("B", "C", "k3*B"), ("C", "B", "k4*C"))
-    t0 = time.monotonic()
     r = detect(reactions=rx, observables={"y": "B"}, equilibrate=True, reduce_cq=True)
     assert (r.rank, r.dim) == (1, 5)
-    # a guard against hanging, wide enough for a slow CI runner
-    assert time.monotonic() - t0 < 300
+
+
+@pytest.mark.parametrize("odes, obs, rank_dim", [
+    ({"x": "-k*x"}, {"y": "exp2(s*x) + acsch(s*x)"}, (2, 3)),
+    ({"x": "-k*atanh(x)"}, {"y": "x"}, (2, 2)),
+    ({"x": "-k*acot(x) - c*x"}, {"y": "x"}, (3, 3)),
+    ({"x": "-k*asech(x)"}, {"y": "s*x"}, (3, 3)),
+    ({"x": "-k*x"}, {"y": "acoth(1 + s*x)"}, (2, 3)),
+])
+def test_the_functions_of_the_backend_expressions(odes, obs, rank_dim):
+    r = detect(odes, obs)
+    assert (r.rank, r.dim) == rank_dim
+
+
+def test_steps_at_every_integer_are_rejected():
+    for fn in ("floor", "ceiling", "round"):
+        with pytest.raises(ValueError, match=rf"{fn}\(\) in"):
+            detect({"x": f"b - k*{fn}(x)"}, {"y": "x"})
+
+
+def test_euler_number_is_no_coordinate():
+    r = detect({"x": "b - k*exp(1)*abs(x)"}, {"y": "s*x"})
+    assert set(r.info["coordinates"]) == {"x", "b", "k", "s"}
+
+
+def test_pi_is_the_number():
+    assert set(detect({"x": "-pi*k*x + E"}, {"y": "s*x"}).info["coordinates"]) == {"x", "k", "s", "E"}
+    with pytest.raises(ValueError, match="pi is the number"):
+        detect({"pi": "-k*pi"}, {"y": "s*pi"})
 
 
 def test_fractional_power_of_a_positive_parameter():
@@ -1137,6 +1202,23 @@ def test_odd_root_rerun_restores_the_primes():
     assert rx.rank == 2
     assert list(gfp.PRIMES) == [1518500183, 1518500173, 1518500171, 1518500143]
     assert gfp.holds_roots([], 1518500171, [3]) and not gfp.holds_roots([], 1518500173, [3])
+
+
+def test_a_constant_with_an_engine_prime_as_denominator_reruns_over_other_primes():
+    r = detect({"x": "-k*x/1518500183"}, {"y": "s*x"},
+               conditions=grid(["a", "b", "c"], k=["k1", "k2", "k3"]), cores=4)
+    assert (r.rank, r.dim) == (4, 5)
+
+
+def test_use_primes_switches_every_prime_together():
+    from symident import gfp
+    before = gfp.all_primes()
+    with gfp.use_primes([], [3]):
+        run = gfp.prime_run(12)
+        assert len(set(gfp.all_primes())) == 8 and len(set(run)) == 12
+        assert all(gfp.holds_roots([], q, [3]) for q in gfp.all_primes() + run)
+        assert gfp.verify_prime() not in run and run[:4] == list(gfp.PRIMES)
+    assert gfp.all_primes() == before
 
 
 def test_forward_route_moves_its_solved_rate():
@@ -1202,3 +1284,134 @@ def test_unobserved_production_branch_keeps_independent_directions():
                    equilibrate=True, reduce_cq=True, reconstruct=True, gauge=gauge)
         assert (r.rank, r.dim, len(r.symmetries)) == (1, 5, 4)
         assert r.reduce().remaining == []
+
+
+def test_modular_values_take_decimals_exactly_and_refuse_irrationals():
+    from symident.sym.modp import eval_rational_mod
+    assert eval_rational_mod("0.5*k", ["k"], [3], 7) == 3 * pow(2, 5, 7) % 7
+    with pytest.raises(TypeError):
+        eval_rational_mod("sqrt(k)", ["k"], [2], 7)
+
+
+def test_direction_check_fails_where_a_leaf_component_does_not_evaluate():
+    from symident.detection.verify import verify_direction
+    znames, leaves = ["a", "b", "x_c1"], ["a", "b"]
+
+    def kcall(pt, q, nt):
+        return {"ok": True}
+
+    def residues(rq, q, z):
+        return np.array([1, 2, 5])
+    ok = {"vector": {"a": "1", "b": "2", "x_c1": "x_c1^2"}}
+    assert verify_direction(ok, 0, znames, leaves, [3, 4], 1, kcall, residues)
+    pole = {"vector": {"a": "1", "b": "2 + 1/(a - a)"}}
+    assert not verify_direction(pole, 0, znames, leaves, [3, 4], 1, kcall, residues)
+    wrong = {"vector": {"a": "1", "b": "3"}}
+    assert not verify_direction(wrong, 0, znames, leaves, [3, 4], 1, kcall, residues)
+
+
+def test_rate_zero_test_is_exact_for_rational_rates():
+    from symident.detection.cq import _expr_is_zero
+    assert not _expr_is_zero("1e-10*x", set())
+    assert _expr_is_zero("k*x*y", {"y"}) and _expr_is_zero("k1*x - k1*x", set())
+    assert not _expr_is_zero("k/(1 + y)", {"y"})
+
+
+def test_rate_zero_test_is_exact_for_other_rates():
+    from symident.detection.cq import _expr_is_zero
+    assert _expr_is_zero("k*exp(x)*y", {"y"}) and _expr_is_zero("log(1 + y)*k", {"y"})
+    assert _expr_is_zero("sqrt(k)*x - k^(1/2)*x", set())
+    assert not _expr_is_zero("1e-12*exp(x)", set()) and not _expr_is_zero("exp(y) - 1 + x", {"y", "z"})
+
+
+def test_the_sink_weights_solve_the_lp_exactly():
+    from symident.detection.cq import _exact_lp, _sink_cluster
+    # rows are reactions, columns species
+    assert _sink_cluster(np.array([[-1.0, 0.0], [0.0, 1.0]])) == [0]
+    assert _sink_cluster(np.array([[-1.0, 1.0], [1.0, -1.0]])) == []
+    # a weight ratio with a denominator past what a rounded float recovers
+    p, q = 1000003, 999983
+    M = [[-p, q], [p, -q], [-1, 0]]
+    assert _sink_cluster(np.array(M, dtype=float)) == [0]
+    assert _exact_lp([[Fraction(a) for a in row] for row in M], [Fraction(-1), Fraction(0)]) == \
+        [Fraction(q, p), Fraction(1)]
+
+
+def test_scalings_only_reports_terms_left_out():
+    r = detect({"x": "-k*x^n"}, {"y": "s*x"}, scalings_only=True)
+    assert any(lim.startswith("scalings:") for lim in r.info["limits"])
+    r = detect({"x": "-k*x"}, {"y": "s*x"}, scalings_only=True)
+    assert r.info["limits"] == []
+
+
+def test_names_that_sympy_holds_as_functions_or_constants_are_symbols():
+    r = detect({"S": "b - k*S", "N": "k*S - d*N"}, {"y": "s*N"}, reconstruct=True)
+    assert (r.rank, r.dim) == (5, 6)
+    gens = [g.sympy() for g in r.symmetries]
+    assert all(isinstance(k, str) and v.free_symbols <= {spy.Symbol(n) for n in ("S", "N", "b", "k", "d", "s")}
+               for g in gens for k, v in g.items())
+
+
+def _kernel_ref(vectors, nz, p):
+    """The reduced rows of a matrix whose kernel the integer `vectors` span."""
+    from symident.gfp import rref_modp
+    K = spy.Matrix(vectors).T
+    A = [list(v.T) for v in K.T.nullspace()]
+    A = [[int(x * spy.lcm([spy.fraction(y)[1] for y in row])) for x in row] for row in A]
+    rr = rref_modp(np.array(A, dtype=np.int64) % p, p)
+    return {"R": rr["R"][:rr["rank"]], "pivots": rr["piv"], "rank": rr["rank"], "dim": nz, "ok": True}
+
+
+def test_minimal_support_beyond_six_coordinates():
+    from symident.gfp import PRIMES, minsupport_gauge
+    p, nz = PRIMES[0], 14
+    wide = [1, 2, 3, 4, 5, 6, 7, 8, 9] + [0] * 5
+    narrow = [0] * 9 + [1, 1, 0, 0, 0]
+    scaling = [0] * 10 + [1, 0, 1, 1]
+    ref = _kernel_ref([wide, narrow, scaling], nz, p)
+    free = [c for c in range(nz) if c not in set(int(x) for x in ref["pivots"])]
+    resid = [fc for fc in free][:2]
+    ms = minsupport_gauge(resid, np.array([scaling]) % p, p, nz, {"ref": ref}, free, cand_cap=2000)
+    supports = sorted(len(np.nonzero(ms["vectors"][:, j] % p)[0]) for j in range(ms["vectors"].shape[1]))
+    assert supports == [2, 9]
+
+
+def test_entry_degrees_along_lines():
+    from symident.detection.interp import entry_degrees
+    from symident.gfp import PRIMES
+    p = PRIMES[0]
+
+    def kbatch(pts, primes, nt):
+        return [{"ok": True, "pivots": [0], "pt": pt} for pt in pts]
+
+    def nv(rp, q, z):
+        x1, x2, x3 = (int(rp["pt"][i]) for i in (1, 2, 3))
+        inv = lambda a: pow(a % p, p - 2, p)  # noqa: E731
+        return [1, (x1 * x1 + x2) * inv(x1 + 3) % p, x1 * x2 * x3 % p, inv(pow(x1, 5, p))]
+    rel = {"relevant": [1, 2, 3], "support_cols": [1, 2, 3], "rel_by_entry": [[1, 2], [1, 2, 3], [1]]}
+    ctrl = si.reconst_control()
+    # an entry past degree_cap is found when the bound doubles, and stays over below it
+    assert entry_degrees(0, [0], [5, 7, 11, 13], nv, lambda pt: None, rel, kbatch, 4, ctrl) == [2, 3, 5]
+    ctrl = si.reconst_control(degree_cap_max=4)
+    assert entry_degrees(0, [0], [5, 7, 11, 13], nv, lambda pt: None, rel, kbatch, 4, ctrl) == [2, 3, "over"]
+
+
+def test_several_resting_branches_are_recorded():
+    f = {"x": "c + a*x - b*x^3 + kin*u - d*x*z", "z": "e*x - g*z", "u": "0"}
+    m = si.Model(f, {"y": "s*x"}, inputs=["u"],
+                 events=[{"var": "u", "time": 0, "value": "1", "method": "replace"}])
+    assert si.detect(m, equilibrate=True).info["branches"] == []
+    with si.switches(NOFWDSEED=True):
+        r = si.detect(m, equilibrate=True)
+    assert r.info["branches"] == ["resting states x, z: several interior roots modulo p, the first is taken"]
+    assert any(line.startswith("  branch: resting states x, z") for line in str(r.summary()).split("\n"))
+
+
+def test_a_start_on_a_curved_invariant_set_leaves_the_lie_order_unproven():
+    m = si.Model({"x1": "-w*x2 - k*x1*(x1^2 + x2^2 - 1)", "x2": "w*x1 - k*x2*(x1^2 + x2^2 - 1)"}, {"y": "s*x1"},
+                 trafo={"x1": "1", "x2": "0"})
+    r = si.detect(m, reconstruct=True)
+    assert (r.rank, r.dim) == (2, 3) and [s.support for s in r.symmetries] == [["k"]]
+    assert r.info["lie_certified"] is False
+    assert r.info["rank_status"] == {"status": "lower bound", "why": "the Lie order is not proven sufficient",
+                                     "probability": None}

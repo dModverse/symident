@@ -31,11 +31,12 @@ def test_dumps_cleans_values_json_cannot_hold():
 
 def test_detect_and_reduce_round_trip(monkeypatch):
     # the scaling of x against s, found and removed; the environment is restored after the call
-    monkeypatch.delenv("SYMIDENT_PROBE_ONLY", raising=False)
-    out = rjson.detect_json(json.dumps(SPEC), env=json.dumps({"SYMIDENT_PROBE_ONLY": "1"}),
+    monkeypatch.delenv("SYMIDENT_SOLVEDIAG", raising=False)
+    out = rjson.detect_json(json.dumps(SPEC), env=json.dumps({"SYMIDENT_SOLVEDIAG": "0"}),
                             options=json.dumps({"cores": None, "nested": {"a": 1}}))
     res = json.loads(out)
-    assert "SYMIDENT_PROBE_ONLY" not in os.environ
+    assert "SYMIDENT_SOLVEDIAG" not in os.environ
+    assert res["info"]["settings"]["switches"]["SOLVEDIAG"] == "0"
     assert (res["rank"], res["dim"], res["identifiable"]) == (2, 3, False)
     assert res["info"]["kernel"] is None and res["warnings"] == []
     assert [d["weights"] for d in res["symmetries"]] == [{"s": "1", "x": "-1"}]
@@ -48,3 +49,13 @@ def test_context_restores_a_preset_variable(monkeypatch):
     with rjson._context(json.dumps({"SYMIDENT_PROBE_ONLY": "other"}), None):
         assert os.environ["SYMIDENT_PROBE_ONLY"] == "other"
     assert os.environ["SYMIDENT_PROBE_ONLY"] == "keep"
+
+
+def test_the_json_reduction_closes_the_loop():
+    det = rjson.detect_json(json.dumps(SPEC))
+    assert json.loads(det)["spec"] == SPEC
+    red = json.loads(rjson.reduce_json(det, json.dumps({})))
+    assert red["checks"]["loop"]["ok"] is True and red["checks"]["loop"]["directions"] == 0
+    assert red["checks"]["pins"] is True
+    off = json.loads(rjson.reduce_json(det, json.dumps({"check": False})))
+    assert "loop" not in off["checks"]

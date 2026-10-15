@@ -4,6 +4,7 @@ import re
 
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, sympy_fail
 from ..rexpr import sym_sort
 from .expr import first_subsets, free_syms, red_locals, red_sympify, tri_solve
 from .sign import sgn, sgn_poly
@@ -14,7 +15,8 @@ def ineq_str(e):
     try:
         ex = spy.expand(e)
         tm = [str(x).replace("**", "^") for x in spy.Add.make_args(ex)]
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return None
     if not tm:
         return None
@@ -30,17 +32,20 @@ def condition(e):
     na = {"sign": None, "cond": None}
     try:
         fr = spy.fraction(spy.cancel(spy.together(e)))
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return na
     try:
         if spy.expand(fr[0]).is_zero:
             return {"sign": 0, "cond": None}
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         pass
     try:
         p = spy.expand(fr[0] * fr[1])
         fl = spy.factor_list(p)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return na
     s = sgn_poly(fl[0])
     if s == 0:
@@ -49,7 +54,8 @@ def condition(e):
     for f, k in fl[1]:
         try:
             k = int(k)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return na
         if k % 2 == 0:
             continue
@@ -83,7 +89,8 @@ def zero_compat(b, fixed=(), verbose=False):
     try:
         Ies = [red_sympify(iv.replace("^", "**"), loc) for iv in invs]
         fr = [spy.fraction(spy.cancel(spy.together(e))) for e in Ies]
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return None
     zero = spy.Integer(0)
     pv = {v: f"si_zero{i + 1}" for i, v in enumerate(supp)}
@@ -100,7 +107,8 @@ def zero_compat(b, fixed=(), verbose=False):
                 e = red_sympify(pr["comps"][v], comp_loc)
                 if not spy.expand(e.subs([(spy.Symbol(v), zero)])).is_zero:
                     return False
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 return False
         return True
 
@@ -122,7 +130,8 @@ def zero_compat(b, fixed=(), verbose=False):
         for num, den in fr:
             try:
                 E = spy.expand(num.subs(subs_v) * den - num * den.subs(subs_v))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 return None
             if E.is_zero:
                 continue
@@ -132,7 +141,7 @@ def zero_compat(b, fixed=(), verbose=False):
             dens.append(den.subs(subs_v))
         return {"eqs": eqs, "dens": dens, "unk": unk, "other": other}
 
-    def analyse(Z):
+    def analyze(Z):
         f = face_eqs(Z)
         if f is None:
             return {"verdict": "unknown"}
@@ -140,7 +149,8 @@ def zero_compat(b, fixed=(), verbose=False):
             return {"verdict": "no"}
         try:
             sols = face_solve(f["eqs"], f["unk"])
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             sols = []
         grow, unclear = [], False
         for br in sols:
@@ -151,7 +161,8 @@ def zero_compat(b, fixed=(), verbose=False):
             def vanishes(e):
                 try:
                     return spy.simplify(e.subs(pairs)).is_zero is True
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     return False
             if not all(vanishes(e) for e in f["eqs"]):
                 continue
@@ -191,7 +202,7 @@ def zero_compat(b, fixed=(), verbose=False):
     for v0 in supp:
         Z = [v0]
         while True:
-            a = analyse(Z)
+            a = analyze(Z)
             if a["verdict"] != "grow":
                 break
             Z2 = sym_sort(list(dict.fromkeys(Z + a["grow"])))

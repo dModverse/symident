@@ -7,11 +7,12 @@ import re
 import numpy as np
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, RouteError, sympy_fail
 from ..rexpr import sym_sort
 from .darboux import apply_x
 from .expr import first_subsets, free_syms, red_locals, red_sympify, tri_solve
 from .scaling import mono_string
-from .sign import _num_val, positive_set, sgn
+from .sign import _num_val, num_sign, positive_set, sgn
 
 
 def mono_parts(m):
@@ -116,7 +117,8 @@ def inv_summands(Ie):
     try:
         num = spy.expand(spy.fraction(spy.together(Ie))[0])
         tm = [str(x) for x in spy.Add.make_args(num)]
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return []
     if len(tm) < 2:
         return []
@@ -132,23 +134,26 @@ def section_monotone(pr, preps, xi_of, loc, pts):
         Xm = [apply_x(xi_of[g], m, loc) for m in ms]
         try:
             d = spy.expand(Xm[0] * ms[1] - ms[0] * Xm[1])
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return None
         if d.is_zero:
             row += [0.0, 0.0]
             continue
         if d.is_number:
             v = _num_val(d)
-            if v is None:
+            if v is None or num_sign(d) is None:
                 return None
             moved = True
             row += [v, v]
             continue
         try:
+            signs = [num_sign(c) for c in spy.Poly(d).coeffs()]
             cf = [float(spy.Float(c)) for c in spy.Poly(d).coeffs()]
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return None
-        if not cf or not (all(c > 0 for c in cf) or all(c < 0 for c in cf)):
+        if not signs or not (all(c == 1 for c in signs) or all(c == -1 for c in signs)):
             return None
         moved = True
         dstr = str(d).replace("**", "^")
@@ -172,7 +177,8 @@ def model_denominators(exprs):
     for x in exprs:
         try:
             den = spy.fraction(spy.together(red_sympify(x, loc)))[1]
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         if not free_syms(den):
             continue
@@ -221,7 +227,8 @@ def face_section(b, pins, dens=(), max_sets=200):
                      [f"{s}_si_f" for s in supp])
     try:
         Ies = [red_sympify(iv.replace("^", "**"), loc) for iv in b["invariants"]]
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return out
     if pins:
         pin_pairs = [(spy.Symbol(nm), red_sympify(v, loc)) for nm, v in pins.items()]
@@ -231,7 +238,8 @@ def face_section(b, pins, dens=(), max_sets=200):
         for Ie in Ies:
             try:
                 e = spy.cancel(Ie.subs(sub))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 return False
             if e.is_zero or _bad(e):
                 return False
@@ -252,7 +260,8 @@ def face_section(b, pins, dens=(), max_sets=200):
         for d in dens:
             try:
                 e = spy.expand(d.subs(sub_z))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 ok_d = False
                 break
             if e.is_zero:
@@ -266,7 +275,8 @@ def face_section(b, pins, dens=(), max_sets=200):
         for Ie in Ies:
             try:
                 Ief = spy.together(Ie.subs(face))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 Ief = None
             if _bad(Ief):
                 ok_z = False
@@ -291,7 +301,8 @@ def face_section(b, pins, dens=(), max_sets=200):
                     if not (spy.cancel(fr[0]).is_zero and not spy.cancel(fr[1]).is_zero):
                         ok_eq = False
                         break
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     ok_eq = False
                     break
             if not ok_eq:
@@ -315,7 +326,8 @@ def face_section(b, pins, dens=(), max_sets=200):
                     for k, Ie in enumerate(Ies):
                         try:
                             q = sgn(spy.cancel(e / Ie))
-                        except Exception:
+                        except SYMPY_FAILS as exc:
+                            sympy_fail(exc)
                             q = 0
                         if q != 0:
                             hit = (k, q)
@@ -330,7 +342,8 @@ def face_section(b, pins, dens=(), max_sets=200):
         for i, v in enumerate(U):
             try:
                 e = spy.cancel(good[i].subs(sub_z) - spy.Symbol(v))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 id_face = False
                 break
             if not e.is_zero:
@@ -382,7 +395,8 @@ def prep_degree(comps):
     for x in comps.values():
         try:
             degs.append(int(spy.total_degree(red_sympify(str(x).replace("^", "**"), loc))))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             pass
     return max(degs) if degs else None
 
@@ -427,7 +441,7 @@ def translation_compress(preps):
         ex = {k: spy.expand(e.subs(fwd)) for k, e in E[i].items()}
         left = {s for e in ex.values() for s in free_syms(e)}
         if all_mem & left:
-            raise RuntimeError("translation group did not separate")
+            raise RouteError("translation group did not separate")
         keys = [U.get(k, k) for k in pr["comps"]]
         comps = dict(zip(keys, [str(e) for e in ex.values()]))
         pr = dict(pr, comps=comps, support=keys, vars=sym_sort(list(dict.fromkeys(keys + list(left)))),

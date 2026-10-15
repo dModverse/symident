@@ -2,6 +2,7 @@
 
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, sympy_fail
 from .parse import _as_list, _make_local_parse
 
 
@@ -60,7 +61,8 @@ def darboux_cofactors(candidates, generators):
     for cs in cands:
         try:
             P = parse(cs)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         if getattr(P, "is_number", False):
             continue
@@ -112,7 +114,8 @@ def verify_invariants(invariants, generators):
                     ok = False
                     break
             out.append(ok)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             out.append(False)
     return out
 
@@ -152,5 +155,6 @@ def integrating_factor_integral(Mstr, xi1, xi2, z1, z2):
         if spy.simplify(XI) != 0:
             return None
         return str(I)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return None

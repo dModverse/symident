@@ -8,6 +8,8 @@ parentheses, as `cOde::replaceSymbols()` does.
 import math
 import re
 
+from .errors import SYMPY_FAILS, InapplicableError
+
 _TOKEN = re.compile(r"""
     (?P<ws>\s+)
   | (?P<num>0[xX][0-9a-fA-F]+L?|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?L?)
@@ -17,7 +19,7 @@ _TOKEN = re.compile(r"""
 """, re.VERBOSE)
 
 _CONSTS = {"TRUE", "FALSE", "NULL", "NA", "Inf", "NaN", "NA_integer_", "NA_real_",
-           "NA_character_"}
+           "NA_character_", "pi"}
 _KEYWORDS = {"function", "if", "else", "for", "while", "repeat", "in", "next", "break"}
 
 
@@ -30,7 +32,7 @@ def tokens(expr):
     while pos < n:
         m = _TOKEN.match(s, pos)
         if m is None:
-            raise ValueError(f"cannot tokenize {s!r} at {pos}")
+            raise InapplicableError(f"cannot tokenize {s!r} at {pos}")
         pos = m.end()
         kind = m.lastgroup
         text = m.group(kind)
@@ -188,7 +190,7 @@ def eval_numeric(expr, env=None):
     try:
         v = eval(compile(to_python(expr), "<expr>", "eval"), {"__builtins__": {}}, names)
         return float(v)
-    except Exception:
+    except (*SYMPY_FAILS, NameError):
         return None
 
 

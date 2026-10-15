@@ -7,7 +7,7 @@ symident finds the non-identifiable directions of an ODE model with observables,
 conditions, events and inputs, returns them as exact generators where possible, and
 reduces the model to identifiable parameters. The observability rank is computed modulo
 primes in a C++ kernel; closed forms are reconstructed by sparse interpolation and
-verified at fresh primes.
+proven over Q or verified at fresh primes.
 
 .. code-block:: python
 

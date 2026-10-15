@@ -2,7 +2,7 @@
 
 import sympy as spy
 
-from .gfpoly import _compile_linear_plan, _dp_subst, _eval_bipoly_dict, _solve_states_reduced
+from .gfpoly import _compile_linear_plan, _dp_subst, _eval_bipoly_dict, _reduce_system, _solve_states_reduced
 from .modp import _bipoly, _eval_terms, _eval_terms_guarded, _poly_terms, _solve_mod
 from .msolve import _solve_states_msolve
 from .parse import _as_list, _build_symbol_table, _clean, _function_aliases, _make_local_parse, _make_parse
@@ -128,7 +128,7 @@ def _compile_t0events(events, param_names):
 
 def _ss_compile(model, state_names, param_names, forcings, held_state_names=()):
     """Prime-independent compile of f = 0 for the modular steady-state solve,
-    memoised in _ss_modular_cache. Inputs are the already-normalised model/state/param
+    memoized in _ss_modular_cache. Inputs are the already-normalized model/state/param
     lists and the forcings set. Returns the cached tuple (param_syms, solve_states,
     polys, Jx, Jt, gens, jx_terms, jt_terms, poly_bi, generic_linear, lin_terms, point_plan).
 
@@ -210,6 +210,33 @@ def _names(cached):
         hit = (cached, {x: str(x) for x in syms})
         _NAMES[id(cached)] = hit
     return hit[1]
+
+
+def resting_kind(model, state_names, param_names, param_vals, prime, forcings=None,
+                 held_states=None):
+    """How the resting state depends on the parameters: "rational" (a compiled rational
+    function), "core" (a coupled core that a resultant solves) or "msolve"."""
+    state_names, param_names, p = _as_list(state_names), _as_list(param_names), int(prime)
+    held_states = {str(k): int(v) % p for k, v in (held_states or {}).items()}
+    cached = _ss_compile(_as_list(model), state_names, param_names, set(_as_list(forcings)),
+                         tuple(sorted(held_states.keys())))
+    param_syms, solve_states, poly_bi, generic_linear, point_plan = (
+        cached[0], cached[1], cached[8], cached[9], cached[11])
+    snm = _names(cached)
+    if point_plan is not None:
+        point_states, point_params, _, point_poly_bi, point_generic_linear = point_plan[:5]
+        if point_generic_linear:
+            return "rational"
+        vals = [(held_states[snm[th]] if snm[th] in held_states
+                 else int(param_vals.get(snm[th], 0)) % p) for th in point_params]
+        dps, nv = [_eval_bipoly_dict(b, vals, p) for b in point_poly_bi], len(point_states)
+    else:
+        if generic_linear:
+            return "rational"
+        vals = [int(param_vals.get(snm[th], 0)) % p for th in param_syms]
+        dps, nv = [_eval_bipoly_dict(b, vals, p) for b in poly_bi], len(solve_states)
+    red = _reduce_system(dps, nv, p)
+    return "core" if red is not None and len(red[3]) <= 2 and len(red[2]) == len(red[3]) else "msolve"
 
 
 def solve_steady_state_modular(model, state_names, param_names, param_vals, prime,

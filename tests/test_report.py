@@ -26,14 +26,14 @@ def test_terms_split_at_top_level_signs_only():
 def test_generator_rows_wrap_at_the_width():
     assert report.format_generator({}, "  ", 80) == ["  0"]
     lines = report.format_generator({"k": " + ".join(f"a{i}" for i in range(12))}, "", 40)
-    assert lines[0].startswith("η(k) :  + a0 + a1")
+    assert lines[0].startswith("ξ(k) :  + a0 + a1")
     assert len(lines) > 1 and all(len(line) <= 40 for line in lines)
     assert lines[1].startswith(" " * 8 + "+ a")
 
 
 def test_generators_grouped_scalings_first():
     out = report.generators_lines(res([SUPP, GEN, SCAL]), verbose=True, width=80)
-    assert out[:4] == ["Generators  X = Σᵢ η(i) ∂ᵢ", "", "Scalings:", "  X₁"]
+    assert out[:4] == ["Generators  X = Σᵢ ξ(i) ∂ᵢ", "", "Scalings:", "  X₁"]
     assert "General:" in out
     assert "  X₂  support only" in out and "      a, b" in out and "      reason: too large" in out
     assert not any("closed form" in line for line in out)
@@ -44,7 +44,7 @@ def test_reduction_hints_singular_and_plural():
     assert report.reduction_hint_lines(res([]), width=200) == []
     one = report.reduction_hint_lines(res([SCAL, GEN]), width=200)
     assert one[1] == "  X₁ is a scaling: gauge it by holding any one of its coordinates fixed, at any value."
-    assert one[2] == "  X₂ is not a scaling: reparametrise onto its invariants with reduce()."
+    assert one[2] == "  X₂ is not a scaling: reparametrize onto its invariants with reduce()."
     two = report.reduction_hint_lines(res([SCAL, SCAL]), width=200)
     assert two[1].startswith("  X₁, X₂ are scalings: gauge them")
 
@@ -82,7 +82,11 @@ def test_summary_saturation_and_guard_variants():
     def comp(**info):
         out = report.summary_lines(res([], info={"engine": "x", **info}), width=80)
         return out[out.index("Computation:") + 1:out.index("")] if "Computation:" in out else []
-    assert comp(rank_proven=2, rank_proof="invariant fields") == ["  rank: proven (2 directions, invariant fields)"]
+    assert comp(rank_proven=2, rank_proof="proven symmetries") == ["  rank: proven (2 directions, proven symmetries)"]
+    assert comp(rank_fields=2) == ["  rank: verified (2 directions, invariant fields at random points)"]
+    assert comp(rank_fields=2, rank_fields_bound={"probability": 3e-12}) == \
+        ["  rank: verified (2 directions, invariant fields at random points, probability of a wrong pass at "
+         "most 3.0e-12)"]
     assert comp(lie_plateau=2, lie_certified=True)[0].startswith("  saturation: certified (every")
     assert comp(lie_plateau=2) == ["  saturation: provisional (plateau 2, no rank bound reached)"]
     assert comp(verification={"ok": True, "reason": "ok"}) == ["  saturation guard: PASSED (ok)"]
@@ -95,7 +99,7 @@ def test_reduction_verdict():
          "blocks": [{"coverage": "partial", "status": "reduced", "labels": ["X₂"]},
                     {"coverage": "partial", "status": "kept", "labels": ["X₃"]}]}
     assert report.red_verdict(x) == ("Reduced 2 of 3 directions  (X₃ remaining); X₄ depends on the others; "
-                                     "the chart of X₂ covers only part of the positive orthant.")
+                                     "the section of X₂ covers only part of the positive orthant.")
     assert report.red_verdict({"removed": ["X₁"], "remaining": []}) == "Reduced 1 of 1 direction."
 
 

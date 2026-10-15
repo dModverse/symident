@@ -3,6 +3,7 @@
 import numpy as np
 
 from .. import _core
+from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import in_span, rref_modp
 from ..rexpr import get_symbols, sym_sort
 from ..sym.direction import classify_generator
@@ -30,7 +31,8 @@ def classify_direction(d):
         lit = {k: str(v) for k, v in d["vector"].items()}
     try:
         cls = classify_generator(lit)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         cls = None
     if cls is None or cls.get("type") is None:
         return d
@@ -89,8 +91,9 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
     return result
 
 
-def peel_scalings(scal_res, znames, nz, zval, P, N):
-    """Scalings common to all conditions whose tangent lies in the nullspace, independent."""
+def peel_scalings(scal_res, znames, nz, zval, P, N, exact=False):
+    """Scalings common to all conditions whose tangent lies in the nullspace, independent;
+    `exact` marks them proven (the integer kernel took every term)."""
     scaling = []
     Bmat = np.zeros((nz, 0), dtype=np.int64)
     env = {z: int(v) for z, v in zip(znames, zval)}
@@ -124,7 +127,7 @@ def peel_scalings(scal_res, znames, nz, zval, P, N):
         order = sorted(range(len(names)), key=lambda i: names[i].encode())
         supp = [names[i] for i in order]
         scaling.append({"support": supp, "vector": {names[i]: wsym[i] for i in order},
-                        "type": "scaling", "closed_form": True})
+                        "type": "scaling", "closed_form": True, "exact": exact})
     return {"scaling": scaling, "Bmat": Bmat}
 
 

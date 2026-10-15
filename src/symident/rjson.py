@@ -12,6 +12,7 @@ from . import state
 from .detection import symmetry_detection
 from .options import reconst_control
 from .reduction import symmetry_reduction
+from .reduction.core import check_levels
 
 
 def _default(o):
@@ -91,6 +92,8 @@ def detect_json(spec, env=None, options=None):
     if res.get("info") and res["info"].get("kernel") is not None:
         res["info"]["kernel"] = None
     res["warnings"] = list(dict.fromkeys(_messages(rec)))
+    # the closed loop of reduce_json runs the detection again from it
+    res["spec"] = json.loads(spec)
     return _dumps(res)
 
 
@@ -103,8 +106,28 @@ def reduce_json(obj, args, env=None, options=None):
         if k == "timeout" and v == "Inf":
             v = math.inf
         kw["separable_" if k == "separable" else k] = v
+    allow_open = bool(kw.pop("allow_open", False))
+    check = bool(kw.pop("check", True))
     with _context(env, options), warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
+        check_levels(o, allow_open)
         res = symmetry_reduction(o, **kw)
+    if check and isinstance(o.get("spec"), dict) and res.get("trafo") and o.get("method") == "observability":
+        with _context(env, options), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            res.setdefault("checks", {})["loop"] = _loop(o["spec"], res, o.get("gauge"))
     res["warnings"] = list(dict.fromkeys(_messages(rec)))
     return _dumps(res)
+
+
+def _loop(spec, red, gauge):
+    """The detection of `spec` with the trafo of the reduction applied: its directions against the remaining ones."""
+    from .api import _composed_trafo
+    s = dict(spec, reconstruct=False, trafo=_composed_trafo(spec.get("trafo"), red["trafo"]),
+             fixed=list(dict.fromkeys(list(spec.get("fixed") or []) + list(gauge or []) +
+                                      list(red.get("fixed") or []))))
+    s.pop("gauge_preference", None)
+    r = symmetry_detection(**kwargs_of(s))
+    n, want = len(r.get("symmetries") or []), len(red.get("remaining") or [])
+    return {"directions": n, "expected": want, "rank": r.get("rank"), "dim": r.get("dim"),
+            "rank_status": ((r.get("info") or {}).get("rank_status") or {}).get("status"), "ok": n == want}

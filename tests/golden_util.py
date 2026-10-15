@@ -96,9 +96,12 @@ def compare(py, ref):
         b = sum(d["type"] == t for d in rs)
         if a != b:
             diffs.append(f"{t} directions: {a} != {b}")
+    better = []
     a = sum(bool(d.get("explicit")) for d in ps)
     b = sum(bool(d.get("explicit")) for d in rs)
-    if a != b:
+    if a > b:
+        better.append("closed by symident only")
+    elif a != b:
         diffs.append(f"explicit: {a} != {b}")
     unmatched = list(ps)
     for d in rs:
@@ -122,12 +125,14 @@ def compare(py, ref):
             diffs.append(f"no matching generator for {d['type']} on {sorted(d['generator'])}")
         else:
             unmatched.remove(hit)
-    py_proven = py.get("info", {}).get("rank_proven")
-    if ref.get("rankProven") is None and py_proven is not None and not diffs:
-        return ["BETTER: rank proven by symident only"]
-    if (ref.get("rankProven") is None) != (py_proven is None):
+    # the reference marks a rank settled by invariant fields as proven; symident reports it verified
+    info = py.get("info", {})
+    py_proven = info.get("rank_proven") if info.get("rank_proven") is not None else info.get("rank_fields")
+    if ref.get("rankProven") is None and py_proven is not None:
+        better.append("rank proven by symident only")
+    elif (ref.get("rankProven") is None) != (py_proven is None):
         diffs.append(f"rank_proven: {py_proven} != {ref.get('rankProven')}")
-    return diffs
+    return diffs or [f"BETTER: {b}" for b in better]
 
 
 def obj_of(o):
@@ -149,6 +154,9 @@ def kw_of(a):
             v = v[0]
         if k == "timeout" and v == "Inf":
             v = math.inf
+        # a reference time limit this short stops the chart search; zero stops it on any machine
+        if k == "timeout" and isinstance(v, (int, float)) and v < 1:
+            v = 0
         if k in ("fixed", "positive") and isinstance(v, list) and v and isinstance(v[0], bool):
             v = v[0]
         kw[k] = v

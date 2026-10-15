@@ -5,11 +5,14 @@ import json
 import re
 
 import numpy as np
+import sympy as spy
 
-from .. import _core, state
-from ..gfp import PRIMES, invmod, mulmod, random_point
+from .. import _core, session, state
+from ..errors import SYMPY_FAILS, RouteError, swallow, sympy_fail
+from ..gfp import PRIMES, invmod, mulmod, random_point, verify_prime
 from ..par import process_map
 from ..rexpr import get_symbols, sym_sort
+from ..sym.exact import certify, event_identities, initial_identities, regime_identities
 from ..sym.fields import (
     extend_fields,
     lift_start,
@@ -17,6 +20,7 @@ from ..sym.fields import (
     verify_distribution,
 )
 from ..sym.modp import eval_rational_mod_batch
+from ..sym.parse import model_sympify
 from ..sym.scaling import scaling_symmetries_multi, verify_scalings
 
 
@@ -156,7 +160,8 @@ def exact_scaling_set(multi, fixed):
             extra_model=[_lines(t.get("ver_ic")) + ev_lines(t, True) for t in ver_tapes],
             extra_obs=[ev_lines(t, False) + ([f"_ = {t['ver_time']}"]
                                            if t.get("ver_time") else []) for t in ver_tapes])
-    except Exception:
+    except Exception as exc:
+        swallow(exc, "exact scalings")
         full = None
     if full is None:
         return []
@@ -166,7 +171,8 @@ def exact_scaling_set(multi, fixed):
         return []
     try:
         ok = [bool(x) for x in verify_scalings(ws, ver_tapes)]
-    except Exception:
+    except Exception as exc:
+        swallow(exc, "scaling verification")
         ok = [False] * len(ws)
     if state.env("LIEDIAG"):
         print(f"[liediag] exact scalings: {len(ws)} candidate(s), verified {ok}")
@@ -198,8 +204,7 @@ def field_setup(multi, chains, cores, fixed=None, fields=None):
     for k in rkeys:
         t = tapes[key_of.index(k)]
         regimes.append({"f": _lines(t.get("model_lines")), "g": _lines(t.get("obs_lines"))})
-    par = (fields is None and len(regimes) >= max(2, cores // 2) and cores > 1
-           and not state.env("SERIALBLOCKS"))
+    par = (fields is None and len(regimes) >= max(2, cores // 2) and cores > 1)
     cores_r = 1 if par else cores
 
     def one(rg):
@@ -211,8 +216,9 @@ def field_setup(multi, chains, cores, fixed=None, fields=None):
             with state.options(inner=True, order_hint=None):
                 r = symmetry_detection(fe, ge, reconstruct=True,
                                        verify=False, cores=cores_r, verbose=False,
-                                       fixed=fx if fx else None)
+                                       fixed=fx if fx else None, control=session.current().control)
         except Exception as e:
+            swallow(e, "regime detection")
             if state.env("LIEDIAG"):
                 print(f"[liediag] regime analysis failed: {e!r}")
             return []
@@ -256,7 +262,9 @@ _CSUFFIX = re.compile(r"\|c[0-9]+$")
 
 
 def field_check(setup, V, znames, leaf_names, point, chains, joint):
-    """Certificate that the kernel vectors V lie in the kernel of every order."""
+    """Certificate that the kernel vectors V lie in the kernel of every order; the checks at
+    random points run modulo the verification prime, and 'bound' holds the chance that a
+    wrong certificate passes."""
     P = PRIMES[0]
     leaf_val = {nm: int(point[i]) % P for i, nm in enumerate(leaf_names)}
     V = np.asarray(V, dtype=np.int64).reshape(len(znames), -1)
@@ -274,7 +282,7 @@ def field_check(setup, V, znames, leaf_names, point, chains, joint):
             mi = joint["conds"].index(ch[0])
             sol = joint["solve"](point, P, joint["conds"][mi])
             if sol is None:
-                raise RuntimeError("no resting state at the evaluation point")
+                raise RouteError("no resting state at the evaluation point")
             xs = sol["sol"]["val_by"]
             base = dict(leaf_val)
             base.update({k: int(v) % P for k, v in xs.items()})
@@ -292,7 +300,7 @@ def field_check(setup, V, znames, leaf_names, point, chains, joint):
                     d[nm] = int(v[j])
             lf = lift_start(_lines(t1.get("ver_ic")), t0, base, d, P, joint=joint is not None)
             if lf is None:
-                raise RuntimeError("the lift has a pole")
+                raise RouteError("the lift has a pole")
             vecs.append(lf["vector"])
         lf0 = lift_start(_lines(t1.get("ver_ic")), t0, base, {}, P, joint=joint is not None)
         times = [t["ver_time"] for t in (setup["tapes"][i] for i in ch) if t.get("ver_time")]
@@ -306,7 +314,10 @@ def field_check(setup, V, znames, leaf_names, point, chains, joint):
         e["lift"] = li
         del e["chain"]
         joins.append(e)
-    return verify_distribution(setup["regimes"], setup["gens"], joins, lifts, P)
+    out = verify_distribution(setup["regimes"], setup["gens"], joins, lifts, P, q=verify_prime())
+    if out.get("ok") and joint is not None:
+        out["bound"] = {"applies": False, "why": "the resting state has no closed form"}
+    return out
 
 
 def field_proof(multi, N, znames, leaf_names, point, chains, joint, cores, setup=None, fixed=None):
@@ -319,21 +330,27 @@ def field_proof(multi, N, znames, leaf_names, point, chains, joint, cores, setup
 _IDENT = re.compile(r"[A-Za-z._][A-Za-z0-9._]*")
 
 
+def extended_fields(setup, chains):
+    """The fields of the first chain's regime with their components on the parameters that
+    are initial values or event values of that chain (sym.fields.extend_fields)."""
+    reg1 = setup["regime_of"][chains[0][0]]
+    t1 = setup["tapes"][chains[0][0]]
+    groups = [_evs(t1.get("ver_t0"))] + [_evs(setup["tapes"][i].get("ver_ev")) for i in chains[0][1:]]
+    groups = [g for g in groups if g]
+    return extend_fields(setup["gens"][reg1 - 1], _lines(t1.get("ver_ic")), groups, setup["states"])
+
+
 def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chains, joint,
                      partial=False):
-    """Closed forms of the residual kernel from the fields of the first regime."""
+    """Closed forms of the residual kernel from the fields of the first regime; RouteError
+    with the reason where they do not close it."""
     P = PRIMES[0]
-    reg1 = setup["regime_of"][chains[0][0]]
     stset = set(setup["states"])
     p_cols = [i for i, z in enumerate(znames) if not _CSUFFIX.search(z) and z not in stset]
     p_names = [znames[i] for i in p_cols]
     li = {nm: i for i, nm in enumerate(leaf_names)}
     vals = [int(point[li[n]]) % P for n in p_names]
-    t1 = setup["tapes"][chains[0][0]]
-    groups = [_evs(t1.get("ver_t0"))] + [_evs(setup["tapes"][i].get("ver_ev")) for i in chains[0][1:]]
-    groups = [g for g in groups if g]
-    ext = extend_fields(setup["gens"][reg1 - 1], _lines(t1.get("ver_ic")), groups,
-                          setup["states"])
+    ext = extended_fields(setup, chains)
     cand = []
     for g in ext:
         th = {k: g[k] for k in g if k in p_names}
@@ -345,16 +362,17 @@ def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chai
         try:
             ev = eval_rational_mod_batch([str(v) for v in th.values()], p_names, [vals], P)
             ev = [int(x) for x in np.asarray(ev).ravel()]
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             ev = None
         if ev is None or any(x < 0 for x in ev):
             continue
         x = np.zeros(len(p_names), dtype=np.int64)
         for k, e in zip(th.keys(), ev):
             x[p_names.index(k)] = e
-        cand.append({"expr": th, "val": x})
+        cand.append({"expr": th, "val": x, "field": g})
     if not cand:
-        return None
+        raise RouteError(f"no regime field in the parameters among {len(ext)}")
     N = np.asarray(N, dtype=np.int64)
     Np = N[p_cols, :] % P
     scal_rows = np.asarray(scal_rows, dtype=np.int64).reshape(-1, len(znames))
@@ -379,24 +397,225 @@ def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chai
         print(f"[liediag] global symmetries: {len(ext)} field(s), {len(cand)} candidate(s), "
               f"{len(chosen)} chosen of {n_res}")
     if not chosen or (len(chosen) < n_res and not partial):
-        return None
+        raise RouteError(f"the regime fields give {len(chosen)} of {n_res} directions")
     Vw = np.zeros((N.shape[0], len(chosen)), dtype=np.int64)
     for j, c0 in enumerate(chosen):
         cc = _core.sym_solve_mod(Np, c0["val"], P)
         if cc is None:
-            raise RuntimeError("a direction is not in the kernel")
+            raise RouteError("a direction is not in the kernel")
         acc = np.zeros(N.shape[0], dtype=np.int64)
         for k, ck in enumerate(np.atleast_1d(cc)):
             acc = (acc + mulmod(N[:, k], int(ck), P)) % P
         Vw[:, j] = acc
     chk = field_check(setup, Vw, znames, leaf_names, point, chains, joint)
     if not chk.get("ok"):
-        return None
-    out = [{"support": sym_sort(list(c0["expr"])), "vector": c0["expr"], "type": "general",
-            "closed_form": True, "route": "global symmetry", "certified": True} for c0 in chosen]
+        raise RouteError(f"the fields are not proven: {chk.get('why')}")
+    out = []
+    for c0 in chosen:
+        ex = exact_direction(setup, c0["field"], chains, joint is not None)
+        out.append({"support": sym_sort(list(c0["expr"])), "vector": c0["expr"], "type": "general",
+                    "closed_form": True, "route": "global symmetry", "certified": True,
+                    "exact": ex["ok"] is True, "state_components": ex.get("states"),
+                    "lift_form": dict(c0["expr"])})
     if len(chosen) < n_res:
         return {"partial": True, "dirs": out, "vectors": Vw}
     return out
+
+
+# suffix of an initial value that is a coordinate named like its state
+INIT = "__0"
+
+
+def initial_names(setup, chains):
+    """The states whose name is a coordinate in an initial value of the first chain."""
+    t1 = setup["tapes"][chains[0][0]]
+    states = set(setup["states"])
+    try:
+        used = {str(y) for l in _lines(t1.get("ver_ic")) for y in model_sympify(l.split("=", 1)[1]).free_symbols}
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return []
+    return [x for x in setup["states"] if x in used and x in states]
+
+
+def _rename_init(expr, init):
+    if not init:
+        return expr
+    e = model_sympify(expr)
+    return str(e.xreplace({spy.Symbol(x): spy.Symbol(x + INIT) for x in init}))
+
+
+def restricted_setup(setup, chains, joint):
+    """The setup on the states that reach an observable of their chain, the states that stay at zero set to 0."""
+    regimes, tapes = setup["regimes"], setup["tapes"]
+    states = list(setup["states"])
+    stset = set(states)
+    eqs = [{l.split("=", 1)[0].strip(): model_sympify(l.split("=", 1)[1]) for l in rg["f"]}
+           for rg in regimes]
+    events = [_evs(t.get("ver_t0")) + _evs(t.get("ver_ev")) for t in tapes]
+    targets = {str(e["var"]) for ch in chains for i in ch for e in events[i]}
+    zero = set()
+    if not joint:
+        zero = {x for x in states if x not in targets and
+                all(any(l.split("=", 1)[0].strip() == x and l.split("=", 1)[1].strip() in ("0", "0.0")
+                        for l in _lines(tapes[ch[0]].get("ver_ic"))) for ch in chains)}
+        visited = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
+        while True:
+            sub = {spy.Symbol(x): spy.Integer(0) for x in zero}
+            drop = {x for x in zero if any(x in eqs[r] and spy.cancel(eqs[r][x].xreplace(sub)) != 0
+                                           for r in visited)}
+            if not drop:
+                break
+            zero -= drop
+    sub = {spy.Symbol(x): spy.Integer(0) for x in zero}
+
+    def syms(e):
+        e = e.xreplace(sub) if sub else e
+        return {str(y) for y in e.free_symbols} & stset
+    # the states each equation, observable and event value holds, once per regime and tape
+    dep = [{x: syms(f) for x, f in eq.items()} for eq in eqs]
+    obs_dep = [set().union(*[syms(model_sympify(l.split("=", 1)[1] if "=" in l else l)) for l in rg["g"]])
+               for rg in regimes]
+    ev_dep = [set().union(*[syms(model_sympify(str(e["value"]))) for e in evs]) for evs in events]
+    keep_of = {}
+    for ch in chains:
+        rs = sorted({setup["regime_of"][i] - 1 for i in ch})
+        seen = set().union(*[obs_dep[r] for r in rs]) | set().union(*[ev_dep[i] for i in ch])
+        seen -= zero
+        while True:
+            more = set().union(*[dep[r][x] for r in rs for x in seen if x in dep[r]]) - zero - seen
+            if not more:
+                break
+            seen |= more
+        for i in ch:
+            keep_of[i] = keep_of.get(i, set()) | seen
+    keep_r = {}
+    for i, k in keep_of.items():
+        r = setup["regime_of"][i] - 1
+        keep_r[r] = keep_r.get(r, set()) | k
+    if not zero and all(keep_r.get(r, stset) >= {x for x in eqs[r]} for r in keep_r):
+        return setup
+
+    def cut(lines, keep):
+        out = []
+        for l in _lines(lines):
+            lhs, rhs = (u.strip() for u in l.split("=", 1))
+            if lhs in keep or lhs not in stset:
+                out.append(f"{lhs} = {model_sympify(rhs).xreplace(sub)}")
+        return out
+    new_regimes = [{"f": cut(rg["f"], keep_r.get(r, stset)),
+                    "g": [f"{l.split('=', 1)[0].strip()} = {model_sympify(l.split('=', 1)[1]).xreplace(sub)}"
+                          for l in rg["g"]]} for r, rg in enumerate(regimes)]
+    new_tapes = []
+    for i, t in enumerate(tapes):
+        keep = keep_of.get(i, stset)
+        t = dict(t, ver_ic=cut(t.get("ver_ic"), keep),
+                 ver_t0=[e for e in _evs(t.get("ver_t0")) if str(e["var"]) in keep],
+                 ver_ev=[e for e in _evs(t.get("ver_ev")) if str(e["var"]) in keep])
+        new_tapes.append(t)
+    union = set().union(*keep_r.values()) if keep_r else set()
+    joins = [dict(e, ev=[v for v in e["ev"] if str(v["var"]) in union]) for e in setup["joins"]]
+    return dict(setup, regimes=new_regimes, tapes=new_tapes, joins=joins,
+                states=[x for x in states if x in union])
+
+
+def exact_direction(setup, field, chains, joint, init=()):
+    """Whether the regime field `field` is a symmetry of every regime the chains visit,
+    proven over Q: in each regime it, or a field of that regime with the same parameter
+    part, satisfies the regime identities, and every join, initial value (unless `joint`,
+    where the chains start at rest) and start event maps it into itself. `init` names the
+    states whose initial value coordinate is X + INIT in `field`."""
+    regimes, states = setup["regimes"], setup["states"]
+    used = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
+    extra = {k: v for k, v in dict(field).items() if k.endswith(INIT)}
+    theta = {k: v for k, v in dict(field).items() if k not in set(states)}
+    of = {}
+    for r in used:
+        res = certify(regime_identities(regimes[r], field))
+        if res["ok"] is True:
+            of[r] = field
+            continue
+        # in another regime the direction may need other state components
+        own = [ch for ch in chains if setup["regime_of"][ch[0]] - 1 == r]
+        alt = combined_field(extended_fields(setup, own) if own else setup["gens"][r], theta, states)
+        res = certify(regime_identities(regimes[r], alt)) if alt is not None else res
+        if res["ok"] is not True:
+            return res
+        of[r] = dict(alt, **extra)
+    ids = []
+    for e in setup["joins"]:
+        if e["from"] in of and e["to"] in of:
+            ids += event_identities(e["ev"], of[e["from"]], of[e["to"]], states)
+    for ch in chains:
+        t1, r0 = setup["tapes"][ch[0]], setup["regime_of"][ch[0]] - 1
+        if not joint:
+            # start events are composed into the initial values
+            ics = []
+            for line in _lines(t1.get("ver_ic")):
+                x, e = (u.strip() for u in line.split("=", 1))
+                ics.append(f"{x} = {_rename_init(e, init)}")
+            ids += initial_identities(ics, of[r0])
+            continue
+        t0 = _evs(t1.get("ver_t0"))
+        if t0:
+            ids += event_identities(t0, of[r0], of[r0], states)
+    res = certify(ids)
+    if res["ok"] is True and used:
+        f0 = of[used[0]]
+        res["states"] = {k: str(v) for k, v in f0.items() if k in set(states) and str(v) != "0"}
+    return res
+
+
+# regime fields beyond which no combination is solved for
+_COMBINE_CAP = 24
+
+
+def _in_span_at_a_point(A, b):
+    """False when b is outside the column span of A at a random rational point."""
+    import random
+    rng = random.Random(len(A))
+    syms = sorted(A.free_symbols | b.free_symbols, key=str)
+    pt = {x: spy.Rational(rng.randint(2, 997), rng.randint(2, 997)) for x in syms}
+    try:
+        An, bn = A.xreplace(pt), b.xreplace(pt)
+        if not all(x.is_Rational for x in list(An) + list(bn)):
+            return True
+        return An.rank() == An.row_join(bn).rank()
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return True
+
+
+def combined_field(gens, vec, states):
+    """A combination sum_i c_i(theta) g_i of the regime fields `gens` whose parameter part
+    is the closed form `vec`, with its state components, or None."""
+    sts = set(states)
+    vp = {k: v for k, v in dict(vec).items() if k not in sts and not k.endswith(INIT)}
+    use = [g for g in gens if any(k not in sts for k in g)]
+    if not vp or not use or len(use) > _COMBINE_CAP:
+        return None
+    try:
+        keys = sorted(set(vp) | {k for g in use for k in g if k not in sts})
+        A = spy.Matrix([[model_sympify(g[k]) if k in g else spy.Integer(0) for g in use] for k in keys])
+        b = spy.Matrix([model_sympify(vp[k]) if k in vp else spy.Integer(0) for k in keys])
+        if not _in_span_at_a_point(A, b):
+            return None
+        sol, params = A.gauss_jordan_solve(b)
+        c = [spy.cancel(x) for x in sol.subs({t: 0 for t in params})]
+        if any(x.free_symbols & {spy.Symbol(s) for s in sts} for x in c):
+            return None
+        if any(spy.cancel(e) != 0 for e in (A * spy.Matrix(c) - b)):
+            return None
+        names = sorted({k for g in use for k in g} | set(vp))
+        out = {}
+        for k in names:
+            e = spy.cancel(sum((ci * model_sympify(g[k]) for ci, g in zip(c, use) if k in g), spy.Integer(0)))
+            if e != 0:
+                out[k] = str(e)
+        out.update({k: str(v) for k, v in dict(vec).items() if k.endswith(INIT)})
+        return out
+    except (ValueError, *SYMPY_FAILS):
+        return None
 
 
 def static_fields(multi, models, conds, chains, p_names, leaf_names, point, forcings=None,
@@ -413,7 +632,8 @@ def static_fields(multi, models, conds, chains, p_names, leaf_names, point, forc
                    "t0": _evs(tp[idx[0]].get("ver_t0"))})
     try:
         sf = static_fields_symbolic(cl, list(p_names), list(forcings) if forcings else None)
-    except Exception:
+    except Exception as exc:
+        swallow(exc, "static fields")
         sf = None
     if state.env("STATICDIAG"):
         print(f"[staticdiag] {sf}")
@@ -427,7 +647,8 @@ def static_fields(multi, models, conds, chains, p_names, leaf_names, point, forc
         try:
             ev = eval_rational_mod_batch([str(v) for v in f.values()], list(p_names), [vals], P)
             ev = [int(x) for x in np.asarray(ev).ravel()]
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             ev = None
         if ev is None or any(x < 0 for x in ev):
             continue
@@ -524,3 +745,21 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
 
     idx = list(range(len(segs)))
     return map_fn(one, idx) if map_fn is not None else [one(b) for b in idx]
+
+
+def rescaled_lift(target, form, states):
+    """The state components `states` of the lift of `form`, rescaled to `target`, a multiple of
+    `form`; None where it is no multiple."""
+    if not states:
+        return states
+    try:
+        base = {k: model_sympify(str(v)) for k, v in target.items()}
+        fm = {k: model_sympify(str(v)) for k, v in form.items()}
+        ratios = {spy.cancel(base[k] / fm[k]) for k in fm if fm[k] != 0 and k in base}
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    if len(ratios) != 1:
+        return None
+    r = ratios.pop()
+    return {x: str(spy.cancel(r * model_sympify(str(v)))) for x, v in states.items()}

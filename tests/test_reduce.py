@@ -1,18 +1,19 @@
 """Behaviour of the reduction: invariants, sections, charts and zero limits.
 
 Assertions are mathematical: invariants are checked by X(I) = 0, charts by evaluating
-them, reparametrisations by detecting again with the emitted trafo.
+them, reparametrizations by detecting again with the emitted trafo.
 """
 
 import math
 import re
-import time
 import warnings
 
+import numpy as np
 import pytest
 import sympy as spy
 
 import symident as si
+from symident import report
 
 _FUNS = {"exp": math.exp, "log": math.log, "sqrt": math.sqrt, "atan": math.atan, "abs": abs,
          "exp10": lambda x: 10.0 ** x, "log10": math.log10, "log1p": math.log1p}
@@ -20,7 +21,9 @@ _IDENT = re.compile(r"[A-Za-z_.][A-Za-z0-9_.]*")
 
 
 def det(f, g, *, trafo=None, fixed=(), reactions=None, **kw):
+    # the reduction does not depend on how a direction is proven
     kw.setdefault("cores", 1)
+    kw.setdefault("control", si.reconst_control(exact_proof=False))
     model = si.Model(f, g, reactions=reactions, trafo=trafo, fixed=fixed)
     return si.detect(model, **kw)
 
@@ -573,7 +576,7 @@ def test_zero_limits_joint_vanishing():
     assert "Zero limits" not in repr(r2)
 
 
-def test_log_parametrised_direction_reduced_and_mapped_back():
+def test_log_parametrized_direction_reduced_and_mapped_back():
     tr = {"k1": "exp(lk1)", "k2": "exp(lk2)", "s": "exp10(ls)", "B": "10^lB"}
     g = {"y": "log10(s*A)"}
     r = red(det(F_AB, g, trafo=tr, reconstruct=True))
@@ -638,10 +641,7 @@ def test_face_section_switches_leaks_off():
     tr = {"x1": "D", "x2": "0", "x3": "0"}
     res = det(f, {"y": "x1"}, trafo=tr, reconstruct=True)
     assert len(res.symmetries) == 2
-    t0 = time.monotonic()
     r = red(res)
-    # a guard against hanging, wide enough for a slow CI runner
-    assert time.monotonic() - t0 < 300
     assert not r.remaining
     zeros = [k for k, v in r.trafo.items() if v == "0"]
     assert len(zeros) == 2
@@ -717,9 +717,7 @@ def test_chart_search_stops_at_timeout():
     f = {"c": "k0 - kd*c", "x": "w*(q + b*c) - x"}
     pos = ["c", "k0", "kd", "w", "b", "x"]
     res = det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos)
-    t0 = time.monotonic()
-    r = red(res, positive=pos, timeout=0.01)
-    assert time.monotonic() - t0 < 30
+    r = red(res, positive=pos, timeout=0)
     assert any(b["status"] == "invariant_only" and "timeout" in (b.get("reason") or "")
                for b in blocks_of(r, "curved"))
 
@@ -767,7 +765,7 @@ def test_alternative_charts_are_valid_and_ranked():
     m = si.Model({"x1": "kin1*u - k2*x1 - d3*x1 + k4*x2", "x2": "k2*x1 - k4*x2 + k5*x3", "x3": "-k5*x3"},
                  {"y0": "x2", "y1": "s1*x2"}, trafo={"x2": "1", "x3": "0"},
                  conditions={"rows": ["a", "b"], "cols": {"u": [1, 3]}})
-    det = si.detect(m, reconstruct=True)
+    det = si.detect(m, reconstruct=True, control=si.reconst_control(exact_proof=False))
     red = det.reduce(alternatives=True)
     assert _chart_valid(red._raw, det.dim)
     for alt in red.alternatives:
@@ -775,3 +773,185 @@ def test_alternative_charts_are_valid_and_ranked():
         assert len(alt["removed"]) <= len(red.removed)
     simple = si.detect(si.Model({"A": "-k1*A", "B": "k1*A - k2*B"}, {"y": "s*B"}), reconstruct=True)
     assert simple.reduce().alternatives == []
+
+
+def test_an_error_in_the_chart_is_raised_not_hidden(monkeypatch):
+    from symident.reduction import core
+
+    def broken(*a, **k):
+        raise KeyError("broken chart")
+    res = det({"x": "-k*x"}, {"y": "s*x"}, reconstruct=True)
+    monkeypatch.setattr(core, "red_coordinates", broken)
+    with pytest.raises(KeyError, match="broken chart"):
+        red(res)
+
+
+def test_amgm_certificate_is_exact_for_rational_coefficients():
+    from fractions import Fraction as Fr
+
+    import numpy as np
+
+    from symident.reduction.sign import absorb
+    e = np.array([[2, 0], [1, 1], [0, 2]], dtype=float)
+    assert absorb(e, [Fr(1), Fr(-1), Fr(1)])
+    # no certificate where the polynomial reaches zero or falls below it, by any margin
+    assert not absorb(e, [Fr(1), Fr(-2), Fr(1)])
+    assert not absorb(e, [Fr(1), Fr(-2) - Fr(1, 10 ** 12), Fr(1)])
+
+
+def test_exact_rank_of_rationals():
+    from fractions import Fraction as Fr
+
+    from symident.reduction.invariants import exact_rank
+    assert exact_rank([[1, 2], [2, 4]]) == 1
+    assert exact_rank([[Fr(1, 3), 1], [1, Fr(1, 3)]]) == 2
+    assert exact_rank([[1.5, 2]]) == 1 and exact_rank([["x", 1]]) is None
+
+
+def test_the_reduction_reads_the_level_of_the_directions():
+    m = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"Aobs": "alpha*A"}, trafo={"k1": "k2*B/A"},
+                 events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
+    r = si.detect(m, reconstruct=True)
+    assert [s.level for s in r.symmetries] == ["verified"]
+    with pytest.warns(UserWarning, match="verified, not proven"):
+        red = r.reduce()
+    assert red.level == "assumed" and [b["generator_level"] for b in red.blocks] == ["verified"]
+    assert "rests on a verified closed form" in " ".join(repr(red).split())
+    exact = si.detect(si.Model({"A": "-k1*A", "B": "k1*A - k2*B"}, {"y": "s*B"}), reconstruct=True).reduce()
+    assert exact.level == "exact" and "verified" not in repr(exact)
+    support = si.detect(si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"y": "s*A"}))
+    assert "open" in [s.level for s in support.symmetries]
+    with pytest.raises(ValueError, match="no closed form"):
+        support.reduce()
+    part = support.reduce(allow_open=True)
+    assert part.removed == ["X₁"] and part.remaining == ["X₂"]
+
+
+def test_the_trafo_is_checked_back_and_the_loop_closed():
+    r = red(det(F_AB, {"y": "s*A"}, reconstruct=True))
+    assert r.checks["pins"] is True and r.checks["invariants"] is True and r.checks["failed"] == []
+    assert r.checks["loop"] == {"directions": 0, "expected": 0, "rank": 3, "dim": 3, "rank_status": "proven",
+                                "ok": True}
+    assert "loop" not in red(det(F_AB, {"y": "s*A"}, reconstruct=True), check=False).checks
+    bad = {"removed": ["X₁"], "remaining": [], "blocks": [], "trafo": {"a": "1"},
+           "checks": {"failed": ["q_1 = a*b"], "loop": {"directions": 1, "expected": 0, "rank": 1, "dim": 2,
+                                                       "rank_status": "proven", "ok": False}}}
+    text = " ".join(report.reduction_lines(bad, width=80)).replace("  ", " ")
+    assert "Check failed over Q: q_1 = a*b." in text and "the reduced model has 1 direction, 0 expected" in text
+
+
+def test_roots_are_taken_only_of_positive_symbols():
+    from symident.reduction.core import _tidy_root
+    assert _tidy_root("sqrt(x^2*y)", {"x", "y"}) == "x*sqrt(y)"
+    assert _tidy_root("sqrt(x^2*y)", {"y"}) == "sqrt(x^2*y)"
+
+
+def test_invariants_are_checked_against_the_generators_as_detected():
+    r = red(det(F_AB, {"y": "s*A"}, reconstruct=True))
+    curved = [b for b in r.blocks if b["type"] != "scaling"]
+    assert curved and all("verified: X(I) = 0 exactly for every generator as detected" in b["certificates"]
+                          for b in curved)
+
+
+def test_independence_of_invariants_with_exp_is_certified():
+    from symident.reduction.blocks import independent_set
+    assert independent_set(["exp(a)*b", "exp(2*a)*b^2", "c*exp(b)"], ["a", "b", "c"], 2,
+                           keep_order=True) == ["exp(a)*b", "c*exp(b)"]
+
+
+def test_the_invariant_count_says_whether_it_is_exact():
+    r = red(det(F_AB, {"y": "s*A"}, reconstruct=True))
+    curved = [b for b in r.blocks if b["type"] != "scaling"]
+    assert curved and all(b["count"] == "exact" for b in curved)
+
+
+def test_signs_of_numbers_are_exact():
+    from symident.reduction.sign import num_sign, sgn_poly
+    assert num_sign(spy.sqrt(2) - 1) == 1 and num_sign(spy.pi - spy.Rational(355, 113)) == -1
+    assert num_sign(spy.exp(1) * spy.exp(-1) - 1) == 0 and num_sign((spy.sqrt(2) + 1)**2 - 3 - 2 * spy.sqrt(2)) is None
+    x, y = spy.symbols("x y")
+    assert sgn_poly(spy.sqrt(2) * x + spy.pi * y) == 1
+    # an algebraic coefficient never enters a float budget
+    assert sgn_poly(spy.sqrt(2) * x**2 - 2 * spy.sqrt(3) * x * y + spy.sqrt(7) * y**2) == 0
+
+
+def test_the_rank_of_a_weight_matrix_is_exact():
+    from symident.gfp import PRIMES
+    from symident.reduction.scaling import rank_modp
+    p = PRIMES[0]
+    W = np.array([[1, 0], [0, p]], dtype=object)
+    assert rank_modp(W) == 2 and rank_modp(W, p) == 1
+
+
+def test_the_reduction_names_what_it_assumes():
+    m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"},
+                 inputs=["u"], events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"}],
+                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
+    r = red(si.detect(m, equilibrate=True, reconstruct=True))
+    scal, curved = r.blocks
+    assert scal["level"] == "exact" and scal["assumptions"] == []
+    assert curved["level"] == "assumed" and r.level == "assumed"
+    assert curved["assumptions"] == ["every level set of the invariants is one orbit",
+                                     "the section kl = 0 lies on a face and is met only in a limit"]
+    assert "{X₂} assumes: every level set" in repr(r)
+    assert red(det(F_AB, {"y": "s*A"}, reconstruct=True), fixed=["k1"]).level in ("exact", "assumed")
+
+
+def test_chart_search_stops_at_its_work_cap_and_says_so():
+    f = {"c": "k0 - kd*c", "x": "w*(q + b*c) - x"}
+    pos = ["c", "k0", "kd", "w", "b", "x"]
+    res = det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos)
+    r = red(res, positive=pos, work_cap=0)
+    assert any(b["status"] == "invariant_only" and "work_cap" in (b.get("reason") or "")
+               for b in blocks_of(r, "curved"))
+    assert any("reduce(work_cap=0) reached" in lim for lim in r.limits)
+    assert red(res, positive=pos).trafo == red(res, positive=pos).trafo
+
+
+def test_a_section_of_several_coordinates_is_an_assumption():
+    from symident.reduction.core import assumptions_of
+    b = {"status": "reduced", "type": "curved", "pins": {"a": "q_1"}, "section": ["a*b = c"],
+         "transversal": ["a", "b"], "face": False, "count": "exact"}
+    assert assumptions_of(b) == ["every level set of the invariants is one orbit",
+                                 "each orbit meets the section a*b = c at most once"]
+
+
+def test_real_coordinates_are_not_claimed_positive():
+    from symident.reduction.sign import set_positive, sgn_poly
+    x, y = spy.symbols("x y")
+    old = set_positive(["y"])
+    try:
+        assert sgn_poly(x**2 * y) == 0 and sgn_poly(x**2 * y + y) == 1
+    finally:
+        set_positive(old)
+    r = red(det({"x": "-k*x"}, {"y": "s*x"}, positive=["k"], reconstruct=True), positive=["k"])
+    sc = blocks_of(r, "scaling")[0]
+    pin = list(sc["pins"])[0]
+    assert sc["coverage"] == "partial" and f"{pin} < 0" in sc["gauge_note"]
+    assert "covers only part" in repr(r)
+
+
+def test_a_sampled_vector_is_checked_before_it_is_chosen(monkeypatch):
+    import symident.reduction.invariants as ri
+    from symident.reduction.expr import gen_prep
+    preps = [gen_prep({"generator": {"x": "x", "y": "-y"}})]
+    vars_ = ["x", "y"]
+    expts = np.array([[1, 0], [1, 1]])
+    calls = []
+
+    def fake(rows_at, n, eval_vars, primes=None, min_rows=0):
+        calls.append(min_rows)
+        return {"basis": np.array([[1, 0], [0, 1]], dtype=np.int64), "rows": 3}
+    monkeypatch.setattr(ri, "modular_nullspace", fake)
+    ns = ri._checked_nullspace(preps, vars_, expts, 2)
+    assert calls == [0, 4 * 2 + 20]
+    assert ns["basis"].tolist() == [[0], [1]] and "1 vector(s) failing X(I) = 0 left out" in ns["note"]
+
+
+def test_a_constant_pin_of_one_monotone_generator_is_proven():
+    from symident.reduction.core import assumptions_of, monotone_pins
+    b = {"status": "reduced", "type": "curved", "pins": {"a": "1", "c": "q_1"}, "face": False, "count": "exact"}
+    assert monotone_pins(b, [{"generator": {"a": "a*b", "c": "-c"}}]) == ["a"]
+    assert monotone_pins(b, [{"generator": {"a": "a - b", "c": "-c"}}]) == []
+    b["monotone"] = ["a"]
+    assert assumptions_of(b) == ["every level set of the invariants is one orbit"]

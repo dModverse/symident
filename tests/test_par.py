@@ -3,6 +3,7 @@ import sys
 
 import pytest
 
+from symident import state
 from symident.par import process_map, thread_map
 
 
@@ -27,4 +28,28 @@ def test_process_map_recomputes_a_failed_item():
         return 10 * x
 
     assert process_map(fn, range(4), 2) == [0, 10, 20, 30]
-    assert process_map(fn, range(4), 2, on_error=lambda x: -x) == [0, 10, -2, 30]
+    with state.switches(DEBUG="0"):
+        assert process_map(fn, range(4), 2, on_error=lambda x: -x) == [0, 10, -2, 30]
+
+
+def test_process_map_gives_on_error_on_the_serial_path_too():
+    def fn(x):
+        if x == 1:
+            raise ValueError("bad item")
+        return x
+    with state.switches(DEBUG="0"):
+        assert process_map(fn, range(3), 1, on_error=lambda x: None) == [0, None, 2]
+    with pytest.raises(ValueError):
+        process_map(fn, range(3), 1)
+    with state.switches(DEBUG="1"), pytest.raises(ValueError):
+        process_map(fn, range(3), 1, on_error=lambda x: None)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no fork")
+def test_process_map_raises_when_a_worker_dies():
+    def fn(x):
+        if x == 1:
+            os._exit(1)
+        return x
+    with pytest.raises(RuntimeError, match="died"):
+        process_map(fn, range(4), 2)

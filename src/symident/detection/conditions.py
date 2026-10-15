@@ -253,7 +253,7 @@ def scaling_component(w, var):
 
 
 def log_param_back(res, lp):
-    """A log parameter analysed in X = base^theta reported in theta."""
+    """A log parameter analyzed in X = base^theta reported in theta."""
     if res is None or not lp or not isinstance(res, dict) or res.get("rerun_blocks"):
         return res
     X = [str(e["X"]) for e in lp]

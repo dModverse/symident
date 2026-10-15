@@ -1,8 +1,8 @@
 """Linear algebra over GF(p), sample points and gauges of the residual directions."""
 
 import contextlib
+import itertools
 import math
-import time
 
 import numpy as np
 
@@ -14,11 +14,54 @@ PRIMES = [1518500183, 1518500173, 1518500171, 1518500143]
 # disjoint from the reconstruction primes; certifies a direction at a fresh evaluation
 VERIFY_PRIME = 1518500141
 _VERIFY = [VERIFY_PRIME]
+# further primes for routes that lift from more than the engine primes
+_EXTRA = [1518500131, 1518500101, 1518500077]
+# the roots every prime must hold, set by use_primes()
+_ROOTS = [(), ()]
 
 
 def verify_prime():
-    """The prime of the fresh-point checks."""
-    return _VERIFY[0]
+    """The prime of the fresh-point checks: in a detection drawn once from its seed among
+    the primes in [2^30, 1.4e9) that hold the roots of the model, so that no fixed prime is
+    assumed generic; outside one the default verification prime."""
+    from . import state
+    s = state.get("session")
+    if s is None:
+        return _VERIFY[0]
+    key = (tuple(PRIMES), repr(_ROOTS))
+    q = s.vprimes.get(key)
+    if q is None:
+        from sympy import prevprime
+        rng = s.rng("verification prime", key)
+        while q is None:
+            c = int(prevprime(rng.randrange(2 ** 30 + 64, 1400000000)))
+            if holds_roots(_ROOTS[0], c, _ROOTS[1]):
+                q = c
+        s.vprimes[key] = q
+    return q
+
+
+def all_primes():
+    """The engine primes, the verification prime and three more, in that order; read at
+    the call, so that use_primes() switches them together."""
+    return list(PRIMES) + [_VERIFY[0]] + list(_EXTRA)
+
+
+def extra_primes():
+    """The primes after the engine and verification primes."""
+    return list(_EXTRA)
+
+
+def prime_run(n):
+    """`n` primes: the engine primes, then primes below them that hold the roots of the
+    model, the verification prime left out."""
+    from sympy import prevprime
+    out, q = list(PRIMES), min(PRIMES)
+    while len(out) < n:
+        q = int(prevprime(q))
+        if q != _VERIFY[0] and holds_roots(_ROOTS[0], q, _ROOTS[1]):
+            out.append(q)
+    return out[:n]
 
 
 class NeedPrimesError(Exception):
@@ -34,11 +77,13 @@ class NeedPrimesError(Exception):
 
 
 def holds_roots(constants, q, degrees=()):
-    """Whether every (c, k), c a positive rational, has k nested square roots modulo the
-    prime q, and every odd degree is prime to q - 1."""
+    """Whether every (c, k), c a rational whose denominator q does not divide, has k nested
+    square roots modulo the prime q, and every odd degree is prime to q - 1."""
     if any(math.gcd(int(d), q - 1) != 1 for d in degrees):
         return False
     for c, k in constants:
+        if int(c.q) % q == 0:
+            return False
         v = int(c.p) * pow(int(c.q), q - 2, q) % q
         for _ in range(k):
             v = sqrt_mod(v, q)
@@ -49,23 +94,27 @@ def holds_roots(constants, q, degrees=()):
 
 @contextlib.contextmanager
 def use_primes(constants=(), degrees=()):
-    """Five primes below the default ones that hold every root of the model (see
-    holds_roots): four for the analysis and one for the checks."""
+    """Eight primes below the default ones that hold every root of the model (see
+    holds_roots): four for the analysis, one for the checks and three more."""
     from sympy import Rational, prevprime
     consts = [(Rational(c), int(k)) for c, k in constants]
     found, q = [], PRIMES[0] + 1
-    while len(found) < 5:
+    while len(found) < 8:
         q = prevprime(q)
         if holds_roots(consts, q, degrees):
             found.append(q)
-    saved, saved_v = list(PRIMES), _VERIFY[0]
+    saved, saved_v, saved_x, saved_r = list(PRIMES), _VERIFY[0], list(_EXTRA), list(_ROOTS)
     PRIMES[:] = found[:4]
     _VERIFY[0] = found[4]
+    _EXTRA[:] = found[5:]
+    _ROOTS[:] = [consts, list(degrees)]
     try:
         yield
     finally:
         PRIMES[:] = saved
         _VERIFY[0] = saved_v
+        _EXTRA[:] = saved_x
+        _ROOTS[:] = saved_r
 
 
 def sieve(n):
@@ -84,9 +133,11 @@ def sieve(n):
 
 
 def random_point(n, seed=1):
-    """Residues below the smallest prime by the MINSTD generator, deterministic in seed."""
+    """Residues below the smallest prime by the MINSTD generator, deterministic in seed and
+    the session seed."""
+    from .session import current
     m = 2147483647
-    x = (1234567 * int(seed) + 89) % m
+    x = current().seed("point", int(seed)) % m
     if x == 0:
         x = 1
     out = np.zeros(n, dtype=np.int64)
@@ -208,7 +259,7 @@ def matinv_modp(B, p):
 
 
 def reduce_mod_rows(S):
-    """Reducer of rows modulo the RREF of the scaling lattice S, memoised per prime."""
+    """Reducer of rows modulo the RREF of the scaling lattice S, memoized per prime."""
     S = np.asarray(S, dtype=np.int64)
     cache = {}
 
@@ -295,93 +346,108 @@ def logcoord_gauge(residual_free, scal_rows, P, nz, sc, zvals0):
     return gauge_from_rows(residual_free, eta_rows, eta_rows(sc["ref"], P, zvals0), P, k, nz)
 
 
-def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, support_cap=6,
-                     cand_cap=20000, max_secs=20):
-    """Residual directions by minimal support over small column subsets."""
+def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20000):
+    """Residual directions of minimal support, as residue functions on their supports.
+
+    In the r-dimensional span of the kernel basis, a vector has minimal support exactly
+    when it is, up to a factor, the only one that vanishes on some r - 1 independent
+    columns: a row of the RREF for some choice of pivots. Candidates come from the column
+    subsets of small support while they are few, from every choice of r - 1 columns when
+    those are few, and from seeded random pivot orders otherwise, within `cand_cap`
+    eliminations. The directions are then taken greedily by support size, outside the
+    span of the scalings and of the directions taken before."""
+    from .session import current
     k = len(residual_free)
     raw = {"anchors": list(residual_free), "residue_fns": [None] * k}
     if k == 0:
         return raw
-    deadline = time.monotonic() + max_secs
     scal_rows = np.asarray(scal_rows, dtype=np.int64).reshape(-1, nz)
     free_cols = list(free_cols)
 
     def basis_rows(rp, p):
         return np.stack([null_residues(rp, fc, p) for fc in free_cols])
 
-    def row_comb(c, B, p):
-        w = np.zeros(nz, dtype=np.int64)
-        for l in range(len(c)):
-            if c[l] % p:
-                w = (w + mulmod(B[l], c[l], p)) % p
-        return w
-
     def left_null(B, keep, p):
+        """The rows of the left null space of B on the columns `keep`."""
         nr = B.shape[0]
         M = B[:, keep]
         rr = rref_modp(np.concatenate([M % p, np.eye(nr, dtype=np.int64)], axis=1), p)
         z = np.nonzero(np.sum(rr["R"][:, :M.shape[1]] % p != 0, axis=1) == 0)[0]
-        if not len(z):
-            return None
-        return rr["R"][z[0], M.shape[1]:] % p
+        return rr["R"][z, M.shape[1]:] % p
+
+    def comb(c, B, p):
+        w = np.zeros(nz, dtype=np.int64)
+        for l in range(B.shape[0]):
+            if c[l] % p:
+                w = (w + mulmod(B[l], c[l], p)) % p
+        return w
 
     def supported(B, S, p):
+        """The vector of the span vanishing off S, when there is exactly one up to a factor."""
         c = left_null(B, sorted(set(range(nz)) - set(S)), p)
-        if c is None:
+        if c.shape[0] != 1:
             return None
-        return row_comb(c, B, p)
+        w = comb(c[0], B, p)
+        return w if np.any(w) else None
 
-    def is_scaling(v):
-        return in_span(scal_rows.T, v, nz, P)
-
-    B0 = basis_rows(sc["ref"], P)
-    cols = sorted({int(c) for fc in residual_free
-                   for c in np.nonzero(B0[free_cols.index(fc)] % P)[0]})
-    if len(cols) < 2:
+    Bfull = basis_rows(sc["ref"], P) % P
+    # supports stay on the columns the residual directions move: the search runs in the
+    # part of the span that vanishes on every other column
+    cols = sorted({int(c) for fc in residual_free for c in np.nonzero(Bfull[free_cols.index(fc)])[0]})
+    n = len(cols)
+    if n < 2:
         return raw
-    n_cols = len(cols)
+    W = left_null(Bfull, sorted(set(range(nz)) - set(cols)), P)
+    B0 = np.stack([comb(w, Bfull, P) for w in W]) if W.shape[0] else np.zeros((0, nz), dtype=np.int64)
+    r = B0.shape[0]
+    if r == 0:
+        return raw
     budget = int(cand_cap)
+    cands = {}
 
-    def next_combo(idx, n, s):
-        idx = list(idx)
-        i = s - 1
-        while i >= 0 and idx[i] == n - s + i:
-            i -= 1
-        if i < 0:
-            return None
-        idx[i] += 1
-        for j in range(i + 1, s):
-            idx[j] = idx[j - 1] + 1
-        return idx
+    def add(v):
+        v = np.asarray(v, dtype=np.int64) % P
+        nzc = np.nonzero(v)[0]
+        if not len(nzc):
+            return
+        v = mulmod(v, invmod(int(v[nzc[0]]), P), P)
+        cands.setdefault(v.tobytes(), (len(nzc), tuple(int(c) for c in nzc), v))
 
-    found = []
-    sel = np.zeros((nz, 0), dtype=np.int64)
-    it = 0
-    for s in range(2, min(n_cols, support_cap) + 1):
-        if len(found) >= k or budget <= 0:
+    # supports of a few columns: every subset while the count stays within half the budget
+    s, spent = 2, 0
+    while s <= n and spent + math.comb(n, s) <= budget // 2:
+        for S in itertools.combinations(cols, s):
+            w = supported(B0, S, P)
+            if w is not None:
+                add(w)
+        spent += math.comb(n, s)
+        s += 1
+    left = budget - spent
+    if r > 1 and math.comb(n, r - 1) <= left:
+        for T in itertools.combinations(cols, r - 1):
+            c = left_null(B0, list(T), P)
+            if c.shape[0] == 1:
+                add(comb(c[0], B0, P))
+    else:
+        rng = current().rng("minimal support", k, n)
+        for _ in range(max(1, left // max(r, 1))):
+            order = rng.sample(cols, n)
+            rr = rref_modp(B0[:, order], P)
+            for i in range(rr["rank"]):
+                v = np.zeros(nz, dtype=np.int64)
+                v[order] = rr["R"][i]
+                add(v)
+
+    found, sel = [], np.zeros((nz, 0), dtype=np.int64)
+    base = scal_rows.T.copy()
+    for _, supp, v in sorted(cands.values(), key=lambda t: (t[0], t[1])):
+        if len(found) >= k:
             break
-        idx = list(range(s))
-        while True:
-            if len(found) >= k or budget <= 0:
-                break
-            it += 1
-            if it % 256 == 0 and time.monotonic() > deadline:
-                budget = 0
-                break
-            S = [cols[i] for i in idx]
-            idx = next_combo(idx, n_cols, s)
-            budget -= 1
-            spanned = any(all(c in S for c in fc["supp"]) for fc in found)
-            if not spanned:
-                v = supported(B0, S, P)
-                if v is not None and not is_scaling(v):
-                    base = np.concatenate([scal_rows.T, sel], axis=1)
-                    if not in_span(base, v, nz, P):
-                        supp = [int(c) for c in np.nonzero(v % P)[0]]
-                        found.append({"supp": supp, "anchor": supp[0], "S": S})
-                        sel = np.concatenate([sel, v.reshape(nz, 1)], axis=1)
-            if idx is None:
-                break
+        if in_span(base, v, nz, P):
+            continue
+        found.append({"supp": list(supp), "anchor": supp[0], "S": list(supp)})
+        sel = np.concatenate([sel, v.reshape(nz, 1)], axis=1)
+        base = np.concatenate([base, v.reshape(nz, 1)], axis=1)
     if not found:
         return raw
 

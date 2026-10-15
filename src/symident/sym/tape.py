@@ -2,6 +2,7 @@
 
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, sympy_fail
 from .charts import (
     _apply_power_recast,
     _detect_log_params,
@@ -22,9 +23,11 @@ from .parse import (
     _read_equations,
 )
 from .recast import (
+    _apply_const_recast,
     _apply_exp_recast,
     _apply_func_recast,
     _apply_trig_recast,
+    _engine_holds,
     _has_func,
     _has_trig,
     _is_sqrt_rational,
@@ -48,6 +51,8 @@ def _emit_tape_shared(fexpr, gexpr, slot_of, base, allow_sqrt=False):
     memo = {}
 
     def emit(opcode, aa, bb, num=0, den=1):
+        if int(den) != 1:
+            _engine_holds([(spy.Rational(int(num), int(den)), 0)])
         op.append(int(opcode))
         a.append(int(aa))
         b.append(int(bb))
@@ -152,7 +157,8 @@ def _lie_reach(f_c, g_c, S, ic_c, evs, f_ss=None):
     for i, X in enumerate(Sstr):
         try:
             rhs[X] = {str(s) for s in spy.sympify(f_c[i]).free_symbols}
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             rhs[X] = set()
     dist = {}
     queue = collections.deque()
@@ -293,7 +299,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             parse_cache[key] = e
         return e
 
-    # substitution memoised on the transitively relevant subset of the map (conditions
+    # substitution memoized on the transitively relevant subset of the map (conditions
     # repeat the same replacements); exact, since other items can never fire and sympy
     # orders dict items canonically per item
     subs_cache = {}
@@ -356,7 +362,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                 [_hyp_to_exp(e) for e in f_ss])
                 for (f_c, g_c, ic_c, f_ss) in per_cond]
 
-    # log-parametrised parameters: one that occurs only as base^(c*theta) is replaced
+    # log-parametrized parameters: one that occurs only as base^(c*theta) is replaced
     # by the rational coordinate X = base^theta, and the report maps X back to theta
     condition_events = condition_events or []
     condition_times = condition_times or []
@@ -508,6 +514,11 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         fixed_names |= set(func_recast['consts'])
     if func_recast is not None:
         exp_recast = _merge_recast(exp_recast, func_recast)
+    if any_in(lambda e: spy.sympify(e).has(spy.pi, spy.E)):
+        const_recast = _apply_const_recast(S, per_cond, ev_per, tm_per, taken_names())
+        per_cond, ev_per, tm_per = const_recast['per_cond'], const_recast['ev_per'], const_recast['tm_per']
+        fixed_names |= set(const_recast['consts'])
+        exp_recast = _merge_recast(exp_recast, const_recast)
 
     nonrational = []
     rat_ok = set()            # deduped exprs recur across conditions; check each once

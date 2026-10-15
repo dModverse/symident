@@ -10,7 +10,8 @@ import numpy as np
 import sympy as spy
 
 from ... import _core
-from ...gfp import PRIMES, VERIFY_PRIME, invmod, mulmod, random_point
+from ...errors import SYMPY_FAILS, swallow, sympy_fail
+from ...gfp import PRIMES, invmod, mulmod, prime_run, random_point, verify_prime
 from ...sym.linalg import sym_rat_recon_big
 from ..closedform import poly_string
 from ..fields import ser_mul
@@ -20,17 +21,6 @@ _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 _N_PRIMES = 12
 _MAX_UNKNOWNS = 1200
 _N_BASES = 32
-
-
-def _candidate_primes():
-    """The analysis primes followed by further primes below them, the verification prime left out."""
-    out = list(PRIMES)
-    q = min(PRIMES)
-    while len(out) < _N_PRIMES:
-        q = int(spy.prevprime(q))
-        if q != VERIFY_PRIME:
-            out.append(q)
-    return out
 
 
 def _monomials(nv, deg, banned):
@@ -58,12 +48,58 @@ def _leading(lines, names):
             e = spy.sympify(rhs.replace("^", "**"), locals=loc)
             num = spy.fraction(spy.together(e))[0]
             P = spy.Poly(spy.expand(num), *syms)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         if P.is_zero or P.total_degree() < 1 or (num.free_symbols - set(syms)):
             continue
         out.append(tuple(int(x) for x in P.monoms(order="grevlex")[0]))
     return out
+
+
+def reduce_relations(lines, states, zero=()):
+    """`lines` with `zero` at zero and states entering linearly eliminated unless all do: (core states, equations)."""
+    zsub = {spy.Symbol(z): spy.Integer(0) for z in zero}
+    syms = [spy.Symbol(x) for x in states]
+    eqs = []
+    for ln in lines:
+        lhs, rhs = (ln.split("=", 1) + [""])[:2] if "=" in ln else ("", ln)
+        if lhs.strip() in set(zero):
+            continue
+        loc = {t: spy.Symbol(t) for t in _IDENT.findall(rhs)}
+        try:
+            e = spy.sympify(rhs.replace("^", "**"), locals=loc).xreplace(zsub)
+            eqs.append(spy.numer(spy.together(e)))
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return list(states), [str(x) for x in lines]
+
+    def degree(e, x):
+        try:
+            return spy.Poly(e, x).degree()
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return None
+    if all(all(degree(e, x) in (0, 1) for x in syms if x in e.free_symbols) for e in eqs):
+        return list(states), [str(e) for e in eqs]
+    core = list(syms)
+    while len(core) > 1:
+        best = None
+        for i, e in enumerate(eqs):
+            for x in core:
+                if x in e.free_symbols and degree(e, x) == 1:
+                    uses = sum(x in f.free_symbols for f in eqs)
+                    if best is None or (uses, -core.index(x)) < best[0]:
+                        best = ((uses, -core.index(x)), i, x)
+        if best is None:
+            break
+        _, i, x = best
+        c1, c0 = spy.Poly(eqs[i], x).all_coeffs()
+        sol = spy.cancel(-c0 / c1)
+        eqs = [spy.numer(spy.together(f.xreplace({x: sol}))) for j, f in enumerate(eqs) if j != i]
+        eqs = [f for f in eqs if f != 0]
+        core.remove(x)
+    return [str(x) for x in core], [str(e) for e in eqs]
 
 
 class StateFit:
@@ -79,19 +115,29 @@ class StateFit:
         hom.rec.pool_next += _N_BASES * (n + 1)
 
     def use(self, mis):
-        """Resting states of the conditions `mis` as variables, suffixed _c<k> for several."""
+        """Resting states of one condition per resting model in `mis` as variables, _c<k> for several."""
         sys = self.sys
-        self.states, self.var = [], {}
+        self.states, self.var, self.relations = [], {}, {}
+        used, seen = [], set()
         for mi in mis:
             ci = sys.equil_conds[mi]
-            zero = set(sys.zero_of(ci))
+            key = sys.model_key[ci] if len(getattr(sys, "model_key", [])) > ci else mi
+            if key in seen:
+                continue
+            seen.add(key)
+            used.append(mi)
+            zero = set(sys.zero_of(ci)) | set(getattr(sys, "solve_held", []))
             st = sys.hom_states[mi] if len(getattr(sys, "hom_states", [])) > mi else {}
-            for nm in sys.real_state_names:
-                if nm in st and nm not in zero and st[nm][0] % PRIMES[0] != 0:
+            cand = [nm for nm in sys.real_state_names
+                    if nm in st and nm not in zero and st[nm][0] % PRIMES[0] != 0]
+            core, rel = reduce_relations(sys.models[ci], cand, sorted(zero))
+            self.relations[mi] = rel
+            for nm in cand:
+                if nm in core:
                     v = nm if len(mis) == 1 else f"{nm}_c{mi + 1}"
                     self.states.append(v)
                     self.var[v] = (mi, nm)
-        self.mis = list(mis)
+        self.mis = used
 
     def state_sets(self, fc):
         """The condition of a free state column (else the first), then all conditions."""
@@ -124,7 +170,8 @@ class StateFit:
                 try:
                     num = spy.fraction(spy.together(spy.sympify(rhs.replace("^", "**"), locals=loc)))[0]
                     P = spy.Poly(spy.expand(num), *syms.values())
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     return {}
                 if P.total_degree() > 1:
                     return {}
@@ -146,14 +193,12 @@ class StateFit:
         return str(spy.factor(spy.cancel(e.subs(subs)))).replace("**", "^")
 
     def banned(self, names):
-        """Leading terms of the resting equations of the used conditions, states renamed."""
+        """Leading terms of the reduced resting equations of the used conditions, states renamed."""
         out = []
         for mi in self.mis:
             ren = {nm: v for v, (m, nm) in self.var.items() if m == mi}
-            lines = []
-            for ln in self.sys.models[self.sys.equil_conds[mi]]:
-                rhs = ln.split("=", 1)[1] if "=" in ln else ln
-                lines.append(_IDENT.sub(lambda m: ren.get(m.group(0), m.group(0)), rhs))
+            lines = [_IDENT.sub(lambda m: ren.get(m.group(0), m.group(0)), rhs)
+                     for rhs in self.relations.get(mi, [])]
             out += _leading(lines, names)
         return out
 
@@ -217,7 +262,7 @@ class StateFit:
         """The series kernel along base + t d from the last base point that served at p,
         else from fresh points until every condition has a resting state modulo p."""
         hom = self.hom
-        key = ("tx", T, p, seed)
+        key = ("tx", T, p, seed, tuple(sorted(d.items())))
         if key in self.lines:
             return self.lines[key]
         n = len(hom.base)
@@ -269,6 +314,8 @@ class StateFit:
 
     def fit(self, a, i, reli):
         """Entry i of direction a over (states, reli), or None."""
+        if not self.sys.kc:
+            return None
         for mis in self.state_sets(self.hom.fcs[a]):
             self.use(mis)
             if self.states:
@@ -281,7 +328,7 @@ class StateFit:
         names = self.names(reli)
         nv = len(names)
         banned = self.banned(names)
-        cands = _candidate_primes()
+        cands = prime_run(_N_PRIMES)
         ns_ = len(self.states)
         for dg in range(1, self.hom.d_cap + 1):
             mons = _monomials(nv, dg, banned)
@@ -314,7 +361,8 @@ class StateFit:
                 primes.append(p)
                 try:
                     rec = sym_rat_recon_big(np.stack(vecs, axis=1), primes)
-                except Exception:
+                except Exception as exc:
+                    swallow(exc, "homotopy state lift")
                     rec = None
                 lifted = rec is not None and not any(dd == "0" for dd in rec["den"])
                 good = lifted and self._verified(a, i, reli, rec, mons, T + 4)
@@ -336,7 +384,7 @@ class StateFit:
 
     def _verified(self, a, i, reli, rec, mons, T):
         """The identity on fresh lines with a longer series, at a prime outside the lift."""
-        p = VERIFY_PRIME
+        p = verify_prime()
         nm = len(mons)
         R = self._rows(a, i, reli, mons, 0, p, T, 2 * nm + 8, 424243)
         if R is None:

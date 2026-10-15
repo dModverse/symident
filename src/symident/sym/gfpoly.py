@@ -1,12 +1,12 @@
 """Polynomial systems over GF(p): linear plans, dense elimination, resultants and roots."""
 
-import random
-
 import numpy as np
 import sympy as spy
 from sympy.polys import galoistools as _gft
 from sympy.polys.domains import ZZ as _ZZ
 
+from .. import session
+from ..errors import SYMPY_FAILS, swallow, sympy_fail
 from .modp import _eval_terms, _poly_terms
 
 _LINSOLVE_OPS_CAP = 2000  # bail to the numeric solver past this elimination size
@@ -30,7 +30,7 @@ def _linear_solution(polys, solve_states):
             if pl.count_ops() > _LINSOLVE_OPS_CAP:
                 return None
             picked = None
-            for v in pl.free_symbols & rem_set:
+            for v in sorted(pl.free_symbols & rem_set, key=str):
                 pv = spy.Poly(pl, v)
                 if pv.degree() != 1:
                     continue
@@ -381,7 +381,7 @@ def _core_candidates(resid, core, p):
     if max(k[1] for k in P1) < 1 or max(k[1] for k in P2) < 1:
         return None
     bound = max(sum(k) for k in P1) * max(sum(k) for k in P2)
-    rng = random.Random(p)
+    rng = session.current().rng("gfpoly.gcd", p)
     dg = min(len(_gft.gf_gcd(_bi_at_u(P1, a, p), _bi_at_u(P2, a, p), p, _ZZ)) - 1
              for a in (rng.randrange(1, p), rng.randrange(1, p)))
     n1, n2 = max(k[1] for k in P1), max(k[1] for k in P2)
@@ -420,11 +420,16 @@ def _solve_states_reduced(dps, solve_states, p):
     plan, sinks, resid, core = red
     try:
         cands = _core_candidates(resid, core, p)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    except Exception as exc:
+        swallow(exc, "resultant core")
         return None
     if cands is None:
         return None
     steps = list(reversed(plan)) + list(reversed(sinks))
+    first = None
     for cp in cands:
         vals = [0] * nv
         for i, x in zip(core, cp):
@@ -440,5 +445,17 @@ def _solve_states_reduced(dps, solve_states, p):
                 ok = False
                 break
         if ok and all(_dp_value(d, vals, p) == 0 for d in dps):
-            return {solve_states[i]: spy.Integer(vals[i]) for i in range(nv)}, None
-    return None, {'ok': False, 'why': 'no consistent interior point'}
+            if first is not None and vals != first:
+                note_branch(solve_states)
+                break
+            first = list(vals)
+    if first is None:
+        return None, {'ok': False, 'why': 'no consistent interior point'}
+    return {solve_states[i]: spy.Integer(first[i]) for i in range(nv)}, None
+
+
+def note_branch(states):
+    """Record that the resting states have several interior roots modulo p and the first is taken."""
+    from .. import session
+    session.note("branches", "resting states " + ", ".join(sorted(map(str, states))) +
+                 ": several interior roots modulo p, the first is taken")

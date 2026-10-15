@@ -1,14 +1,12 @@
 """Closed forms of narrow directions from jets of the observables."""
 
-import random
-
 import sympy as spy
 
+from .. import session
 from .parse import _as_list, _make_local_parse
 
 
-def jet_generator(conds, support, anchor, max_order=8, max_chars=200000,
-                 time_limit=60.0):
+def jet_generator(conds, support, anchor, max_order=8, max_chars=200000, work_limit=None):
     """A direction with support S in closed form from the jets.
 
     Every Lie derivative L_f^k h evaluated at the initial values is invariant under
@@ -27,22 +25,21 @@ def jet_generator(conds, support, anchor, max_order=8, max_chars=200000,
     first segments are tried alone first (fewer, smaller jets); the later ones join
     only when those fall short of the rank.
     Jets are taken order by order, lowest first, rows kept greedily while they raise
-    the rank at a random rational point. Returns {'ok': True, 'vector': {z: entry}}
-    normalised to 1 at `anchor`, or {'ok': False, 'reason': ...}. The caller
-    verifies the result."""
-    import time as _time
-    t0 = _time.time()
+    the rank at a random rational point. The work counts the characters of every jet and
+    row formed and stops at `work_limit` (50 * max_chars by default). Returns {'ok': True,
+    'vector': {z: entry}} normalized to 1 at `anchor`, or {'ok': False, 'reason': ...}.
+    The caller verifies the result."""
+    work = [0, 50 * max_chars if work_limit is None else int(work_limit)]
     primary, extra = _jet_expand_chains(conds)
-    res = _jet_core(primary, support, anchor, max_order, max_chars, time_limit, t0)
+    res = _jet_core(primary, support, anchor, max_order, max_chars, work)
     if not res['ok'] and extra and str(res.get('reason', '')).startswith('rank'):
-        res = _jet_core(primary + extra, support, anchor, max_order, max_chars,
-                        time_limit, t0)
+        res = _jet_core(primary + extra, support, anchor, max_order, max_chars, work)
     return res
 
 
-def _jet_core(conds, support, anchor, max_order, max_chars, time_limit, t0):
-    """jet_generator() on a fixed list of jet conditions, within time_limit from t0."""
-    import time as _time
+def _jet_core(conds, support, anchor, max_order, max_chars, work):
+    """jet_generator() on a fixed list of jet conditions; work = [done, limit] is shared
+    between the calls."""
     support = [str(s) for s in _as_list(support)]
     anchor = str(anchor)
     m = len(support)
@@ -55,11 +52,11 @@ def _jet_core(conds, support, anchor, max_order, max_chars, time_limit, t0):
     lines += support
     local, parse = _make_local_parse(lines)
     zs = [local.get(s, spy.Symbol(s)) for s in support]
-    rng = random.Random(20260927)
+    rng = session.current().rng("jets.point")
     point = {}
 
     def num(e):
-        for sym in e.free_symbols:
+        for sym in sorted(e.free_symbols, key=str):
             if sym not in point:
                 point[sym] = spy.Integer(rng.randint(2, 997))
         return e.xreplace(point)
@@ -81,14 +78,16 @@ def _jet_core(conds, support, anchor, max_order, max_chars, time_limit, t0):
     for order in range(max_order + 1):
         for ci, (_states, _rhs, icd, _gs) in enumerate(parsed):
             for h in jets[ci]:
-                if _time.time() - t0 > time_limit:
-                    return {'ok': False, 'reason': 'time limit'}
+                if work[0] > work[1]:
+                    return {'ok': False, 'reason': 'work limit'}
                 he = h.xreplace(icd) if icd else h
                 row = [spy.diff(he, z) for z in zs]
                 if all(r == 0 for r in row):
                     continue
+                size = sum(len(str(r)) for r in row)
+                work[0] += size
                 # a minor of rows this large does not simplify in bounded time
-                if sum(len(str(r)) for r in row) > max_chars // 20:
+                if size > max_chars // 20:
                     continue
                 nr = [num(r) for r in row]
                 if spy.Matrix(numrows + [nr]).rank() > rank:
@@ -108,7 +107,9 @@ def _jet_core(conds, support, anchor, max_order, max_chars, time_limit, t0):
             for h in jets[ci]:
                 d = sum((spy.diff(h, states[i]) * rhs[i] for i in range(len(states))),
                         spy.Integer(0))
-                if len(str(d)) > max_chars:
+                size = len(str(d))
+                work[0] += size
+                if size > max_chars:
                     return {'ok': False, 'reason': 'jet too large'}
                 new.append(d)
             jets[ci] = new
@@ -120,8 +121,6 @@ def _jet_core(conds, support, anchor, max_order, max_chars, time_limit, t0):
         sub = M[:, [j for j in range(m) if j != i]]
         # the minor by cofactor expansion, kept as a product/sum tree (no expansion)
         comps.append((-1) ** i * (sub.det(method='berkowitz') if m > 2 else sub[0, 0]))
-        if _time.time() - t0 > time_limit:
-            return {'ok': False, 'reason': 'time limit'}
     ia = support.index(anchor)
     if comps[ia] == 0:
         return {'ok': False, 'reason': 'anchor component vanishes'}
@@ -136,8 +135,6 @@ def _jet_core(conds, support, anchor, max_order, max_chars, time_limit, t0):
             return {'ok': False, 'reason': 'closed form too large'}
         if e != 0:
             vec[support[i]] = str(e)
-        if _time.time() - t0 > time_limit:
-            return {'ok': False, 'reason': 'time limit'}
     return {'ok': True, 'vector': vec, 'order': int(order)}
 
 

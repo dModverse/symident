@@ -109,12 +109,21 @@ class Run:
         """The leaf slot of `name`, or None."""
         return self.leaf_index.get(name)
 
-    def par_map(self, xs, f):
-        """Per-point kernel calls in forked workers, serial with one core."""
+    def par_map(self, xs, f, sys=None):
+        """f over xs in forked workers, serially with one core; an item that raises gives
+        None. Every item starts from the route state of `sys` before the call, and the
+        changes are merged in item order, so the result does not depend on the cores."""
         xs = list(xs)
-        if self.cores > 1:
+        if sys is None or not hasattr(sys, "route_state"):
             return process_map(f, xs, self.cores, on_error=lambda x: None)
-        return [f(x) for x in xs]
+        base = sys.route_state()
+
+        def g(x):
+            sys.set_route_state(base)
+            return f(x), sys.route_state()
+        res = process_map(g, xs, self.cores, on_error=lambda x: None)
+        sys.merge_route_states(base, [r[1] for r in res if r is not None])
+        return [None if r is None else r[0] for r in res]
 
     def block_threads(self):
         """Threads per block call: one with gaps, else all cores."""

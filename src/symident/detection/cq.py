@@ -1,11 +1,16 @@
 """Conserved moieties of a reaction network and states forced to zero at steady state."""
 
-import random
+from fractions import Fraction
 
 import numpy as np
-from scipy.optimize import linprog
+import sympy as spy
 
+from .. import session
+from ..errors import SYMPY_FAILS, sympy_fail
+from ..gfp import verify_prime
 from ..rexpr import eval_numeric, get_symbols, replace_symbols
+from ..sym.modp import eval_rational_mod
+from ..sym.parse import _is_rational_expr, _make_local_parse
 
 
 def _coef_matrix(totals, states):
@@ -124,35 +129,72 @@ def conserved_totals(smatrix, species):
     return out
 
 
-def _expr_is_zero(expr, dead, ntry=4, tol=1e-9):
+def _expr_is_zero(expr, dead, ntry=4):
+    """Whether `expr` vanishes with the symbols in `dead` at zero: modulo a prime at seeded
+    points for a rational expression, else by cancellation over Q; a value that is not shown
+    to vanish counts as nonzero."""
     vars_ = get_symbols(expr)
-    free = [v for v in vars_ if v not in dead]
-    deadv = [v for v in vars_ if v in dead]
-    rng = random.Random(hash(expr) & 0xffffffff)
-    for _ in range(ntry):
-        env = {v: 0.0 for v in deadv}
-        env.update({v: rng.uniform(0.5, 1.5) for v in free})
-        val = eval_numeric(expr, env)
-        if val is None or abs(val) > tol:
-            return False
-    return True
+    rng = session.current().rng("cq.zero", expr)
+    q = verify_prime()
+    try:
+        _, parse = _make_local_parse([str(expr)])
+        e = parse(str(expr))
+        if _is_rational_expr(e):
+            vals = [[0 if v in dead else rng.randrange(2, q) for v in vars_] for _ in range(ntry)]
+            got = [eval_rational_mod(expr, vars_, pt, q) for pt in vals]
+            if all(g is not None for g in got):
+                return all(g == 0 for g in got)
+        e = e.xreplace({x: 0 for x in e.free_symbols if str(x) in dead})
+        return spy.simplify(e) == 0
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return False
 
 
-def _sink_cluster(M, eps=1e-8, Mbig=1e4):
+def _exact_lp(M, c):
+    """A vertex minimizing c.w over M w <= 0, 0 <= w <= 1, by the simplex method over Q with
+    Bland's rule, which cannot cycle; M and c are Fractions."""
+    m, n = len(M), len(c)
+    zero, one = Fraction(0), Fraction(1)
+    # columns: w, then the slacks of M w <= 0, then those of w <= 1, then the right-hand side
+    T = [list(row) + [one if k == i else zero for k in range(m)] + [zero] * (n + 1) for i, row in enumerate(M)]
+    T += [[one if k == j else zero for k in range(n)] + [zero] * m + [one if k == j else zero for k in range(n)] + [one]
+          for j in range(n)]
+    basis = list(range(n, 2 * n + m))
+    z = list(c) + [zero] * (m + n + 1)
+    while True:
+        e = next((k for k in range(2 * n + m) if z[k] < 0), None)
+        if e is None:
+            break
+        # every variable is bounded, so some row limits the entering one
+        l = min((i for i in range(m + n) if T[i][e] > 0), key=lambda i: (T[i][-1] / T[i][e], basis[i]))
+        piv = T[l][e]
+        T[l] = [x / piv for x in T[l]]
+        nz = [k for k, x in enumerate(T[l]) if x]
+        for row in T + [z]:
+            f = row[e]
+            if f and row is not T[l]:
+                for k in nz:
+                    row[k] -= f * T[l][k]
+        basis[l] = e
+    w = [zero] * n
+    for i, b in enumerate(basis):
+        if b < n:
+            w[b] = T[i][-1]
+    return w
+
+
+def _sink_cluster(M):
+    """Species zero at rest: reactants of positive weight in reactions that lower a weight no
+    reaction raises. The weights solve an LP over Q, the stoichiometry taken exactly."""
     n_f, n_s = M.shape
     if n_f == 0 or n_s == 0:
         return []
-    c = M.sum(axis=0)
-    res = linprog(c, A_ub=M, b_ub=np.zeros(n_f), bounds=[(0, Mbig)] * n_s, method="highs")
-    if res.status == 0 and res.fun >= -eps:
-        return []
-    for i in range(n_s):
-        bounds = [(0, Mbig)] * n_s
-        bounds[i] = (1, 1)
-        res = linprog(c, A_ub=M, b_ub=np.zeros(n_f), bounds=bounds, method="highs")
-        if res.status == 0 and res.fun < -eps:
-            return [j for j in range(n_s) if res.x[j] > eps]
-    return []
+    Mq = [[Fraction(float(a)) for a in row] for row in M]
+    w = _exact_lp(Mq, [sum(row[j] for row in Mq) for j in range(n_s)])
+    flux = [sum(a * x for a, x in zip(row, w)) for row in Mq]
+    drained = [i for i, f in enumerate(flux) if f < 0]
+    return [j for j in range(n_s) if w[j] > 0 and any(Mq[i][j] < 0 for i in drained)]
 
 
 def equil_zero_states(smatrix, species, rates, forcings):

@@ -30,3 +30,13 @@ def test_detection(path):
 @pytest.mark.parametrize("path", cases(RED))
 def test_reduction(path):
     assert run_reduction(path) == []
+
+
+def test_a_direction_closed_or_a_rank_proven_beyond_the_reference_is_better():
+    from golden_util import compare
+    open_ = {"type": "general", "support": ["k"], "explicit": False}
+    ref = {"rank": 1, "dim": 2, "identifiable": False, "symmetries": [open_]}
+    closed = dict(open_, explicit=True, generator={"k": "k"})
+    py = {"rank": 1, "dim": 2, "identifiable": False, "symmetries": [closed], "info": {"rank_proven": 1}}
+    assert compare(py, ref) == ["BETTER: closed by symident only", "BETTER: rank proven by symident only"]
+    assert compare(dict(py, rank=2), ref)[0] == "rank: 2 != 1"

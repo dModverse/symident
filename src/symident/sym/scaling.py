@@ -5,6 +5,7 @@ import math
 import sympy as spy
 
 from .. import state
+from ..errors import SYMPY_FAILS, InapplicableError, sympy_fail
 from .charts import _exp_atom, _hyp_to_exp
 from .linalg import exact_nullspace
 from .parse import _as_list, _clean, _make_local_parse, _read_equations
@@ -30,7 +31,7 @@ def _poly_monomials(expr, zvars):
                 if k in idx:
                     a[idx[k]] = spy.Rational(v)
                 elif k.free_symbols & zset:
-                    raise ValueError('not a monomial in the coordinates: %s' % t)
+                    raise InapplicableError('not a monomial in the coordinates: %s' % t)
             out[tuple(a)] = None
         return list(out)
     p, q = spy.fraction(spy.together(spy.sympify(expr)))
@@ -92,14 +93,16 @@ def _scaling_rows(diff_equations, obs_functions, m, zvars, inter_offset, logs=Fa
     for g in obs_functions:
         try:
             pmon, qmon = _poly_monomials(g, zvars)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             skipped += 1
             continue
         exprs.append((pmon, qmon, [0] * nz))
     for i in eq_new:
         try:
             pmon, qmon = _poly_monomials(eq_split[i], zvars)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             skipped += 1
             continue
         tvec = [0] * nz
@@ -351,6 +354,7 @@ def scaling_symmetries(all_variables, diff_equations, obs_functions, m, params,
         'count': len(non_id),
         'non_identifiable': non_id,
         'coordinates': znames,
+        'skipped': skipped,
     }
 
 
@@ -471,11 +475,13 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
     else:
         non_id = _scaling_nonid(gens, znames, nz)
     return {'method': 'scaling', 'count': len(non_id), 'non_identifiable': non_id,
-            'coordinates': znames}
+            'coordinates': znames, 'skipped': skipped}
 
 
-def scaling_symmetries_single(model, observation, inputs=None, fixed=None, parameters=None):
-    """Scaling symmetries of one condition from the integer kernel of its exponent rows."""
+def scaling_symmetries_single(model, observation, inputs=None, fixed=None, parameters=None,
+                              verbose=False):
+    """Scaling symmetries of one condition from the integer kernel of its exponent rows;
+    `verbose` prints them."""
     model = _as_list(model)
     observation = _as_list(observation)
     input_names = _as_list(inputs)
@@ -499,7 +505,7 @@ def scaling_symmetries_single(model, observation, inputs=None, fixed=None, param
     diff_equations = [diff_equations[i] for i in keep]
     all_variables = list(variables) + list(input_syms) + list(params)
     return scaling_symmetries(all_variables, diff_equations, obs_functions, len(variables), params,
-                             fixed=fixed_syms)
+                             fixed=fixed_syms, verbose=verbose)
 
 
 def _read_observation(observation, variables, parameters, parse):

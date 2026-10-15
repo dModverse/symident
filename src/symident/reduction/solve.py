@@ -7,6 +7,7 @@ import numpy as np
 import sympy as spy
 
 from .. import state
+from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import Pool
 from ..rexpr import sym_sort
 from .expr import free_syms, red_locals, red_sympify, tri_solve
@@ -54,13 +55,15 @@ def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_p
     loc = red_locals(list(b["invariants"]) + b["support"] + list(pins) + list(pins.values()))
     try:
         Ies = [red_sympify(iv.replace("^", "**"), loc) for iv in b["invariants"]]
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return out
     Ies2 = []
     for e in Ies:
         try:
             Ies2.append(spy.powsimp(spy.cancel(spy.together(e)), combine="exp"))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             Ies2.append(e)
     Ies = Ies2
     inv_n = _q_names(len(Ies), coords, inv_start)
@@ -69,7 +72,8 @@ def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_p
         try:
             pp = spy.Poly(p, spy.Symbol(v))
             return sorted({int(m[0]) for m in pp.monoms()})
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return None
     pos = positive_set()
     adm = []
@@ -118,7 +122,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
     eqs = [Ies[l] - spy.Symbol(tmp_n[l]) for l in range(len(Ies))]
     try:
         sol_carr = [_str_keys(d) for d in spy.solve(eqs, [spy.Symbol(v) for v in carriers], dict=True)]
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         sol_carr = None
     gauge_all = [v for v in b["support"] if v not in carriers]
     pos = positive_set()
@@ -258,7 +263,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
             for cb in carr_br:
                 try:
                     sub = [spy.together(e.subs(cb["subs"])) for e in sec_eqs]
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     continue
                 for gb in tri_solve(sub, gauge0):
                     if len(gb) < len(gauge0):
@@ -275,12 +281,14 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
             def vanishes(e):
                 try:
                     return spy.simplify(e.subs(pairs)).is_zero is True
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     return None
             for e in eqs + sec_eqs:
                 try:
                     fr = spy.fraction(spy.together(e))
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     return False
                 if vanishes(fr[1]) is not False or vanishes(fr[0]) is not True:
                     return False
@@ -327,7 +335,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             e = pos_form(sh["es"][v])
                             if e is None:
                                 if red_diag:
-                                    print(f"[reddiag]   {v} = {sh['es'][v]} not certified")
+                                    print(f"[reddiag]   {v} = {sh['es'][v]} not proven")
                                 ok_br = False
                                 break
                             partial = True
@@ -352,7 +360,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             a_ = str(r[0]).replace("**", "^")
                             bq = str(r[1]).replace("**", "^")
                             secs.append(f"{bq} = 1" if a_ == "1" else f"{a_} = {bq}")
-                        except Exception:
+                        except SYMPY_FAILS as exc:
+                            sympy_fail(exc)
                             secs.append(f"{pr[0]} = {pr[1]}")
                     cand["section"] = secs + [f"{v} = {pins[v]}" for v in pinned1]
                     cand["root_note"] = ("a solved entry contains a square root; the branch is the "
@@ -461,7 +470,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
     if best is not None:
         return best
     if time_up():
-        out["reason"] = "the chart search stopped at reduce(timeout=)"
+        out["reason"] = "the chart search stopped at reduce(work_cap=) or reduce(timeout=)"
         return out
     tried = ""
     if any("exp(" in s for s in b["invariants"]):

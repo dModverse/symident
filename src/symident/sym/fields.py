@@ -1,14 +1,14 @@
 """Invariant distributions: the field certificate of the rank and static subsystems."""
 
 import functools
-import random
 import sys
 from fractions import Fraction
 
 import numpy as np
 import sympy as spy
 
-from .. import state
+from .. import session, state
+from ..errors import SYMPY_FAILS, InapplicableError, sympy_fail
 from .parse import _as_list, _clean, _make_local_parse
 
 _LIFT_CACHE = {}
@@ -41,7 +41,7 @@ class _DistCheck:
             self.fns[key] = fn
         try:
             v = fn(*vals)
-        except ZeroDivisionError:
+        except (ZeroDivisionError, OverflowError, ValueError):
             return None
         if isinstance(v, int):
             return v % p
@@ -103,7 +103,7 @@ class _DualMod:
                                                        self.p), 0, self.p)
         if isinstance(o, int):
             return _DualMod(o, 0, self.p)
-        raise TypeError('unsupported operand')
+        raise InapplicableError('unsupported operand')
 
     def __add__(self, o):
         o = self._c(o)
@@ -142,7 +142,7 @@ class _DualMod:
         if isinstance(n, Fraction) and n.denominator == 1:
             n = n.numerator
         if not isinstance(n, int):
-            raise TypeError('non-integer power')
+            raise InapplicableError('non-integer power')
         if n < 0:
             return _DualMod(1, 0, self.p) / (self ** (-n))
         if n == 0:
@@ -154,7 +154,7 @@ class _DualMod:
         return self
 
 
-def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
+def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None):
     """Certificate that every direction of `lifts` lies in the kernel of all orders.
 
     `regimes`: list of {'f': ["X = rhs"], 'g': ["y = h"]}; `gens[r]`: fields of regime r,
@@ -164,8 +164,12 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
     consecutive segments in chain order, {'from', 'to', 'ev': [{var, method, value}],
     'lift'}. Per chain the fields that the directions reach are closed under the
     brackets with each regime's field and propagated through the joins; (A) and (B) are
-    checked on them. Returns {'ok': bool, 'why': str}."""
+    checked on them. The lifts are residues modulo `p`; the checks at random points run
+    modulo `q`, `p` by default. Returns {'ok': bool, 'why': str}, with `q` also 'bound',
+    the chance that a wrong certificate passes (distribution_bound)."""
     p, npts = int(p), int(npts)
+    q = p if q is None else int(q)
+    mod = p
     lines = []
     for rg in regimes:
         lines += list(_as_list(rg['f'])) + list(_as_list(rg['g']))
@@ -175,7 +179,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
     for ev in events:
         lines += ['_ = %s' % e['value'] for e in _as_list(ev['ev'])]
     ck = _DistCheck(lines)
-    rng = random.Random(seed)
+    rng = session.current().rng("distribution", seed)
     states = []
     for rg in regimes:
         for l in _as_list(rg['f']):
@@ -224,7 +228,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
     def comp(field, nm):
         return field.get(nm, zero)
 
-    # regimes share most right-hand sides, so the partials are memoised per expression
+    # regimes share most right-hand sides, so the partials are memoized per expression
     dcache = {}
 
     def dpart(e, s):
@@ -241,7 +245,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
     def vec(exprs, vals):
         out = []
         for e in exprs:
-            v = ck.value(e, sym_list, vals, p, skey='vd')
+            v = ck.value(e, sym_list, vals, mod, skey='vd')
             if v is None:
                 return None
             out.append(v)
@@ -254,14 +258,14 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
         for nm, e in x.items():
             if nm not in pos_of or e == zero:
                 continue
-            v = ck.value(e, sym_list, vals, p, skey='vd')
+            v = ck.value(e, sym_list, vals, mod, skey='vd')
             if v is None:
                 return None
             out[pos_of[nm]] = v
         return out
 
     def rand_point():
-        return [Fraction(rng.randrange(2, p - 1)) for _ in coords]
+        return [Fraction(rng.randrange(2, mod - 1)) for _ in coords]
 
     bracket_cache = {}
 
@@ -286,7 +290,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
         B = fields_at(r, vals)
         if B is None:
             return None
-        c = _span_coeffs(B, v, p)
+        c = _span_coeffs(B, v, mod)
         if c is None:
             return None
         nx = len(Xm[r])
@@ -312,22 +316,23 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
 
     def along(key, exprs, vals, dirv):
         """Values and derivatives of exprs at vals along dirv (residues), or None."""
-        args = [_DualMod(int(v.numerator) % p * pow(int(v.denominator) % p, p - 2, p),
-                         d, p) for v, d in zip(vals, dirv)]
+        args = [_DualMod(int(v.numerator) % mod * pow(int(v.denominator) % mod, mod - 2, mod),
+                         d, mod) for v, d in zip(vals, dirv)]
         try:
             out = lam(key, exprs)(*args)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return None
         res = []
         for o in out:
             if isinstance(o, _DualMod):
                 res.append((o.a, o.b))
             elif isinstance(o, Fraction):
-                if o.denominator % p == 0:
+                if o.denominator % mod == 0:
                     return None
-                res.append((o.numerator % p * pow(o.denominator % p, p - 2, p), 0))
+                res.append((o.numerator % mod * pow(o.denominator % mod, mod - 2, mod), 0))
             elif isinstance(o, int):
-                res.append((o % p, 0))
+                res.append((o % mod, 0))
             else:
                 return None
         return res
@@ -361,7 +366,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
             e = F[r].get(states[k], zero)
             if not supp & {str(t) for t in e.free_symbols}:
                 continue
-            v = ck.value(deriv_dir(e, X), sym_list, vals, p, skey='vd')
+            v = ck.value(deriv_dir(e, X), sym_list, vals, mod, skey='vd')
             if v is None:
                 return None
             df[k] = v
@@ -371,10 +376,10 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
             cx = comp(X, nm)
             dx = 0
             if cx != zero:
-                dx = ck.value(deriv_dir(cx, Fr), sym_list, vals, p, skey='vd')
+                dx = ck.value(deriv_dir(cx, Fr), sym_list, vals, mod, skey='vd')
                 if dx is None:
                     return None
-            out.append(((df[k] if k < n_s else 0) - dx) % p)
+            out.append(((df[k] if k < n_s else 0) - dx) % mod)
         return out
 
     def close(r, S):
@@ -410,22 +415,23 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
         xd = dict(zip(coords, x))
         for e in ev_list:
             ve = ck.expr(e['value'])
-            v = ck.value(ve, sym_list, vals, p, skey='vd')
+            v = ck.value(ve, sym_list, vals, mod, skey='vd')
             if v is None:
                 return None, None
             dv = 0
             for s_ in ve.free_symbols:
-                d = ck.value(spy.diff(ve, s_), sym_list, vals, p, skey='vd')
+                d = ck.value(spy.diff(ve, s_), sym_list, vals, mod, skey='vd')
                 if d is None:
                     return None, None
-                dv = (dv + d * x[coords.index(str(s_))]) % p if str(s_) in coords else dv
-            s0 = int(val_of[e['var']]) % p
-            img[e['var']] = Fraction({'replace': v, 'add': (s0 + v) % p,
-                                      'multiply': s0 * v % p}[e['method']])
-            xd[e['var']] = {'replace': dv, 'add': (xd[e['var']] + dv) % p,
-                            'multiply': (xd[e['var']] * v + s0 * dv) % p}[e['method']]
+                dv = (dv + d * x[coords.index(str(s_))]) % mod if str(s_) in coords else dv
+            s0 = int(val_of[e['var']]) % mod
+            img[e['var']] = Fraction({'replace': v, 'add': (s0 + v) % mod,
+                                      'multiply': s0 * v % mod}[e['method']])
+            xd[e['var']] = {'replace': dv, 'add': (xd[e['var']] + dv) % mod,
+                            'multiply': (xd[e['var']] * v + s0 * dv) % mod}[e['method']]
         return [xd[nm] for nm in coords], [img[nm] for nm in coords]
 
+    visits, crossed = [], []
     joins_of = {}
     for ev in events:
         if ev.get('lift') is not None:
@@ -436,6 +442,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
         pt = {str(k): int(v) for k, v in dict(lf['point']).items()}
         vals0 = [Fraction(pt.get(nm, 0)) for nm in coords]
         taus = [ck.expr(t) for t in _as_list(lf.get('times', []))]
+        mod = p
         vecs = [{str(k): int(x) % p for k, x in dict(v).items()}
                 for v in _as_list(lf['vectors'])]
         # (D) the lifted directions in the span at the start, and the fields they reach
@@ -446,13 +453,15 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
                 return {'ok': False, 'why': 'a kernel direction is not in the span of the fields'}
             S |= sup
             for tau in taus:
-                dv = [ck.value(spy.diff(tau, s_), sym_list, vals0, p, skey='vd') for s_ in tau.free_symbols]
+                dv = [ck.value(spy.diff(tau, s_), sym_list, vals0, mod, skey='vd') for s_ in tau.free_symbols]
                 if any(x is None for x in dv) or sum(
-                        x * vd.get(str(sy), 0) for x, sy in zip(dv, tau.free_symbols)) % p:
+                        x * vd.get(str(sy), 0) for x, sy in zip(dv, tau.free_symbols)) % mod:
                     return {'ok': False, 'why': 'a kernel direction moves an event time'}
+        mod = q
         S, why = close(r, S)
         if S is None:
             return {'ok': False, 'why': why}
+        visits.append((r, frozenset(S)))
         us = [[vd.get(nm, 0) if nm in free else 0 for nm in coords] for vd in vecs]
         # (C) the joins of the chain in order
         for ev in joins_of.get(li, []):
@@ -472,11 +481,84 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1):
                     if sup is None:
                         return {'ok': False, 'why': 'an event leaves the span of the fields'}
                     S2 |= sup
+            crossed.append((r, r2, evs, frozenset(S), us))
             S, why = close(r2, S2)
             if S is None:
                 return {'ok': False, 'why': why}
+            visits.append((r2, frozenset(S)))
             r = r2
-    return {'ok': True, 'why': ''}
+    if q == p:
+        return {'ok': True, 'why': ''}
+    rows = {'F': F, 'H': H, 'X': Xm, 'units': len(free), 'sym': dict(zip(coords, sym_list)),
+            'expr': ck.expr, 'deriv': deriv_dir, 'bracket': bracket}
+    return {'ok': True, 'why': '', 'bound': distribution_bound(rows, visits, crossed, q, npts)}
+
+
+# operations of the expressions of one check beyond which no degree bound is taken
+_BOUND_OPS = 5000
+
+
+def distribution_bound(rows, visits, crossed, q, npts):
+    """{"degree", "points", "prime", "probability"} of the checks of verify_distribution, or
+    {"applies": False, "why"} where an expression is not rational.
+
+    A check passes wrongly only where a nonzero minor of the span rows with the tested row
+    vanishes, a polynomial of degree at most the sum of the row degrees once each row is
+    cleared of its denominator (Schwartz, Zippel); each identity and each decomposition is
+    tested at `npts` independent points of [2, q-2]."""
+    from ..detection.bound import _rational, _vector_degree
+    zero = spy.Integer(0)
+    sym = rows['sym']
+
+    def deg(exprs):
+        exprs = [spy.sympify(e) for e in exprs]
+        exprs = [e for e in exprs if e != zero]
+        if not exprs:
+            return 0
+        if sum(spy.count_ops(e) for e in exprs) > _BOUND_OPS:
+            raise InapplicableError('an expression is too large for a degree bound')
+        if not all(_rational(e) for e in exprs):
+            raise InapplicableError('an expression is not rational')
+        return _vector_degree(exprs)
+
+    def image(evs, x):
+        """D E applied to the field x and E itself, symbolically, as image() of the check."""
+        img, xd = dict(sym), dict(x)
+        for e in evs:
+            ve = rows['expr'](e['value'])
+            dv = sum((spy.diff(ve, s_) * x.get(str(s_), zero) for s_ in ve.free_symbols), zero)
+            s0, var = sym[e['var']], e['var']
+            img[var] = {'replace': ve, 'add': s0 + ve, 'multiply': s0 * ve}[e['method']]
+            xd[var] = {'replace': dv, 'add': xd.get(var, zero) + dv,
+                       'multiply': xd.get(var, zero) * ve + s0 * dv}[e['method']]
+        return xd, {sym[k]: v for k, v in img.items()}
+
+    try:
+        D, checks = 0, 0
+        for r, S in visits:
+            span = sum(deg(X.values()) for X in rows['X'][r])
+            for j in S:
+                X = rows['X'][r][j]
+                tests = [rows['bracket'](r, j)] + [[rows['deriv'](h, X)] for h in rows['H'][r]]
+                D = max([D] + [span + deg(t) for t in tests])
+                checks += len(tests)
+        for r, r2, evs, S, us in crossed:
+            items = [rows['X'][r][j] for j in S]
+            items += [{nm: spy.Integer(int(c)) for nm, c in zip(sym, u) if c} for u in us]
+            sub = image(evs, {})[1]
+            span = sum(deg([v.xreplace(sub) for v in X.values()]) for X in rows['X'][r2])
+            for x in items:
+                D = max(D, span + deg(image(evs, x)[0].values()))
+                checks += 1
+    except InapplicableError as exc:
+        return {'applies': False, 'why': str(exc)}
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return {'applies': False, 'why': 'no degree bound of an expression'}
+    # every identity and every decomposition that picks the fields reached
+    m = 2 * checks
+    return {'degree': int(D), 'points': int(npts), 'prime': int(q),
+            'probability': float(min(1.0, m * min(1.0, D / (q - 3)) ** npts))}
 
 
 def static_fields_symbolic(conds, param_names, forcings=None):

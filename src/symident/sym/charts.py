@@ -2,7 +2,8 @@
 
 import sympy as spy
 
-from .parse import _make_local_parse, _make_parse
+from ..errors import InapplicableError
+from .parse import _make_local_parse, _make_parse, to_r
 
 _HYPERBOLIC = (spy.sinh, spy.cosh, spy.tanh, spy.coth, spy.sech, spy.csch)
 
@@ -168,13 +169,13 @@ def sign_chart(f, gs, positive):
     def one(k, rhs):
         if any(t in rhs for t in ('max(', 'min(', 'pmax(', 'pmin(', 'ifelse(',
                                   'Heaviside(')):
-            raise ValueError('%s: max, min and steps are not analytic; analyse each '
+            raise InapplicableError('%s: max, min and steps are not analytic; analyze each '
                              'regime on its own, e.g. through `conditions`' % k)
         e = parse(rhs).xreplace(to_pos)
         if e.atoms(spy.Abs, spy.sign):
-            raise ValueError('%s: the sign inside abs() or sign() is not decided by '
+            raise InapplicableError('%s: the sign inside abs() or sign() is not decided by '
                              'the coordinates declared `positive`' % k)
-        return str(e.xreplace(back))
+        return to_r(e.xreplace(back))
     try:
         Fn = {k: one(k, str(v)) for k, v in fl.items()}
         Gn = [{k: one(k, str(v)) for k, v in g.items()} for g in gl]
@@ -194,7 +195,7 @@ def _log_numbers(e, consts):
             continue
         n = spy.nsimplify(n)
         if not (n.is_Rational and n > 0):
-            raise ValueError('log(%s) of a number that is not a positive rational' % n)
+            raise InapplicableError('log(%s) of a number that is not a positive rational' % n)
         out = spy.Integer(0)
         for q, sgn in ((n.p, 1), (n.q, -1)):
             for pr, ex in spy.factorint(q).items():
@@ -260,7 +261,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
     def claim(v, a, b):
         if v in chart and (spy.simplify(chart[v][0] - a) != 0 or
                            spy.simplify(chart[v][1] - b) != 0):
-            raise ValueError('%s enters two different logarithms, which no single '
+            raise InapplicableError('%s enters two different logarithms, which no single '
                              'chart makes rational' % v)
         chart[v] = (a, b)
 
@@ -414,7 +415,7 @@ def log_arg_event(var, value, method, maps):
         le = spy.log(e)
         kind = 'add'
     else:
-        return {'why': 'a %s event on %s, which is analysed as %s, is not supported'
+        return {'why': 'a %s event on %s, which is analyzed as %s, is not supported'
                 % (method, var, 'log(%s)' % (a + b * parse(str(var))))}
     le = spy.powsimp(spy.expand_log(le, force=True))
     if any(not at.args[0].is_number for at in le.atoms(spy.log)):
@@ -533,7 +534,7 @@ def log_chart_generators(gens, coords):
         h = {k: spy.cancel(v) for k, v in h.items()}
         # a translation of theta is X*log(b) d/dX: the constant factor goes
         if any(v.atoms(spy.log) for v in h.values()):
-            for b in {b for _, b in lp.values()}:
+            for b in sorted({b for _, b in lp.values()}, key=str):
                 h2 = {k: spy.cancel(v / spy.log(b)) for k, v in h.items()}
                 if not any(v.atoms(spy.log) for v in h2.values()):
                     h = h2

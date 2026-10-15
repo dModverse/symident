@@ -1,4 +1,4 @@
-"""Hybrid models: every regime that the declared signs do not exclude, analysed together.
+"""Hybrid models: every regime that the declared signs do not exclude, analyzed together.
 
 A direction is non-identifiable when it is an exact symmetry of every such regime, maps
 every switching surface to itself and is compatible with the events and the initial
@@ -8,21 +8,21 @@ rank from below; exact symmetries verified symbolically bound it from above. The
 is returned only when the two bounds meet."""
 
 import itertools
-import random
 import re
 import time
 
 import numpy as np
 import sympy as spy
 
-from .. import state
+from .. import session, state
+from ..gfp import PRIMES
 from ..rexpr import is_number, sym_sort
 from ..sym.scaling import scaling_symmetries_multi
-from ..sym.switching import TIME, comparison, surface_ratios, to_str
+from ..sym.switching import BACK, CONSTS, TIME, comparison, surface_ratios, to_str
+from ..sym.taylor import NoSeriesError, output_series
 from .conditions import Grid, as_events, num_str
 from .finalize import finalize
 
-_RNG = random.Random(20261008)
 _MAX_REGIMES = 4096
 _VISIBLE, _INVISIBLE, _UNDECIDED = "visible", "invisible", "undecided"
 
@@ -34,11 +34,12 @@ def _sym(x):
 def _parse(text):
     """A model string (R syntax) as a sympy expression."""
     from ..sym.switching import _plain
-    return _plain(str(text))
+    return _plain(str(text)).xreplace(CONSTS)
 
 
-def _rational_point(syms):
-    return {s: spy.Rational(_RNG.randint(2, 89), _RNG.randint(2, 89)) for s in syms}
+def _rational_point(syms, *key):
+    rng = session.current().rng("hybrid.point", *key)
+    return {s: spy.Rational(rng.randint(2, 89), rng.randint(2, 89)) for s in sorted(syms, key=str)}
 
 
 def _value(e, pt):
@@ -56,8 +57,8 @@ def is_zero(e):
     e = spy.sympify(e)
     if e == 0:
         return True
-    for _ in range(2):
-        v = _value(e, _rational_point(e.free_symbols))
+    for i in range(2):
+        v = _value(e, _rational_point(e.free_symbols, str(e), i))
         if v is not None and v != 0:
             return False
     try:
@@ -136,6 +137,14 @@ class _Setup:
         self.t0e = spy.Rational(num_str(self.t0))
         self.dyn = [x for x in self.f if x not in self.inputs]
         self._conditions()
+        exprs = list(self.f.values()) + [e for x in hy.g for e in x.values()] + list(self.sw.funcs)
+        for cd in self.conds:
+            exprs += [e for e in cd.ic.values() if e is not None] + list(cd.obs.values())
+            exprs += [e[k] for e in cd.events for k in ("time", "value")]
+            exprs += list(cd.sub_t.values()) + list(cd.sub_g.values())
+        used = set().union(*[spy.sympify(e).free_symbols for e in exprs])
+        self.fixed += [str(s) for s in CONSTS.values() if s in used and str(s) not in self.fixed]
+        self.kw = dict(kw, fixed=list(self.fixed))
         self.regimes, self.excluded = self._regimes()
         self.roots = {r["surface"] for r in hy.roots}
         decl = self._declarations(regimes)
@@ -285,6 +294,13 @@ class _Setup:
             self._check_start(cd, picks[0])
         cd.surfaces = [j for j in range(len(self.sw.funcs))
                        if {r[j] for r in cd.regimes} == {1, -1} or j in self.roots]
+        # no trajectory crosses a surface in the parameters alone
+        moving = {_sym(x) for x in self.f} | {TIME}
+        for j in cd.surfaces:
+            if not self.gfun(cd, j).free_symbols & moving:
+                raise HybridError(f"condition {cd.name}: the switch on {self.hy.surface(j)} depends on "
+                                  f"parameters only, so no trajectory crosses it; name its side with "
+                                  f"`regimes`, for instance regimes=[{self.hy.text(j, 1)!r}]")
 
     def _check_start(self, cd, pick):
         """The declared start against the initial values: a sign of g at the start that the
@@ -348,28 +364,40 @@ class _Setup:
                     all(is_zero(fa[x] - fb[x]) for x in reach):
                 verdicts.append(_INVISIBLE)
                 continue
-            seen = False
-            if sol is not None:
-                rep = {sol[0]: sol[1]}
-                for y in ha:
-                    ea, eb = ha[y], hb[y]
-                    for _ in range(len(self.dyn) + 2):
-                        v = _value((ea - eb).xreplace(rep), _rational_point(
-                            (ea - eb).xreplace(rep).free_symbols))
-                        if v is not None and v != 0:
-                            seen = True
-                            break
-                        ea, eb = self.lie(fa, ea), self.lie(fb, eb)
-                    if seen:
-                        break
+            seen = sol is not None and self._jets_differ(fa, fb, ha, hb, sol)
             verdicts.append(_VISIBLE if seen else _UNDECIDED)
         if _VISIBLE in verdicts:
             return _VISIBLE
         return _INVISIBLE if verdicts and all(v == _INVISIBLE for v in verdicts) else _UNDECIDED
 
-    def lie(self, f, e):
-        """The Lie derivative of e along the right-hand sides f."""
-        return sum((spy.diff(e, _sym(x)) * v for x, v in f.items()), spy.Integer(0))
+    def _jets_differ(self, fa, fb, ha, hb, sol):
+        """Whether the observable jets differ between the regimes at a seeded point of the surface, modulo a prime."""
+        syms = set().union(*[e.free_symbols for m in (fa, fb, ha, hb) for e in m.values()])
+        # a surface symbol that no expression contains does not enter the key
+        key = tuple(tuple(sorted((str(k), str(v)) for k, v in m.items())) for m in (fa, fb, ha, hb)) + \
+            ((str(sol[0]), str(sol[1])) if sol[0] in syms else ())
+        memo = self.__dict__.setdefault("_jet_memo", {})
+        if key in memo:
+            return memo[key]
+        ys = sorted(ha)
+        syms |= {_sym(x) for x in fa} | {sol[0]} | spy.sympify(sol[1]).free_symbols
+        rng = session.current().rng("hybrid.jets", *key)
+        p = PRIMES[0]
+        seen = False
+        for _ in range(3):
+            pt = {x: rng.randrange(2, p) for x in sorted(syms, key=str)}
+            try:
+                pt[sol[0]] = output_series({}, [sol[1]], pt, 1, p)[0][0]
+                va = output_series({_sym(k): v for k, v in fa.items()}, [ha[y] for y in ys], pt,
+                                   len(self.dyn) + 2, p)
+                vb = output_series({_sym(k): v for k, v in fb.items()}, [hb[y] for y in ys], pt,
+                                   len(self.dyn) + 2, p)
+            except NoSeriesError:
+                continue
+            seen = any(x != y for A, B in zip(va, vb) for x, y in zip(A, B))
+            break
+        memo[key] = seen
+        return seen
 
     def text(self, sides):
         """A regime as the list of the sides of the surfaces."""
@@ -428,7 +456,7 @@ def _start_inputs(st, cd):
 def _copies(st):
     """The copies whose observability rows every direction of the rule satisfies: each
     regime from the start of each condition, from a generic point of each visible surface
-    that a state parametrises and, where a switch is not visible, from a generic point;
+    that a state parametrizes and, where a switch is not visible, from a generic point;
     each switched into every other regime; the times of the visible time switches as
     observables. Returns the copies and the fresh coordinates."""
     names = _Names(_model_symbols(st))
@@ -875,8 +903,8 @@ def _rank_at_point(rows):
     for r in rows:
         for e in r:
             syms |= spy.sympify(e).free_symbols
-    for _ in range(4):
-        pt = _rational_point(syms)
+    for i in range(4):
+        pt = _rational_point(syms, str(rows), i)
         vals = [[_value(e, pt) for e in r] for r in rows]
         if any(v is None for r in vals for v in r):
             continue
@@ -943,6 +971,7 @@ def _kernel_candidates(st, res, fresh):
         if syms & set(fresh):
             continue
         theta = {k: v for k, v in comp.items() if k not in st.f}
+        lift = _parsed(d.get("state_components") or {})
         states = {}
         for cd in st.conds:
             part = {}
@@ -952,9 +981,20 @@ def _kernel_candidates(st, res, fresh):
                     part[x] = comp[x]
                 elif v is not None and v.is_Symbol and str(v) in comp:
                     part[x] = comp[str(v)].xreplace({v: _sym(x)})
+                elif x in lift:
+                    part[x] = lift[x]
             states[cd.index] = part
         out.append(_Field(theta, states, d.get("type", "general"), origin="stacked analysis"))
     return out
+
+
+def _parsed(comp):
+    """String components as SymPy expressions; empty where one does not parse."""
+    try:
+        return {k: spy.sympify(str(v).replace("^", "**"), locals={n: spy.Symbol(n) for n in _names_in(v)})
+                for k, v in comp.items()}
+    except (spy.SympifyError, TypeError):
+        return {}
 
 
 def _unit_candidates(st, coords):
@@ -1002,12 +1042,16 @@ def _entry(F, comps, coords, reconstruct):
     if F.kind == "scaling" and F.weights is not None:
         w = {z: str(F.weights.get(z, 0)) for z in support}
         return {"support": support, "vector": w, "type": "scaling", "closed_form": True,
-                "certified": True, "route": "hybrid symmetry"}
-    vec = {z: to_str(spy.factor(c)) for z, c in zip(coords, comps) if z in support}
+                "certified": True, "exact": True, "route": "hybrid symmetry"}
+    w = {z: spy.cancel(c / _sym(z)) for z, c in zip(coords, comps) if z in support}
+    if w and all(r.is_Integer for r in w.values()):
+        return {"support": support, "vector": {z: str(r) for z, r in w.items()}, "type": "scaling",
+                "closed_form": True, "certified": True, "exact": True, "route": "hybrid symmetry"}
+    vec = {z: to_str(spy.factor(c).xreplace(BACK)) for z, c in zip(coords, comps) if z in support}
     if not reconstruct:
         return {"support": support, "type": "general", "closed_form": False, "certified": True}
     return {"support": support, "vector": vec, "type": "general", "closed_form": True,
-            "certified": True, "route": "hybrid symmetry"}
+            "certified": True, "exact": True, "route": "hybrid symmetry"}
 
 
 
@@ -1074,26 +1118,53 @@ def hybrid_detection(hy, kw, regimes=None):
         cands = _scaling_candidates(st) + _kernel_candidates(st, res, fresh) + \
             _unit_candidates(st, coords)
         chosen, why = _certify(st, cands, coords, need)
-    if len(chosen) < need:
-        msg = (f"the analysis of the switches is not certified: the stacked regimes leave "
-               f"{need} direction(s) open, and {len(chosen)} were proven directions of the rule")
-        if why:
-            msg += "; rejected candidates: " + "; ".join(dict.fromkeys(why))
-        raise HybridError(msg)
-    dim = len(coords)
+    uncertified = None
     syms = [_entry(F, c, coords, bool(kw.get("reconstruct"))) for F, c in chosen]
+    if len(chosen) < need:
+        uncertified = (f"the stacked regimes leave {need} direction(s) open, and {len(chosen)} were proven "
+                       "directions of the rule" + ("; rejected candidates: " + "; ".join(dict.fromkeys(why))
+                                                    if why else ""))
+        syms += _stacked_entries(res, fresh, syms, need - len(chosen), uncertified)
+    dim = len(coords)
     info = res["info"]
+    proven = need if need and uncertified is None else None
     raw = {"rank": dim - need, "dim": dim, "coordinates": coords, "non_identifiable": syms,
-           "rank_proven": need if need else None,
-           "rank_proof": "stacked regimes and exact symmetries of every regime" if need else None,
+           "rank_proven": proven,
+           "rank_proof": "stacked regimes and exact symmetries of every regime" if proven else None,
+           "bound": info.get("bound") if uncertified is not None else None,
            "lie_order_used": info.get("lie_order_used"), "lie_certified": info.get("lie_certified"),
            "lie_block_orders": info.get("lie_block_orders"),
-           "gap_order_used": info.get("gap_order_used"), "conditions": len(st.conds),
+           "gap_order_used": info.get("gap_order_used"), "gap_certified": info.get("gap_certified"),
+           "gap_certificate": info.get("gap_certificate"),
+           "conditions": len(st.conds),
            "segments": info.get("segments")}
     out = finalize(raw, "observability", _settings(st), elapsed=time.monotonic() - t_start,
                    coordinates=coords)
     out["info"]["model_exprs"] = info.get("model_exprs")
-    out["info"]["switching"] = _info(st, {"copies": len(copies)})
+    out["info"]["switching"] = _info(st, {"copies": len(copies), "uncertified": uncertified})
+    return out
+
+
+def _stacked_entries(res, fresh, have, n, why):
+    """Up to `n` directions of the stacked analysis that hold no fresh coordinate and are not among
+    `have`, as verified directions of the switched model; the rest by their support."""
+    sup = {tuple(sorted(d["support"])) for d in have}
+    out = []
+    for d in res.get("symmetries") or []:
+        if len(out) >= n:
+            break
+        support = [z for z in d.get("support") or [] if z not in set(fresh)]
+        if not support or tuple(sorted(support)) in sup:
+            continue
+        sup.add(tuple(sorted(support)))
+        closed = d.get("generator") is not None and len(support) == len(d["support"])
+        e = {"support": support, "type": d.get("type", "general"), "closed_form": closed, "certified": False,
+             "exact": False, "route": "stacked regimes",
+             "proof": f"the rule of the switches is not proven: {why}"}
+        if closed:
+            scal = d.get("type") == "scaling" and d.get("weights")
+            e["vector"] = dict(d["weights"]) if scal else dict(d["generator"])
+        out.append(e)
     return out
 
 
@@ -1108,7 +1179,7 @@ def _scalings_only(st, coords, t_start):
     for F in cands:
         out_syms.append({"support": sym_sort([k for k, v in F.weights.items() if v]),
                          "vector": {k: str(v) for k, v in F.weights.items() if v},
-                         "type": "scaling"})
+                         "type": "scaling", "certified": True, "exact": True})
     raw = {"non_identifiable": out_syms, "coordinates": coords}
     out = finalize(raw, "scaling", _settings(st), elapsed=time.monotonic() - t_start,
                    coordinates=coords)

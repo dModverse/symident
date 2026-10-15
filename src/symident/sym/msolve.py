@@ -6,8 +6,9 @@ import os
 
 import sympy as spy
 
+from .. import session
 from ..install import find_msolve
-from .gfpoly import _dp_coeffs, _dp_subst_rat, _dp_value, _gf_roots
+from .gfpoly import _dp_coeffs, _dp_subst_rat, _dp_value, _gf_roots, note_branch
 
 _MSOLVE_TIMEOUT = 600
 
@@ -87,8 +88,12 @@ def _msolve_points(polys, vars_idx, nv, p):
         fi, fo = os.path.join(td, "in.ms"), os.path.join(td, "out.ms")
         with open(fi, "w") as fh:
             fh.write(", ".join(vs) + "\n" + str(p) + "\n" + ",\n".join(eqs) + "\n")
-        r = subprocess.run([_msolve_binary(), "-f", fi, "-o", fo, "-P", "1", "-t", "1"],
-                           capture_output=True, text=True, timeout=_MSOLVE_TIMEOUT)
+        try:
+            r = subprocess.run([_msolve_binary(), "-f", fi, "-o", fo, "-P", "1", "-t", "1"],
+                               capture_output=True, text=True, timeout=_MSOLVE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            session.note("limits", f"msolve: a resting state was not solved within {_MSOLVE_TIMEOUT:g} s")
+            raise
         txt = ""
         if os.path.exists(fo):
             with open(fo) as fh:
@@ -210,6 +215,7 @@ def _solve_states_msolve(dps, solve_states, p):
     cands = _component_points(rest, nv, p) if rest else iter([{}])
     if isinstance(cands, dict):
         return None, cands
+    first = None
     for cand in itertools.islice(cands, 4096):
         vals = [0] * nv
         for i, v in cand.items():
@@ -226,5 +232,10 @@ def _solve_states_msolve(dps, solve_states, p):
         for i, b, inv in reversed(plan):
             vals[i] = (-_dp_value(b, vals, p)) * inv % p
         if all(vals) and all(_dp_value(d, vals, p) == 0 for d in dps):
-            return {solve_states[i]: spy.Integer(vals[i]) for i in range(nv)}, None
-    return None, {'ok': False, 'why': 'no consistent interior point'}
+            if first is not None and vals != first:
+                note_branch(solve_states)
+                break
+            first = list(vals)
+    if first is None:
+        return None, {'ok': False, 'why': 'no consistent interior point'}
+    return {solve_states[i]: spy.Integer(first[i]) for i in range(nv)}, None

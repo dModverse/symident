@@ -17,7 +17,7 @@ def plural(n, one, many):
 
 
 def _eta(var):
-    return f"η({var})"
+    return f"ξ({var})"
 
 
 def _split_terms(s):
@@ -48,7 +48,7 @@ def _signed_terms(s):
 
 
 def format_generator(gen, indent, width):
-    """Lines of the generator `gen`, one η row per coordinate, wrapped at `width`."""
+    """Lines of the generator `gen`, one ξ row per coordinate, wrapped at `width`."""
     nm = list(gen)
     if not nm:
         return [indent + "0"]
@@ -87,7 +87,7 @@ def generators_lines(res, verbose=False, width=None):
     syms, labels = _labels(res["symmetries"])
     if not syms:
         return []
-    out = ["Generators  X = Σᵢ η(i) ∂ᵢ", ""]
+    out = ["Generators  X = Σᵢ ξ(i) ∂ᵢ", ""]
     lw = max(len(l) for l in labels)
     cur = ""
     for d, lab in zip(syms, labels):
@@ -103,8 +103,22 @@ def generators_lines(res, verbose=False, width=None):
                 out.append(f"{ind}reason: {d['reason']}")
             out.append("")
             continue
-        out.append(lead.rstrip())
+        out.append((lead + (f"({d['level']})" if d.get("level") else "")).rstrip())
         out += format_generator(d.get("display") or d["generator"], ind, width)
+        out.append("")
+    levels = {d.get("level") for d in syms}
+    if "exact" in levels:
+        out += [_wrap("exact = proven over Q.", "", width)]
+    if "verified" in levels:
+        b = (res.get("info") or {}).get("bound")
+        if isinstance(b, dict) and b.get("probability") is not None:
+            sure = f"a wrong closed form passes with probability at most {b['probability']:.1e}"
+        else:
+            sure = "no bound on the chance that a wrong closed form passes" + \
+                (f" ({b['why']})" if isinstance(b, dict) and b.get("why") else "")
+        out += [_wrap("verified = checked at random points modulo a large prime at the orders used, not proven; "
+                      f"{sure}. info['proof'] says why it is not proven.", "", width)]
+    if levels & {"exact", "verified"}:
         out.append("")
     return out
 
@@ -130,9 +144,9 @@ def reduction_hint_lines(res, width=None):
                                           " are scalings: gauge them by holding one coordinate of each "
                                           "fixed, at any value."), "  ", width))
     if gl:
-        out.append(_wrap(", ".join(gl) + (" is not a scaling: reparametrise onto its invariants with "
+        out.append(_wrap(", ".join(gl) + (" is not a scaling: reparametrize onto its invariants with "
                                           "reduce()." if len(gl) == 1 else
-                                          " are not scalings: reparametrise onto their invariants with "
+                                          " are not scalings: reparametrize onto their invariants with "
                                           "reduce()."), "  ", width))
     return out
 
@@ -146,7 +160,20 @@ def result_lines(res, verbose=False, width=None, fixing=False):
         return [f"Result:  structurally locally identifiable (rank {res['rank']} / {res['dim']})"]
     if is_obs:
         out = [f"Result:  rank {res['rank']} / {res['dim']}  |  "
-               f"{plural(n, 'non-identifiable direction', 'non-identifiable directions')}", ""]
+               f"{plural(n, 'non-identifiable direction', 'non-identifiable directions')}"]
+        rs = (res.get("info") or {}).get("rank_status")
+        if isinstance(rs, dict) and rs.get("status") == "verified" and res["info"].get("rank_fields") is not None:
+            out.append(_wrap(f"The rank is verified, not proven: the {rs['why']}" +
+                             (f" (probability of a wrong pass at most {rs['probability']:.1e})."
+                              if rs.get("probability") is not None else "."), "         ", width))
+        elif isinstance(rs, dict) and rs.get("status") == "verified":
+            out.append(_wrap("The rank is verified, not proven: it holds unless a verified closed form is "
+                             "wrong" + (f" (probability at most {rs['probability']:.1e})."
+                                        if rs.get("probability") is not None else "."), "         ", width))
+        elif isinstance(rs, dict) and rs.get("status") == "lower bound":
+            out.append(_wrap(f"The rank is a lower bound ({rs['why']}): there may be fewer "
+                             "non-identifiable directions.", "         ", width))
+        out.append("")
     else:
         out = [f"Result:  {plural(n, 'scaling symmetry', 'scaling symmetries')} (exact integer kernel)", ""]
     out += generators_lines(res, verbose, width)
@@ -171,6 +198,11 @@ def summary_lines(res, verbose=False, width=None):
                     (f", set by condition {drv + 1}" if drv is not None else ""))
     if is_obs and info.get("rank_proven") is not None:
         comp.append(f"rank: proven ({info['rank_proven']} directions, {info.get('rank_proof')})")
+    elif is_obs and info.get("rank_fields") is not None:
+        b = info.get("rank_fields_bound") or {}
+        comp.append(f"rank: verified ({info['rank_fields']} directions, invariant fields at random points" +
+                    (f", probability of a wrong pass at most {b['probability']:.1e})"
+                     if b.get("probability") is not None else ")"))
     elif is_obs and info.get("lie_plateau") is not None:
         if info.get("lie_certified"):
             comp.append("saturation: certified (every segment at the rank bound of its invariant space)")
@@ -196,6 +228,13 @@ def summary_lines(res, verbose=False, width=None):
              plural(len(sw["regimes"]), "regime", "regimes")] +
             ([plural(len(sw["excluded"]), "excluded sign pattern", "excluded sign patterns")]
              if sw.get("excluded") else [])) + " (info['switching'])")
+    for lim in info.get("limits") or []:
+        comp.append(f"stopped: {lim}")
+    if info.get("errors"):
+        comp.append(f"errors: {plural(len(info['errors']), 'exception', 'exceptions')} turned into failed "
+                    "routes (info['errors'])")
+    for b in info.get("branches") or []:
+        comp.append(f"branch: {b}")
     keys = ["reduce_cq", "equilibrate", "reconstruct"] + (["verify", "sym_engine", "degree_cap"] if verbose else [])
     keys = [k for k in keys if s.get(k) is not None] if is_obs else []
     if keys:
@@ -230,20 +269,20 @@ def _pairs(names, vals, width, ind="  "):
 
 
 def partial_labels(x):
-    """Labels of the removed directions whose chart covers only part of the domain."""
+    """Labels of the removed directions whose section covers only part of the domain."""
     return [lab for b in x.get("blocks") or [] if b.get("coverage") == "partial"
             and b.get("status") == "reduced" for lab in b.get("labels") or []]
 
 
 def red_verdict(x, domain="positive orthant"):
-    """One line on how many directions the reduction removed, and where the chart is partial."""
+    """One line on how many directions the reduction removed, and where the section is partial."""
     n_dir = len(x["removed"]) + len(x["remaining"])
     part = partial_labels(x)
     dep = x.get("dependent") or []
     return (f"Reduced {len(x['removed'])} of {n_dir} direction{'' if n_dir == 1 else 's'}" +
             (f"  ({', '.join(x['remaining'])} remaining)" if x["remaining"] else "") +
             (f"; {', '.join(dep)} {'depends' if len(dep) == 1 else 'depend'} on the others" if dep else "") +
-            (f"; the chart of {', '.join(part)} covers only part of the {domain}" if part else "") + ".")
+            (f"; the section of {', '.join(part)} covers only part of the {domain}" if part else "") + ".")
 
 
 def red_chart_lines(x, width, domain="positive orthant"):
@@ -381,12 +420,35 @@ def red_zero_lines(x, width):
     return out
 
 
+def _level_lines(x, width):
+    """Lines on the removed directions that rest on a verified closed form and on failed checks."""
+    out = []
+    ver = [l for b in x.get("blocks") or [] if b.get("generator_level", b.get("level")) == "verified"
+           and b["status"] in ("reduced", "fixed") for l in b["labels"]]
+    if ver:
+        out.append(_wrap(f"The section of {', '.join(ver)} rests on a verified closed form, checked modulo a "
+                         "prime, not proven.", "", width))
+    for b in x.get("blocks") or []:
+        if b.get("assumptions") and b["status"] in ("reduced", "fixed"):
+            out.append(_wrap(f"{{{', '.join(b['labels'])}}} assumes: " + "; ".join(b["assumptions"]) + ".",
+                             "", width))
+    ck = x.get("checks") or {}
+    if ck.get("failed"):
+        out.append(_wrap("Check failed over Q: " + "; ".join(ck["failed"]) + ".", "", width))
+    lp = ck.get("loop")
+    if isinstance(lp, dict) and not lp.get("ok"):
+        out.append(_wrap(f"Closed loop: the reduced model has {plural(lp['directions'], 'direction', 'directions')}, "
+                         f"{lp['expected']} expected (rank {lp['rank']} / {lp['dim']}, {lp['rank_status']}).",
+                         "", width))
+    return out
+
+
 def reduction_lines(x, width=None, detail_call=DETAIL_CALL):
     """Report lines of the reduction result."""
     width = _width(width)
     if not x["removed"] and not x["remaining"]:
         return ["Nothing to reduce."]
-    out = [red_verdict(x)] + red_chart_lines(x, width) + \
+    out = [red_verdict(x)] + _level_lines(x, width) + red_chart_lines(x, width) + \
         red_section_lines(x, width, detail_call=detail_call) + red_zero_lines(x, width)
     for b in x["blocks"]:
         if b["status"] in ("reduced", "fixed"):

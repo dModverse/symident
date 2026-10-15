@@ -7,7 +7,8 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
                     sample_slack=5, probe_retries=8, laurent_deg_num=4, laurent_deg_den=2,
                     laurent_cand_cap=200000, term_cap=60, general_deg_num=4, general_deg_den=3,
                     gap_order_cap=8, minsupport_cand_cap=20000, perprime_cap=120, perprime_min_primes=3,
-                    homotopy=True, timeout=math.inf):
+                    homotopy=True, homotopy_degree=4, timeout=math.inf, seed=0, exact_proof=True,
+                    degree_cap_max=8, exact_work_cap=500000):
     """Saturation and closed-form reconstruction settings.
 
     Parameters
@@ -20,6 +21,9 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
         Coordinates in one entry for the sparse fit; a wider entry is reported by its support.
     degree_cap : int
         Total degree bound of the dense rational fit.
+    degree_cap_max : int
+        Total degree up to which an entry past `degree_cap` is probed along lines, doubling
+        the bound, and fitted at the degree found.
     sample_slack : int
         Samples beyond the minimum of the fit.
     probe_retries : int
@@ -43,9 +47,20 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
     homotopy : bool
         Whether directions still open under a steady state are fitted along parameter lines
         as a last route.
+    homotopy_degree : int
+        Total degree bound of the entries fitted by the homotopy route.
     timeout : float
         Time limit of the reconstruction in seconds; unfinished directions are reported
         by their support.
+    seed : int
+        Seed of the random choices: sample points and the order of trials. The same seed
+        and model give the same result.
+    exact_proof : bool
+        Whether closed forms that no route proved over Q are proven through the fields of
+        each regime; this runs a detection per regime unless the field route already did.
+    exact_work_cap : float
+        Work budget of those detections, regimes times coordinates times tape length; past it
+        the proof is skipped and listed in `info["limits"]`.
 
     Returns
     -------
@@ -56,7 +71,7 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
             and laurent_deg_num >= 1 and laurent_deg_den >= 0 and laurent_cand_cap >= 1
             and general_deg_num >= 1 and general_deg_den >= 1 and gap_order_cap >= 0
             and minsupport_cand_cap >= 1 and perprime_cap >= 1 and perprime_min_primes >= 2
-            and timeout > 0):
+            and homotopy_degree >= 1 and timeout > 0 and degree_cap_max >= 0 and exact_work_cap > 0):
         raise ValueError("reconst_control: invalid setting")
     return {"relevance_cap": int(relevance_cap), "relevance_cap_dir": int(relevance_cap_dir),
             "relevance_cap_sparse": int(relevance_cap_sparse), "degree_cap": int(degree_cap),
@@ -66,5 +81,8 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
             "general_deg_num": int(general_deg_num), "general_deg_den": int(general_deg_den),
             "gap_order_cap": int(gap_order_cap), "minsupport_cand_cap": int(minsupport_cand_cap),
             "perprime_cap": int(perprime_cap), "perprime_min_primes": int(perprime_min_primes),
-            "homotopy": bool(homotopy), "timeout": float(timeout)}
+            "homotopy": bool(homotopy), "homotopy_degree": int(homotopy_degree),
+            "timeout": float(timeout), "seed": int(seed),
+            "exact_proof": bool(exact_proof), "degree_cap_max": int(max(degree_cap, degree_cap_max)),
+            "exact_work_cap": float(exact_work_cap)}
 

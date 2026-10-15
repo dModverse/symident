@@ -1,11 +1,14 @@
 """Parallel maps: threads for kernel calls (the kernel releases the GIL), forked
 processes for Python-heavy tasks such as symbolic steady-state solves."""
 
+import itertools
 import multiprocessing as mp
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
-from . import state
+from . import session, state
+from .errors import swallow
 
 
 def thread_map(fn, xs, n):
@@ -18,36 +21,57 @@ def thread_map(fn, xs, n):
         return list(ex.map(fn, xs))
 
 
-_FN = None
+_JOBS = {}
+_TOKENS = itertools.count()
 
 
-def _call(i):
+def _call(token, i):
+    fn, xs = _JOBS[token]
+    m = session.marks()
     try:
-        return ("ok", _FN(_XS[i]))
+        return ("ok", fn(xs[i]), session.notes_since(m))
     except Exception as e:
-        return ("err", repr(e))
-
-
-_XS = None
+        return ("err", repr(e), session.notes_since(m))
 
 
 def process_map(fn, xs, n, on_error=None):
-    """fn over xs in forked workers (fn may be a closure); serial with n = 1 or off Unix.
+    """fn over xs in forked workers (fn may be a closure); serial with n = 1, off Unix or
+    under the NOFORK switch.
 
-    An item whose worker raised is recomputed serially."""
-    global _FN, _XS
+    An item that raises gives on_error(item) on either path; without on_error a failed
+    worker item is recomputed serially, so its error is raised as on the serial path. A
+    worker that dies raises RuntimeError."""
     xs = list(xs)
     n = max(1, min(int(n), len(xs)))
-    if n == 1 or sys.platform == "win32" or state.env("NOFORK"):
-        return [fn(x) for x in xs]
-    _FN, _XS = fn, xs
+    if n == 1 or sys.platform == "win32":
+        return [_serial(fn, x, on_error) for x in xs]
+    token = next(_TOKENS)
+    _JOBS[token] = (fn, xs)
     try:
-        ctx = mp.get_context("fork")
-        with ctx.Pool(processes=n) as pool:
-            res = pool.map(_call, range(len(xs)), chunksize=1)
+        with ProcessPoolExecutor(max_workers=n, mp_context=mp.get_context("fork")) as ex:
+            res = list(ex.map(_call, [token] * len(xs), range(len(xs))))
+    except BrokenProcessPool as e:
+        raise RuntimeError("a worker process died, possibly out of memory") from e
     finally:
-        _FN, _XS = None, None
+        _JOBS.pop(token, None)
     out = []
-    for x, (st, v) in zip(xs, res):
-        out.append(v if st == "ok" else (on_error(x) if on_error else fn(x)))
+    for x, (st, v, notes) in zip(xs, res):
+        session.merge_notes(notes)
+        if st == "ok":
+            out.append(v)
+        elif on_error is None or state.env("DEBUG"):
+            out.append(fn(x))
+        else:
+            session.note("errors", f"worker: {v[:200]}")
+            out.append(on_error(x))
     return out
+
+
+def _serial(fn, x, on_error):
+    if on_error is None:
+        return fn(x)
+    try:
+        return fn(x)
+    except Exception as exc:
+        swallow(exc, "worker")
+        return on_error(x)

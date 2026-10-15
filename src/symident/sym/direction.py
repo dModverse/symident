@@ -2,6 +2,7 @@
 
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, sympy_fail
 from .parse import _make_local_parse
 
 
@@ -109,7 +110,8 @@ def _classify_factored(infis, gens):
                     'components': comp_out, 'degree': 1}
         return {'type': 'general', 'weights': None, 'components': comp_out,
                 'degree': int(max(degs)) if degs else 0}
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return None
 
 
@@ -123,12 +125,12 @@ def classify_generator(vector):
     `vector` is {coordinate: component_str}, the components eta_i of
     X = sum_i eta_i d/dz_i (a scaling as {z_i: "w_i*z_i"}). X is defined up to a
     factor h(z); the gauge is fixed by clearing the common denominator, dividing by
-    the polynomial content and normalising to integer-primitive form.
+    the polynomial content and normalizing to integer-primitive form.
 
       scaling : every eta_i = w_i * z_i. The orbit is a ray, so any one coordinate
                 can be fixed at any value.
       general : anything else. The orbit is curved, so fixing a coordinate is not
-                free; the direction is removed by reparametrising onto invariants.
+                free; the direction is removed by reparametrizing onto invariants.
 
     Returns {'type', 'weights', 'components', 'degree'}: integer scaling weights
     (None unless scaling), the canonical generator {z_i: str(eta_i)} and its total
@@ -153,7 +155,8 @@ def classify_generator(vector):
     try:
         for k, v in items:
             comps[spy.Symbol(k)] = parse(v)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return fallback
 
     varset = set(comps.keys())
@@ -181,7 +184,8 @@ def classify_generator(vector):
         nums = [spy.expand(spy.cancel(e * L)) for e in infis]
         for e in nums:
             spy.Poly(e, *gens)                 # raises if not polynomial in gens
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return fallback
     g = spy.Integer(0)
     for e in nums:

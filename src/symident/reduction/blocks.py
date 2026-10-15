@@ -5,15 +5,17 @@ import re
 import numpy as np
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, RouteError, swallow, sympy_fail
 from ..gfp import Pool
 from ..rexpr import sym_sort
 from ..sym.invariants import verify_invariants
 from .darboux import _moved_vars, darboux, exp_factors, int_factor, separable
 from .expr import gen_prep, group_by, module_reduce, red_locals, red_sympify
 from .invariants import (
+    _direction_rank,
+    exact_rank,
     monomial_invariants,
     poly_invariants,
-    qr_rank,
     rational_invariants,
 )
 from .scaling import coords_of, scaling_block
@@ -21,64 +23,104 @@ from .sections import translation_compress, unmoved_compress
 from .sign import sgn
 
 
-def block_corank(preps):
-    """Number of moved coordinates minus the rank of the block directions at a numeric point."""
-    from ..rexpr import eval_numeric
+def block_corank(preps, exact=False):
+    """Number of moved coordinates minus the rank of the block directions at a point; with
+    `exact` also whether that rank is proven generic, which it is when it equals the number
+    of directions or of moved coordinates (a rank at a point only underestimates)."""
     moved, vars_ = _moved_vars(preps)
-    pt = dict(zip(vars_, [float(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 5)]))
-    Xi = np.array([[eval_numeric(pr["comps"][v], pt) if v in pr["comps"] else 0.0 for v in moved]
-                   for pr in preps], dtype=float)
-    return len(moved) - qr_rank(Xi, tol=1e-9)
+    ipt = [int(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 5)]
+    r = _direction_rank(preps, moved, vars_, ipt)
+    if not exact:
+        return len(moved) - r
+    return len(moved) - r, r >= min(len(preps), len(moved))
 
 
 def independent_set(invs, vars_, target, moved=None, keep_order=False):
-    """A functionally independent subset of invariants by a numeric Jacobian rank test."""
+    """A functionally independent subset of invariants: a nonzero minor of the Jacobian at a point,
+    modulo a prime where every gradient is rational, else shown nonzero by evaluation with
+    guaranteed precision."""
     if moved is None:
         moved = vars_
     if not invs or target <= 0:
         return []
-    pool = np.array([float(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 13)])
+    ipool = [int(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 13)]
+    pool = np.array([float(x) for x in ipool])
     if any("exp(" in s for s in invs):
         pool = 1 + pool / (pool.max() + 1)
     pt = dict(zip(vars_, pool))
+    ipt = {spy.Symbol(k): spy.Integer(v) for k, v in zip(vars_, ipool)}
     loc = {v: spy.Symbol(v) for v in vars_}
 
-    def grad(iv):
+    def grad_exact(iv):
+        # the gradient as exact rationals at the integer point; None where one is not rational
         try:
             e = spy.sympify(iv.replace("^", "**"), locals=dict(loc, **red_locals(iv)))
-        except Exception:
+            out = [spy.diff(e, spy.Symbol(v)).xreplace(ipt) for v in moved]
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return None
-        out = []
-        subs = {spy.Symbol(k): v for k, v in pt.items()}
-        for v in moved:
-            try:
-                out.append(float(spy.N(spy.diff(e, spy.Symbol(v)).subs(subs))))
-            except Exception:
-                return None
-        return np.array(out)
-    J = np.zeros((0, len(moved)))
-    sel = []
+        return out if all(x.is_Rational for x in out) else None
+
+    rpt = {spy.Symbol(k): spy.Rational(v).limit_denominator(10**6) for k, v in pt.items()}
+
+    def grad(iv):
+        # the gradient as exact numbers at a rational point, with a float copy to order the minors
+        try:
+            e = spy.sympify(iv.replace("^", "**"), locals=dict(loc, **red_locals(iv)))
+            ex = [spy.diff(e, spy.Symbol(v)).xreplace(rpt) for v in moved]
+            return ex, np.array([float(spy.N(x)) for x in ex])
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return None
+
+    def certified(rows, fl):
+        # a nonzero maximal minor, its columns chosen by pivoted QR and its value shown nonzero
+        from scipy.linalg import qr
+        cols = sorted(qr(fl, pivoting=True)[2][:len(rows)])
+        try:
+            det = spy.Matrix([[r[c] for c in cols] for r in rows]).det(method="berkowitz")
+            return det.evalf(30, strict=True) != 0
+        except (SYMPY_FAILS + (spy.core.evalf.PrecisionExhausted,)) as exc:
+            sympy_fail(exc)
+            return False
     cand = list(dict.fromkeys(invs))
     if not keep_order:
         cand = sorted(cand, key=len)
-    for iv in cand:
-        if len(sel) >= target:
-            break
-        gr = grad(iv)
-        if gr is None or not np.all(np.isfinite(gr)):
-            continue
-        Jc = np.vstack([J, gr])
-        if qr_rank(Jc, tol=1e-9) > J.shape[0]:
-            J = Jc
-            sel.append(iv)
-    return sel
+    def select(exact):
+        # exact ranks while every gradient is rational, else the float rank throughout
+        J, Jx, Jn, sel = np.zeros((0, len(moved))), [], [], []
+        for iv in cand:
+            if len(sel) >= target:
+                break
+            if exact:
+                gx = grad_exact(iv)
+                r = None if gx is None else exact_rank(Jx + [gx])
+                if r is None:
+                    return None
+                if r > len(Jx):
+                    Jx.append(gx)
+                    sel.append(iv)
+                continue
+            gr = grad(iv)
+            if gr is None or not np.all(np.isfinite(gr[1])):
+                continue
+            Jc = np.vstack([J, gr[1]])
+            if certified(Jn + [gr[0]], Jc):
+                J = Jc
+                Jn.append(gr[0])
+                sel.append(iv)
+        return sel
+    out = select(True)
+    return out if out is not None else select(False)
 
 
 def solve_block(preps, d_poly, d_darboux, d_exp, verbose=False, sep=True):
     """The invariant stages on one module-reduced sub-block."""
     moved, vars_ = _moved_vars(preps)
-    target = block_corank(preps)
+    target, count_exact = block_corank(preps, exact=True)
     certs, found, stage_ = [], [], "monomial"
+    certs.append(f"invariant count {target}: " + ("exact, the directions are independent at a point" if count_exact
+                                                  else "an upper bound, from a rank at one point"))
     moved_re = re.compile(r"(?<![0-9A-Za-z_.])(" + "|".join(re.escape(m) for m in moved) +
                           r")(?![0-9A-Za-z_.])")
     sgn_cache = {}
@@ -89,7 +131,8 @@ def solve_block(preps, d_poly, d_darboux, d_exp, verbose=False, sep=True):
         try:
             e = red_sympify(iv.replace("^", "**"), red_locals(iv))
             v = sgn(e) != 0
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             v = False
         sgn_cache[iv] = v
         return v
@@ -172,6 +215,7 @@ def solve_block(preps, d_poly, d_darboux, d_exp, verbose=False, sep=True):
         f"found {len(found)} of {target} independent invariants (poly/rational degree <= {d_poly}, "
         f"Darboux degree <= {d_darboux}, exp numerator degree <= {d_exp}); gauge pinning needs the full set")
     return {"stage": stage_, "invariants": found, "target": target, "certificates": certs,
+            "count": "exact" if count_exact else "upper bound",
             "reason": reason}
 
 
@@ -260,16 +304,26 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, verbose=False, se
                            "pins": None, "gauge_note": "removed entirely by the user's fixed coordinates"})
         if not fx["preps"]:
             continue
+        # the generators as detected, for the exact check of the invariants; those that move a
+        # fixed coordinate act only through the combinations that do not
+        originals = [preps[g] for g in grp if not set(preps[g]["support"]) & set(fixed or [])]
         glab_k = [glab[s[0]] if len(s) == 1 else "(" + "+".join(glab[i] for i in s) + ")"
                   for s in fx["sources"]]
         try:
             tc = translation_compress(fx["preps"])
-        except Exception:
+        except RouteError:
+            tc = None
+        except Exception as exc:
+            swallow(exc, "translation compression")
             tc = None
         p1 = fx["preps"] if tc is None else tc["preps"]
         try:
             uc = unmoved_compress(p1)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            uc = None
+        except Exception as exc:
+            swallow(exc, "unmoved compression")
             uc = None
         p2 = p1 if uc is None else uc["preps"]
 
@@ -313,14 +367,14 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, verbose=False, se
                 preps_orig = [decomp(pr) for pr in preps_orig]
             blocks.append({"labels": sub_labs, "type": "curved", "kind": kind_of(sub_labs),
                            "support": sym_sort(list(dict.fromkeys(c for pr in preps_orig for c in pr["support"]))),
-                           "stage": sol["stage"], "target": sol["target"],
+                           "stage": sol["stage"], "target": sol["target"], "count": sol.get("count"),
                            "status": "invariant_only" if sol["invariants"] else "unresolved",
                            "removed_by_fixed": fx["removed"] if fx["removed"] > 0 and not fixed_labs else None,
                            "invariants": sol["invariants"],
                            "certificates": fix_cert + sol["certificates"], "reason": sol["reason"],
                            "module_combos": mr["combos"], "transversal": None,
                            "survivor_meaning": None, "pins": None, "preps": preps_orig,
-                           "face_invariants": face_inv,
+                           "originals": originals, "face_invariants": face_inv,
                            "face_back": uc["back"] if uc is not None else None})
     return blocks
 
@@ -331,7 +385,8 @@ def verify_blocks(blocks):
         try:
             return [bool(x) for x in verify_invariants([s.replace("^", "**") for s in inv],
                                                          [dict(pr["comps"]) for pr in preps])]
-        except Exception:
+        except Exception as exc:
+            swallow(exc, "invariant verification")
             return [False] * len(inv)
     ident = re.compile(r"[A-Za-z._][A-Za-z0-9._]*")
     for bi, b in enumerate(blocks):
@@ -355,6 +410,16 @@ def verify_blocks(blocks):
                 b["status"] = "unresolved"
         else:
             b["certificates"].append("verified: X(I) = 0 exactly (sympy cancel) for every generator")
+        if b.get("originals") and b["invariants"]:
+            keep = chk(b["invariants"], b["originals"])
+            if not all(keep):
+                b["certificates"].append(f"verification DROPPED {sum(not k for k in keep)} invariant(s): "
+                                         "X(I) != 0 for a generator as detected")
+                b["invariants"] = [i for i, k in zip(b["invariants"], keep) if k]
+                if not any(keep):
+                    b["status"] = "unresolved"
+            else:
+                b["certificates"].append("verified: X(I) = 0 exactly for every generator as detected")
         inv = b["invariants"]
         inv_syms = {m for s in inv for m in ident.findall(s)}
         other = [pr for j, ob in enumerate(blocks) if j != bi for pr in (ob.get("preps") or [])]

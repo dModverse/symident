@@ -6,11 +6,22 @@ import time
 import numpy as np
 
 from .. import _core, state
-from ..gfp import invmod, mono_table, mulmod, null_basis_rows, null_residues, phys_rref, random_point, rref_modp
+from ..errors import SYMPY_FAILS, swallow, sympy_fail
+from ..gfp import (
+    all_primes,
+    invmod,
+    mono_table,
+    mulmod,
+    null_basis_rows,
+    null_residues,
+    phys_rref,
+    random_point,
+    rref_modp,
+)
 from ..rexpr import sym_sort
 from ..sym.linalg import sym_rat_recon_big
 from ..sym.restforward import solve_forward_modular
-from .closedform import RP8, _strip_name, eval_modq, expired, poly_string, simplify
+from .closedform import _strip_name, eval_modq, expired, poly_string, simplify
 
 
 def _nonzero_rows(B, p):
@@ -99,7 +110,8 @@ def _fit_entry(primes, bankU_rows, reli_cols, mons, vals_of, vars_):
         coef_res[:, jp] = mulmod(raw, invmod(dn, pp), pp)
     try:
         rec = sym_rat_recon_big(coef_res, [int(p) for p in primes])
-    except Exception:
+    except Exception as exc:
+        swallow(exc, "forward lift")
         return None
     if rec is None or any(d == "0" for d in rec["den"]):
         return None
@@ -112,9 +124,10 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
                      state_col_names, param_names, recast, spy_on, ctrl, phys_cols, models,
                      real_state_names, solve_param_names, solve_held, ac_in=None, list_anchors=False):
     """Forward-sampling reconstruction of one residual direction over solved resting states."""
-    n_prime_fwd = max(2, min(3, len(RP8) - 1))
-    primes = RP8[:n_prime_fwd]
-    qv = RP8[len(primes)]
+    rprimes = all_primes()
+    n_prime_fwd = max(2, min(3, len(rprimes) - 1))
+    primes = rprimes[:n_prime_fwd]
+    qv = rprimes[len(primes)]
     P1 = primes[0]
     track = {"dir_support": None, "pool_n": sc["pool_next"]}
 
@@ -206,7 +219,11 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
         ts = solve_forward_modular(models[0], list(real_state_names), list(solve_param_names), tsv,
                                     tpv, P1, forcings=list(solve_held) if solve_held else None,
                                     keep_free=keep_free)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        ts = None
+    except Exception as exc:
+        swallow(exc, "forward rate choice")
         ts = None
     if ts is None or not ts.get("ok"):
         return fb("forward: no turnover transversal; " + ("solve error" if ts is None else str(ts.get("why"))))
@@ -317,7 +334,8 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
             resc = [int(bank["V"][jp][0, c9]) for jp in range(len(primes))]
             try:
                 rc = sym_rat_recon_big(np.array([resc], dtype=np.int64), [int(p) for p in primes])
-            except Exception:
+            except Exception as exc:
+                swallow(exc, "forward lift")
                 rc = None
             if rc is None or rc["den"][0] == "0":
                 return fb("forward: a constant entry could not be lifted")
@@ -325,6 +343,8 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
             entry_reli[nm] = []
             continue
         rr = rec_entry(reli, c9)
+        if rr is None and expired(ctrl):
+            return fb("forward: timeout in fitting")
         if rr is None:
             return fb(f"forward: entry {nm} not a bounded rational (deg>{d_cap})")
         entries[nm] = simplify(rr["expr"]) if spy_on else rr["expr"]
@@ -370,8 +390,9 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                             real_state_names, solve_param_names, solve_held, kcall_fwd_sh=None,
                             select_fn=None, fwd_state=None, map_fn=None):
     """Every residual direction on the forward route: one transversal, one bank."""
-    n_prime_fwd = max(2, min(3, len(RP8) - 1))
-    P1 = RP8[0]
+    rprimes = all_primes()
+    n_prime_fwd = max(2, min(3, len(rprimes) - 1))
+    P1 = rprimes[0]
     if kcall_fwd is None or expired(ctrl):
         return None
     rdiag = state.env("ROBUSTDIAG")
@@ -464,8 +485,8 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
     li = {nm: i for i, nm in enumerate(leaf_names)}
 
     def run_group(acs, supp_of, ts, n_p=1):
-        primes = RP8[:n_p]
-        qv = RP8[-1]
+        primes = rprimes[:n_p]
+        qv = rprimes[-1]
         solve_rates = SolveRates(ts["solve_rates"], ts.get("state_solve"))
         if rdiag:
             print(f"[fwds] {len(acs)} anchors, transversal of {len(solve_rates)} rates ({el()})")
@@ -629,7 +650,8 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                     resc = [val_of(jp, a, c9, 1)[0] for jp in range(len(primes))]
                     try:
                         rc = sym_rat_recon_big(np.array([resc], dtype=np.int64), [int(p) for p in primes])
-                    except Exception:
+                    except Exception as exc:
+                        swallow(exc, "forward lift")
                         rc = None
                     if rc is None or rc["den"][0] == "0":
                         res = opn("forward: constant not lifted")
@@ -639,7 +661,8 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                     continue
                 rr = rec_entry(a, reli, c9)
                 if rr is None:
-                    res = opn(f"forward: entry {nm} not a bounded rational")
+                    res = opn("forward: timeout in fitting" if expired(ctrl)
+                              else f"forward: entry {nm} not a bounded rational")
                     break
                 entries[nm] = simplify(rr["expr"]) if spy_on else rr["expr"]
                 entry_reli[nm] = rr["reli"]
@@ -672,7 +695,11 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                                         tsv, tpv, P1,
                                         forcings=list(solve_held) if solve_held else None,
                                         keep_free=kf)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return None
+        except Exception as exc:
+            swallow(exc, "forward rate choice")
             return None
         return ts if ts is not None and ts.get("ok") else None
 
@@ -700,7 +727,7 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             groups.append({"idx": lone, "ts": trans_for([])})
         return groups
 
-    ts1 = None if state.env("FWDGROUPS") else trans_for([])
+    ts1 = trans_for([])
     all_idx = list(range(len(acs)))
     groups = groups_for(all_idx) if ts1 is None else [{"idx": all_idx, "ts": ts1}]
     out = [None] * len(acs)

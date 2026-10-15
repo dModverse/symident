@@ -10,7 +10,7 @@ symident finds the non-identifiable directions of an ODE model with observables,
 conditions and events, returns them as exact generators where possible, and reduces
 the model to identifiable parameters. The observability rank is computed modulo
 primes in a C++ kernel; closed forms are reconstructed by sparse interpolation and
-verified at fresh primes.
+proven over Q or verified at fresh primes.
 
 ## Installation
 
@@ -59,8 +59,9 @@ print(res.reduce())
 |---|---|
 | `Model(odes, observables, ...)` | ODEs or a reaction network, observables, `trafo`, `conditions`, `events`, `inputs`, `fixed` |
 | `detect(model, ...)` | rank, identifiability and the non-identifiable directions (`Symmetries`) |
-| `reduce(result, ...)`, `result.reduce()` | reparametrisation that removes the directions (`Reduction`) |
+| `reduce(result, ...)`, `result.reduce()` | reparametrization that removes the directions (`Reduction`) |
 | `reconst_control(...)` | settings of the saturation and the reconstruction |
+| `switches(...)` | diagnostic and route switches for a `with` block |
 
 Both results print a report; `summary()` adds the computation details and
 `to_dict()` returns the raw result.

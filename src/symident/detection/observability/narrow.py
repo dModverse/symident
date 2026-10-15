@@ -4,7 +4,8 @@ import re
 
 import numpy as np
 
-from ... import _core, state
+from ... import _core, session, state
+from ...errors import SYMPY_FAILS, swallow, sympy_fail
 from ...gfp import PRIMES, invmod, mulmod
 from ...rexpr import sym_sort
 from ..groups import shift_groups, translation_groups
@@ -103,6 +104,7 @@ class Narrow:
         try:
             tc = an.sys.chunk([an.sc["point0"]], [PRIMES[0]], self.nt, cols=self.cols, touch=True)
         except Exception as e:
+            swallow(e, "narrow support check")
             tc = [{"ok": False, "why": str(e)}]
         if not ok(tc[0]):
             rec.tlog(f"narrow: no rows on the support at the base point {tc[0].get('why')} {an.run.ss_why}")
@@ -144,13 +146,20 @@ class Narrow:
         try:
             # a closed form much longer than this is no usable result and costs minutes to verify
             jg = jet_generator(conds, [an.znames[c] for c in self.cols], an.znames[self.anchor],
-                                 max_order=max_ord, max_chars=20000, time_limit=limit)
+                               max_order=max_ord, max_chars=20000, work_limit=limit)
+        except SYMPY_FAILS as err:
+            sympy_fail(err)
+            rec.tlog(f"narrow: jet error: {err}")
+            jg = None
         except Exception as err:
+            swallow(err, "jets")
             rec.tlog(f"narrow: jet error: {err}")
             jg = None
         rec.tlog("narrow: jet closed form " + (f"found at order {int(jg['order'])}"
                                                 if jg is not None and jg.get("ok") else
                                                 f"not found ({'error' if jg is None else jg.get('reason')})"))
+        if jg is not None and jg.get("reason") == "work limit":
+            session.note("limits", f"jets: stopped after {limit} characters of jets")
         if jg is None or not jg.get("ok"):
             return None
         return {"support": sym_sort(list(jg["vector"])),
@@ -231,15 +240,15 @@ class Narrow:
             v = res(rp, P) if ok(rp) else None
             if v is not None and base_v is not None and np.any(v != base_v):
                 n_rel += 1
-        jet_time = float(state.env_value("JETTIME", "20"))
-        jet_first = n_rel > ctrl["relevance_cap"] or state.env("JETFIRST")
-        e = self._jet(jet_time) if jet_first else None
+        jet_work = int(state.env_value("JETWORK", "1000000"))
+        jet_first = n_rel > ctrl["relevance_cap"]
+        e = self._jet(jet_work) if jet_first else None
         if e is not None:
             groups = []
         else:
             e = self._fit(ref, base0, rel)
             if not e.get("closed_form") and not jet_first:
-                ej = self._jet(jet_time)
+                ej = self._jet(jet_work)
                 if ej is not None:
                     e, groups = ej, []
         if not e.get("closed_form"):
@@ -256,5 +265,6 @@ class Narrow:
                     "reason": "a closed form was reconstructed but failed verification at a fresh prime"}
         eb = an.multi.get("exp_back") or {}
         if eb.get("names"):
+            e.setdefault("checked", dict(e["vector"]))
             e["vector"] = exp_backsub(e["vector"], eb, an.multi.get("exp_atoms"))
         return e

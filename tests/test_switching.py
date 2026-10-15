@@ -70,6 +70,8 @@ def test_parse(text, point, expect):
 @pytest.mark.parametrize("text, expect", [
     ("log(x, 2)", "log(x)/log(2)"), ("log10(x)", "log(x)/log(10)"), ("log2(x)", "log(x)/log(2)"),
     ("exp10(x)", "10**x"), ("sin(x)", "sin(x)"), ("foo(x)", "foo(x)"),
+    ("ln(x)", "log(x)"), ("exp2(x)", "2**x"), ("acot(x)", "atan(1/x)"),
+    ("pow(x, 3) + cbrt(x)", "x**3 + x**(1/3)"), ("cot(x) + erf(x)", "cot(x) + erf(x)"),
 ])
 def test_parse_functions_without_switch(text, expect):
     sw = Switches(True)
@@ -87,8 +89,23 @@ def test_parse_decided():
     # a surface shared by two conditions is one switch
     sw.parse("piecewise(a, x > thr, b) + Heaviside(thr - x)")
     assert len(sw.funcs) == 1
-    with pytest.raises(ValueError, match="only on a surface"):
-        sw.parse("piecewise(a, x == thr, b)")
+    # equality off an identity holds on a set of measure zero
+    assert sw.parse("piecewise(a, x == thr, b)") == spy.Symbol("b")
+    assert sw.parse("k*(x != thr) + c*(x == x)") == spy.Symbol("k") + spy.Symbol("c")
+
+
+def test_pi_and_euler_number_in_a_switched_model():
+    r = det({"x": "piecewise(pi*b, x > c, exp(1)*b) - k*x"}, {"y": "s*x"}, reconstruct=True)
+    assert [(s.support, s.level) for s in r.symmetries] == [(["b", "c", "s", "x"], "exact")]
+    assert r.info["switching"]["surfaces"] == ["c - x = 0"]
+
+
+def test_a_switch_on_parameters_only_needs_its_side():
+    f = {"x": "min(p, 2) - k*x"}
+    with pytest.raises(ValueError, match="parameters only"):
+        det(f, {"y": "s*x"})
+    assert [s.support for s in det(f, {"y": "s*x"}, regimes=["p > 2"]).symmetries] == [["p"]]
+    assert [s.support for s in det(f, {"y": "s*x"}, regimes=["p < 2"]).symmetries] == [["p", "s", "x"]]
 
 
 def test_one_crossing_free_initial_state():
@@ -223,8 +240,6 @@ def test_named_regimes():
 
 def test_unsupported():
     f = {"x": "piecewise(-k1*x, x > c, -k2*x)"}
-    with pytest.raises(ValueError, match="only on a surface"):
-        det({"x": "piecewise(-k1*x, x == c, -k2*x)"}, {"y": "x"})
     with pytest.raises(ValueError, match="gauge"):
         det(f, {"y": "x"}, gauge=None)
     with pytest.raises(ValueError, match="reduce_cq"):
@@ -314,3 +329,58 @@ def test_root_event():
     r = det(f, {"y": "s*x"}, trafo={"x": "0"}, events=ev, reconstruct=True)
     assert (r.rank, r.dim) == (3, 4)
     same_span(r, [{"a": "a", "c": "c", "s": "-s"}])
+
+
+def test_visibility_of_a_step_input_is_shared_across_switching_times(monkeypatch):
+    # the jets that show a switch are computed once for conditions that differ only in the switching time
+    from symident.detection import hybrid
+    calls = []
+    series = hybrid.output_series
+    monkeypatch.setattr(hybrid, "output_series", lambda *a, **k: calls.append(1) or series(*a, **k))
+    f = {"x": "k*piecewise(0, time - T < 0, 1) - d*x", "z": "x - e*z"}
+    cg = {"rows": [f"c{i}" for i in range(40)], "cols": {"T": list(range(1, 41))}}
+    r = det(f, {"y": "s*z"}, trafo={"x": "0", "z": "0"}, conditions=cg)
+    vis = [c["visibility"] for c in r.info["switching"]["conditions"]]
+    assert vis == [{"T - time = 0": "visible"}] * 40 and len(calls) == 3
+
+
+def test_output_series_are_the_taylor_coefficients_modulo_p():
+    from symident.sym.taylor import NoSeriesError, output_series
+    x, k, s = spy.symbols("x k s")
+    p = 1000003
+    (h,) = output_series({x: -k * x}, [s * x / (1 + x)], {x: 2, k: 3, s: 5}, 3, p)
+    inv3 = pow(3, p - 2, p)
+    assert h == [10 * inv3 % p, -10 * inv3 % p, -5 * inv3 % p]
+    with pytest.raises(NoSeriesError):
+        output_series({x: -spy.exp(x)}, [x], {x: 2}, 3, p)
+
+
+def test_a_switched_input_model_at_rest_keeps_its_directions():
+    f = {"x1": "kb + kin*u - (k1 + piecewise(kl, x1 > thr, kl2))*x1", "x2": "k1*x1 - k2*x2", "u": "0"}
+    m = si.Model(f, {"y": "s*x2"}, inputs=["u"], regimes=["x1 > thr"],
+                 events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"}],
+                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
+    r = si.detect(m, equilibrate=True, reconstruct=True)
+    assert (r.rank, r.dim) == (4, 8)
+    assert sorted(sorted(s.support) for s in r.symmetries) == \
+        [["k1", "kb", "kin", "kl"], ["kb", "kin", "s"], ["kl2"], ["thr"]]
+
+
+def test_a_field_with_integer_weights_is_a_scaling():
+    r = si.detect(si.Model({"x": "-k*x", "z": "piecewise(-a*z, z > c, -b*z)"}, {"y": "x"}), reconstruct=True)
+    kinds = {tuple(s.support): s.type for s in r.symmetries}
+    assert kinds[("a",)] == kinds[("b",)] == "scaling" and kinds[("c",)] == "general"
+    assert {tuple(s.support): s.weights for s in r.symmetries}[("a",)] == {"a": "1"}
+
+
+def test_a_direction_the_rule_does_not_prove_is_verified_with_its_probability():
+    m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"},
+                 inputs=["u"], events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"},
+                                       {"var": "x2", "root": "x1 - c", "value": "0", "method": "replace"}],
+                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
+    r = si.detect(m, equilibrate=True, reconstruct=True)
+    assert (r.rank, r.dim) == (5, 7)
+    assert {s.level for s in r.symmetries} == {"exact", "verified"}
+    assert 0 < r.info["bound"]["probability"] < 1e-10
+    assert r.info["rank_status"]["status"] == "lower bound" and r.info["switching"]["uncertified"]
+    assert r.info["proof"][0]["reason"].startswith("the rule of the switches is not proven")

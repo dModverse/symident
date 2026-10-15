@@ -1,10 +1,10 @@
 """Resting states over GF(p) solved forward for turnover rates."""
 
-import random
 import sys
 
 import sympy as spy
 
+from .. import session
 from .modp import _eval_terms, _poly_terms, _solve_mod
 from .parse import _as_list
 from .steady import _ss_compile
@@ -187,9 +187,9 @@ def _forward_plan_once(rhs_by_name, solve_states, param_names, forcings, keep_fr
     rest = [s for s in solve_states if s not in bs]
     forbidden = {str(r) for u in bs for r in params[u]}
     Q = 2147483629
-    rng = random.Random(len(rest))
+    rng = session.current().rng("restforward.basis", len(rest))
     syms = set().union(*(polys[s].free_symbols for s in rest)) if rest else set()
-    pt = {x: rng.randrange(2, Q - 1) for x in syms}
+    pt = {x: rng.randrange(2, Q - 1) for x in sorted(syms, key=str)}
     def score(r):
         best = 2
         for s in rest:
@@ -232,7 +232,7 @@ def _forward_plan_once(rhs_by_name, solve_states, param_names, forcings, keep_fr
     for att in range(40):
         if len(chosen) == len(rest):
             break
-        rs = random.Random(att)
+        rs = session.current().rng("restforward.shuffle", att)
         shuffled = sorted(cols, key=lambda r: (key_of[r], rs.random()))
         cand2 = pick_basis(shuffled)
         if len(cand2) > len(chosen):

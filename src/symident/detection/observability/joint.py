@@ -6,6 +6,7 @@ import re
 import numpy as np
 
 from ... import _core, state
+from ...errors import SYMPY_FAILS, swallow, sympy_fail
 from ...gfp import invmod, mulmod
 from ...sym.continuation import continue_resting_state
 from ..fields import series_const, series_embed, series_stack
@@ -79,6 +80,7 @@ class JointSystem(RestingStates):
         self.df_droppable = set(self.forcings) | set(run.equil_zero_states) | \
             {s for z in run.cond_zero_states for s in (z or [])} | (set(run.leaf_names) - set(znames))
         self.solve_cache = {}
+        self.solve_secs = [0.0, 0]
         self.model_key = ["\n".join(self.models[ci] + self.zero_of(ci)) for ci in range(len(self.models))]
         if run.timing:
             print(f"[sym] {self.kc} equilibrate condition(s), "
@@ -109,7 +111,6 @@ class JointSystem(RestingStates):
         n_eq = (max(self.equil_conds) + 1) if self.equil_conds else 0
         self.cont_off = [False] * n_eq
         self.cont_seen = [False] * n_eq
-        self.redraws = 0
         self.chains = [run.chain_tapes(run.chain_groups[run.chain_idx[self.equil_conds[mi]]])
                        for mi in range(self.kc)] if run.has_gaps else None
         self.fwd_sel = list(range(self.kc))
@@ -590,11 +591,30 @@ class JointSystem(RestingStates):
                     sblocks, self.nz_wide, run.mtot + 1, prime_vec[i], run.cores)
         return out
 
+    hom_kind = "resting states"
+    hom_tries = 4
+
+    def hom_prepare(self, point):
+        """Moves the parameters of the resting solve and the logarithms of the recast bases."""
+        self.hom_params = list(self.solve_param_names) + [nm for nm in self.l_names
+                                                          if nm not in self.solve_param_names]
+
+    def hom_env(self, point, q, mi_plain=None):
+        """Leaves at `point`, resting states as X_c<k> (X in `mi_plain`); None where a condition does not solve."""
+        env = {nm: int(point[i]) for i, nm in enumerate(self.run.leaf_names) if i < len(point)}
+        for mi, ci in enumerate(self.equil_conds):
+            sol = self.solve_cond(point, q, ci)
+            if sol is None:
+                return None
+            for nm, v in sol["sol"]["val_by"].items():
+                env[f"{nm}_c{mi + 1}"] = int(v) % q
+                if mi == mi_plain:
+                    env[nm] = int(v) % q
+        return env
+
     def hom_line(self, point, d, T, p, Nt):
-        """The wide series rows along theta0 + t d (models without later events)."""
+        """Wide series rows along theta0 + t d, each condition's chain started at the resting state on the line."""
         run = self.run
-        if run.has_gaps:
-            return None
         sp = set(self.solve_param_names)
         blocks = []
         self.hom_states = []
@@ -610,7 +630,11 @@ class JointSystem(RestingStates):
                                               list(self.solve_param_names), pv["param_vals"], dv,
                                               ref["sol"]["val_by"], p, int(T),
                                               forcings=self.held_of(ci) or None)
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
+                sol = None
+            except Exception as exc:
+                swallow(exc, "homotopy continuation")
                 sol = None
             if sol is None or not sol.get("ok"):
                 return None
@@ -624,9 +648,9 @@ class JointSystem(RestingStates):
                 v = [int(x) % p for x in vals]
                 ptc[sl] = v[0]
                 ser[sl, :] = v[1:1 + T]
-            for nm, v in dv.items():
+            for nm, v in d.items():
                 sl = run.slot(nm)
-                if sl is not None:
+                if sl is not None and (nm in sp or nm in self.l_names):
                     ser[sl, 0] = int(v) % p
             for nm in self.zero_of(ci):
                 sl = run.slot(nm)
@@ -634,10 +658,13 @@ class JointSystem(RestingStates):
                     ptc[sl] = 0
                     ser[sl, :] = 0
             try:
-                obs = _core.sym_obs_null_chain([[run.tapes[ci]]], run.n_leaves, run.n_states,
-                                               self.z_slots_local, ptc % p, p, int(Nt), int(T), 1, [],
-                                               ser % p)
-            except Exception:
+                chain = run.chain_tapes(run.chain_groups[run.chain_idx[ci]]) if run.has_gaps else [run.tapes[ci]]
+                nt_c = [run.nt_cap[mi]] if run.has_gaps and len(run.nt_cap) == self.kc else []
+                obs = _core.sym_obs_null_chain([chain], run.n_leaves, run.n_states, self.z_slots_local,
+                                               ptc % p, p, int(Nt), int(run.mtot) if run.has_gaps else 0,
+                                               1, nt_c, ser % p, int(T))
+            except Exception as exc:
+                swallow(exc, "homotopy series")
                 obs = None
             if not ok(obs):
                 return None

@@ -7,6 +7,7 @@ import numpy as np
 import sympy as spy
 
 from .. import _core
+from ..errors import SYMPY_FAILS, swallow, sympy_fail
 from ..gfp import Pool, mulmod
 from ..rexpr import sym_sort
 from ..sym.invariants import (
@@ -46,7 +47,8 @@ def cofactor_rows(cols, vars_, n_gen, n_mon):
                for t in range(1, n_mon + 1)]
         try:
             v = eval_rational_batch(exprs, list(vars_), pts)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         for t in range(n_mon):
             try:
@@ -85,7 +87,8 @@ def darboux(preps, d_darboux, extactic_ok=True):
             try:
                 fl = spy.factor_list(xi)
                 cands += [pair[0] for pair in fl[1]]
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 pass
     Nbasis = math.comb(len(moved) + d_darboux, d_darboux)
     Dmax = max([1] + [3 if pr["degree"] is None else int(pr["degree"]) for pr in preps])
@@ -105,7 +108,8 @@ def darboux(preps, d_darboux, extactic_ok=True):
             pt = dict(zip(vars_, [int(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 11 * t)]))
             try:
                 v = subs_rational(D, pt)
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 v = None
             if v is not None and v != "0":
                 nonzero = True
@@ -179,7 +183,8 @@ def exp_factors(preps, darb, d_exp):
     for j, P in enumerate(darb["Ps"]):
         try:
             dj = int(spy.total_degree(P))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             dj = None
         if dj is None or dj < 1:
             continue
@@ -250,7 +255,8 @@ def exp_factors(preps, darb, d_exp):
                 try:
                     if q.is_polynomial():
                         continue
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     pass
             mu = []
             for g in range(K):
@@ -350,7 +356,8 @@ def int_factor(preps, darb, ex_factors):
         try:
             Iv = integrating_factor_integral(Mstr.replace("^", "**"), str(xi[moved[0]]),
                                               str(xi[moved[1]]), moved[0], moved[1])
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             Iv = None
         if Iv is not None:
             inv.append(str(Iv).replace("**", "^"))
@@ -380,7 +387,8 @@ def separable(preps):
         for v in nm:
             try:
                 G[v] = spy.integrate(spy.Integer(1) / xi_of[g][v], red_sympify(v, loc))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 G[v] = None
         nm = [v for v in nm if G[v] is not None]
         if len(nm) < 2:
@@ -390,7 +398,8 @@ def separable(preps):
             try:
                 e = spy.simplify(spy.exp(Dd)) if Dd.atoms(spy.log) else spy.cancel(spy.together(Dd))
                 cand.append(str(e).replace("**", "^"))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 pass
     cand = list(dict.fromkeys(c for c in cand if c and c != "1"))
     cert = (f"separable-characteristics stage ({len(sep_idx)} of {len(preps)} generator(s) separable, "
@@ -400,7 +409,8 @@ def separable(preps):
     try:
         keep = [bool(x) for x in verify_invariants([c.replace("^", "**") for c in cand],
                                                      [dict(pr["comps"]) for pr in preps])]
-    except Exception:
+    except Exception as exc:
+        swallow(exc, "invariant verification")
         keep = None
     if keep is None or not any(keep):
         return {"ok": False, "invariants": [],

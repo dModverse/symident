@@ -4,7 +4,8 @@ import time
 
 import numpy as np
 
-from .. import state
+from .. import session, state
+from ..errors import swallow
 from ..gfp import PRIMES, Pool, null_residues, random_point
 from .fields import rank_of, rank_score
 
@@ -102,7 +103,7 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, warm=None, probe_block=1, blo
                     print(f"[liediag] {label} Mtot={Mtot} rank {lo['rank']} flat over Lie order "
                           f"{frm}-{frm + need} (nz={nz})")
                 return {"res": hi, "Nt": frm + need, "grew": frm}
-        if Mtot > 0 and frm > 1 and not state.env("NOGALLOP"):
+        if Mtot > 0 and frm > 1:
             memo = {}
 
             def at(o):
@@ -247,48 +248,48 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, warm=None, probe_block=1, blo
         pool_next += n_leaves
     if sat is None:
         return None
+    # an accepted hint fixes both orders; the checks at other primes and points still run
+    hinted = False
     if using_hint and hint.get("sat_score") is not None and hint.get("Mtot") is not None:
         r = kcall(point0, P, sat["Nt"], hint["Mtot"]) if hint["Mtot"] > 0 else sat["res"]
         if timing:
             print(f"[sat] hint score {rank_score(r) if _ok(r) else '-'} of {hint['sat_score']}")
         if _ok(r) and rank_score(r) >= hint["sat_score"]:
-            if sat.get("block_orders"):
-                set_caps(sat["block_orders"], point0, hint["Mtot"], None)
-            return {"ref": r, "nt_used": sat["Nt"], "mtot_used": hint["Mtot"], "saturated_m": True,
-                    "point0": point0, "pool": pool, "pool_next": pool_next,
-                    "block_orders": sat.get("block_orders"), "block_driver": sat.get("block_driver"),
-                    "block_ranks": sat.get("block_ranks"), "budget": budget, "plateau": need_used,
-                    "certified": certified, "rank": r["rank"], "rank_s": rank_of(r),
-                    "pivots": r["pivots"]}
+            sat["res"], hinted = r, True
     sat_t0 = time.monotonic()
 
     def sat_log(what):
         if timing:
             print(f"[sat {time.monotonic() - sat_t0:7.1f}s] {what}")
     sat_log(f"scanned, Lie order {sat['Nt']}")
-    nt_used, mtot_used, saturated_m = sat["Nt"], 0, True
+    nt_used, mtot_used = sat["Nt"], (int(hint["Mtot"]) if hinted else 0)
+    # why the gap order stopped: "full" proves it sufficient, "plateau", "cap" and "failed" do not
+    gap_stop = hint.get("gap_stop") if hinted else None
 
-    if max_m > 0:
+    if max_m > 0 and not hinted:
         while True:
             if rank_of(sat["res"]) >= rank_cap:
+                gap_stop = "full"
                 break
             if mtot_used >= max_m:
-                saturated_m = False
+                gap_stop = "cap"
                 break
             sat_m = saturate_nt(point0, mtot_used + 1, sat.get("block_orders"))
             if sat_m is None:
+                gap_stop = "failed"
                 break
             sat_log(f"gap order {mtot_used + 1}: Lie order {sat_m['Nt']}, score "
                    f"{rank_score(sat_m['res'])} (was {rank_score(sat['res'])})")
             mtot_used += 1
             if rank_score(sat_m["res"]) <= rank_score(sat["res"]):
+                gap_stop = "plateau"
                 break
             sat = sat_m
             nt_used = sat["Nt"]
 
     if sat.get("block_orders"):
         set_caps(sat["block_orders"], point0, mtot_used, None)
-    while rank_of(sat["res"]) < min(sat["res"]["rank"], rank_cap) and mtot_used < max_m:
+    while not hinted and rank_of(sat["res"]) < min(sat["res"]["rank"], rank_cap) and mtot_used < max_m:
         r = kcall(point0, P, nt_used, mtot_used + 1)
         if not _ok(r):
             break
@@ -314,12 +315,15 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, warm=None, probe_block=1, blo
         for rp in rand_pts:
             try:
                 rj = kcall(rp, P, nt_used, mtot_used)
-            except Exception:
+            except Exception as exc:
+                swallow(exc, "uniform-point rank")
                 rj = None
             if _ok(rj):
                 rank_max = max(rank_max, rank_score(rj))
         sat_log("cross-prime and uniform-point checks")
         tries = 0
+        # the saturated point of the highest rank stands, also when the retries end short
+        best = (rank_score(sat["res"]), sat, point0, nt_used)
         while rank_score(sat["res"]) < rank_max:
             tries += 1
             if tries <= 20:
@@ -332,16 +336,23 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, warm=None, probe_block=1, blo
                 return None
             point0 = sat["point"]
             nt_used = sat["Nt"]
+            if rank_score(sat["res"]) > best[0]:
+                best = (rank_score(sat["res"]), sat, point0, nt_used)
             for rp in rand_pts:
                 try:
                     rj = kcall(rp, P, nt_used, mtot_used)
-                except Exception:
+                except Exception as exc:
+                    swallow(exc, "uniform-point rank")
                     rj = None
                 if _ok(rj):
                     rank_max = max(rank_max, rank_score(rj))
             if tries > 22:
                 break
-    return {"ref": sat["res"], "nt_used": nt_used, "mtot_used": mtot_used, "saturated_m": saturated_m,
+        _, sat, point0, nt_used = best
+        if best[0] < rank_max:
+            session.note("limits", "rank: no saturated point reached the rank seen at another prime "
+                                   "or point; a direction may be reported too many")
+    return {"ref": sat["res"], "nt_used": nt_used, "mtot_used": mtot_used, "gap_stop": gap_stop,
             "point0": point0, "pool": pool, "pool_next": pool_next,
             "block_orders": sat.get("block_orders"), "block_driver": sat.get("block_driver"),
             "block_ranks": sat.get("block_ranks"), "budget": budget, "plateau": need_used,

@@ -10,6 +10,11 @@ from .. import _core, state
 from ..rexpr import eval_numeric
 
 
+def _settled(info):
+    """Whether the rank is proven, or the invariant fields hold the kernel at every order."""
+    return info.get("rank_proven") is not None or info.get("rank_fields") is not None
+
+
 def gauge_state(kernel, coords):
     """Row echelon form of the kernel basis mod p, or None without a kernel over all of `coords`."""
     if kernel is None or kernel.get("N") is None or not np.asarray(kernel["N"]).size:
@@ -146,7 +151,7 @@ def gauged_detection(args, pref, fixed, reconstruct, verbose):
         return ([d for d in s["symmetries"] if d["type"] == "scaling"],
                 [d for d in s["symmetries"] if d["type"] != "scaling"])
     scal, gen = split(s1)
-    if s1["info"].get("rank_proven") is None and not s1["info"].get("lie_certified") and \
+    if not _settled(s1["info"]) and not s1["info"].get("lie_certified") and \
             (not (gen and reconstruct) or s1["info"].get("stacked")):
         with state.options(keep_kernel=True, stacked_first=False):
             s1 = symmetry_detection(**a1)
@@ -167,17 +172,18 @@ def gauged_detection(args, pref, fixed, reconstruct, verbose):
     res["info"] = dict(s1info, kernel=None, sat_score=None, stacked=None)
     if gen and reconstruct:
         a2 = dict(args, fixed=list(dict.fromkeys(list(fixed or []) + gauge)))
-        s1ok = bool(s1info.get("lie_certified")) or s1info.get("rank_proven") is not None
+        s1ok = bool(s1info.get("lie_certified")) or _settled(s1info)
         hint = None
         if s1info.get("lie_block_orders"):
             hint = {"block_orders": [int(x) for x in s1info["lie_block_orders"]],
                     "nt_used": int(s1info["lie_order_used"]), "sat_score": s1info.get("sat_score"),
-                    "Mtot": int(s1info.get("gap_order_used") or 0), "certified": s1ok}
+                    "Mtot": int(s1info.get("gap_order_used") or 0), "certified": s1ok,
+                    "gap_stop": "full" if s1info.get("gap_certified") else "plateau"}
         with state.options(order_hint=hint):
             s2 = symmetry_detection(**a2)
         res["symmetries"] = scal + s2["symmetries"]
         res["info"]["verification"] = s2["info"].get("verification")
-        if not s1info.get("lie_certified") and s1info.get("rank_proven") is None:
+        if not s1info.get("lie_certified") and not _settled(s1info):
             res["rank"] = int(s2["rank"])
             res["identifiable"] = res["rank"] == res["dim"]
         if res["info"].get("rank_proven") is None and s2["info"].get("rank_proven") is not None:
@@ -186,6 +192,11 @@ def gauged_detection(args, pref, fixed, reconstruct, verbose):
             res["info"]["rank_proven"] = int(s2["info"]["rank_proven"] + len(scal))
             res["info"]["rank_proof"] = s2["info"].get("rank_proof")
             res["info"]["lie_order_used"] = s2["info"].get("lie_order_used")
+        elif not _settled(res["info"]) and s2["info"].get("rank_fields") is not None:
+            res["rank"] = int(s2["rank"])
+            res["identifiable"] = res["rank"] == res["dim"]
+            res["info"]["rank_fields"] = int(s2["info"]["rank_fields"] + len(scal))
+            res["info"]["rank_fields_bound"] = s2["info"].get("rank_fields_bound")
     res["gauge"] = gauge
     res["info"]["settings"] = dict(res["info"]["settings"], gauge_preference=pref)
     res["info"]["elapsed"] = time.monotonic() - t0

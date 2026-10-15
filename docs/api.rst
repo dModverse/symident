@@ -16,7 +16,7 @@ Results
 -------
 
 .. autoclass:: Symmetries
-   :members: summary, reduce, to_dict
+   :members: summary, unproven, reduce, to_dict
 
 .. autoclass:: Symmetry
    :members: sympy
@@ -28,6 +28,8 @@ Settings and programs
 ---------------------
 
 .. autofunction:: reconst_control
+
+.. autofunction:: switches
 
 .. autofunction:: install_msolve
 

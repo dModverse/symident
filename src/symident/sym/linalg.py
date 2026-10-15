@@ -5,6 +5,7 @@ import math
 import numpy as np
 import sympy as spy
 
+from ..errors import swallow
 from .parse import _PRIMES
 
 
@@ -98,7 +99,8 @@ def _crt_nullspace(reduce_mod_p, ncols):
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=len(first)) as ex:
             pre = dict(zip(first, ex.map(lambda q: _rref_mod_p(reduce_mod_p(q), q), first)))
-    except Exception:
+    except Exception as exc:
+        swallow(exc, "threaded nullspace")
         pre = {}
     for p in _PRIMES:
         R, pivots = pre[p] if p in pre else _rref_mod_p(reduce_mod_p(p), p)

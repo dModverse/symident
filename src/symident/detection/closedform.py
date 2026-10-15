@@ -6,18 +6,20 @@ import time
 import numpy as np
 import sympy as spy
 
-from .. import _core
-from ..gfp import PRIMES, rat_recon
+from .. import _core, session
+from ..errors import SYMPY_FAILS, sympy_fail
+from ..gfp import rat_recon
 from ..sym.charts import recast_backsub_expr
 from ..sym.modp import eval_rational_mod
 
-RP8 = list(dict.fromkeys(list(PRIMES) + [1518500141, 1518500131, 1518500101, 1518500077]))
-
 
 def expired(ctrl):
-    """Whether the deadline in `ctrl` has passed."""
+    """Whether the deadline in `ctrl` has passed; a passed deadline is recorded as a limit."""
     d = ctrl.get("deadline")
-    return d is not None and time.monotonic() > d
+    if d is None or time.monotonic() <= d:
+        return False
+    session.note("limits", f"timeout: the reconstruction stopped after {ctrl.get('timeout')} s")
+    return True
 
 
 def mono_string(expo, vars_):
@@ -68,7 +70,8 @@ def simplify(expr):
     """`expr` cancelled by SymPy as a string; `expr` itself when that fails."""
     try:
         out = str(spy.cancel(spy.sympify(expr)))
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return expr
     return out
 
@@ -84,7 +87,8 @@ def recast_backsub(vector, recast):
         try:
             v = recast_backsub_expr(str(x), e_n, l_n, b_n, x_n)
             out[k] = v if isinstance(v, str) else str(x)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             out[k] = str(x)
     return out
 
@@ -93,7 +97,8 @@ def eval_modq(expr, env, q):
     """Rational expression at the integer point env modulo q; None if its denominator vanishes."""
     try:
         v = eval_rational_mod(str(expr), list(env.keys()), [int(x) for x in env.values()], int(q))
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return None
     return None if v is None else int(v)
 

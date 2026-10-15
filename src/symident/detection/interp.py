@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from .. import _core, session
+from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import PRIMES, mono_table, null_residues
 from ..rexpr import sym_sort
 from ..sym.recast import drop_monomial_content, exp_backsub_expr, trig_full_angle
@@ -11,10 +13,61 @@ from .relevance import dense_need, direction_relevance
 from .sparse import _default_kbatch, _pivots_eq, general_rational_entry, sparse_entry
 
 
+def _degrees_at(cap, f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, lines, key=()):
+    P = PRIMES[0]
+    relevant, support_cols = rel["relevant"], rel["support_cols"]
+    nodes = list(range(2 * cap + 4))
+    out = [None] * len(support_cols)
+    for line in range(lines):
+        rng = session.current().rng("entry degrees", f, line, *key)
+        u0 = np.array([rng.randrange(2, P) for _ in relevant], dtype=np.int64)
+        w = np.array([rng.randrange(1, P) for _ in relevant], dtype=np.int64)
+        pts = []
+        for t in nodes:
+            pt = np.array(point0, dtype=np.int64)
+            pt[relevant] = (u0 + t * w) % P
+            pts.append(pt)
+        res = kbatch(pts, [P] * len(pts), nt_used)
+        vals = [nv(rp, P, zvals_of(pt)) if _pivots_eq(rp, pivots) else None for pt, rp in zip(pts, res)]
+        if any(v is None for v in vals):
+            continue
+        for i, c in enumerate(support_cols):
+            rv = [int(v[c]) % P for v in vals]
+            deg = None
+            for tot in range(2 * cap + 1):
+                for a in range(max(0, tot - cap), min(tot, cap) + 1):
+                    r = _core.sym_cauchy_eval(nodes, rv, a, tot - a, P)
+                    if r.get("status") == "ok":
+                        deg = max(a, tot - a)
+                        break
+                if deg is not None:
+                    break
+            if deg is None:
+                out[i] = "over"
+            elif out[i] != "over":
+                out[i] = deg if out[i] is None else max(out[i], deg)
+    return out
+
+
+def entry_degrees(f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, ctrl, lines=2):
+    """Per support entry the degree of its dense fit; "over" past degree_cap_max, None where no line gave values."""
+    if not rel["relevant"]:
+        return [None] * len(rel["support_cols"])
+    cap = int(ctrl["degree_cap"])
+    top = int(ctrl.get("degree_cap_max", cap))
+    out = _degrees_at(cap, f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, lines)
+    while "over" in out and cap < top:
+        cap = min(2 * max(cap, 1), top)
+        again = _degrees_at(cap, f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, lines, (cap,))
+        out = [a if o == "over" else o for o, a in zip(out, again)]
+    return out
+
+
 def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, point0, pool,
                           pool_next, nt_used, kcall, rel_probe=None, residue_fn=None, ctrl=None,
-                          kbatch=None, shared_bank=None, fast_only=False, aux_leaves=()):
-    """One residual direction as rational entries over the leaves that move each entry."""
+                          kbatch=None, shared_bank=None, fast_only=False, aux_leaves=(), degrees=None):
+    """One residual direction as rational entries over the leaves that move each entry;
+    `degrees` per entry as entry_degrees() gives them, probed here when missing."""
     from .closedform import reconstruct_entry
     if kbatch is None:
         kbatch = _default_kbatch(kcall)
@@ -76,7 +129,15 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
                         f"{ctrl['relevance_cap_sparse']}; raise the relevant cap")
     nrel = len(relevant)
     n_p = len(PRIMES)
-    dn = dense_need(rel_by_entry, ctrl)
+    degs = list(degrees) if degrees is not None else [None] * len(support_cols)
+    if degrees is None and any(1 <= len(r) <= ctrl["relevance_cap"] for r in rel_by_entry):
+        degs = entry_degrees(f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, ctrl)
+        over = [i for i, d in enumerate(degs) if d == "over" and 1 <= len(rel_by_entry[i]) <= ctrl["relevance_cap"]]
+        if over:
+            top = ctrl.get("degree_cap_max", ctrl["degree_cap"])
+            return fallback(f"an entry exceeded degree_cap_max={top} along a line; raise it")
+    degs = [d if isinstance(d, int) else None for d in degs]
+    dn = dense_need(rel_by_entry, ctrl, degs)
     sample_u = np.zeros((0, nrel), dtype=np.int64)
     rstore = [np.zeros((0, n_p), dtype=np.int64) for _ in support_cols]
     if dn["any_dense"]:
@@ -109,8 +170,6 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
                     return fallback("dense sampling could not collect enough pivot-consistent points; "
                                     "raise sample_slack or probe_retries")
                 chunk = max(1, min(max_need - len(rows_u) + ctrl["sample_slack"], 30 * max_need - tries))
-                if ctrl.get("deadline") is not None:
-                    chunk = min(chunk, 96)
                 tries += chunk
                 uv = []
                 for _ in range(chunk):
@@ -180,7 +239,7 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
         cols_i = [relevant.index(r) for r in reli]
         vars_i = [leaf_names[r] for r in reli]
         fitted = None
-        for degree in range(ctrl["degree_cap"] + 1):
+        for degree in range(degs[i] or 0, max(ctrl["degree_cap"], degs[i] or 0) + 1):
             mons = mono_table(len(reli), degree)
             need = 2 * mons.shape[0] - 1 + ctrl["sample_slack"]
             rec = reconstruct_entry(sample_u[:need][:, cols_i], mons, rstore[i][:need], list(PRIMES))
@@ -210,13 +269,15 @@ def exp_backsub(vector, back, atoms=None):
         try:
             v = exp_backsub_expr(str(x), nm, vl)
             out[k] = v if isinstance(v, str) else str(x)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             out[k] = str(x)
     skip = [str(a) for a in (atoms or [])]
     for tidy in (trig_full_angle, drop_monomial_content):
         try:
             v = tidy(out, skip)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             v = None
         if v is not None:
             out = {k: str(v[k]) for k in out}

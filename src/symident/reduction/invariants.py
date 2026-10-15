@@ -7,10 +7,34 @@ import numpy as np
 import sympy as spy
 
 from .. import _core
+from ..errors import SYMPY_FAILS, InapplicableError, sympy_fail
 from ..gfp import PRIMES, Pool, invmod, mulmod, rat_recon, rref_modp
 from ..rexpr import sym_sort
+from ..sym.invariants import verify_invariants
 from .expr import eval_batch, red_locals, red_sympify
 from .scaling import mono_string, primitive_rows
+
+
+def exact_rank(rows):
+    """Rank of a matrix of exact rationals (int, Fraction or SymPy Rational) modulo the
+    first engine prime, None when an entry is not rational or has the prime in its
+    denominator. A rank mod p at a rational point is a lower bound of the rank over Q."""
+    p = PRIMES[0]
+    if not len(rows):
+        return 0
+    M = []
+    for r in rows:
+        out = []
+        for x in r:
+            try:
+                q = spy.Rational(x)
+            except (TypeError, ValueError):
+                return None
+            if not q.is_Rational or int(q.q) % p == 0:
+                return None
+            out.append(int(q.p) % p * invmod(int(q.q) % p, p) % p)
+        M.append(out)
+    return int(rref_modp(np.array(M, dtype=np.int64), p)["rank"])
 
 
 def qr_rank(M, tol=1e-7):
@@ -47,8 +71,9 @@ def gcd(a, b):
     return math.gcd(int(abs(a)), int(abs(b)))
 
 
-def modular_nullspace(rows_at, n, eval_vars, primes=PRIMES):
-    """Common nullspace of sampled rows over the primes as primitive integer columns."""
+def modular_nullspace(rows_at, n, eval_vars, primes=PRIMES, min_rows=0):
+    """Common nullspace of sampled rows over the primes as primitive integer columns; the
+    sampling stops on a flat rank only past `min_rows` rows."""
     basis_per, pivots_per, n_rows = {}, {}, 0
     nv = len(eval_vars)
     for pi, p in enumerate(primes, start=1):
@@ -81,7 +106,7 @@ def modular_nullspace(rows_at, n, eval_vars, primes=PRIMES):
                 break
             flat = flat + 1 if r == prev else 0
             prev = r
-            if flat >= 2 or rows.shape[0] > 4 * n + 20:
+            if (flat >= 2 and rows.shape[0] >= min_rows) or rows.shape[0] > max(4 * n + 20, min_rows):
                 break
         n_rows = max(n_rows, rows.shape[0])
         if rows.shape[0] == 0:
@@ -173,15 +198,36 @@ def _rows_mono(preps, vars_, expts):
     return rows_at
 
 
+def _direction_rank(preps, moved, vars_, ipt):
+    """Rank of the block directions on the moved coordinates at the integer point `ipt`:
+    exact where the components are rational, by pivoted QR otherwise."""
+    from ..rexpr import eval_numeric
+    from ..sym.modp import eval_rational_mod
+    P = PRIMES[0]
+    rows = []
+    try:
+        for pr in preps:
+            row = []
+            for v in moved:
+                x = eval_rational_mod(str(pr["comps"][v]), vars_, ipt, P) if v in pr["comps"] else 0
+                if x is None:
+                    raise InapplicableError("pole")
+                row.append(int(x))
+            rows.append(row)
+        return int(rref_modp(np.array(rows, dtype=np.int64).reshape(len(preps), len(moved)), P)["rank"])
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        pt = dict(zip(vars_, [float(x) for x in ipt]))
+        Xi = np.array([[eval_numeric(pr["comps"][v], pt) if v in pr["comps"] else 0.0 for v in moved]
+                       for pr in preps], dtype=float)
+        return qr_rank(Xi, tol=1e-9)
+
+
 def independent_poly(B, expts, vars_, moved, preps):
     """A functionally independent subset by a greedy Jacobian rank test."""
-    from ..rexpr import eval_numeric
     pool = Pool()
     ptv = [float(x) for x in pool(np.arange(1, len(vars_) + 1) + 5)]
-    pt = dict(zip(vars_, ptv))
-    Xi = np.array([[eval_numeric(pr["comps"][v], pt) if v in pr["comps"] else 0.0 for v in moved]
-                   for pr in preps], dtype=float)
-    target = len(moved) - qr_rank(Xi, tol=1e-9)
+    target = len(moved) - _direction_rank(preps, moved, vars_, [int(x) for x in ptv])
     mv = np.exp(expts @ np.log(np.array(ptv)))
     m_idx = [vars_.index(m) for m in moved]
 
@@ -191,9 +237,25 @@ def independent_poly(B, expts, vars_, moved, preps):
     key = [float(np.max(deg[B[:, j] != 0])) * 1e4 + float(np.sum(B[:, j] != 0)) for j in range(B.shape[1])]
     J = np.zeros((0, len(moved)))
     sel = []
+    P = PRIMES[0]
+    ip = [int(x) for x in ptv]
+    mvp = [int(np.prod([pow(ip[k], int(e), P) for k, e in enumerate(row)], dtype=object) % P) for row in expts]
+
+    def grad_p(cf):
+        # the gradient of sum_i cf_i m_i at the integer point, exactly modulo P
+        return [sum(int(cf[i]) * int(expts[i, k]) * mvp[i] for i in range(len(cf))) % P * invmod(ip[k] % P, P) % P
+                for k in m_idx]
+    exact = all(float(x).is_integer() for x in B.ravel()) and all(float(x).is_integer() for x in expts.ravel())
+    Jp = []
     for j in sorted(range(B.shape[1]), key=lambda j: key[j]):
         if len(sel) >= target and target > 0:
             break
+        if exact:
+            r = grad_p([int(x) for x in B[:, j]])
+            if int(rref_modp(np.array(Jp + [r], dtype=np.int64), P)["rank"]) > len(Jp):
+                Jp.append(r)
+                sel.append(j)
+            continue
         Jc = np.vstack([J, grad(B[:, j].astype(float))])
         if qr_rank(Jc, tol=1e-9) > J.shape[0]:
             J = Jc
@@ -214,9 +276,9 @@ def poly_invariants(preps, d_poly):
     N = expts.shape[0]
     if not N:
         return {"ok": False, "invariants": [], "cert": "polynomial stage skipped: empty ansatz"}
-    ns = modular_nullspace(_rows_mono(preps, vars_, expts), N, vars_)
+    ns = _checked_nullspace(preps, vars_, expts, N)
     cert = (f"polynomial stage (degree <= {d_poly}, {N} monomials): exact modular nullspace over "
-            f"{len(PRIMES)} primes, {ns['rows']} sampling rows")
+            f"{len(PRIMES)} primes, {ns['rows']} sampling rows" + ns["note"])
     if ns["basis"] is None:
         return {"ok": False, "invariants": [], "cert": cert + "; reconstruction failed (inconclusive)"}
     if ns["basis"].shape[1] == 0:
@@ -228,6 +290,35 @@ def poly_invariants(preps, d_poly):
     return {"ok": True, "invariants": inv, "coefs": ns["basis"][:, sel], "expts": expts,
             "vars": vars_,
             "cert": cert + f"; {len(sel)} functionally independent of {ns['basis'].shape[1]}"}
+
+
+def _checked_nullspace(preps, vars_, expts, N):
+    """The sampled nullspace with every basis vector checked exactly as an invariant before any
+    is chosen; a failing vector means the sampling stopped short, and it is sampled again with
+    four times the rows. `note` says what was left out."""
+    ns = modular_nullspace(_rows_mono(preps, vars_, expts), N, vars_)
+    ns["note"] = ""
+    for attempt in range(2):
+        B = ns.get("basis")
+        if B is None or B.shape[1] == 0:
+            return ns
+        gens = [dict(pr["comps"]) for pr in preps]
+        try:
+            ok = verify_invariants([poly_string(B[:, j], expts, vars_).replace("^", "**")
+                                    for j in range(B.shape[1])], gens)
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return ns
+        if all(ok):
+            return ns
+        if attempt == 0:
+            ns = modular_nullspace(_rows_mono(preps, vars_, expts), N, vars_, min_rows=4 * N + 20)
+            ns["note"] = "; resampled after a vector failed X(I) = 0"
+            continue
+        keep = [j for j, k in enumerate(ok) if k]
+        ns["basis"] = B[:, keep]
+        ns["note"] += f"; {len(ok) - len(keep)} vector(s) failing X(I) = 0 left out"
+    return ns
 
 
 RATIONAL_CAP = 700
@@ -276,10 +367,10 @@ def rational_invariants(preps, d_poly):
     N = expts.shape[0]
     if N > RATIONAL_CAP:
         return skip(f"rational stage skipped ({N} Laurent monomials over the {RATIONAL_CAP}-unknown budget)")
-    ns = modular_nullspace(_rows_mono(preps, vars_, expts), N, vars_)
+    ns = _checked_nullspace(preps, vars_, expts, N)
     cert = (f"rational stage (numerator degree <= {d_poly}, denominator one of {{{', '.join(den_c)}}}; "
             f"{N} Laurent monomials): exact modular nullspace over {len(PRIMES)} primes, "
-            f"{ns['rows']} sampling rows")
+            f"{ns['rows']} sampling rows" + ns["note"])
     if ns["basis"] is None:
         return skip(cert + "; reconstruction failed (inconclusive)")
     if ns["basis"].shape[1] == 0:
@@ -293,7 +384,8 @@ def rational_invariants(preps, d_poly):
         try:
             e = spy.cancel(spy.together(red_sympify(s.replace("^", "**"), loc)))
             out.append(str(e).replace("**", "^"))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             out.append(s)
     return {"ok": True, "invariants": out,
             "cert": cert + f"; {len(sel)} functionally independent of {ns['basis'].shape[1]}"}

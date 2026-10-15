@@ -3,7 +3,8 @@
 import time
 import warnings
 
-from .. import state
+from .. import session, state
+from ..errors import SYMPY_FAILS, swallow, sympy_fail
 from ..options import reconst_control
 from ..rexpr import (
     eqn_lines,
@@ -13,8 +14,10 @@ from ..rexpr import (
     is_number,
     replace_symbols,
     subst,
+    tokens,
 )
 from ..sym.charts import log_arg_chart, log_arg_event, sign_chart
+from ..sym.parse import model_sympify, to_r
 from ..sym.scaling import scaling_symmetries_multi, scaling_symmetries_single
 from ..sym.switching import hybrid_model
 from ..sym.symbolic import observability_sympy_multi
@@ -40,7 +43,7 @@ from .observability import observability_analytic_multi
 def _clean(e):
     if e is None:
         return None
-    return {str(k): str(v).replace("**", "^") for k, v in dict(e).items()}
+    return {str(k): to_r(v) for k, v in dict(e).items()}
 
 
 def _sub_or_none(fn, e):
@@ -89,7 +92,7 @@ def _drop_sinks(fdyn, g_exprs, trafo, events, reactions, totals, keep, zero=()):
     rhs = list(fdyn.values())
     if zero and not events:
         at0 = {spy.Symbol(z): 0 for z in zero}
-        rhs = [str(spy.sympify(str(e).replace("^", "**")).xreplace(at0)) for e in rhs]
+        rhs = [to_r(model_sympify(e).xreplace(at0)) for e in rhs]
     used = set(get_symbols(rhs + list(g_exprs) +
                            [str(v) for t in trafos if t for v in dict(t).values()] +
                            [str(e["value"]) for e in events] + [str(e["time"]) for e in events]))
@@ -122,8 +125,9 @@ def _off_domain(exprs, positive, states):
     names = None if positive is True else set(positive or [])
     for e in exprs:
         try:
-            x = spy.sympify(str(e).replace("^", "**"))
-        except (spy.SympifyError, TypeError):
+            x = model_sympify(e)
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         for a in x.atoms(spy.log, spy.Pow):
             u = a.args[0] if isinstance(a, spy.log) else a.base
@@ -139,11 +143,44 @@ def _off_domain(exprs, positive, states):
     return None
 
 
+# piecewise constant functions with a jump at every integer
+_STEPS = ("floor", "ceiling", "round")
+
+
+def _check_steps(kw):
+    """ValueError for a call of floor(), ceiling() or round() in the model."""
+    texts = []
+    for key in ("f", "g", "trafo", "events"):
+        for x in (kw.get(key) if isinstance(kw.get(key), (list, tuple)) else [kw.get(key)]):
+            texts += [str(v) for v in (x.values() if isinstance(x, dict) else [x]) if v is not None]
+    for t in texts:
+        hit = [n for k, n in tokens(t) if k == "fun" and n in _STEPS]
+        if hit:
+            raise ValueError(f"{hit[0]}() in {t} jumps at every integer of its argument and is constant "
+                             "in between; symident does not analyze it: write the steps it takes with "
+                             "piecewise() on their thresholds")
+
+
+def _check_names(kw):
+    """ValueError for a state, parameter or input named pi."""
+    names = list(dict(kw.get("f") or {}))
+    for key in ("parameters", "fixed", "forcings", "free_initial"):
+        names += [str(x) for x in kw.get(key) or []]
+    trafo = kw.get("trafo")
+    for t in trafo if isinstance(trafo, (list, tuple)) else [trafo]:
+        names += list(dict(t or {}))
+    names += [str(e.get("var")) for e in kw.get("events") or []]
+    if "pi" in names:
+        raise ValueError("pi is the number in the equations and cannot name a state, parameter or input")
+
+
 def symmetry_detection(*args, **kw):
     """The detection on plain inputs (see _symmetry_detection); a model with switches that
     the declared signs leave open goes to the hybrid analysis."""
     import inspect
     kw = dict(inspect.signature(_symmetry_detection).bind(*args, **kw).arguments)
+    _check_steps(kw)
+    _check_names(kw)
     regimes = kw.pop("regimes", None)
     hy = None
     if kw.get("f") is not None:
@@ -156,10 +193,172 @@ def symmetry_detection(*args, **kw):
     if hy is None and regimes is not None:
         raise ValueError("`regimes` names regimes, but the model has no switch that the "
                          "declared signs leave open")
-    if hy is not None:
-        from .hybrid import hybrid_detection
-        return hybrid_detection(hy, kw, regimes)
-    return detection_with_primes(kw)
+    outer = state.get("session") is None
+    if outer:
+        state.check_names()
+    with session.opened(kw) as ses:
+        ses.depth += 1
+        try:
+            if hy is not None:
+                from .hybrid import hybrid_detection
+                res = hybrid_detection(hy, kw, regimes)
+            else:
+                res = detection_with_primes(kw)
+        finally:
+            ses.depth -= 1
+        if outer and hy is None and isinstance(res, dict) and isinstance(res.get("info"), dict) \
+                and res["info"].get("bound") is None:
+            res["info"]["bound"] = _kernel_bound(kw, res)
+        if outer and isinstance(res, dict) and isinstance(res.get("info"), dict):
+            _gap_settled(res["info"])
+            _bound_needs_orders(res["info"])
+        if outer and isinstance(res, dict) and isinstance(res.get("info"), dict) and \
+                res.get("method") == "observability":
+            res["info"]["rank_status"] = _rank_status(res)
+    if outer and isinstance(res, dict) and isinstance(res.get("info"), dict):
+        from .. import __version__
+        res["info"]["limits"] = list(ses.notes["limits"])
+        res["info"]["errors"] = list(ses.notes["errors"])
+        res["info"]["branches"] = list(ses.notes["branches"])
+        st = res["info"].setdefault("settings", {})
+        st.update(control={k: v for k, v in ses.control.items() if k != "deadline"},
+                  switches={n: v for n, v in state.active().items()
+                            if state.SWITCHES.get(n, ("",))[0] != "install"},
+                  primes=ses.primes, version=__version__)
+    return res
+
+
+def _rank_status(res):
+    """{"status", "why", "probability"} of the rank: "proven", "verified" or "lower bound"; None without a rank."""
+    info = res["info"]
+    if res.get("rank") is None or res.get("dim") is None:
+        return None
+    if res["rank"] >= res["dim"]:
+        return {"status": "proven", "why": "full rank at a point", "probability": None}
+    if info.get("rank_proven") is not None:
+        return {"status": "proven", "why": info.get("rank_proof"), "probability": None}
+    sw = (info.get("switching") or {}).get("uncertified")
+    if sw:
+        return {"status": "lower bound", "probability": None,
+                "why": "the rule of the switches is not proven for every direction"}
+    if info.get("rank_fields") is not None:
+        b = info.get("rank_fields_bound") or {}
+        return {"status": "verified", "probability": b.get("probability"),
+                "why": "invariant fields hold the kernel at every order, checked at random points modulo "
+                       "a prime" + ("" if b.get("probability") is not None else
+                                    f"; no bound on the chance of a wrong pass ({b.get('why') or 'not taken'})")}
+    syms = res.get("symmetries") or []
+    if info.get("engine") == "symbolic" and not info.get("lie_certified"):
+        why = "the Lie order of the symbolic engine is not proven sufficient" + \
+            (f": {info['lie_certificate']}" if info.get("lie_certificate") else "")
+    elif not info.get("lie_certified"):
+        why = "the Lie order is not proven sufficient"
+    elif (info.get("verification") or {}).get("ok") is False:
+        why = "the rank grows past the orders used"
+    elif info.get("gap_certified") is False:
+        why = "the gap order is not proven sufficient"
+    elif any(not s.get("explicit") for s in syms):
+        why = "a direction has no closed form"
+    else:
+        b = info.get("bound")
+        prob = b.get("probability") if isinstance(b, dict) else None
+        return {"status": "verified", "probability": prob,
+                "why": "every direction is closed and lies in the kernel; the rank holds unless a "
+                       "verified closed form is wrong"}
+    return {"status": "lower bound", "why": why, "probability": None}
+
+
+def _gap_settled(info):
+    """A proven rank proves the gap order sufficient; otherwise the stopped gap order is a limit."""
+    if info.get("gap_certified") is not False:
+        return
+    if info.get("rank_proven") is not None:
+        info["gap_certified"], info["gap_certificate"] = True, None
+        return
+    session.note("limits", f"gap order: {info.get('gap_certificate')}; the order is not proven sufficient")
+
+
+def _bound_needs_orders(info):
+    """The probability of info["bound"] dropped where the Lie or gap order is not proven sufficient
+    and the rank does not settle the kernel."""
+    b = info.get("bound")
+    if not isinstance(b, dict) or b.get("probability") is None or info.get("engine") == "symbolic" or \
+            info.get("rank_proven") is not None or info.get("rank_fields") is not None:
+        return
+    if not info.get("lie_certified"):
+        why = "the Lie order is not proven sufficient"
+    elif (info.get("verification") or {}).get("ok") is False:
+        why = "the rank grows past the orders used"
+    elif info.get("gap_certified") is False:
+        why = "the gap order is not proven sufficient"
+    else:
+        return
+    info["bound"] = dict(b, probability=None, applies=False,
+                         why=f"{why}, and the check runs at the order reached")
+
+
+def _kernel_bound(kw, res):
+    """The bound of detection.bound for the directions that rest on the kernel check alone,
+    or why it does not apply; None without such directions."""
+    from ..gfp import verify_prime
+    from .bound import kernel_bound
+    vecs = [s["generator"] for s in res.get("symmetries") or []
+            if s.get("level") == "verified" and s.get("generator")]
+    if not vecs:
+        return None
+    if (res.get("info") or {}).get("engine") == "symbolic":
+        return {"applies": False, "why": "the symbolic engine takes the kernel exactly, up to the Lie order used"}
+    if kw.get("equilibrate"):
+        return {"applies": False, "why": "the resting state has no closed form"}
+    every = as_events(kw.get("events")) or []
+    if any(e.get("root") is not None for e in every):
+        return {"applies": False, "why": "an event at a root"}
+    evs, later = [], {}
+    for e in every:
+        try:
+            t = float(str(e.get("time")))
+        except ValueError:
+            return {"applies": False, "why": "an event time depends on the parameters"}
+        if t == 0:
+            evs.append(e)
+        else:
+            later.setdefault(t, []).append(e)
+    later = [later[t] for t in sorted(later)]
+    gap_order = int(res["info"].get("gap_order_used") or 0)
+    f = {str(k): str(v) for k, v in dict(kw["f"]).items()}
+    gs = kw.get("g")
+    gs = [gs] if not isinstance(gs, (list, tuple)) else list(gs)
+    trafos = kw.get("trafo")
+    trafos = [trafos] if not isinstance(trafos, (list, tuple)) else list(trafos)
+    out = None
+    for tr in trafos or [None]:
+        tr = {str(k): str(v) for k, v in dict(tr or {}).items()}
+        sub = {k: v for k, v in tr.items() if k not in f}
+        x0 = {x: tr.get(x, x) for x in f}
+        for e in evs:
+            x, v = str(e["var"]), str(e["value"])
+            x0[x] = {"add": f"({x0.get(x, x)}) + ({v})", "replace": v,
+                     "multiply": f"({x0.get(x, x)})*({v})"}[e.get("method", "replace")]
+        fs = {x: _subs(rhs, sub) for x, rhs in f.items()}
+        x0 = {x: _subs(v, sub) for x, v in x0.items()}
+        for g in gs:
+            gg = {str(k): _subs(str(v), sub) for k, v in dict(g or {}).items()}
+            grp = [[dict(e, value=_subs(str(e["value"]), sub)) for e in g_] for g_ in later]
+            b = kernel_bound(fs, gg, x0, int(res["info"].get("lie_order_used") or 0), vecs, verify_prime(), 2,
+                             events=grp, gap_order=gap_order)
+            if b is None:
+                return {"applies": False, "why": "a term is not rational"}
+            out = b if out is None or b["probability"] > out["probability"] else out
+    return out
+
+
+def _subs(text, sub):
+    """`text` with the parameter rules of `sub` applied, as a string."""
+    if not sub:
+        return str(text)
+    import sympy as spy
+    e = model_sympify(text)
+    return to_r(e.xreplace({spy.Symbol(k): model_sympify(v) for k, v in sub.items()}))
 
 
 def detection_with_primes(kw):
@@ -167,12 +366,16 @@ def detection_with_primes(kw):
     square roots of the model's constants when the default ones do not."""
     import contextlib
 
-    from ..gfp import NeedPrimesError, use_primes
+    from ..gfp import NeedPrimesError, all_primes, use_primes
     consts, degrees = [], []
     while True:
         try:
             with use_primes(consts, degrees) if consts or degrees else contextlib.nullcontext():
-                return _symmetry_detection(**kw)
+                res = _symmetry_detection(**kw)
+                ses = state.get("session")
+                if ses is not None and ses.depth == 1:
+                    ses.primes = all_primes()
+                return res
         except NeedPrimesError as e:
             new_c = [c for c in e.constants if c not in consts]
             new_d = [d for d in e.degrees if d not in degrees]
@@ -194,7 +397,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
     `totals` give the network structure that `reduce_cq` and `equilibrate` use;
     `regimes` restricts the regimes of a model with switches (symmetry_detection()).
     """
-    control = dict(control or reconst_control())
+    control = {**reconst_control(), **dict(control or {})}
     equilibrate = bool(equilibrate)
     method = "scaling" if scalings_only else "observability"
     if gauge_preference is not False and method != "observability":
@@ -237,7 +440,8 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                 res["info"]["gauge_suggestion"] = gauge_suggest(res["symmetries"], raw["kernel"],
                                                                 res["info"]["coordinates"],
                                                                 fixed=fixed)
-            except Exception:
+            except Exception as exc:
+                swallow(exc, "gauge suggestion")
                 res["info"]["gauge_suggestion"] = None
         return res
 
@@ -422,8 +626,8 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                           True if positive is True else ([] if positive is False else list(positive)))
         if sc.get("why") is not None:
             raise ValueError(f"{sc['why']}.")
-        fdyn = {k: str(v).replace("**", "^") for k, v in sc["f"].items()}
-        gset = [({k: str(v).replace("**", "^") for k, v in x.items()} or None) for x in sc["g"]]
+        fdyn = {k: to_r(v) for k, v in sc["f"].items()}
+        gset = [({k: to_r(v) for k, v in x.items()} or None) for x in sc["g"]]
     off = _off_domain(list(fdyn.values()) + g_char(), positive, set(states))
     if positive is not False and method != "scaling" and not (sym_engine == "symbolic"):
         ev_ic = [{e["var"]: e["value"]} for e in events if e["method"] in ("replace", "multiply")]
@@ -445,11 +649,11 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             clash_l = [v for v in vs if v in clashes]
             if clash_l:
                 raise ValueError(f"{', '.join(clash_l)} appear(s) inside log() or "
-                                 "under a fractional power and is analysed as exp(log_<name>); "
+                                 "under a fractional power and is analyzed as exp(log_<name>); "
                                  "inputs and conditions on it are not supported.")
 
             def from_py(e):
-                return {k: str(v).replace("**", "^") for k, v in e.items()} if e else None
+                return {k: to_r(v) for k, v in e.items()} if e else None
             fdyn = from_py(lc["f"])
             states = list(fdyn)
             gset = [from_py(x) for x in lc["g"]]
@@ -460,7 +664,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                     if ce.get("why") is not None:
                         raise ValueError(f"{ce['why']}.")
                     e["var"] = ce["var"]
-                    e["value"] = str(ce["value"]).replace("**", "^")
+                    e["value"] = to_r(ce["value"])
                     e["method"] = ce["method"]
                     lognum += list(ce.get("consts") or [])
                 for e in events:
@@ -566,6 +770,12 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             sr = dict(sr, method="observability", engine="symbolic",
                       lie_order_used=int(sr["lie_order"]), conditions=int(res["n_conditions"]),
                       segments=int(res["n_conditions"]), gap_order_used=0)
+            from .observability.proof import prove_symbolic
+            prove_symbolic(sr, sr.pop("systems"))
+            dirs = sr["non_identifiable"]
+            if sr.get("rank_proven") is None and dirs and all(d.get("exact") for d in dirs) and \
+                    len(dirs) == sr["dim"] - sr["rank"]:
+                sr["rank_proven"], sr["rank_proof"] = len(dirs), "proven symmetries"
             sr["non_identifiable"] = relabel_directions(sr["non_identifiable"])
             return deliver(sr, method)
         if off is not None:
@@ -615,8 +825,8 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                              "any generic point (a denominator vanishes at every point tried).")
         out["non_identifiable"] = relabel_directions(out["non_identifiable"])
         if verify and isinstance(out.get("verification"), dict) and out["verification"].get("ok") is False:
-            warnings.warn("`verify`: the saturation guard found the rank still "
-                          "growing past the reported Lie order; the directions may be over-reported; "
+            warnings.warn("`verify`: the rank still grows past the Lie or gap order used; "
+                          "the directions may be over-reported; "
                           f"inspect info['verification'] ({out['verification'].get('reason')}).", stacklevel=2)
         return deliver(out, method)
 
@@ -632,5 +842,10 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
     else:
         r = scaling_symmetries_single(model=eqn_lines(fdyn), observation=g_lines(),
                                        inputs=forcings or None, fixed=fixed_scal,
-                                       parameters=parameters or None)
+                                       parameters=parameters or None, verbose=verbose)
+    for d in r.get("non_identifiable") or []:
+        d["exact"] = not r.get("skipped")
+    if r.get("skipped"):
+        session.note("limits", f"scalings: {r['skipped']} term(s) without polynomial form left out of the "
+                               "scaling conditions; a scaling they forbid may be reported")
     return deliver(r, "scaling")

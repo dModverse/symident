@@ -7,11 +7,14 @@ import warnings
 import numpy as np
 
 from ... import _core, state
+from ...errors import SYMPY_FAILS, InapplicableError, RouteError, swallow, sympy_fail
 from ...gfp import PRIMES, in_span, null_residues
 from ...par import thread_map
 from ...rexpr import sym_sort
 from ...sym.msolve import msolve_timeout
+from ...sym.parse import model_sympify
 from ..classify import joint_expand_scal, peel_scalings, report_physical
+from ..closedform import recast_backsub
 from ..fields import (
     exact_scaling_set,
     field_check,
@@ -31,6 +34,7 @@ from .guard import saturation_guard
 from .joint import JointSystem
 from .plain import PlainSystem
 
+# regimes beyond which the exact proof does not run its own field setup
 _CSUFFIX = re.compile(r"\|c[0-9]+$")
 
 
@@ -44,7 +48,8 @@ def _rational_forms(exprs):
     try:
         _, parse = _make_local_parse([str(x) for x in exprs])
         return all(_is_rational_expr(parse(str(x).replace("^", "**"))) for x in exprs)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return False
 
 
@@ -59,7 +64,7 @@ class Analysis:
                  cond_zero_states=(), t0events=(), n_conditions=None, chain_of=None, n_gaps=0,
                  implicit_steady_state=False, control=None, verify=False, codim_spec=None):
         from ...options import reconst_control
-        self.ctrl = dict(control or reconst_control())
+        self.ctrl = {**reconst_control(), **dict(control or {})}
         self.closed_form = bool(closed_form)
         self.verify = bool(verify)
         self.codim_spec = codim_spec
@@ -109,7 +114,7 @@ class Analysis:
 
     def kcall_sat(self, point, p, Nt, Mtot=0):
         """The kernel for the saturation, rank only in joint mode unless WIDESAT is set."""
-        if self.joint and not state.env("WIDESAT"):
+        if self.joint:
             return self.sys.kcall(point, p, Nt, Mtot, rank_only=True)
         return self.sys.kcall(point, p, Nt, Mtot)
 
@@ -132,16 +137,16 @@ class Analysis:
             return _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, run.z_slots, leaves(),
                                             list(prime_vec), int(Nt), run.cores)
         if run.has_gaps and not run.ss_constraint and not self.joint and not self.transient and \
-                n > 0 and not state.env("NOPOINTBATCH"):
+                n > 0:
             return _core.sym_obs_null_chain_point_batch([run.chain_tapes(idx) for idx in run.chain_groups],
                                                         run.n_leaves, run.n_states, run.z_slots, leaves(),
                                                         list(prime_vec), int(Nt), int(run.mtot), run.cores,
                                                         list(run.nt_cap))
-        if self.transient and not run.has_gaps and n > 0 and not state.env("NOPOINTBATCH"):
+        if self.transient and not run.has_gaps and n > 0:
             os_ = _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, run.z_slots, leaves(),
                                            list(prime_vec), int(Nt), run.cores)
             return [self.sys.with_relations(os_[i], point_list[i], prime_vec[i]) for i in range(n)]
-        if self.chunked and n > 0 and not state.env("NOCHUNK"):
+        if self.chunked and n > 0:
             per = state.get("chunk_points", 2 * max(1, run.cores))
             out = []
             for s in range(0, n, per):
@@ -156,7 +161,8 @@ class Analysis:
             if self.joint:
                 self.sys.warm_off = True
         try:
-            return run.par_map(range(n), lambda i: self.kcall(point_list[i], prime_vec[i], Nt))
+            return run.par_map(range(n), lambda i: self.kcall(point_list[i], prime_vec[i], Nt),
+                               self.sys if self.joint else None)
         finally:
             run.cores_call = cc_saved
             if self.joint:
@@ -186,13 +192,13 @@ class Analysis:
         return f
 
     def exact_scalings(self, fixed):
-        """The exact scalings with `fixed` held, memoised."""
+        """The exact scalings with `fixed` held, memoized."""
         key = "k:" + ",".join(sorted(fixed))
         if key not in self.scal_memo:
             self.scal_memo[key] = exact_scaling_set(self.multi, fixed)
         return self.scal_memo[key]
 
-    # ---- saturation and the certified Lie order ---------------------------------------
+    # ---- saturation and the proven Lie order -----------------------------------------
 
     def _lower_caps(self, cap0, cap_rank):
         """Lower the deepest chain caps by bisection while the rank score stays; False
@@ -217,19 +223,20 @@ class Analysis:
         """Each chain at its own order plus the plateau during the saturation."""
         run = self.run
         nb = self.sys.kc if self.joint else (len(run.chain_groups) if run.chain_groups else 0)
-        if not (run.has_gaps and not state.env("NOCAP") and len(orders) == nb
+        if not (run.has_gaps and len(orders) == nb
                 and (self.joint or not run.ss_constraint)):
             return
         cap0 = [int(o) + _plateau() for o in orders]
         run.nt_cap = cap0
-        if first is None or state.env("NOJOINTCAP"):
+        if first is None:
             return
         Nt = max(cap0)
 
         def cap_rank():
             try:
                 r = self.kcall_sat(point, PRIMES[0], Nt, Mtot)
-            except Exception:
+            except Exception as exc:
+                swallow(exc, "joint cap")
                 r = None
             return rank_score(r) if ok(r) else None
         if self._lower_caps(cap0, cap_rank) and state.env("LIEDIAG"):
@@ -240,8 +247,7 @@ class Analysis:
         run = self.run
         if block_profile is not None and len(block_profile) == len(block_call) and len(block_call) > 1:
             return lambda f, xs: [f(x) for x in xs]
-        if (not run.ss_constraint or self.joint) and run.cores > 1 and len(block_call) > 1 \
-                and not state.env("SERIALBLOCKS"):
+        if (not run.ss_constraint or self.joint) and run.cores > 1 and len(block_call) > 1:
             return lambda f, xs: thread_map(f, xs, run.cores)
         return None
 
@@ -292,8 +298,7 @@ class Analysis:
             nt_min_block = None
         self._scaling_cap()
         self.stacked_first = (((not run.ss_constraint and not run.has_gaps)
-                               or (self.joint and run.has_gaps and self.rank_cap < self.nz
-                                   and not state.env("NOSTACKEDSS")))
+                               or (self.joint and run.has_gaps and self.rank_cap < self.nz))
                               and not self.recast and self.nz > state.get("stacked_min", 150)
                               and state.get("stacked_first") is not False and not state.get("inner")
                               and state.get("order_hint") is None)
@@ -321,6 +326,45 @@ class Analysis:
         run.stage("saturated")
         return sc
 
+    def _gap_proof(self, sc):
+        """The gap order raised until the truncated rank reaches the bound of gapcert, which proves
+        it sufficient; False where no bound applies or the cap comes first."""
+        from ... import session
+        from ..gapcert import gap_bound
+        run = self.run
+        if self.joint or not run.chain_groups or self.recast:
+            return False
+        b = gap_bound(self.multi["tapes"], run.chain_groups, list(self.znames), int(sc["nt_used"]), PRIMES[0],
+                      session.current().rng("gap.bound", ",".join(self.znames)))
+        self.gap_bound = b
+        if b["bound"] is None:
+            return False
+        if rank_of(sc["ref"]) >= b["bound"]:
+            return True
+        for m in range(run.mtot + 1, run.max_gap + 1):
+            try:
+                r = self.kcall4(sc["point0"], PRIMES[0], sc["nt_used"], m)
+            except Exception as exc:
+                swallow(exc, "gap order past the plateau")
+                return False
+            if not ok(r):
+                return False
+            if rank_of(r) >= b["bound"]:
+                sc.update(ref=r, mtot_used=m, rank=r["rank"], rank_s=rank_of(r), pivots=r["pivots"])
+                run.mtot = m
+                return True
+        return False
+
+    def _gap_why(self, sc):
+        """None when the rank bound proves the gap order sufficient, else why it stopped."""
+        run = self.run
+        stop = sc.get("gap_stop") or "cap"
+        if rank_of(sc["ref"]) >= self.rank_cap or stop == "full":
+            return None
+        return {"plateau": f"the rank did not grow from gap order {run.mtot - 1} to {run.mtot}",
+                "cap": f"reconst_control(gap_order_cap={run.max_gap}) reached",
+                "failed": f"no kernel past gap order {run.mtot}"}[stop]
+
     def _cert_segments(self, sc):
         """The certificate inputs: chains of tapes and a seed per chain."""
         run, sys = self.run, self.sys
@@ -336,7 +380,7 @@ class Analysis:
         return segs, [np.asarray(sc["point0"][:run.n_leaves], dtype=np.int64)] * len(segs)
 
     def certify(self, sc):
-        """The certified Lie order per block, then the per-chain caps lowered."""
+        """The proven Lie order per block, then the per-chain caps lowered."""
         run = self.run
         run.nt_cap = []
         sc["certified"] = self.rank_cap < self.nz and rank_of(sc["ref"]) >= self.rank_cap
@@ -345,21 +389,22 @@ class Analysis:
                 list(sc.get("block_orders") or []) == list(hint.get("block_orders") or []):
             sc["certified"] = True
             sc["cert_orders"] = True
-        if not sc["certified"] and not self.stacked_first and not state.env("NOCERT"):
+        if not sc["certified"] and not self.stacked_first:
             self._certificate(sc)
         nb = self.sys.kc if self.joint else (len(run.chain_groups) if run.chain_groups else -1)
         if run.has_gaps and (self.joint or not run.ss_constraint) and \
-                sc.get("block_orders") is not None and len(sc["block_orders"]) == nb and not state.env("NOCAP"):
+                sc.get("block_orders") is not None and len(sc["block_orders"]) == nb:
             add = 0 if sc.get("cert_orders") else _plateau()
             run.nt_cap = [int(o) + add for o in sc["block_orders"]]
         run.stage("Lie order certified")
-        if run.nt_cap and not state.env("NOJOINTCAP"):
+        if run.nt_cap:
             mt = int(sc.get("mtot_used") or 0)
 
             def cap_rank():
                 try:
                     r = self.kcall4(sc["point0"], PRIMES[0], sc["nt_used"], mt)
-                except Exception:
+                except Exception as exc:
+                    swallow(exc, "joint block caps")
                     r = None
                 return rank_score(r) if ok(r) else None
             self._lower_caps(list(run.nt_cap), cap_rank)
@@ -369,7 +414,7 @@ class Analysis:
     def _cert_start(self, sc, n):
         """Per block the saturated order plus the plateau, where the saturation knows it."""
         bo = sc.get("block_orders")
-        if state.env("CERTFROM16") or bo is None or len(bo) != n:
+        if bo is None or len(bo) != n:
             return None
         return [int(o) + _plateau() + 1 for o in bo]
 
@@ -390,6 +435,7 @@ class Analysis:
                                          map_fn=mapf, threads=threads,
                                          start=self._cert_start(sc, len(segs)))
             except Exception as e:
+                swallow(e, "Lie order certificate")
                 if state.env("LIEDIAG"):
                     print(f"[liediag] certificate failed: {e}")
                 orders = None
@@ -400,7 +446,8 @@ class Analysis:
             need = max([1, *ordv])
             try:
                 rc = self.kcall4(sc["point0"], P1, need, sc.get("mtot_used") or 0)
-            except Exception:
+            except Exception as exc:
+                swallow(exc, "certified kernel")
                 rc = None
             if ok(rc):
                 sc.update(ref=rc, nt_used=need, rank=rc["rank"], rank_s=rank_of(rc), pivots=rc["pivots"],
@@ -432,11 +479,13 @@ class Analysis:
         self.point0_solved = np.array(sc["point0"], dtype=np.int64)
         self._mark_states()
         run.mtot = int(sc.get("mtot_used") or 0)
-        if run.has_gaps and sc.get("saturated_m") is False:
-            warnings.warn(f"the gap power-series order hit the cap ({run.max_gap}) "
-                          "before the rank stabilised; the reported rank is a sound (conservative) "
-                          "lower bound. Raise reconst_control(gap_order_cap=) for the exact "
-                          "generic-timing verdict.", stacklevel=2)
+        gap_why = self._gap_why(sc) if run.has_gaps else None
+        if gap_why is not None and self._gap_proof(sc):
+            gap_why = None
+        elif gap_why is not None and getattr(self, "gap_bound", None) is not None:
+            b = self.gap_bound
+            gap_why += (f" (no rank bound: {b['why']})" if b["bound"] is None else
+                        f" (the rank stays below its bound {b['bound']} up to the cap)")
         nz, n_seg = self.nz, len(self.multi["tapes"])
         result = {"method": "observability", "engine": "analytic",
                   "conditions": n_seg if self.n_conditions is None else int(self.n_conditions),
@@ -445,6 +494,7 @@ class Analysis:
                   "lie_order_used": int(sc["nt_used"]), "lie_order_driver": sc.get("block_driver"),
                   "lie_uncertified": sc.get("uncertified"), "lie_plateau": sc.get("plateau"),
                   "lie_certified": bool(sc.get("certified")), "lie_block_orders": sc.get("block_orders"),
+                  "gap_certified": None if not run.has_gaps else gap_why is None, "gap_certificate": gap_why,
                   "sat_score": rank_score(sc["ref"]), "non_identifiable": []}
         self.phys_params0 = [z for z in self.znames if z not in self.zsn]
         if self.joint:
@@ -516,7 +566,7 @@ class Analysis:
         result["coordinates"] = self.phys_params0
         chosen = self._scalings_and_statics(ker_dim)
         if len(chosen) < ker_dim and self.closed_form and not self.stacked_quick and \
-                not self.stacked_first and not state.env("NOCONTDIRECT") and self._direct_kernel(ker_dim):
+                not self.stacked_first and self._direct_kernel(ker_dim):
             result["rank"] = rank0
             result["coordinates"] = coords0
             self.gap_dirs = self._gap_dirs()
@@ -524,6 +574,10 @@ class Analysis:
         result["non_identifiable"] = chosen + [
             {"support": [], "type": "general", "closed_form": False,
              "reason": "not reconstructed along the continuation"} for _ in range(ker_dim - len(chosen))]
+        run = self.run
+        self.field_chains = run.chain_groups if run.has_gaps else [[i] for i in range(len(self.multi["tapes"]))]
+        self.field_joint = {"conds": self.sys.equil_conds, "solve": self.sys.solve_cond}
+        self._prove_exact(result)
         if len(chosen) == ker_dim:
             result["rank_proven"] = ker_dim
             result["rank_proof"] = ("exact scalings and static subsystems"
@@ -553,10 +607,10 @@ class Analysis:
                 rows = r2
                 vv = {k: str(w) for k, w in v.items() if k in pp and str(w) != "0"}
                 chosen.append({"support": sym_sort(list(vv)), "vector": vv, "type": "scaling",
-                               "closed_form": True})
+                               "closed_form": True, "exact": True})
             if len(chosen) == ker_dim:
                 break
-        if len(chosen) < ker_dim and not state.env("NOSTATIC"):
+        if len(chosen) < ker_dim:
             stf = self.static_fields()
             for f in (stf or []):
                 r2 = np.vstack([rows, f["lval"]])
@@ -579,13 +633,15 @@ class Analysis:
         with msolve_timeout(float(state.env_value("DIRECTSECS", "120"))):
             try:
                 pt_d = sys.sat_prep(self.point0_solved, rounds=2)
-            except Exception:
+            except Exception as exc:
+                swallow(exc, "direct kernel point")
                 pt_d = None
             if pt_d is None:
                 pt_d = self.point0_solved
             try:
                 rc = self.kcall4(pt_d, PRIMES[0], sc["nt_used"], sc.get("mtot_used") or 0)
             except Exception as e:
+                swallow(e, "direct kernel")
                 rc = {"ok": False, "why": str(e)}
         direct = ok(rc) and nz - rank_of(rc) == ker_dim
         if state.env("LIEDIAG"):
@@ -613,15 +669,17 @@ class Analysis:
                                             per_cond_obs=[obs_lines[i] for i in keep],
                                             inputs=strs(self.multi.get("forcings")) or None,
                                             fixed=self.scal_fixed or None, recast=self.recast or None)
-        except Exception:
+        except Exception as exc:
+            swallow(exc, "scalings of the model")
             res = None
         if res is None:
             return [], np.zeros((self.nz, 0), dtype=np.int64)
+        exact = not res.get("skipped")
         if self.joint:
             sys = self.sys
             res = joint_expand_scal(res, sys.state_base, sys.kc, sys.held_param_of, sys.pinned())
         peel = peel_scalings(res, self.znames, self.nz, np.asarray(self.sc["point0"])[self.z_slots],
-                             PRIMES[0], self.N)
+                             PRIMES[0], self.N, exact=exact)
         return peel["scaling"], peel["Bmat"]
 
     def _residual(self, result):
@@ -661,27 +719,38 @@ class Analysis:
         run.stage("reconstruction")
         result = self._physical(result)
         self._prove_by_scalings(result)
+        self._prove_exact(result)
         run.stage("exact scalings proof")
         self._prove_by_fields(result)
         run.stage("field proof")
+        if not state.get("inner"):
+            from .proof import chain_bound
+            result["bound"] = chain_bound(self, result)
         kernel = {"coords": list(self.znames), "N": self.N, "p": P}
         if self.stacked_first:
-            if result.get("rank_proven") is None and not self.stacked_quick:
+            if not _settled(result) and not self.stacked_quick:
                 return {"rerun_blocks": True}
             result["kernel"] = kernel
             if not self.closed_form:
                 result["non_identifiable"] = [d if d.get("type") == "scaling" else
                                              {"support": d.get("support"), "type": d.get("type"),
                                               "closed_form": False} for d in result["non_identifiable"]]
-            run.stage("done (stacked)" if result.get("rank_proven") is None else "done (stacked, rank proven)")
+            run.stage("done (stacked)" if not _settled(result) else "done (stacked, rank settled)")
             result["stacked"] = bool(run.ss_constraint)
             return result
-        if self.verify and not sc.get("certified") and result.get("rank_proven") is None:
-            try:
-                result["verification"] = saturation_guard(self._guard_call, self.point0_solved,
-                                                          sc["nt_used"], sc["rank_s"])
-            except Exception as e:
-                result["verification"] = {"ok": None, "method": "saturation guard", "reason": str(e)}
+        gap_open = run.has_gaps and result.get("gap_certificate") is not None
+        if self.verify and (not sc.get("certified") or gap_open) and not _settled(result):
+            checks = []
+            if not sc.get("certified"):
+                try:
+                    checks.append(saturation_guard(self._guard_call, self.point0_solved,
+                                                   sc["nt_used"], sc["rank_s"]))
+                except Exception as e:
+                    swallow(e, "saturation guard")
+                    checks.append({"ok": None, "method": "saturation guard", "reason": str(e)})
+            if gap_open:
+                checks.append(self._gap_guard(sc))
+            result["verification"] = _joint_check(checks)
         result["kernel"] = kernel
         run.stage("done")
         return result
@@ -696,16 +765,17 @@ class Analysis:
         if len(conds) != 1:
             return None
         try:
-            sc0 = self.sys.solve_cond(self.sc["point0"], PRIMES[0], conds[0])
-        except Exception:
+            # at the kernel's point, whose leaves include the recast coordinates
+            sc0 = self.sys.solve_cond(self.point0_solved, PRIMES[0], conds[0])
+        except Exception as exc:
+            swallow(exc, "kernel point")
             sc0 = None
         if sc0 is None:
             return None
         return {nm: int(v) for nm, v in zip(self.leaf_names_aug, sc0["ptc"])}
 
-    def _in_kernel(self, vec, env):
-        """Whether the closed form {name: expr} lies in the kernel at the base point on the
-        physical coordinates; None when it does not evaluate there."""
+    def _phys_vector(self, vec, env):
+        """The closed form {name: expr} at `env` on the physical coordinates; None where it does not evaluate."""
         from ..closedform import eval_modq
         P = PRIMES[0]
         if env is None or not _rational_forms(list(vec.values())):
@@ -718,6 +788,16 @@ class Analysis:
                 if x is None:
                     return None
                 v[j] = x % P
+        return v
+
+    def _in_kernel(self, vec, env):
+        """Whether the closed form {name: expr} lies in the kernel at the base point on the
+        physical coordinates; None when it does not evaluate there."""
+        P = PRIMES[0]
+        v = self._phys_vector(vec, env)
+        if v is None:
+            return None
+        phys = [i for i, z in enumerate(self.znames) if not _CSUFFIX.search(z)]
         Nphys = np.asarray(self.N, dtype=np.int64)[phys, :] % P
         return bool(in_span(Nphys, v, len(phys), P)) if np.any(v) else None
 
@@ -730,8 +810,9 @@ class Analysis:
         if not self.joint or not lines:
             return dirs
         try:
-            eqs = [spy.sympify(ln.split("=", 1)[1].replace("^", "**")) for ln in lines]
-        except (spy.SympifyError, TypeError, ValueError):
+            eqs = [model_sympify(ln.split("=", 1)[1]) for ln in lines]
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return dirs
         out = []
         for d in dirs:
@@ -740,15 +821,23 @@ class Analysis:
             if not d.get("closed_form") or not missing:
                 out.append(d)
                 continue
+            # the completion in the recast coordinates of the resting equations
+            vec = d.get("checked") or vec
             try:
-                comp = {k: spy.sympify(str(v).replace("^", "**")) for k, v in vec.items()}
+                comp = {k: model_sympify(v) for k, v in vec.items()}
+                moved = dict(comp)
+                for r in self.recast:
+                    # a recast power whose base the direction fixes: E moves with its exponent
+                    E, L, n = (spy.Symbol(str(r[k])) for k in ("E", "L", "exp"))
+                    if str(r["base"]) not in vec and str(r["exp"]) in vec:
+                        moved[str(E)] = E * L * comp[str(n)]
                 for r in missing:
                     R = spy.Symbol(r)
                     sol = next((spy.solve(spy.fraction(spy.together(e))[0], R) for e in eqs
                                 if R in e.free_symbols), [])
                     if len(sol) != 1:
-                        raise ValueError(r)
-                    comp[r] = spy.cancel(sum((spy.diff(sol[0], spy.Symbol(c)) * v for c, v in comp.items()),
+                        raise InapplicableError(r)
+                    comp[r] = spy.cancel(sum((spy.diff(sol[0], spy.Symbol(c)) * v for c, v in moved.items()),
                                              spy.Integer(0)))
                 full = {k: str(v).replace("**", "^") for k, v in comp.items() if v != 0}
                 env = self._kernel_point()
@@ -757,11 +846,14 @@ class Analysis:
                 if self._in_kernel(vec, env) is not False:
                     out.append(d)
                 elif self._in_kernel(full, env) is not False:
-                    out.append(dict(d, vector=full, support=sym_sort(list(full))))
+                    back = recast_backsub(full, self.recast) if self.recast else full
+                    out.append(dict(d, vector=back, support=sym_sort(list(full)),
+                                    checked=full if self.recast else d.get("checked")))
                 else:
                     out.append({"support": sym_sort(list(full)), "type": "general",
                                 "closed_form": False, "reason": "no closed form on the kernel"})
-            except (spy.SympifyError, TypeError, ValueError, NotImplementedError):
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 out.append({"support": sym_sort(list(vec) + missing), "type": "general",
                             "closed_form": False, "reason": "a solved rate of the forward route "
                             "has no closed form"})
@@ -770,15 +862,15 @@ class Analysis:
     def _eliminate_states(self, dirs):
         """Closed forms that hold resting states rewritten in the coordinates where the resting
         equations allow it: solved rates are substituted until no state remains."""
-        import sympy as spy
         lines = (self.multi.get("tapes") or [{}])[0].get("constraint_model")
         states = set(self.multi.get("real_state_names") or []) - set(self.znames)
         if not self.joint or not lines or not states:
             return dirs
         coords = {z for z in self.znames if not _CSUFFIX.search(z)}
         try:
-            eqs = [spy.sympify(ln.split("=", 1)[1].replace("^", "**")) for ln in lines]
-        except (spy.SympifyError, TypeError, ValueError):
+            eqs = [model_sympify(ln.split("=", 1)[1]) for ln in lines]
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return dirs
         out = []
         for d in dirs:
@@ -787,17 +879,18 @@ class Analysis:
                 out.append(d)
                 continue
             try:
-                held = any(states & {str(x) for x in spy.sympify(str(v).replace("^", "**")).free_symbols}
+                held = any(states & {str(x) for x in model_sympify(v).free_symbols}
                            for v in vec.values())
                 out.append(self._rewrite_in_coords(d, vec, eqs, states, coords) if held else d)
-            except (spy.SympifyError, TypeError, ValueError):
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 out.append(d)
         return out
 
     @staticmethod
     def _rewrite_in_coords(d, vec, eqs, states, coords):
         import sympy as spy
-        comp0 = {k: spy.sympify(str(v).replace("^", "**")) for k, v in vec.items()}
+        comp0 = {k: model_sympify(v) for k, v in vec.items()}
 
         def held(c):
             return {str(x) for e in c.values() for x in e.free_symbols} & states
@@ -859,7 +952,17 @@ class Analysis:
             at = env if env is not None or not gen else \
                 (None if rest & {t for x in gen.values() for t in tok.findall(str(x))} else leaves)
             inside = None if not gen else self._in_kernel(gen, at)
+            if inside is None and d.get("checked") and env is not None:
+                # a form with recast or exponential terms, in the coordinates it was checked in
+                gen, at = {k: v for k, v in d["checked"].items() if not _CSUFFIX.search(k)}, env
+                inside = self._in_kernel(gen, at)
             if inside is None:
+                kv = d.pop("kernel_residue", None)
+                if kv is not None:
+                    v = np.asarray(kv, dtype=np.int64)[phys] % P
+                    if in_span(span, v, n, P):
+                        continue
+                    span = np.concatenate([span, v.reshape(n, 1)], axis=1)
                 keep.append(d)
                 continue
             if not inside:
@@ -901,6 +1004,24 @@ class Analysis:
                          "reason": "not reconstructed in closed form"})
         return keep
 
+    def _gap_guard(self, sc, margin=2):
+        """The rank at `margin` gap orders past the reported one, at the same point and Lie order."""
+        mt, nt = self.run.mtot, int(sc["nt_used"])
+        try:
+            r0 = self.kcall4(sc["point0"], PRIMES[0], nt, mt)
+            r1 = self.kcall4(sc["point0"], PRIMES[0], nt, mt + margin)
+        except Exception as e:
+            swallow(e, "gap guard")
+            return {"ok": None, "method": "gap guard", "reason": str(e)}
+        if not (ok(r0) and ok(r1)):
+            return {"ok": None, "method": "gap guard", "reason": "no kernel past the reported gap order"}
+        base, top = int(rank_of(r0)), int(rank_of(r1))
+        if top > base:
+            return {"ok": False, "method": "gap guard", "kernel_rank": base, "kernel_rank_extended": top,
+                    "reason": f"rank grows {base} -> {top} by gap order {mt + margin}"}
+        return {"ok": True, "method": "gap guard", "kernel_rank": base,
+                "reason": f"rank {base} stable through gap order {mt + margin}"}
+
     def _guard_call(self, point, p, Nt):
         """The kernel at a higher Lie order, every chain cap raised with it."""
         run = self.run
@@ -940,9 +1061,21 @@ class Analysis:
             result["rank_proof"] = ("exact scalings and static subsystems"
                                     if self.static_rows is not None else "exact scalings")
 
+    def _prove_exact(self, result):
+        """Closed forms proven over Q (proof.prove_exact)."""
+        from .proof import prove_exact
+        prove_exact(self, result)
+
     def _prove_by_fields(self, result):
-        """Proven when every kernel direction lies in the span of invariant fields."""
-        if result.get("rank_proven") is not None or result["rank"] >= result["dim"] or self.recast \
+        """Proven when every kernel direction lies in the span of invariant fields; exactly
+        when every direction is a proven symmetry, independent at a point."""
+        dirs = result.get("non_identifiable") or []
+        if result.get("rank_proven") is None and result["rank"] < result["dim"] and dirs and \
+                len(dirs) == result["dim"] - result["rank"] and all(d.get("exact") for d in dirs):
+            result["rank_proven"] = len(dirs)
+            result["rank_proof"] = "proven symmetries"
+            return
+        if _settled(result) or result["rank"] >= result["dim"] or self.recast \
                 or state.get("inner") or self.stacked_quick or state.env("NOFIELDS"):
             return
         run = self.run
@@ -953,20 +1086,41 @@ class Analysis:
                 proof = field_check(field_setup(self.multi, self.field_chains, run.cores, fields=own),
                                     self.N, self.znames, run.leaf_names, self.point0_solved,
                                     self.field_chains, self.field_joint)
+            except RouteError as e:
+                proof = {"ok": False, "why": str(e)}
             except Exception as e:
+                swallow(e, "field proof")
                 proof = {"ok": False, "why": str(e)}
         if not proof.get("ok") and len(set(regime_keys(self.multi["tapes"]))) <= 3:
             try:
                 proof = field_proof(self.multi, self.N, self.znames, run.leaf_names, self.point0_solved,
                                     self.field_chains, self.field_joint, run.cores, setup=None,
                                     fixed=self.field_fixed(self.N))
+            except RouteError as e:
+                proof = {"ok": False, "why": str(e)}
             except Exception as e:
+                swallow(e, "field proof")
                 proof = {"ok": False, "why": str(e)}
         if state.env("LIEDIAG"):
             print("[liediag] invariant fields: " + ("proven" if proof.get("ok") else str(proof.get("why"))))
         if proof.get("ok"):
-            result["rank_proven"] = int(result["dim"] - result["rank"])
-            result["rank_proof"] = "invariant fields"
+            result["rank_fields"] = int(result["dim"] - result["rank"])
+            result["rank_fields_bound"] = proof.get("bound")
+
+
+def _joint_check(checks):
+    """One verification from several guards: failed if one fails, inconclusive if one is."""
+    if len(checks) == 1:
+        return checks[0]
+    oks = [c.get("ok") for c in checks]
+    return {"ok": False if False in oks else (None if None in oks else True),
+            "method": " and ".join(c["method"] for c in checks),
+            "reason": "; ".join(f"{c['method']}: {c.get('reason')}" for c in checks)}
+
+
+def _settled(result):
+    """Whether the rank is proven, or the invariant fields hold the kernel at every order."""
+    return result.get("rank_proven") is not None or result.get("rank_fields") is not None
 
 
 def observability_analytic_multi(multi, closed_form=False, cores=1, equil_zero_states=(),

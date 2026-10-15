@@ -2,8 +2,12 @@
 
 import numpy as np
 
+from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import invmod
 from .sparse import _ints
+
+# leaves sent to the kernel together when the groups are formed
+_BLOCK = 32
 
 
 def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves, first=None):
@@ -42,27 +46,49 @@ def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves, first=None):
         z[v] = z[v] % P * ainv % P
         return z
     moves = {"add": add, "mul": mul}
+    nt = sc["nt_used"]
+
+    def outcome(o):
+        v = res_s(o, P)
+        return None if v is None else (tuple(_ints(o["pivots"])), v)
+
+    def same(a, b):
+        return a is not None and b is not None and a[0] == b[0] and np.array_equal(a[1], b[1])
+    def shift(z, v):
+        z = z.copy()
+        z[v] += tval
+        return z
+
+    def scale(z, v):
+        z = z.copy()
+        z[v] = z[v] % P * aval % P
+        return z
+    single = {"add": shift, "mul": scale}
+    at_z1 = outcome(kb_s([z1], [P], nt)[0])
     groups = []
     for type_, mv in moves.items():
         grouped = {x for g in groups for x in [g["rep"]] + g["members"]}
         reps, members = [], []
-        for v in [x for x in relevant if x not in grouped]:
-            joined = False
-            if reps:
-                pts = [z1] + [mv(z1, r, v) for r in reps]
-                out = kb_s(pts, [P] * len(pts), sc["nt_used"])
-                v1 = res_s(out[0], P)
-                if v1 is not None:
-                    for j in range(len(reps)):
-                        v2 = res_s(out[j + 1], P)
-                        if v2 is not None and _ints(out[j + 1]["pivots"]) == _ints(out[0]["pivots"]) \
-                                and np.array_equal(v1, v2):
-                            members[j].append(v)
-                            joined = True
-                            break
-            if not joined:
-                reps.append(v)
-                members.append([])
+        todo = [x for x in relevant if x not in grouped]
+        # leaves that enter only through their sum (product) give the same kernel when either alone
+        # is shifted (scaled): only pairs with the same such signature are tested
+        sig = [outcome(o) for o in kb_s([single[type_](z1, v) for v in todo], [P] * len(todo), nt)] \
+            if todo else []
+        sig = dict(zip(todo, sig))
+        # one kernel call per block against every possible representative; the greedy
+        # assignment replays in order
+        for start in range(0, len(todo), _BLOCK):
+            block = todo[start:start + _BLOCK]
+            keys = [(r, v) for i, v in enumerate(block) for r in reps + block[:i] if same(sig[r], sig[v])]
+            outs = kb_s([mv(z1, r, v) for r, v in keys], [P] * len(keys), nt) if keys else []
+            got = {k: outcome(o) for k, o in zip(keys, outs)}
+            for v in block:
+                j = next((j for j, r in enumerate(reps) if (r, v) in got and same(got[(r, v)], at_z1)), None)
+                if j is None:
+                    reps.append(v)
+                    members.append([])
+                else:
+                    members[j].append(v)
         for j in range(len(reps)):
             if members[j]:
                 groups.append({"rep": reps[j], "members": members[j], "type": type_})
@@ -109,5 +135,6 @@ def shift_groups(vec, groups, leaf_names, point0):
                 back.append((spy.Symbol(U[k]), tot))
             out[nm] = str(e.subs(back)).replace("**", "^")
         return out
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return None

@@ -49,15 +49,15 @@ def direction_relevance(f, ref, pivots, z_slots, n_leaves, point0, rel_probe, re
             "rel_by_entry": rel_by_entry}
 
 
-def dense_need(rel_by_entry, ctrl):
-    """Sample count the dense interpolation needs, and whether any entry is dense."""
+def dense_need(rel_by_entry, ctrl, degrees=None):
+    """Sample count the dense interpolation needs, and whether any entry is dense. `degrees`
+    holds per entry the degree its fit needs (None: up to degree_cap)."""
     def is_dense(r):
         return 1 <= len(r) <= ctrl["relevance_cap"]
-    dense_rel = max([0] + [len(r) for r in rel_by_entry if is_dense(r)])
-    any_dense = any(is_dense(r) for r in rel_by_entry)
-    max_need = 2 * math.comb(dense_rel + ctrl["degree_cap"], dense_rel) - 1 + ctrl["sample_slack"] \
-        if any_dense else 0
-    return {"max_need": int(max_need), "any_dense": any_dense}
+    degs = degrees or [None] * len(rel_by_entry)
+    needs = [2 * math.comb(len(r) + (ctrl["degree_cap"] if d is None else d), len(r)) - 1 + ctrl["sample_slack"]
+             for r, d in zip(rel_by_entry, degs) if is_dense(r)]
+    return {"max_need": int(max(needs, default=0)), "any_dense": bool(needs)}
 
 
 def build_shared_bank(union, need_pts, point0, pool, pool_next, kbatch, pivots, nt_used, n_p, ctrl=None):
@@ -76,8 +76,6 @@ def build_shared_bank(union, need_pts, point0, pool, pool_next, kbatch, pivots, 
         chunk = max(1, min(need_pts - len(points) + 5, 30 * need_pts - tries))
         if not points:
             chunk = min(chunk, 24)
-        if ctrl is not None and ctrl.get("deadline") is not None:
-            chunk = min(chunk, 96)
         tries += chunk
         uv = []
         for _ in range(chunk):

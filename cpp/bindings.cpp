@@ -211,13 +211,15 @@ PYBIND11_MODULE(_core, m) {
 
   m.def("sym_obs_null_chain", [](py::object chains, int nLeaves, int nStates, py::object zSlots,
                                  py::object point, double p, int Nt, int Mtot, int cores,
-                                 py::object NtChain, py::object pointSer) {
+                                 py::object NtChain, py::object pointSer, int serOrder) {
     List c = cv<List>(chains); IntegerVector z = cv<IntegerVector>(zSlots), pt = cv<IntegerVector>(point);
     IntegerVector nc = cv<IntegerVector>(NtChain); Value ps = to_value(pointSer);
-    return run([&] { return Value(symObsNullChain(c, nLeaves, nStates, z, pt, p, Nt, Mtot, cores, nc, ps)); });
+    return run([&] {
+      return Value(symObsNullChain(c, nLeaves, nStates, z, pt, p, Nt, Mtot, cores, nc, ps, serOrder));
+    });
   }, arg("chains"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
      arg("Nt"), arg("Mtot"), arg("cores") = 1, arg("nt_chain") = py::none(),
-     arg("point_ser") = py::none());
+     arg("point_ser") = py::none(), arg("ser_order") = -1);
 
   m.def("sym_segment_ranks", [](py::object segs, int nLeaves, int nStates, py::object zSlots,
                                 py::object point, double p, int Nt, py::object stateVals,

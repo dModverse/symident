@@ -6,6 +6,7 @@ import re
 import warnings
 
 import numpy as np
+import sympy as spy
 
 from .. import state
 from ..gfp import PRIMES, rref_modp
@@ -56,11 +57,13 @@ def weight_rows(syms):
     return {"W": W, "cols": cols, "rows": rows, "symbolic": symbolic}
 
 
-def rank_modp(M, p=PRIMES[0]):
-    """Rank of `M` mod `p`."""
+def rank_modp(M, p=None):
+    """Rank of `M` mod `p`; without `p` the rank of the integer matrix over Q, exactly."""
     M = np.asarray(M)
     if M.size == 0 or M.ndim != 2 or M.shape[0] == 0 or M.shape[1] == 0:
         return 0
+    if p is None:
+        return int(spy.Matrix([[spy.Rational(str(x)) for x in row] for row in M.tolist()]).rank())
     return rref_modp(np.asarray(M, dtype=np.int64) % p, p)["rank"]
 
 
@@ -211,6 +214,13 @@ def scaling_block(W, cols, labels, fixed, allowed=None):
         blk["gauge_note"] = ("each fixed coordinate may take any nonzero value (here 1); "
                              "any of the listed choices works")
         blk["pins"] = {t: "1" for t in tv["T"]}
+        from .sign import positive_set
+        pos = positive_set()
+        real = [t for t in tv["T"] if pos is not None and t not in set(pos)]
+        if real:
+            # a scaling keeps the sign of a coordinate: orbits where it is negative miss the pin 1
+            blk["coverage"] = "partial"
+            blk["gauge_note"] += f"; orbits with {', '.join(real)} < 0 do not meet the pin"
         blk["certificates"].append("transversal certified exactly: W[,T] invertible with "
                                    "integer W[,T]^-1 W")
     else:

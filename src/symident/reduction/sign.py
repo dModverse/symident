@@ -4,10 +4,12 @@ import math
 import re
 import time
 import warnings
+from fractions import Fraction
 
 import numpy as np
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, sympy_fail
 from .expr import free_syms, red_locals, red_sympify
 
 
@@ -15,7 +17,8 @@ def entry_class(e):
     """'yes', 'root' (a non-integer rational power) or 'no' for an entry outside rational/exp/log."""
     try:
         fnames = {type(f).__name__ for f in e.atoms(spy.Function)}
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return "no"
     if fnames and not fnames <= {"exp", "log"}:
         return "no"
@@ -68,41 +71,68 @@ def set_positive(x):
 def _num_val(e):
     try:
         return float(spy.N(e))
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return None
+
+
+def num_sign(e):
+    """The sign of a number: exact for a rational, else by evaluation with guaranteed
+    precision; None where neither decides."""
+    try:
+        e = spy.sympify(e)
+        if e.is_Rational:
+            return int(spy.sign(e))
+        v = e.evalf(30, strict=True)
+    except (*SYMPY_FAILS, spy.core.evalf.PrecisionExhausted) as exc:
+        if not isinstance(exc, spy.core.evalf.PrecisionExhausted):
+            sympy_fail(exc)
+        return None
+    if not v.is_real or v == 0:
+        return None
+    return 1 if v > 0 else -1
 
 
 def sgn_poly(pp):
     """Sign of a radical-free polynomial on the declared domain; 0 when undecided."""
     try:
         ex = spy.expand(pp)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return 0
     if ex.is_number:
-        v = _num_val(ex)
-        if v is None or v == 0 or not math.isfinite(v):
-            return 0
-        return 1 if v > 0 else -1
+        return num_sign(ex) or 0
     try:
         P = spy.Poly(ex)
         tm = P.terms()
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return 0
     if not tm:
         return 0
     expts = np.array([list(t[0]) for t in tm], dtype=float)
     cf = []
     for t in tm:
-        v = _num_val(t[1])
-        if v is None or not math.isfinite(v):
+        c = t[1]
+        # rational coefficients stay exact, so that a sign is certified without rounding
+        if c.is_Float:
+            c = spy.Rational(str(c))
+        if c.is_Rational:
+            cf.append(Fraction(int(c.p), int(c.q)))
+            continue
+        # another number enters by its sign alone, which then has to decide
+        sc = num_sign(c)
+        if sc is None:
             return 0
-        cf.append(v)
-    cf = np.array(cf)
+        cf.append(sc)
+    algebraic = not all(isinstance(c, Fraction) for c in cf)
+    cf = np.array(cf, dtype=object)
     pos = positive_set()
     if pos is not None:
         try:
             gens = [str(g) for g in P.gens]
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return 0
         if len(gens) != expts.shape[1]:
             return 0
@@ -112,61 +142,89 @@ def sgn_poly(pp):
         for j, fr in enumerate(free):
             if fr and np.any(expts[:, j] % 2 != 0):
                 return 0
+    else:
+        free = [False] * expts.shape[1]
+    fcols = [j for j, fr in enumerate(free) if fr]
+
+    def anchored(sg):
+        # a real coordinate with even powers only vanishes somewhere: a term free of it keeps the sign strict
+        return not fcols or any(sg * cf[i] > 0 and not np.any(expts[i, fcols]) for i in range(len(cf)))
     if np.all(cf > 0):
-        return 1
+        return 1 if anchored(1) else 0
     if np.all(cf < 0):
-        return -1
+        return -1 if anchored(-1) else 0
+    if algebraic:
+        return 0
     if absorb(expts, cf):
-        return 1
+        return 1 if anchored(1) else 0
     if absorb(expts, -cf):
-        return -1
+        return -1 if anchored(-1) else 0
     return 0
 
 
 def absorb(expts, cf):
-    """AM-GM absorption of every negative term by two positive ones with matching exponents."""
-    bud = np.where(cf > 0, cf, 0.0)
-    tol = 1e-9
+    """AM-GM absorption of every negative term by two positive ones whose exponents average
+    to its own: a u + b v >= 2 sqrt(a b) w when u v = w^2 on the domain. With rational
+    coefficients the budgets are kept in exact rationals; the part 2 sqrt(alpha beta) a pair
+    gives is split as alpha = t*take/2, beta = take/(2t) with a rational t that keeps both
+    within budget, so no shortfall is rounded away."""
+    return _absorb_exact(expts, cf)
+
+
+def _sqrt_below(x):
+    """A rational at most sqrt(x) for a nonnegative Fraction x, within a part in 10^12."""
+    if x <= 0:
+        return Fraction(0)
+    k = 10 ** 12
+    return Fraction(math.isqrt(x.numerator * x.denominator * k * k), x.denominator * k)
+
+
+def _absorb_exact(expts, cf):
+    bud = [c if c > 0 else Fraction(0) for c in cf]
     n = len(cf)
-    for i in np.nonzero(cf < 0)[0]:
-        need_v = -cf[i]
+    for i in [i for i in range(n) if cf[i] < 0]:
+        need = -cf[i]
         tgt = 2 * expts[i]
         for u in range(n):
-            if bud[u] <= tol:
-                continue
             for v in range(u + 1, n):
-                if bud[v] <= tol:
-                    continue
-                if np.any(expts[u] + expts[v] != tgt):
-                    continue
-                take = min(2 * math.sqrt(bud[u] * bud[v]), need_v)
-                bu, bv = bud[u], bud[v]
-                bud[u] = max(0, bu - (take / 2) * math.sqrt(bu / bv))
-                bud[v] = max(0, bv - (take / 2) * math.sqrt(bv / bu))
-                need_v -= take
-                if need_v <= tol * abs(cf[i]):
+                if need == 0:
                     break
-            if need_v <= tol * abs(cf[i]):
+                bu, bv = bud[u], bud[v]
+                if bu == 0 or bv == 0 or np.any(expts[u] + expts[v] != tgt):
+                    continue
+                take = need if need * need <= 4 * bu * bv else _sqrt_below(4 * bu * bv)
+                if take <= 0:
+                    continue
+                lo, hi = take / (2 * bv), 2 * bu / take
+                t = min(hi, max(lo, Fraction(math.sqrt(bu / bv)).limit_denominator(10 ** 6)))
+                bud[u], bud[v] = bu - take * t / 2, bv - take / (2 * t)
+                need -= take
+            if need == 0:
                 break
-        if need_v > tol * abs(cf[i]):
+        if need > 0:
             return False
-    return bud.sum() > tol * np.abs(cf).sum()
+    return sum(bud) > 0
 
 
 def time_up():
-    """Whether the deadline of the domain has passed."""
+    """Whether the work budget of the section search, one unit per call, or its deadline is spent."""
+    DOMAIN["work"] = DOMAIN.get("work", 0) + 1
+    cap = DOMAIN.get("work_cap")
+    if cap is not None and DOMAIN["work"] > cap:
+        return True
     d = DOMAIN["deadline"]
     return d is not None and time.monotonic() > d
 
 
 def sgn(pp, depth=0):
-    """Sign on the declared domain by structural recursion; memoised per domain."""
+    """Sign on the declared domain by structural recursion; memoized per domain."""
     cache = DOMAIN["sgn_cache"]
     if depth > 0 or cache is None:
         return sgn_raw(pp, depth)
     try:
         key = f"{bool(DOMAIN['no_roots'])}:{','.join(sorted(DOMAIN['real_carriers']))}|{spy.srepr(pp)}"
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return sgn_raw(pp, depth)
     if key in cache:
         return cache[key]
@@ -181,13 +239,11 @@ def sgn_raw(pp, depth=0):
         return 0
     try:
         ex = spy.expand(pp)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return 0
     if ex.is_number:
-        v = _num_val(ex)
-        if v is None or v == 0 or not math.isfinite(v):
-            return 0
-        return 1 if v > 0 else -1
+        return num_sign(ex) or 0
     if ex.is_Function and type(ex).__name__ == "exp":
         return 1
     if ex.is_Pow and ex.exp.is_Rational:
@@ -208,12 +264,14 @@ def sgn_raw(pp, depth=0):
     try:
         rads = [w for w in ex.atoms(spy.Pow) if w.exp.is_Rational and not w.exp.is_Integer
                 and not w.base.is_number]
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         rads = []
     if not rads:
         try:
             fr = spy.fraction(spy.cancel(spy.together(ex)))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return 0
         s1, s2 = sgn_poly(fr[0]), sgn_poly(fr[1])
         if s1 == 0 or s2 == 0:
@@ -225,7 +283,8 @@ def sgn_raw(pp, depth=0):
         try:
             a, rest = ex.as_independent(s, as_Add=True)
             cc = spy.cancel(rest / s)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         if cc.has(s):
             continue
@@ -242,7 +301,8 @@ def sgn_raw(pp, depth=0):
         if sa == 0:
             try:
                 d2 = spy.expand(cc ** 2 * s.base - a ** 2)
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 d2 = None
             if d2 is not None and sgn(d2, depth + 1) == 1:
                 return sc
@@ -251,7 +311,8 @@ def sgn_raw(pp, depth=0):
             return sa
         try:
             d = spy.expand(a ** 2 - cc ** 2 * s.base)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         sdd = sgn(d, depth + 1)
         if sdd == 0:
@@ -286,7 +347,8 @@ def _rads(e, half_only=False, symbol_base=False):
             if half_only and not spy.simplify(w.exp - spy.Rational(1, 2)).is_zero:
                 continue
             out.append(w)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return []
     return out
 
@@ -296,7 +358,8 @@ def rad_norm(e, rounds=3):
     for _ in range(rounds):
         try:
             num, den = spy.fraction(spy.cancel(spy.together(e)))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return e
         rads = _rads(den, half_only=True)
         if not rads:
@@ -306,7 +369,8 @@ def rad_norm(e, rounds=3):
             a, b = den.as_independent(s, as_Add=True)
             conj = a - b
             e = spy.cancel(spy.expand(num * conj) / spy.expand(den * conj))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return e
     return e
 
@@ -330,7 +394,8 @@ def _forms(e):
     for fn in (lambda x: spy.cancel(spy.together(x)), half_pow, rad_norm):
         try:
             out.append(fn(e))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             out.append(None)
     return out
 
@@ -346,7 +411,8 @@ def pos_form(e):
     if cache is not None:
         try:
             key = _dom_key("pos", e)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             key = None
     if key is not None and key in cache:
         return cache[key]
@@ -368,7 +434,8 @@ def pos_form_raw(e):
         seen.add(k)
         try:
             num, den = spy.fraction(f)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         s1 = sgn(num)
         if s1 != 0 and s1 == sgn(den):
@@ -393,14 +460,16 @@ def shift_fix(es, tmp_n, Ies):
     def fparts(part):
         try:
             fl = spy.factor_list(part)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return []
         return [fm[0] for fm in fl[1]]
 
     def factor_bases(e0):
         try:
             key = "fb:" + spy.srepr(e0)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             key = None
         if key is not None and key in cache:
             return cache[key]
@@ -421,7 +490,8 @@ def shift_fix(es, tmp_n, Ies):
             form_seen.add(ek)
             try:
                 fr = spy.fraction(spy.cancel(spy.together(e)))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 continue
             lvl1 = fparts(fr[0]) + fparts(fr[1])
             for f in lvl1:
@@ -448,19 +518,22 @@ def shift_fix(es, tmp_n, Ies):
                     if set(fs) - {tl}:
                         try:
                             dg = int(spy.Poly(f, tsym[tl]).degree())
-                        except Exception:
+                        except SYMPY_FAILS as exc:
+                            sympy_fail(exc)
                             dg = None
                         if dg != 1:
                             continue
                     try:
                         sk = f"sv:{tl}:{spy.srepr(f)}"
-                    except Exception:
+                    except SYMPY_FAILS as exc:
+                        sympy_fail(exc)
                         sk = None
                     rt = cache.get(sk) if sk is not None else None
                     if rt is None:
                         try:
                             rt = spy.solve(f, tsym[tl])
-                        except Exception:
+                        except SYMPY_FAILS as exc:
+                            sympy_fail(exc)
                             rt = []
                         if sk is not None:
                             cache[sk] = rt
@@ -472,7 +545,8 @@ def shift_fix(es, tmp_n, Ies):
                     sub = [(tsym[tj], mean_e[tj]) for tj in tmp_n if tj != tl]
                     try:
                         cov = rad_norm(mean_e[tl] - s.subs(sub))
-                    except Exception:
+                    except SYMPY_FAILS as exc:
+                        sympy_fail(exc)
                         continue
                     if sgn(cov) != 1:
                         continue
@@ -482,7 +556,8 @@ def shift_fix(es, tmp_n, Ies):
     def norm(e):
         try:
             return spy.cancel(spy.together(e))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return e
     es = [norm(e) for e in es]
     for _ in tmp_n:
@@ -504,21 +579,24 @@ def sgn_real(pp, real_syms):
         return sgn(pp)
     try:
         ex = spy.expand(pp)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return 0
     present = [s for s in real_syms if s in set(free_syms(ex))]
     if not present:
         return sgn(ex)
     try:
         sq = [w for w in ex.atoms(spy.Pow) if w.exp == spy.Rational(1, 2) and not w.base.is_number]
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         sq = []
     if len(sq) == 1 and not DOMAIN["no_roots"]:
         w = sq[0]
         try:
             a, rest = ex.as_independent(w, as_Add=True)
             cc = spy.cancel(rest / w)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return 0
         if cc.has(w):
             return 0
@@ -531,7 +609,8 @@ def sgn_real(pp, real_syms):
             return sc
         try:
             d2 = spy.expand(cc ** 2 * w.base - a ** 2)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             d2 = None
         if d2 is not None and sgn_real(d2, real_syms) == 1:
             return sc
@@ -548,7 +627,8 @@ def sgn_real(pp, real_syms):
             B = spy.expand(rest.coeff(ts, 1))
             C = spy.expand(rest.coeff(ts, 0))
             chk = str(spy.expand(rest - (A * ts ** 2 + B * ts + C)))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return 0
         if chk != "0":
             return 0
@@ -560,7 +640,8 @@ def sgn_real(pp, real_syms):
         rest = C
     try:
         red = spy.cancel(spy.together(rest - corr))
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return 0
     return 1 if sgn(red) == 1 else 0
 
@@ -579,7 +660,8 @@ def pos_form_real(e, real_syms):
         seen.add(k)
         try:
             num, den = spy.fraction(f)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         if sgn_real(num, real_syms) == 1 and sgn_real(den, real_syms) == 1:
             return f
@@ -624,7 +706,8 @@ def translates(b, v, pinned):
             for e in ex.values():
                 g = e if g is None else spy.gcd(g, e)
             ex = {k: spy.cancel(e / g) for k, e in ex.items()}
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         if any(set(free_syms(e)) & set(pr["support"]) for e in ex.values()):
             continue
@@ -637,7 +720,8 @@ def real_form(e, real_syms):
     """`e` cancelled if rational or a real root with a denominator of certified sign over `real_syms`, else None."""
     try:
         f = spy.cancel(spy.together(e))
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return None
     cls = entry_class(f)
     if cls == "root" and DOMAIN["no_roots"]:

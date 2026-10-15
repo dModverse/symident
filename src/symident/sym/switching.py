@@ -9,15 +9,18 @@ import re
 
 import sympy as spy
 
+from ..errors import InapplicableError
 from ..rexpr import tokens
+from .parse import model_function, to_r
 
 _SWITCHY = re.compile(r"\b(piecewise|ifelse|Heaviside|max|min|pmax|pmin)\s*\(|[<>!&|=]")
 _SIGNY = re.compile(r"\b(abs|sign)\s*\(")
 _BIN = {"||": 1, "|": 1, "&&": 2, "&": 2, "<": 4, ">": 4, "<=": 4, ">=": 4, "==": 4, "!=": 4,
         "+": 5, "-": 5, "*": 6, "/": 6, "^": 8}
-_MATH = {"exp", "log", "sqrt", "sin", "cos", "tan", "sinh", "cosh", "tanh", "asin", "acos",
-         "atan", "asinh", "acosh", "atanh"}
 TIME = spy.Symbol("time")
+# pi and Euler's number in a model with switches, as fixed symbols
+CONSTS = {spy.pi: spy.Symbol("si_pi"), spy.E: spy.Symbol("si_e")}
+BACK = {v: k for k, v in CONSTS.items()}
 
 
 class _Bool:
@@ -32,6 +35,8 @@ def _val(x):
 
 
 def _number(t):
+    if t == "pi":
+        return spy.pi
     if t in ("TRUE", "T"):
         return spy.Integer(1)
     if t in ("FALSE", "F"):
@@ -42,12 +47,12 @@ def _number(t):
     try:
         return spy.Rational(t)
     except (TypeError, ValueError):
-        raise ValueError(f"the number {t} has no finite value") from None
+        raise InapplicableError(f"the number {t} has no finite value") from None
 
 
 def to_str(e):
     """A sympy expression in the R syntax of the model strings."""
-    return str(e).replace("**", "^")
+    return to_r(e)
 
 
 class Switches:
@@ -61,6 +66,7 @@ class Switches:
         self.namer = namer or (lambda k: f"H{k}")
         self.funcs = []
         self.ind = []
+        self.consts = {}
 
     def is_pos(self, name):
         """Whether the coordinate `name` is declared positive."""
@@ -89,6 +95,7 @@ class Switches:
 
     def match(self, p):
         """(j, +1) when p is the switching function g_j, (j, -1) for -g_j, else None."""
+        p = spy.sympify(p).xreplace(self.consts)
         for j, q in enumerate(self.funcs):
             if spy.expand(q - p) == 0:
                 return j, 1
@@ -97,6 +104,7 @@ class Switches:
         return None
 
     def _register(self, p):
+        p = p.xreplace(self.consts)
         flip = p.could_extract_minus_sign()
         p = -p if flip else p
         hit = self.match(p)
@@ -113,7 +121,7 @@ class Switches:
         """The indicator of e > 0 in the H_j; the boundary e = 0 has measure zero."""
         e = spy.sympify(e)
         if e.free_symbols & set(self.ind):
-            raise ValueError(f"a condition on a switched expression ({to_str(e)}) is not "
+            raise InapplicableError(f"a condition on a switched expression ({to_str(e)}) is not "
                              "supported")
         s = self.sign_of(e)
         if s is not None:
@@ -148,7 +156,7 @@ class Switches:
             return spy.Integer(0)
         if s is not None:
             return spy.Integer(1)
-        raise ValueError(f"the truth value of {to_str(x)} is not a comparison")
+        raise InapplicableError(f"the truth value of {to_str(x)} is not a comparison")
 
     def binary(self, op, a, b):
         if op in ("&&", "&"):
@@ -162,11 +170,8 @@ class Switches:
         if op in (">", ">="):
             return _Bool(self.indicator(a - b))
         if op in ("==", "!="):
-            s = self.sign_of(a - b)
-            if s is None:
-                raise ValueError(f"{to_str(a)} {op} {to_str(b)} changes only on a surface; "
-                                 "write it with < or >")
-            eq = spy.Integer(1 if s == 0 else 0)
+            # unless a - b vanishes identically, equality holds on a set of measure zero
+            eq = spy.Integer(1 if self.sign_of(a - b) == 0 else 0)
             return _Bool(eq if op == "==" else 1 - eq)
         return {"+": lambda: a + b, "-": lambda: a - b, "*": lambda: a * b,
                 "/": lambda: a / b, "^": lambda: a ** b}[op]()
@@ -194,7 +199,7 @@ class Switches:
             return out
         if name == "ifelse":
             if len(args) != 3:
-                raise ValueError("ifelse() needs three arguments")
+                raise InapplicableError("ifelse() needs three arguments")
             t = self.truth(args[0])
             return t * _val(args[1]) + (1 - t) * _val(args[2])
         args = [_val(a) for a in args]
@@ -210,19 +215,12 @@ class Switches:
             return self._extreme(args, -1)
         if name == "log" and len(args) == 2:
             return spy.log(args[0]) / spy.log(args[1])
-        if name == "log10":
-            return spy.log(args[0]) / spy.log(10)
-        if name == "log2":
-            return spy.log(args[0]) / spy.log(2)
-        if name == "exp10":
-            return spy.Integer(10) ** args[0]
-        if name in _MATH:
-            return getattr(spy, name)(*args)
-        return spy.Function(name)(*args)
+        fn = model_function(name)
+        return spy.Function(name)(*args) if fn is None else fn(*args)
 
     def parse(self, text):
         """The expression with its switches written in the indicators."""
-        return _val(_Reader(str(text), self).expr())
+        return spy.sympify(_val(_Reader(str(text), self).expr())).xreplace(self.consts)
 
 
 class _Reader:
@@ -240,7 +238,7 @@ class _Reader:
     def take(self, want=None):
         tok = self.peek()
         if tok[0] is None or (want is not None and tok[1] != want):
-            raise ValueError(f"cannot parse {self.text!r}")
+            raise InapplicableError(f"cannot parse {self.text!r}")
         self.i += 1
         return tok
 
@@ -254,7 +252,7 @@ class _Reader:
             right = self.expr(_BIN[t] - 1 if t == "^" else _BIN[t])
             left = self.sw.binary(t, left, right)
         if rbp == 0 and self.i < len(self.toks) and self.peek()[1] not in (",", ")"):
-            raise ValueError(f"cannot parse {self.text!r}")
+            raise InapplicableError(f"cannot parse {self.text!r}")
         return left
 
     def prefix(self):
@@ -282,7 +280,7 @@ class _Reader:
             return _val(self.expr(7))
         if t == "!":
             return _Bool(1 - self.sw.truth(self.expr(3)))
-        raise ValueError(f"cannot parse {self.text!r}")
+        raise InapplicableError(f"cannot parse {self.text!r}")
 
 
 def _plain(text):
@@ -290,7 +288,7 @@ def _plain(text):
     sw = Switches(False)
     e = sw.parse(text)
     if sw.funcs:
-        raise ValueError(f"{text!r} holds a switch")
+        raise InapplicableError(f"{text!r} holds a switch")
     return e
 
 
@@ -298,7 +296,7 @@ def comparison(text):
     """The comparison `a < b` or `a > b` as (a - b, side): side +1 for a - b > 0."""
     parts = re.split(r"(<=|>=|<|>)", str(text))
     if len(parts) != 3:
-        raise ValueError(f"{text!r} is not one comparison a < b or a > b")
+        raise InapplicableError(f"{text!r} is not one comparison a < b or a > b")
     a, op, b = parts
     return spy.expand(_plain(a) - _plain(b)), (1 if op in (">", ">=") else -1)
 
@@ -336,11 +334,11 @@ class Hybrid:
 
     def text(self, j, side):
         """The side of surface j as a comparison."""
-        return f"{to_str(self.sw.funcs[j])} {'>' if side > 0 else '<'} 0"
+        return f"{to_str(self.sw.funcs[j].xreplace(BACK))} {'>' if side > 0 else '<'} 0"
 
     def surface(self, j):
         """Surface j as an equation."""
-        return f"{to_str(self.sw.funcs[j])} = 0"
+        return f"{to_str(self.sw.funcs[j].xreplace(BACK))} = 0"
 
 
 def hybrid_model(f, g, positive, events=None, inputs=(), taken=()):
@@ -377,7 +375,7 @@ def hybrid_model(f, g, positive, events=None, inputs=(), taken=()):
         single = len(hit) == 1 and (spy.expand(h - sw.ind[hit[0]]) == 0 or
                                     spy.expand(h - 1 + sw.ind[hit[0]]) == 0)
         if not single:
-            raise ValueError(f"the root {e['root']} of an event is not one switching surface; "
+            raise InapplicableError(f"the root {e['root']} of an event is not one switching surface; "
                              "give the event a root that changes sign on a single surface")
         root_of.append({"event": e, "surface": hit[0]})
     if not sw.funcs:
@@ -386,8 +384,11 @@ def hybrid_model(f, g, positive, events=None, inputs=(), taken=()):
                     "g": [{k: to_str(v) for k, v in x.items()} or None for x in Gs]
                     if obs_list else ({k: to_str(v) for k, v in Gs[0].items()} or None)}
         return None
-    states = list(F)
-    return Hybrid(sw, F, Gs, obs_list, states, [u for u in inputs if u in F], root_of)
+    sw.consts = CONSTS
+    sw.funcs = [q.xreplace(CONSTS) for q in sw.funcs]
+    F = {k: v.xreplace(CONSTS) for k, v in F.items()}
+    Gs = [{k: v.xreplace(CONSTS) for k, v in x.items()} for x in Gs]
+    return Hybrid(sw, F, Gs, obs_list, list(F), [u for u in inputs if u in F], root_of)
 
 
 def surface_ratios(surfaces):

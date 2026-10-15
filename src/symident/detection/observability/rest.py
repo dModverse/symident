@@ -1,17 +1,20 @@
 """Resting states of the conditions over GF(p): backward and forward solves, continuation
 along the point, and the warm-up of solves across worker processes."""
 
+import copy
 import os
 import time
 
 import numpy as np
 
-from ... import state
+from ... import session, state
+from ...errors import SYMPY_FAILS, swallow, sympy_fail
 from ...gfp import PRIMES, random_point
 from ...par import process_map
 from ...sym.continuation import continue_resting_state
+from ...sym.msolve import MsolveMissingError
 from ...sym.restforward import solve_forward_modular
-from ...sym.steady import solve_steady_state_modular
+from ...sym.steady import resting_kind, solve_steady_state_modular
 from ..forward import SolveRates
 
 
@@ -57,18 +60,59 @@ class RestingStates:
                 forcings=self.held_of(ci) or None, t0events=ev_c, recast=self.recast or None,
                 l_vals=pv["l_vals"], joint_mode=True,
                 held_states=pv["held_vals"] if self.held_names else None)
-        except Exception as e:
-            if "needs msolve" in str(e):
-                raise
+        except MsolveMissingError:
+            raise
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             out = None
+        except Exception as exc:
+            swallow(exc, "resting-state solve")
+            out = None
+        self.solve_secs[0] += time.monotonic() - t0
+        self.solve_secs[1] += 1
         if state.env("SOLVEDIAG"):
             print(f"[sym]   solve cond {ci + 1}, pid {os.getpid()}: {time.monotonic() - t0:.1f}s")
         return out
+
+    _ROUTE = ("cont_off", "fwd_on", "fwd_rates", "fwd_banned", "fwd_sel")
+
+    def route_state(self):
+        """The settings that solves change and later solves read."""
+        return {k: copy.copy(getattr(self, k)) for k in self._ROUTE}
+
+    def set_route_state(self, st):
+        """Restore a route_state()."""
+        for k, v in st.items():
+            setattr(self, k, copy.copy(v))
+
+    def merge_route_states(self, base, states):
+        """The route state after items that each started from `base`, taken in item order:
+        a continuation or the forward seed switched off stays off, the first forward
+        rates found are kept, banned rates accumulate."""
+        out = {k: copy.copy(v) for k, v in base.items()}
+        for st in states:
+            out["cont_off"] = [a or b for a, b in zip(out["cont_off"], st["cont_off"])]
+            out["fwd_on"] = out["fwd_on"] and st["fwd_on"]
+            out["fwd_banned"] = list(dict.fromkeys(out["fwd_banned"] + st["fwd_banned"]))
+            if out["fwd_rates"] is None:
+                out["fwd_rates"] = st["fwd_rates"]
+            if out["fwd_sel"] == base["fwd_sel"]:
+                out["fwd_sel"] = st["fwd_sel"]
+        self.set_route_state(out)
+
+    def rest_kind(self, p, pv, ci):
+        """resting_kind() of condition `ci` at the values `pv`."""
+        return resting_kind(self.models[ci], list(self.real_state_names), list(self.solve_param_names),
+                            pv["param_vals"], p, forcings=self.held_of(ci) or None,
+                            held_states=pv["held_vals"] if self.held_names else None)
 
     def warm_solves(self, pts, primes, conds=None):
         """The solve cache for a batch of points, in forked workers."""
         run = self.run
         if self.warm_off or run.cores <= 1:
+            return
+        # the mean solve time decides only where the solves run, not their values
+        if self.solve_secs[1] >= 2 and self.solve_secs[0] < 0.02 * self.solve_secs[1]:
             return
         if conds is None:
             conds = self.equil_conds
@@ -152,7 +196,11 @@ class RestingStates:
                                              forcings=self.held_of(ci) or None,
                                              solve_rates=list(solve_rates),
                                              state_solve=list(getattr(solve_rates, "state_solve", [])))
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
+                sol = None
+            except Exception as exc:
+                swallow(exc, "forward seed")
                 sol = None
             if len(self.fwd_solve_cache) > 2000:
                 self.fwd_solve_cache.clear()
@@ -177,7 +225,11 @@ class RestingStates:
                     solve_rates=list(fr) if fr is not None else None,
                     state_solve=list(fr.state_solve) if fr is not None else None,
                     keep_free=list(self.fwd_banned) if self.fwd_banned else None)
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
+                return None
+            except Exception as exc:
+                swallow(exc, "forward seed")
                 return None
         sol = solve()
         if self.fwd_rates is None:
@@ -216,7 +268,7 @@ class RestingStates:
         """Whether condition `ci` may be continued from the forward condition."""
         return (self.fwd_on and self.run.has_gaps and ci != self.fwd_cond
                 and self.model_key[ci] != self.model_key[self.fwd_cond]
-                and not self.held_names and not state.env("NOCONT"))
+                and not self.held_names)
 
     def cont_active(self, ci):
         """Whether condition `ci` is eligible for continuation and its continuation is not switched off."""
@@ -255,7 +307,11 @@ class RestingStates:
                                               {n: pv["param_vals"][n] for n in priv},
                                               ref["sol"]["val_by"], p, self.cont_t,
                                               forcings=self.held_of(ci) or None)
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
+                sol = None
+            except Exception as exc:
+                swallow(exc, "continuation")
                 sol = None
             success = sol is not None and sol.get("ok")
             self.solve_cache[key] = sol if success else {"ok": False}
@@ -291,12 +347,13 @@ class RestingStates:
                 "df_jt": {th: [int(x[k]) for x in col] for th, col in sol["df_jt"].items()},
                 "df_state_cols": sol["df_state_cols"], "df_param_cols": sol["df_param_cols"]}
 
-    def sat_prep(self, point, P1=PRIMES[0], rounds=8):
-        """A point with every resting state solved at P1; failed conditions redraw their
-        private parameters."""
+    def sat_prep(self, point, P1=None, rounds=8):
+        """A point with every resting state solved at P1 (the first engine prime by
+        default); failed conditions redraw their private parameters."""
         run = self.run
+        P1 = PRIMES[0] if P1 is None else P1
         point = np.array(point, dtype=np.int64)
-        for _ in range(rounds + 1):
+        for rnd in range(rounds + 1):
             if self.fwd_on:
                 fp = self.fwd_seed(point, P1)
                 if fp is not None:
@@ -311,8 +368,7 @@ class RestingStates:
             redraw = list(dict.fromkeys(n for ci in failed for n in self.private_of[ci]))
             if any(len(self.private_of[ci]) == 0 for ci in failed):
                 return None
-            self.redraws += 1
-            vals = random_point(len(redraw), seed=7919 + self.redraws)
+            vals = random_point(len(redraw), seed=session.current().seed("redraw", point.tobytes(), rnd))
             for k, nm in enumerate(redraw):
                 point[run.slot(nm)] = vals[k]
             if run.timing:

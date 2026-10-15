@@ -4,6 +4,7 @@ algebraic solvers."""
 import numpy as np
 import sympy as spy
 
+from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import PRIMES, Pool, invmod, mulmod
 from ..rexpr import sym_sort
 from ..sym.invariants import module_reduce_replay
@@ -22,7 +23,7 @@ _SYMP = {}
 
 
 def red_sympify(x, locals_):
-    """`x` sympified with `locals_`, memoised."""
+    """`x` sympified with `locals_`, memoized."""
     key = str(x)
     hit = _SYMP.get(key)
     if hit is not None:
@@ -48,14 +49,16 @@ def gen_prep(d, pins=None):
     loc = red_locals(list(comp0.values()) + list(pins.values()))
     try:
         exprs = {k: red_sympify(x, loc) for k, x in comp0.items()}
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         out["reason"] = "component not parseable by sympy"
         return out
     if pins:
         try:
             subs = [(spy.Symbol(nm), red_sympify(str(v).replace("^", "**"), loc)) for nm, v in pins.items()]
             exprs = {k: e.subs(subs) for k, e in exprs.items()}
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             out["reason"] = "gauge not substitutable"
             return out
     L = spy.Integer(1)
@@ -67,7 +70,8 @@ def gen_prep(d, pins=None):
             if not e.is_polynomial():
                 out["reason"] = "component not a rational function"
                 return out
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             out["reason"] = "component not a rational function"
             return out
     comps = {k: str(e) for k, e in exprs.items()}
@@ -80,7 +84,8 @@ def gen_prep(d, pins=None):
     for k in nz:
         try:
             degs.append(int(spy.total_degree(exprs[k])))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             pass
     out["degree"] = max(degs) if degs else None
     return out
@@ -150,7 +155,8 @@ def eval_batch(exprs, pt, p):
     try:
         v = eval_rational_mod_batch([str(e) for e in exprs], list(pt.keys()),
                                     [[int(x) for x in pt.values()]], int(p))
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return [None] * len(exprs)
     out = [int(x) for x in np.asarray(v[0]).ravel()]
     return [None if x < 0 else x for x in out]
@@ -229,20 +235,23 @@ def roots_in(e, v):
     try:
         num = spy.fraction(spy.together(e))[0]
         fl = spy.factor_list(num, sv)
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return []
     out = []
     for fm in fl[1]:
         f = fm[0]
         try:
             dg = int(spy.Poly(f, sv).degree())
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             continue
         if dg < 1 or dg > 2:
             continue
         try:
             out += list(spy.solve(f, sv))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             pass
     return out
 
@@ -286,7 +295,8 @@ def tri_solve(sys_, vars_):
             for r in roots:
                 try:
                     rest = [spy.together(e.subs([(spy.Symbol(v), r)])) for j, e in enumerate(sys_) if j != i]
-                except Exception:
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
                     continue
                 for s in tri_solve(rest, [x for x in vars_ if x != v]):
                     s = dict(s)

@@ -2,9 +2,9 @@
 
 import math
 
-import numpy as np
 import sympy as spy
 
+from .. import session
 from .charts import _exp_atom, _has_exp
 from .linalg import _rank_mod
 from .modp import _modp_rational
@@ -69,10 +69,10 @@ def _terms_independent(atoms):
     taus = [t for _, t in atoms]
     syms = sorted(set().union(*[t.free_symbols for t in taus]), key=str)
     m, nb = len(atoms), len(basis)
-    rng = np.random.default_rng(7)
+    rng = session.current().rng("recast.independent")
     rows, npts = [], 0
     for _ in range(4 * (m + 3)):
-        pt = {s: spy.Integer(int(v)) for s, v in zip(syms, rng.integers(2, 997, len(syms)))}
+        pt = {s: spy.Integer(rng.randint(2, 996)) for s in syms}
         vals = [t.xreplace(pt) for t in taus]
         vals = [v if v.is_Rational else spy.nsimplify(v) for v in vals]
         if not all(v.is_Rational for v in vals):
@@ -393,12 +393,9 @@ def _has_trig(e):
     return e.has(*_TRIG) or e.has(*_TRIG_RECIPROCAL)
 
 
-def _trig_basic(e, pi_sym):
-    """cot, sec and csc through sin and cos, a model symbol pi as the number."""
-    e = spy.sympify(e)
-    if pi_sym is not None:
-        e = e.xreplace({pi_sym: spy.pi})
-    return e.replace(lambda x: type(x) in _TRIG_RECIPROCAL,
+def _trig_basic(e):
+    """cot, sec and csc through sin and cos."""
+    return spy.sympify(e).replace(lambda x: type(x) in _TRIG_RECIPROCAL,
                      lambda x: _TRIG_RECIPROCAL[type(x)](x.args[0]))
 
 
@@ -477,21 +474,14 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken):
     and return as _apply_exp_recast, or {'why': ...} for an unsupported form."""
     ctx = _ExpCtx(taken)
     pis = ctx.fresh('_pi_', positive=True)
-    pi_sym = next((s for p in per_cond
-                   for e in list(p[0]) + list(p[1]) + list(p[2].values())
-                   for s in spy.sympify(e).free_symbols if str(s) == 'pi'), None)
-    if pi_sym is not None and pi_sym in set(S):
-        pi_sym = None
-    def tb(e):
-        return _trig_basic(e, pi_sym)
     S = list(S)
     K = len(per_cond)
-    f = [[tb(e) for e in p[0]] for p in per_cond]
-    g = [[tb(e) for e in p[1]] for p in per_cond]
-    ic = [{k: tb(v) for k, v in p[2].items()} for p in per_cond]
-    fss = [[tb(e).xreplace({spy.pi: pis}) for e in p[3]] for p in per_cond]
-    ev = [[dict(e, value=tb(e['value'])) for e in evs] for evs in ev_per]
-    tm = [None if t is None else tb(t) for t in tm_per]
+    f = [[_trig_basic(e) for e in p[0]] for p in per_cond]
+    g = [[_trig_basic(e) for e in p[1]] for p in per_cond]
+    ic = [{k: _trig_basic(v) for k, v in p[2].items()} for p in per_cond]
+    fss = [[_trig_basic(e).xreplace({spy.pi: pis}) for e in p[3]] for p in per_cond]
+    ev = [[dict(e, value=_trig_basic(e['value'])) for e in evs] for evs in ev_per]
+    tm = [None if t is None else _trig_basic(t) for t in tm_per]
     unsupported = ('the argument of %s is not supported by engine="modular"; '
                    'try engine="symbolic"')
 
@@ -647,6 +637,25 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken):
             'consts': sorted(str(s) for s in consts),
             'atoms': [str(a['V']) for a in atoms], 'back': back,
             'n_aux': len(aux), 'codim': len(aux) + len(atoms)}
+
+
+def _apply_const_recast(S, per_cond, ev_per, tm_per, taken):
+    """pi and Euler's number as fixed generic leaves; arguments and return as _apply_exp_recast."""
+    ctx = _ExpCtx(taken)
+    leaves = {spy.pi: ctx.fresh('_pi_', positive=True), spy.E: ctx.ec}
+
+    def sub(e):
+        return spy.sympify(e).xreplace(leaves)
+    per_cond = [([sub(e) for e in f], [sub(e) for e in g], {k: sub(v) for k, v in ic.items()},
+                 [sub(e) for e in fss]) for f, g, ic, fss in per_cond]
+    ev = [[dict(e, value=sub(e['value'])) for e in evs] for evs in ev_per]
+    tm = [None if t is None else sub(t) for t in tm_per]
+    exprs = [e for p in per_cond for e in list(p[0]) + list(p[1]) + list(p[2].values()) + list(p[3])]
+    exprs += [e['value'] for evs in ev for e in evs] + [t for t in tm if t is not None]
+    used = set().union(*[e.free_symbols for e in exprs]) & set(leaves.values())
+    back = {str(v): 'pi' if k == spy.pi else 'exp(1)' for k, v in leaves.items() if v in used}
+    return {'S': list(S), 'per_cond': per_cond, 'ev_per': ev, 'tm_per': tm, 'rel': [],
+            'consts': sorted(back), 'atoms': [], 'back': back, 'n_aux': 0, 'codim': 0}
 
 
 def _merge_recast(a, b):
@@ -814,10 +823,11 @@ def _func_derivative(a, u):
 
 
 def _engine_holds(constants=(), degrees=()):
-    """Whether every engine prime holds the roots (see gfp.holds_roots); raises
-    NeedPrimesError otherwise, so that the analysis reruns over primes that do."""
-    from ..gfp import PRIMES, NeedPrimesError, holds_roots, verify_prime
-    if not all(holds_roots(constants, q, degrees) for q in list(PRIMES) + [verify_prime()]):
+    """Whether every prime of the analysis holds the roots and the denominators (see
+    gfp.holds_roots); raises NeedPrimesError otherwise, so that the analysis reruns over
+    primes that do."""
+    from ..gfp import NeedPrimesError, all_primes, holds_roots
+    if not all(holds_roots(constants, q, degrees) for q in all_primes()):
         raise NeedPrimesError(constants, degrees)
     return True
 
@@ -936,6 +946,10 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken):
         out = spy.Integer(0)
         for part, sgn in ((num, 1), (den, -1)):
             c, facs = spy.factor_list(part)
+            # a negative content is absorbed by negating a factor of odd multiplicity
+            odd = next((i for i, (_, m) in enumerate(facs) if m % 2), None)
+            if c < 0 and odd is not None:
+                c, facs[odd] = -c, (-facs[odd][0], facs[odd][1])
             if c <= 0:
                 return None
             if c != 1:

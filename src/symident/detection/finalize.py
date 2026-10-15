@@ -6,8 +6,10 @@ import warnings
 import sympy as spy
 
 from .. import state
+from ..errors import SYMPY_FAILS, sympy_fail
 from ..rexpr import get_symbols, replace_symbols, sym_sort
 from ..sym.charts import log_arg_back_vec, scaling_weights
+from ..sym.parse import model_sympify
 from .conditions import scaling_component
 
 _ID = re.compile(r"(?<![0-9.A-Za-z_])[A-Za-z_][A-Za-z0-9_.]*(?![A-Za-z0-9_.])(?!\s*\()")
@@ -34,7 +36,24 @@ def public_symmetry(d):
             "weights": weights, "degree": d.get("degree"),
             "support": d.get("support") if d.get("support") is not None else list(gen or []),
             "explicit": gen is not None, "reason": d.get("reason"), "route": d.get("route"),
-            "certified": bool(d.get("certified"))}
+            "level": level_of(d, gen),
+            "state_components": _lift(d, gen)}
+
+
+def _lift(d, gen):
+    """The state components of the proving lift, rescaled to the published generator."""
+    sc = d.get("state_components") or None
+    if sc is None or gen is None or d.get("lift_form") is None:
+        return sc
+    from .fields import rescaled_lift
+    return rescaled_lift(gen, d["lift_form"], sc)
+
+
+def level_of(d, gen):
+    """exact: proven over Q; verified: checked modulo a prime at random points; open: no closed form."""
+    if gen is None:
+        return "open"
+    return "exact" if d.get("exact") else "verified"
 
 
 def display_form(syms):
@@ -51,8 +70,9 @@ def display_form(syms):
                 disp[k] = x.replace("**", "^")
                 continue
             try:
-                y = str(spy.factor(spy.sympify(x.replace("^", "**"))))
-            except Exception:
+                y = str(spy.factor(model_sympify(x)))
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 y = x
             if len(y) >= len(x):
                 y = x
@@ -71,7 +91,8 @@ def denominator(xi):
         for x in comp:
             acc = spy.lcm(acc, spy.fraction(spy.cancel(spy.together(spy.sympify(x, locals=loc))))[1])
         return str(acc).replace("**", "^")
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return "1"
 
 
@@ -82,7 +103,8 @@ def tidy(x):
     try:
         e = spy.sympify(x.replace("^", "**"), locals=red_locals(x))
         y = str(spy.together(e) if wide else spy.factor(spy.cancel(e))).replace("**", "^")
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         y = x
     return y if len(y) < len(x) else x
 
@@ -142,21 +164,30 @@ def finalize(raw, method, settings, call=None, elapsed=None, coordinates=None):
     info = {"engine": engine, "lie_order_used": raw.get("lie_order_used"),
             "lie_order_driver": raw.get("lie_order_driver"), "lie_plateau": raw.get("lie_plateau"),
             "lie_certified": raw.get("lie_certified"), "lie_uncertified": raw.get("lie_uncertified"),
+            "lie_certificate": raw.get("lie_certificate"),
             "lie_block_orders": raw.get("lie_block_orders"),
             "kernel": raw.get("kernel") if keep else None,
             "sat_score": raw.get("sat_score") if keep else None,
             "stacked": raw.get("stacked") if keep else None,
             "rank_proven": raw.get("rank_proven"), "rank_proof": raw.get("rank_proof"),
-            "gap_order_used": raw.get("gap_order_used"), "conditions": raw.get("conditions"),
+            "rank_fields": raw.get("rank_fields"), "rank_fields_bound": raw.get("rank_fields_bound"),
+            "gap_order_used": raw.get("gap_order_used"), "gap_certified": raw.get("gap_certified"),
+            "gap_certificate": raw.get("gap_certificate"),
+            "conditions": raw.get("conditions"),
             "segments": raw.get("segments"),
             "coordinates": list(raw["coordinates"]) if raw.get("coordinates") is not None else coordinates,
-            "settings": settings, "elapsed": elapsed, "verification": raw.get("verification")}
+            "settings": settings, "elapsed": elapsed, "verification": raw.get("verification"),
+            "bound": raw.get("bound"),
+            "attempts": [{"support": d.get("support"), "attempts": [list(a) for a in d["attempts"]]}
+                         for d in raw_syms if d.get("attempts")],
+            "proof": [{"support": s["support"], "reason": d.get("proof") or "no exact proof on this path"}
+                      for d, s in zip(raw_syms, syms) if s["level"] == "verified"]}
     return {"method": method, "identifiable": identifiable, "rank": rank, "dim": dim,
             "symmetries": syms, "info": info, "call": call}
 
 
 def log_arg_back(raw, la):
-    """Directions analysed in log_v = log(v) mapped back to v."""
+    """Directions analyzed in log_v = log(v) mapped back to v."""
     if la is None or raw is None or not isinstance(raw, dict):
         return raw
 
@@ -193,7 +224,8 @@ def log_arg_back(raw, la):
             vec = back(vec)
             try:
                 w = scaling_weights({k: x.replace("^", "**") for k, x in vec.items()})
-            except Exception:
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
                 w = None
             if w is not None:
                 d["vector"] = {k: str(x) for k, x in w.items()}

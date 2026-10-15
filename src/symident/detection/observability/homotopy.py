@@ -2,12 +2,14 @@
 as a power series in t along :math:`\\theta_0 + t\\,d`, kernel entries as series, closed
 forms fitted to their Pade values on a star of lines."""
 
+import math
 import re
 
 import numpy as np
 
 from ... import _core, state
-from ...gfp import PRIMES, VERIFY_PRIME, invmod, matinv_modp, mono_table, mulmod, random_point
+from ...errors import SYMPY_FAILS, swallow, sympy_fail
+from ...gfp import PRIMES, extra_primes, invmod, matinv_modp, mono_table, mulmod, random_point, verify_prime
 from ...rexpr import sym_sort
 from ...sym.linalg import sym_rat_recon_big
 from ...sym.modp import eval_rational_mod
@@ -17,14 +19,14 @@ from ..series import pade_at, pade_mod, series_null
 from ..verify import in_kernel
 from .homstate import StateFit
 
-_EXTRA_PRIMES = (1518500131, 1518500101)
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 
 
 def _inv_mod(M, p):
     try:
         return np.asarray(matinv_modp(np.asarray(M, dtype=np.int64) % p, p), dtype=np.int64) % p
-    except Exception:
+    except Exception as exc:
+        swallow(exc, "homotopy inverse")
         return None
 
 
@@ -49,8 +51,9 @@ class Homotopy:
         self.base = np.asarray(base, dtype=np.int64)
         self.nt = nt
         run = an.run
-        self.pars = [nm for nm in self.sys.solve_param_names if run.slot(nm) is not None]
-        self.d_cap = max(1, min(3, int(an.ctrl["degree_cap"])))
+        self.sys.hom_prepare(self.base)
+        self.pars = [nm for nm in self.sys.hom_params if run.slot(nm) is not None]
+        self.d_cap = max(1, int(an.ctrl.get("homotopy_degree", 3)))
         self.lines = {}
 
     def diag(self, msg):
@@ -70,7 +73,7 @@ class Homotopy:
         return ns
 
     def line_at(self, key, d, T, p):
-        """The series kernel along `d` at order `T` mod `p`, memoised by `key`."""
+        """The series kernel along `d` at order `T` mod `p`, memoized by `key`."""
         k = (key, T, p)
         if k not in self.lines:
             self.lines[k] = self.line_null(d, T, p)
@@ -185,8 +188,11 @@ class Homotopy:
         k = len(reli)
         n_mon = mono_table(k, dg).shape[0]
         need, per, T = 2 * n_mon + 4, 2 * dg + 1, 2 * dg + 2
+        # a nonzero form of degree dg vanishes on fewer lines of the star than it has
+        # coefficients: one line more fixes the fit
+        n_lines = max(-(-need // per), math.comb(k + dg - 1, dg) + 1)
         U, R = [], []
-        for line in range(1, -(-need // per) + 1):
+        for line in range(1, n_lines + 1):
             d = self.zero_line()
             for nm, x in zip(reli, random_point(k, 31 * line + 7 * dg + 1)):
                 d[nm] = int(x) % p
@@ -215,7 +221,8 @@ class Homotopy:
         v = self.entry(self.ns0, a, self.cols[a][i], PRIMES[0])
         try:
             rc = sym_rat_recon_big(np.array([[int(v[0])]], dtype=np.int64), [PRIMES[0]])
-        except Exception:
+        except Exception as exc:
+            swallow(exc, "homotopy lift")
             return None
         if rc is None or rc["den"][0] == "0":
             return None
@@ -242,15 +249,18 @@ class Homotopy:
             coef[:, jp] = mulmod(raw, invmod(dn, pr), pr)
         try:
             return sym_rat_recon_big(coef, list(primes))
-        except Exception:
+        except Exception as exc:
+            swallow(exc, "homotopy lift")
             return None
 
     def fit_entry(self, a, i):
-        """Entry i of direction a as a rational function of its relevant parameters."""
+        """Entry i of direction a as a rational function of its relevant parameters; a lift
+        from fewer primes is kept only when it holds at the verification prime, else more
+        primes are taken."""
         reli = self.rel[a][i]
         if not reli:
             return self._constant(a, i)
-        cands = list(dict.fromkeys(list(PRIMES) + list(_EXTRA_PRIMES)))
+        cands = list(dict.fromkeys(list(PRIMES) + extra_primes()[:2]))
         for dg in range(self.d_cap + 1):
             mons = mono_table(len(reli), dg)
             n_mon = mons.shape[0]
@@ -275,7 +285,11 @@ class Homotopy:
                     continue
                 num = poly_string(rec["num"][:n_mon], rec["den"][:n_mon], mons, reli)
                 den = poly_string(rec["num"][n_mon:], rec["den"][n_mon:], mons, reli)
-                return {"expr": num if den == "1" else f"({num})/({den})", "reli": reli}
+                e = {"expr": num if den == "1" else f"({num})/({den})", "reli": reli}
+                if self._verified(a, i, e):
+                    return e
+                self.diag(f"entry {self.cols[a][i]} degree {dg}: the lift at {np_} prime(s) fails "
+                          "at the verification prime")
         return None
 
     # ---- directions -------------------------------------------------------------------
@@ -317,7 +331,7 @@ class Homotopy:
     def _verified(self, a, i, e):
         """The fitted entry against the Pade value at t = 1 on a fresh line at a prime
         outside the lift."""
-        nsv, dv, P2 = self.nsv, self.dv, VERIFY_PRIME
+        nsv, dv, P2 = self.nsv, self.dv, verify_prime()
         if nsv is None:
             return False
         es = self.entry(nsv, a, self.cols[a][i], P2)
@@ -329,7 +343,8 @@ class Homotopy:
         at1 = [(self.value(nm, P2) + dv[nm]) % P2 for nm in e["reli"]]
         try:
             pred = eval_rational_mod(e["expr"], list(e["reli"]), at1, P2)
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             pred = None
         if pred is None or (int(pred) - pade_at(pq, 1, P2)) % P2 != 0:
             self.diag(f"entry {self.cols[a][i]} failed verification: {e['expr']}")
@@ -346,7 +361,7 @@ class Homotopy:
             e = self.fit_entry(a, i)
             if e is not None and not self._verified(a, i, e):
                 return None
-            if e is None and not state.env("NOHOMSTATES"):
+            if e is None:
                 e = self.state_fit.fit(a, i, self.rel[a][i])
                 if e is not None:
                     e["expr"] = self.state_fit.substitute(e["expr"])
@@ -362,15 +377,16 @@ class Homotopy:
             return None
         route = "homotopy fit"
         if used:
-            route += " in the parameters and the resting states" + \
+            route += f" in the parameters and the {self.sys.hom_kind}" + \
                 (f" of condition {single[0] + 1}" if single and len(used) == 1 else "")
         return {"support": sym_sort(list(entries)), "vector": entries, "type": "general",
                 "closed_form": True, "route": route}
 
-    def _in_kernel(self, entries, mi_plain, tries=4):
+    def _in_kernel(self, entries, mi_plain, tries=None):
         """Whether the shared part of the kernel at a fresh point modulo the verification prime
         holds `entries`, a state read as its resting value (unsuffixed in condition `mi_plain`)."""
-        an, sys, q = self.an, self.sys, VERIFY_PRIME
+        an, sys, q = self.an, self.sys, verify_prime()
+        tries = tries or sys.hom_tries
         n = len(self.base)
         idx = {nm: c for c, nm in enumerate(an.znames)}
         start = self.rec.pool_next
@@ -380,28 +396,21 @@ class Homotopy:
             rq = an.kcall(pt, q, self.nt)
             if not rq.get("ok"):
                 continue
-            env = {nm: int(pt[i]) for i, nm in enumerate(an.leaf_names_aug) if i < n}
-            for mi, ci in enumerate(sys.equil_conds):
-                sol = sys.solve_cond(pt, q, ci)
-                if sol is None:
-                    break
-                for nm, v in sol["sol"]["val_by"].items():
-                    env[f"{nm}_c{mi + 1}"] = int(v) % q
-                    if mi == mi_plain:
-                        env[nm] = int(v) % q
-            else:
-                v = np.zeros(an.nz, dtype=np.int64)
-                for nm, ex in entries.items():
-                    got = eval_modq(ex, env, q)
-                    if got is None:
-                        return False
-                    v[idx[nm]] = got % q
-                return in_kernel(rq, v, list(range(sys.n_shared)), an.nz, q)
+            env = sys.hom_env(pt, q, mi_plain)
+            if env is None:
+                continue
+            v = np.zeros(an.nz, dtype=np.int64)
+            for nm, ex in entries.items():
+                got = eval_modq(ex, env, q)
+                if got is None:
+                    return False
+                v[idx[nm]] = got % q
+            return in_kernel(rq, v, list(range(sys.n_shared)), an.nz, q)
         return False
 
     def run(self, fcs):
         """(free columns, directions) with None where a direction does not close; None
-        without a series kernel at the base. Each direction is first normalised on one
+        without a series kernel at the base. Each direction is first normalized on one
         shared column, the rest then jointly on a gauge of shared columns."""
         self.ns0 = self.line_null(self.zero_line(), 1, PRIMES[0])
         if self.ns0 is None:
@@ -409,14 +418,14 @@ class Homotopy:
             return None
         self.diag(f"residual {','.join(map(str, fcs))}; base free {','.join(map(str, self.ns0['free']))}; "
                   f"shared {self.sys.n_shared}")
-        P2 = VERIFY_PRIME
+        P2 = verify_prime()
         self.dv = {nm: int(x) % P2 for nm, x in zip(self.pars, random_point(len(self.pars), 424242))}
         self.nsv = self.line_null(self.dv, 2 * self.d_cap + 2, P2)
         self.state_fit = StateFit(self)
         done = {}
         todo = list(fcs)
         for mode in ("free", "gauge"):
-            if not todo or (mode == "gauge" and state.env("NOHOMGAUGE")):
+            if not todo:
                 break
             self.mode = mode
             self._anchors(todo)
