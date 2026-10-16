@@ -7,4 +7,4 @@ from .state import switches
 
 __all__ = ["Model", "Symmetries", "Symmetry", "Reduction", "detect", "reduce", "reconst_control", "install_msolve",
            "switches"]
-__version__ = "0.10.0"
+__version__ = "0.10.1"

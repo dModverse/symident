@@ -78,12 +78,23 @@ def test_find_msolve_order(monkeypatch, tmp_path):
     assert install.find_msolve() == (env, "SYMIDENT_MSOLVE")
 
 
+def test_cache_bins_complete_builds_only(tmp_path):
+    cache = tmp_path / "cache"
+    for v in ("0.9.9", "0.10.1", "0.11.0"):
+        (cache / f"deps-msolve-{v}" / "bin").mkdir(parents=True)
+    for v in ("0.9.9", "0.10.1"):
+        (cache / f"deps-msolve-{v}" / ".msolve-complete").touch()
+    name = "msolve.exe" if sys.platform == "win32" else "msolve"
+    assert install._cache_bins() == [str(cache / f"deps-msolve-{v}" / "bin" / name)
+                                     for v in ("0.10.1", "0.9.9")]
+
+
 def tools(monkeypatch, have):
     monkeypatch.setattr(install.shutil, "which", lambda t: f"/bin/{t}" if t in have else None)
 
 
 @pytest.mark.parametrize("platform, have, match", [
-    ("win32", {"curl", "make", "m4"}, "not supported on Windows"),
+    ("win32", {"curl", "make", "m4"}, "does not build on Windows"),
     ("linux", {"make", "m4"}, "needs curl or wget"),
     ("linux", {"wget"}, "needs make and m4"),
     ("linux", {"curl", "make"}, "needs m4 for"),

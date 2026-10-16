@@ -29,8 +29,11 @@ downloads and builds msolve with GMP, MPFR and FLINT into a per-user cache
 
 msolve is looked up in this order: the environment variable ``SYMIDENT_MSOLVE``, the
 builds of :func:`symident.install_msolve` in the cache, and ``msolve`` on the ``PATH`` if
-it is a tested version (0.10). Each candidate has to solve a test system. On Windows,
-install msolve by other means (e.g. MSYS2) and set ``SYMIDENT_MSOLVE``.
+it is a tested version (0.10). Each candidate has to solve a test system.
+:func:`symident.install_msolve` does not build on Windows: set ``SYMIDENT_MSOLVE`` to an
+``msolve.exe``, or place it in the cache (``%LOCALAPPDATA%\symident\cache``) as
+``deps-msolve-<version>\bin\msolve.exe`` next to an empty file ``.msolve-complete``;
+``dMod2::installMsolve()`` in R does the latter.
 
 Without msolve, models that need it stop with
 :class:`~symident.sym.msolve.MsolveMissingError`; all other analyses run without it.

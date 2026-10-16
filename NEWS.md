@@ -1,3 +1,7 @@
+# symident 0.10.1
+
+* On Windows the msolve builds in the cache are found as `msolve.exe`.
+
 # symident 0.10.0
 
 ## Levels and proofs

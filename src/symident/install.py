@@ -11,6 +11,7 @@ from importlib import resources
 
 MSOLVE_VERSION = "0.10.1"
 _TESTED = "0.10."
+_EXE = "msolve.exe" if sys.platform == "win32" else "msolve"
 
 
 def cache_dir():
@@ -57,15 +58,16 @@ def _cache_bins():
 
     def key(d):
         return tuple(int(x) if x.isdigit() else 0 for x in os.path.basename(d)[12:].split("."))
-    return [os.path.join(d, "bin", "msolve") for d in sorted(dirs, key=key, reverse=True)]
+    return [os.path.join(d, "bin", _EXE) for d in sorted(dirs, key=key, reverse=True)]
 
 
 def find_msolve():
     """The msolve to use and where it was found, (path, source), or (None, None).
 
-    Searched in order: `SYMIDENT_MSOLVE`, the builds of
-    :func:`install_msolve` in the cache, then `msolve` on the `PATH` if it is a
-    tested version. Each candidate must solve a test system."""
+    Searched in order: `SYMIDENT_MSOLVE`, the builds in the cache, each
+    ``deps-msolve-<version>/bin/msolve`` (``msolve.exe`` on Windows) next to a file
+    ``.msolve-complete``, then `msolve` on the `PATH` if it is a tested version. Each
+    candidate must solve a test system."""
     p = os.environ.get("SYMIDENT_MSOLVE", "")
     if p and msolve_check(p):
         return p, "SYMIDENT_MSOLVE"
@@ -110,8 +112,8 @@ def install_msolve(dir=None, version=MSOLVE_VERSION, jobs=None, quiet=False, ask
         jobs = max(1, min(8, len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity")
                           else (os.cpu_count() or 2)))
     if sys.platform == "win32":
-        raise RuntimeError("install_msolve() is not supported on Windows; install msolve "
-                           "(e.g. through MSYS2) and set SYMIDENT_MSOLVE to its path.")
+        raise RuntimeError("install_msolve() does not build on Windows; set SYMIDENT_MSOLVE to "
+                           "an msolve.exe, or place one in the cache, see find_msolve().")
     if not (shutil.which("curl") or shutil.which("wget")):
         raise RuntimeError("install_msolve() needs curl or wget to download the sources.")
     missing = [t for t in ("make", "m4") if not shutil.which(t)]

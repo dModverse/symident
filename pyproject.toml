@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "symident"
-version = "0.10.0"
+version = "0.10.1"
 description = "Structural identifiability of ODE models by Lie symmetries over finite fields"
 readme = "README.md"
 requires-python = ">=3.10"
