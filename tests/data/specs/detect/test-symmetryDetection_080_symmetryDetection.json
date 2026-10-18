@@ -1,0 +1,36 @@
+{
+ "name": "test-symmetryDetection_080_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "-k1*x + u*k2*z",
+   "z": "-(1-u)*z",
+   "u": "0"
+  },
+  "g": {
+   "y": "x"
+  },
+  "events": [
+   {
+    "var": "u",
+    "time": "0",
+    "value": "0",
+    "method": "replace",
+    "root": null
+   },
+   {
+    "var": "u",
+    "time": "1",
+    "value": "1",
+    "method": "replace",
+    "root": null
+   }
+  ],
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

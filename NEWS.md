@@ -1,3 +1,65 @@
+# symident 0.11.0
+
+## PEtab
+
+* `read_petab()` and `Model.from_petab()` read a PEtab problem, format version 1 or 2,
+  into a `Model` (extra `symident[petab]`). Volumes that change in time dilute the
+  concentrations, and a reset volume keeps the amounts of its species.
+
+## Model
+
+* `Model(equilibrate=, positive=, reduce_cq=)` set the defaults of `detect()` for the
+  model; `read_petab()` sets them from the problem. `reduce(positive=)` defaults to the
+  setting of the detection.
+* A condition starts at t = 0, or at its earliest event when that comes before.
+
+## Levels and assumptions
+
+* New level `"checked"`: a closed form checked at random points without an error bound.
+  A `"verified"` direction always has its probability in `info["bound"]`, and a rank
+  without a probability is a lower bound. A closed form whose kernel check can evaluate
+  only part of its entries is `"checked"` as well. `Symmetries.unproven()` returns the
+  verified and checked directions.
+* Directions of a model with switches that the rule of the switches does not prove are no
+  longer reported as symmetries: they are listed under `info["switching"]["candidates"]`,
+  and the printout says how many more directions there may be.
+* New `info["assumptions"]` and `Reduction.assumptions`: the declared `domain` and the
+  sides of switches that `regimes` declares at the start (`starts`), together with the
+  `error_bound` of the verification.
+* The start sides that `regimes` declares move from
+  `info["switching"]["conditions"][i]["assumptions"]` to `["declared"]`.
+
+## Reduction
+
+* More section claims are proven: that every orbit meets a section at most once, for any
+  number of generators (`blocks[i]["injective"]`), and that every level set of the
+  invariants is one orbit, so that every orbit meets the section (`blocks[i]["reach"]`),
+  also under partial coverage.
+* A section on a face of the parameter space is proven to give the output of every orbit
+  in the limit, also under `equilibrate`. A face whose resting state is only checked at
+  random points has `blocks[i]["face_level"]` `"checked"`, and so has its block.
+* A section claim that is not proven is named under `blocks[i]["unproven"]`, makes the
+  block `"open"` and gives a warning. This replaces the level `"assumed"` and
+  `blocks[i]["assumptions"]`; `reduce(verbose=)` is removed.
+* `blocks[i]["new_parameters"]`, `blocks[i]["solved_domain"]` and `choices` in `blocks[i]`
+  and `family[i]` replace `survivor_meaning`, `carrier_domain` and `admissible`.
+* The section search also tries a product of two coordinates at one. A search that a
+  budget cuts short is named in `limits`.
+* `zero_limits` reports "no" only when every branch of the face equations is solved.
+* Ranks and signs in the reduction are exact; no floating point remains.
+
+## Detection
+
+* `equilibrate`: conditions at rest that share parameters are continued as power series
+  from a common start instead of being solved jointly with msolve; `SYMIDENT_NODIAG`
+  switches this off. `info["series_certified"]` says whether the series order is proven
+  sufficient; otherwise the rank is a lower bound. msolve uses the cores of the call.
+* Condition-specific parameters in log coordinates map back to their names.
+* `switches()` also sets `CACHE`, `MSOLVE` and the switches of the msolve build;
+  `install_msolve()` takes `MSOLVE_VERSION` and `JOBS` as its defaults. `LIBS_CACHE` is
+  removed, `SYMIDENT_CACHE` sets the cache. `ROUTEDIAG` replaces `ROBUSTDIAG`, and
+  `BLOCKMB` is listed.
+
 # symident 0.10.1
 
 * On Windows the msolve builds in the cache are found as `msolve.exe`.
@@ -120,7 +182,7 @@ First release.
   directions proven symbolically, and an error is raised where they do not meet.
 * Reduction by scaling transversals, module reduction and invariants (monomial, polynomial,
   rational, Darboux, exponential), with positivity certificates and face sections.
-* `reduce()` returns the best admissible chart and lists the others under `alternatives`
+* `reduce()` returns the best reparametrization and lists the others under `alternatives`
   (`reduce(alternatives=True)`); dependent directions are named under `dependent`.
 * `install_msolve()` builds msolve, used for coupled steady states, into a per-user cache.
 * `symident.rjson`: JSON interface for host languages.

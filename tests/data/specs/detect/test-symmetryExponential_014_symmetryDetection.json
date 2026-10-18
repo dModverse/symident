@@ -1,0 +1,17 @@
+{
+ "name": "test-symmetryExponential_014_symmetryDetection",
+ "spec": {
+  "f": {
+   "V": "(I - gNa*m^3*h*(V - ENa) - gK*n^4*(V - EK) - gL*(V - EL))/C",
+   "m": "(0.1*(V + 40)/(1 - exp(-(V + 40)/10)))*(1 - m) - (4*exp(-(V + 65)/18))*m",
+   "h": "(0.07*exp(-(V + 65)/20))*(1 - h) - (1/(1 + exp(-(V + 35)/10)))*h",
+   "n": "(0.01*(V + 55)/(1 - exp(-(V + 55)/10)))*(1 - n) - (0.125*exp(-(V + 65)/80))*n"
+  },
+  "g": {
+   "y": "V"
+  },
+  "reconstruct": true
+ },
+ "env": {},
+ "options": {}
+}

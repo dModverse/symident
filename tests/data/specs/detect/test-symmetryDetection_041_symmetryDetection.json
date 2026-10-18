@@ -1,0 +1,50 @@
+{
+ "name": "test-symmetryDetection_041_symmetryDetection",
+ "spec": {
+  "f": {
+   "R": "kpr - kdg*R + kon*u*R",
+   "u": "0"
+  },
+  "g": {
+   "y": "scale*R"
+  },
+  "conditions": {
+   "rows": [
+    "Ctrl"
+   ],
+   "cols": {
+    "init_u": [
+     1
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "u",
+    "time": "0",
+    "value": "init_u",
+    "method": "replace",
+    "root": null
+   },
+   {
+    "var": "u",
+    "time": "60",
+    "value": "0",
+    "method": "replace",
+    "root": null
+   }
+  ],
+  "forcings": [
+   "u"
+  ],
+  "equilibrate": true,
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": ""
+ },
+ "options": {}
+}

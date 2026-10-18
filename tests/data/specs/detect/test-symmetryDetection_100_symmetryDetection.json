@@ -1,0 +1,27 @@
+{
+ "name": "test-symmetryDetection_100_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-p*A"
+  },
+  "g": {
+   "y": "s*A"
+  },
+  "trafo": [
+   {
+    "p": "pa"
+   },
+   {
+    "p": "pb"
+   }
+  ],
+  "reduceCQ": false,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

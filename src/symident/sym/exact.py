@@ -1,6 +1,4 @@
-"""Exact certificates of a field Y = eta(theta) d/dtheta + xi(x, theta) d/dx: every identity
-that makes Y a symmetry is cancelled to zero over Q. Each identity holds the symbols of one
-equation, so the cost grows with the number of equations, not with their product."""
+"""Exact certificates of a field Y: every identity that makes Y a symmetry cancels to zero over Q."""
 
 import functools
 import random
@@ -69,8 +67,7 @@ def regime_identities(regime, field):
 
 
 def event_identities(events, field_from, field_to, states):
-    """(label, expression) of xi_to(E(x)) = Y_from(E(x)) per state, E the event group
-    (list of {var, method, value}) applied together."""
+    """(label, expression) of xi_to(E(x)) = Y_from(E(x)) per state, E the event group applied together."""
     Yf, Yt = _Field(field_from), _Field(field_to)
     E = {}
     for ev in events:
@@ -233,8 +230,7 @@ def rest_identities(conds, vector):
 
 
 def certify(identities):
-    """{"ok": True when every identity cancels, False with the first that does not, None
-    when one is past the size cap; "why"; "identities": the count}."""
+    """{"ok": True if all identities cancel, False at the first that does not, None past the cap; "why"}."""
     undecided = None
     for label, e in identities:
         z = _zero(e)

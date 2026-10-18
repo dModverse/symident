@@ -13,10 +13,7 @@ from .recast import _TRIG, _TRIG_RECIPROCAL
 
 
 def _poly_monomials(expr, zvars):
-    """Numerator and denominator monomial-exponent lists of expr over zvars
-    (other symbols are treated as weight-zero coefficients). Exponents may be
-    rational, as in sqrt(x). Raises if expr is not a ratio of such sums.
-    Read term by term: a dense Poly nests one level per coordinate."""
+    """Numerator and denominator monomial-exponent lists of expr over zvars; raises for other forms."""
     idx = {z: i for i, z in enumerate(zvars)}
     zset = set(zvars)
     zero = spy.Integer(0)
@@ -39,10 +36,7 @@ def _poly_monomials(expr, zvars):
 
 
 def _exp_split(expr, logs=False):
-    """expr with every exponential atom (exp(u), or b^u with a numeric base), every
-    trigonometric function of u, and with `logs` every log(u), replaced by a fresh
-    symbol, innermost first, and the list of the u. Each is invariant exactly when u
-    is: log(lambda^w*u) = log(u) + w*log(lambda)."""
+    """expr with exponentials, trig and, with `logs`, log atoms as fresh symbols, and their arguments."""
     exps = []
 
     def rec(e):
@@ -64,12 +58,7 @@ def _exp_split(expr, logs=False):
 
 def _scaling_rows(diff_equations, obs_functions, m, zvars, inter_offset, logs=False,
                   seen=None):
-    """Sparse {col: coeff} monomial-exponent rows of one (f, g) system for the scaling
-    kernel: weight columns 0..nz-1 over zvars, intermediate columns from inter_offset.
-    Returns (rows, ninter, skipped). An exponential has weight zero and its exponent
-    is an invariant, like an observable; with `logs` so is the argument of a log(),
-    off for the power recast, which keeps log(base) as a coordinate. An (expression,
-    target) pair already in `seen` is skipped."""
+    """(rows, ninter, skipped): sparse monomial-exponent rows of one (f, g) system for the scaling kernel."""
     nz = len(zvars)
     exprs = []          # (numer monomials, denom monomials, target weight vector)
     skipped = 0
@@ -155,8 +144,7 @@ def _materialize_rows(rows, ncols):
 
 
 def _scaling_gens(rows, ncols, nz):
-    """Reduced integer generators (primitive, over the first nz weight columns)
-    of the scaling kernel given the determining rows."""
+    """Primitive integer generators of the scaling kernel over the first nz weight columns."""
     basis = exact_nullspace(rows, ncols, integer=True) if rows else []
     cvecs = [[v[j] for j in range(nz)] for v in basis
              if any(v[j] != 0 for j in range(nz))]
@@ -181,8 +169,7 @@ def _scaling_gens(rows, ncols, nz):
 
 
 def _weighted_degree(e, w):
-    """Weighted degree of `e` with symbol weights `w` (name -> number, default 0), or None
-    when `e` is not weighted-homogeneous."""
+    """Weighted degree of `e` under the weights `w`, or None when `e` is not weighted-homogeneous."""
     if e.is_Number or e.is_NumberSymbol:
         return 0
     if e.is_Symbol:
@@ -210,10 +197,7 @@ def _weighted_degree(e, w):
 
 
 def verify_scalings(scalings, tapes):
-    """Exact check that each scaling (name -> weight) leaves every tape's model, observables,
-    initial values, events and start time invariant: a right-hand side has the weight of
-    its state, an observable weight 0, a replaced or added value the weight of its target,
-    a factor and a time weight 0. Returns one bool per scaling."""
+    """One bool per scaling: whether it leaves every tape's model, observables, values and events invariant."""
     lines = []
     for t in tapes:
         lines += _as_list(t.get('model_lines', [])) + _as_list(t.get('obs_lines', []))
@@ -276,11 +260,7 @@ def _scaling_nonid(gens, znames, nz):
 
 
 def _scaling_gens_recast(gens, znames, nz, recast):
-    """Impose c_E = exp * c_base on the integer scaling lattice span(gens) and return
-    the physical generators, weights possibly symbolic in the exponent. No integer
-    weight satisfies c_E = nhill * c_base, so the plain kernel misses Hill scalings;
-    intersecting over Q(exp) recovers them exactly (e.g. xi_kinh = -nhill * kinh).
-    Holds for inverted and normal recasts alike."""
+    """Generators of span(gens) with c_E = exp * c_base imposed, weights possibly symbolic in exp."""
     if not gens:
         return []
     G = spy.Matrix(gens)                      # rows = basis vectors, cols = coords
@@ -320,9 +300,7 @@ def _scaling_gens_recast(gens, znames, nz, recast):
 
 def scaling_symmetries(all_variables, diff_equations, obs_functions, m, params,
                       fixed=(), verbose=True):
-    """Exact scaling symmetries z_i -> lam^{c_i} z_i from the integer kernel of the
-    monomial-exponent conditions (observables invariant, f_i scaling like x_i); no
-    expression swell. Symbols in `fixed` get weight zero."""
+    """Exact scaling symmetries z_i -> lam^{c_i} z_i from the integer kernel; `fixed` gets weight zero."""
     zvars = list(all_variables[:m]) + list(params)
     nz = len(zvars)
     znames = [str(s) for s in zvars]
@@ -360,12 +338,7 @@ def scaling_symmetries(all_variables, diff_equations, obs_functions, m, params,
 
 def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=None,
                            recast=None, logs=False, extra_model=None, extra_obs=None):
-    """Scaling symmetries common to every condition: the integer kernel of all
-    conditions' monomial-exponent rows stacked over a shared weight space (own
-    intermediate columns each), i.e. the intersection of the per-condition lattices.
-    Coordinates are states plus parameters; `inputs` and `fixed` do not scale.
-    `extra_model` ("X = e", e of the weight of state X) and `extra_obs` ("_ = e", e of
-    weight 0) add constraints per condition, such as initial values and events."""
+    """Scaling symmetries common to every condition; `inputs` and `fixed` do not scale."""
     per_cond_model = [_as_list(m) for m in per_cond_model]
     per_cond_obs = [_as_list(o) for o in per_cond_obs]
     extra_model = [_as_list(m) for m in (extra_model or [[] for _ in per_cond_model])]
@@ -414,8 +387,8 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
     paramset -= set(state_syms)
     paramset -= {local.get(nm, spy.Symbol(nm)) for nm in inputset}
     params = sorted(paramset, key=spy.default_sort_key)
-    # re-add free-exponent bases the recast eliminated (Km in C^n/(Km^n+C^n)), so
-    # _scaling_gens_recast can impose c_E = exp*c_base on them
+    # re-add free-exponent bases the recast eliminated, so _scaling_gens_recast can
+    # impose c_E = exp*c_base on them
     for rc in _as_list(recast):
         b = local.get(str(rc['base']), spy.Symbol(str(rc['base'])))
         if (b not in set(state_syms) and b not in params
@@ -467,7 +440,7 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
             dense.append(row)
 
     gens = _scaling_gens(dense, ncols, nz)
-    # the integer kernel treats each recast E as free; recover the Hill scalings
+    # the integer kernel treats each recast E as free; recover the symbolic-weight scalings
     recast = _as_list(recast)
     if recast:
         physical = _scaling_gens_recast(gens, znames, nz, recast)
@@ -480,8 +453,7 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
 
 def scaling_symmetries_single(model, observation, inputs=None, fixed=None, parameters=None,
                               verbose=False):
-    """Scaling symmetries of one condition from the integer kernel of its exponent rows;
-    `verbose` prints them."""
+    """Scaling symmetries of one condition from the integer kernel of its exponent rows."""
     model = _as_list(model)
     observation = _as_list(observation)
     input_names = _as_list(inputs)

@@ -1,0 +1,17 @@
+{
+ "name": "test-symmetryDetection_093_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-exp(lk)*A + lk"
+  },
+  "g": {
+   "y": "A"
+  }
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

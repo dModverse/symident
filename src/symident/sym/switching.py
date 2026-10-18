@@ -1,9 +1,4 @@
-"""State-dependent switches: piecewise(), comparisons, logic, Heaviside, sign, abs, max, min.
-
-A switch whose condition the declared signs decide is resolved. Any other switch makes the
-model hybrid: each undecided condition is a switching surface g_j = 0 with an indicator
-H_j (1 where g_j > 0), and a regime fixes every indicator.
-"""
+"""State-dependent switches: piecewise(), comparisons, logic, Heaviside, sign, abs, max, min."""
 
 import re
 
@@ -56,10 +51,7 @@ def to_str(e):
 
 
 class Switches:
-    """Switching functions g_j with indicator symbols H_j = 1 where g_j > 0.
-
-    `positive` is True (every coordinate positive), False, or the positive names; `namer`
-    gives the name of the next indicator."""
+    """Switching functions g_j with indicator symbols H_j = 1 where g_j > 0."""
 
     def __init__(self, positive, namer=None):
         self.positive = positive
@@ -302,8 +294,7 @@ def comparison(text):
 
 
 class Hybrid:
-    """A model whose switches are not all decided: right-hand sides and observables in the
-    indicators, the switching functions and their kinds, and the root events."""
+    """A model with undecided switches: right-hand sides and observables in the indicators, surfaces, root events."""
 
     def __init__(self, sw, f, g, g_list, states, inputs, roots):
         self.sw = sw
@@ -342,11 +333,7 @@ class Hybrid:
 
 
 def hybrid_model(f, g, positive, events=None, inputs=(), taken=()):
-    """The model with its switches resolved, or as a Hybrid.
-
-    Returns None when the model has no switch and no root event, {'hybrid': False, 'f',
-    'g'} when the declared signs decide every switch, else a Hybrid. `taken` holds names
-    the indicators must avoid."""
+    """None without a switch or root event, {'hybrid': False, 'f', 'g'} if the signs decide all, else a Hybrid."""
     obs_list = isinstance(g, (list, tuple))
     gl = [dict(x or {}) for x in g] if obs_list else [dict(g or {})]
     events = list(events or [])
@@ -392,8 +379,7 @@ def hybrid_model(f, g, positive, events=None, inputs=(), taken=()):
 
 
 def surface_ratios(surfaces):
-    """Ratios of the terms of each surface function: a scaling maps g = 0 to itself
-    exactly when it scales every term of g alike, which leaves these ratios invariant."""
+    """Term ratios of each surface function, invariant exactly under the scalings that map g = 0 to itself."""
     out = []
     for q in surfaces:
         terms = spy.Add.make_args(spy.expand(spy.fraction(spy.together(q))[0]))

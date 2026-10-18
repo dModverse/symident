@@ -140,7 +140,7 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
 
     if kcall_fwd is None or expired(ctrl):
         return [] if list_anchors else fb("forward path unavailable")
-    rdiag = state.env("ROBUSTDIAG")
+    rdiag = state.env("ROUTEDIAG")
     npt = len(sc["point0"])
 
     def draw(n):
@@ -395,7 +395,7 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
     P1 = rprimes[0]
     if kcall_fwd is None or expired(ctrl):
         return None
-    rdiag = state.env("ROBUSTDIAG")
+    rdiag = state.env("ROUTEDIAG")
     t_f = time.monotonic()
 
     def el():
@@ -780,8 +780,7 @@ def fwd_adopt(fwd, n_res):
 def perprime_forward_multi(residual_free, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz,
                            scaling, state_col_names, param_names, recast, spy_on, ctrl, phys_cols,
                            models, real_state_names, solve_param_names, solve_held):
-    """Forward results of the first residual direction, one per anchor; [] without residual directions,
-    None without anchors."""
+    """Forward results of the first residual direction per anchor; [] without directions, None without anchors."""
     if not residual_free:
         return []
 

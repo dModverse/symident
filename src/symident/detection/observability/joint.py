@@ -1,24 +1,24 @@
-"""The joint system under a steady state: per-condition resting states as coordinates,
-the tangency rows df_rest = [Jx | Jt] stacked with the observability rows."""
+"""Joint system under a steady state: resting states as coordinates, tangency rows [Jx | Jt] with observability rows."""
 
 import re
 
 import numpy as np
 
-from ... import _core, state
+from ... import _core, session, state
 from ...errors import SYMPY_FAILS, swallow, sympy_fail
-from ...gfp import invmod, mulmod
+from ...gfp import PRIMES, invmod, mulmod, random_point
 from ...sym.continuation import continue_resting_state
+from ...sym.restforward import solve_forward_modular
 from ..fields import series_const, series_embed, series_stack
 from .context import ints, ok, strs
 from .rest import RestingStates
+from .start import DiagonalStart
 
 _IDENT = re.compile(r"[A-Za-z._][A-Za-z0-9._]*")
 
 
 class JointSystem(RestingStates):
-    """Resting states per condition, their solves and the wide kernel over
-    shared parameter columns and per-condition state columns."""
+    """Resting states per condition, their solves and the wide kernel over shared and per-condition state columns."""
 
     def __init__(self, run):
         self.run = run
@@ -105,8 +105,7 @@ class JointSystem(RestingStates):
         self.fwd_cond = self.equil_conds[0] if self.equil_conds else None
         self.fwd_rates = None
         self.fwd_banned = []
-        self.fwd_on = (not self.held_names and not any(r.get("inverted") for r in self.recast)
-                       and not state.env("NOFWDSEED"))
+        self.fwd_on = not any(r.get("inverted") for r in self.recast) and not state.env("NOFWDSEED")
         self.cont_t = max(1, int(run.ctrl["gap_order_cap"]))
         n_eq = (max(self.equil_conds) + 1) if self.equil_conds else 0
         self.cont_off = [False] * n_eq
@@ -115,6 +114,102 @@ class JointSystem(RestingStates):
                        for mi in range(self.kc)] if run.has_gaps else None
         self.fwd_sel = list(range(self.kc))
         self.warm_off = False
+        self.diag = self.diagonal_start()
+        self.diag_ref = {}
+        self.chained = False
+        if self.diag is not None and not run.has_gaps:
+            self.chain()
+
+    def chain(self):
+        """Single segments as chains, for the series of the diagonal start."""
+        run = self.run
+        run.as_chains()
+        self.chains = [run.chain_tapes(run.chain_groups[run.chain_idx[self.equil_conds[mi]]])
+                       for mi in range(self.kc)]
+        self.chained = True
+
+    def unchain(self):
+        """Back to single segments, for kernels at points of GF(p) itself."""
+        self.run.as_segments()
+        self.chains = None
+        self.chained = False
+        if self.held_names and self.diag is None:
+            self.fwd_on = False
+
+    def diagonal_start(self):
+        """The diagonal start of the resting conditions, or None."""
+        run = self.run
+        if not self.fwd_on or state.env("NODIAG"):
+            return None
+        reps = list({self.model_key[ci]: ci for ci in reversed(self.equil_conds)}.values())
+        if len(reps) < 2 and not self.held_names:
+            return None
+        cand = [n for n in self.solve_param_names if run.slot(n) is not None and n not in self.l_names]
+        try:
+            ds = DiagonalStart(self.models, reps, self.fwd_cond, self.held_of, cand, keep=self.held_names)
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return None
+        except Exception as exc:
+            swallow(exc, "diagonal start")
+            return None
+        good = ds.ok and self.diagonal_trial(ds)
+        if run.timing:
+            print(f"[sym] diagonal start: Z = {ds.Z}, zero at the start {ds.S}" if good
+                  else "[sym] diagonal start: none")
+        return ds if good else None
+
+    def diagonal_trial(self, ds):
+        """Whether a random forward seed at Z = 0 lifts every distinct condition into the torus."""
+        p, T = PRIMES[0], self.cont_t
+        names = list(self.real_state_names) + list(self.solve_param_names)
+        vals = random_point(len(names), seed=session.current().seed("diagonal trial") % (1 << 31))
+        sv = {n: int(v) for n, v in zip(names, vals) if n in set(self.real_state_names)}
+        pv = {n: int(v) for n, v in zip(names, vals) if n in set(self.solve_param_names)}
+        sv.update({x: 0 for x in ds.S})
+        pv.update({z: 0 for z in ds.Z})
+        forc = list(dict.fromkeys(self.held_of(self.fwd_cond) + ds.S))
+        keep = list(dict.fromkeys(ds.Z + ds.dead))
+        held = {n: 0 for n in self.held_names} or None
+        try:
+            for _ in range(6):
+                fw = solve_forward_modular(self.models[self.fwd_cond], list(self.real_state_names),
+                                           list(self.solve_param_names), sv, pv, p, forcings=forc,
+                                           keep_free=keep, held=self.held_names or None)
+                if not fw.get("ok"):
+                    return False
+                zero = [r for r, v in fw["rates"].items() if int(v) % p == 0]
+                if not zero:
+                    break
+                keep = list(dict.fromkeys(keep + zero))
+            else:
+                return False
+            pv.update({str(r): int(v) % p for r, v in fw["rates"].items()})
+            x0 = {x: 0 for x in self.real_state_names}
+            x0.update({str(k): int(v) % p for k, v in fw["val_by"].items()})
+            x0.update({x: 0 for x in ds.S})
+            if ds.pole({**pv, **x0}, p):
+                return False
+            dz = {z: int(v) for z, v in zip(ds.Z, random_point(len(ds.Z), seed=7))}
+            for ci in dict.fromkeys(self.equil_conds):
+                if ci != {self.model_key[c]: c for c in reversed(self.equil_conds)}[self.model_key[ci]]:
+                    continue
+                pz = [z for z in ds.Z if z in set(self.model_params[ci])]
+                sol = continue_resting_state(self.models[ci], list(self.real_state_names),
+                                             list(self.solve_param_names), pv, {z: dz[z] for z in pz},
+                                             x0, p, T, forcings=self.held_of(ci) or None, held=held)
+                if not sol.get("ok"):
+                    return False
+                if any(not any(int(v) for v in sol["val_by"][x]) for x in ds.S
+                       if x in sol["val_by"] and x not in self.held_of(ci)):
+                    return False
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return False
+        except Exception as exc:
+            swallow(exc, "diagonal trial")
+            return False
+        return True
 
     # ---- conditions -----------------------------------------------------------------
 
@@ -167,9 +262,7 @@ class JointSystem(RestingStates):
         return M
 
     def cond_local(self, mi, obs, sc0, p, scale=True):
-        """One condition's rows over its local columns: observability, df, pinned zeros and
-        recast relations; state columns scaled by the resting values unless continued.
-        With a series, the same rows as series. None rejects the point."""
+        """One condition's rows on its local columns, state columns scaled unless continued; None rejects the point."""
         from ..fields import ser_inv, ser_mul
         if not ok(obs):
             return None
@@ -286,8 +379,7 @@ class JointSystem(RestingStates):
         return {"W": W, "series": ser}
 
     def _project(self, locs, p, cores, sel=None):
-        """Each condition eliminates its state columns first; the rows free of them on
-        the shared columns, with their series projections."""
+        """Rows on the shared columns once each condition eliminates its state columns, with series projections."""
         st_l, sh_l = self.per_cond_cols, self.shared_idx
         n_first = len(st_l)
         r_p, Q, r_ps, QS, prec, series = 0, [], 0, [], [], True
@@ -499,9 +591,7 @@ class JointSystem(RestingStates):
         return [mk(mi) for mi in range(self.kc)]
 
     def chunk(self, point_list, prime_vec, Nt, cols=None, conds=None, touch=False):
-        """Coupled gap path: every (point, condition) seed solved, all chain kernels in one
-        batch, then assembled and reduced per point. `cols` restricts to wide columns,
-        `conds` to conditions, `touch` reports which condition has a row on `cols`."""
+        """Coupled gap path: (point, condition) seeds solved, chain kernels batched, then reduced per point."""
         run = self.run
         nz_l = self.nz_local
         mis = list(range(self.kc)) if conds is None else [int(c) for c in conds]
@@ -621,6 +711,8 @@ class JointSystem(RestingStates):
         for mi in range(self.kc):
             ci = self.equil_conds[mi]
             ref = self.solve_cond(point, p, ci)
+            if ref is not None and ref.get("cont"):
+                ref = self.solve_direct(point, p, ci)
             if ref is None:
                 return None
             pv = self.joint_pv(point, p)

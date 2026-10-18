@@ -66,8 +66,7 @@ def entry_degrees(f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, ctrl, l
 def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, point0, pool,
                           pool_next, nt_used, kcall, rel_probe=None, residue_fn=None, ctrl=None,
                           kbatch=None, shared_bank=None, fast_only=False, aux_leaves=(), degrees=None):
-    """One residual direction as rational entries over the leaves that move each entry;
-    `degrees` per entry as entry_degrees() gives them, probed here when missing."""
+    """One residual direction as rational entries over the leaves that move each entry."""
     from .closedform import reconstruct_entry
     if kbatch is None:
         kbatch = _default_kbatch(kcall)

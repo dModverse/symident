@@ -1,0 +1,23 @@
+{
+ "name": "test-symmetryExponential_020_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "kA - kd*A",
+   "B": "kB - kE*exp(A)*B"
+  },
+  "g": {
+   "y": "s*B"
+  },
+  "trafo": {
+   "A": "0",
+   "B": "1",
+   "kA": "-q_1",
+   "kB": "kB",
+   "kE": "q_2",
+   "kd": "kd",
+   "s": "s"
+  }
+ },
+ "env": {},
+ "options": {}
+}

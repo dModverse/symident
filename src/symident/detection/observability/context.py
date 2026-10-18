@@ -53,12 +53,7 @@ def tape_fields(t):
 
 
 class Run:
-    """Coordinates, tapes, chains and the parallel budget of one analysis.
-
-    `nt_cap` (per-chain Lie order caps), `mtot` (the gap order of the samples) and
-    `cores_call` (kernel threads, 1 inside forked workers) change during the analysis
-    and are read by every kernel call.
-    """
+    """Coordinates, tapes, chains and parallel budget of one analysis; nt_cap, mtot and cores_call change during it."""
 
     def __init__(self, multi, cores, ctrl, chain_of, n_gaps, t0events, cond_zero_states,
                  equil_zero_states):
@@ -99,6 +94,28 @@ class Run:
         self.nt_cap = []
         self.mtot = 0
         self.ss_why = None
+        self.series_gaps = False
+
+    _CHAIN_FIELDS = ("has_gaps", "chain_of", "chain_groups", "chain_idx", "first_of_chain", "max_gap",
+                     "cores_call", "mtot", "nt_cap", "series_gaps")
+
+    def as_chains(self):
+        """Every tape a chain of one segment, whose gap order is then the series order."""
+        self._unchained = {k: getattr(self, k) for k in self._CHAIN_FIELDS}
+        n = len(self.multi["tapes"])
+        self.has_gaps = True
+        self.chain_of = list(range(n))
+        self.chain_groups = [[i] for i in range(n)]
+        self.chain_idx = {i: i for i in range(n)}
+        self.first_of_chain = [True] * n
+        self.max_gap = int(self.ctrl["gap_order_cap"])
+        self.cores_call = int(max(1, min(self.cores, n)))
+        self.series_gaps = True
+
+    def as_segments(self):
+        """Undo as_chains()."""
+        for k, v in self._unchained.items():
+            setattr(self, k, v)
 
     def stage(self, what):
         """Print the elapsed time and `what` when timing is on."""
@@ -110,9 +127,7 @@ class Run:
         return self.leaf_index.get(name)
 
     def par_map(self, xs, f, sys=None):
-        """f over xs in forked workers, serially with one core; an item that raises gives
-        None. Every item starts from the route state of `sys` before the call, and the
-        changes are merged in item order, so the result does not depend on the cores."""
+        """f over xs in forked workers, None for an item that raises; route states merge in item order."""
         xs = list(xs)
         if sys is None or not hasattr(sys, "route_state"):
             return process_map(f, xs, self.cores, on_error=lambda x: None)

@@ -42,11 +42,7 @@ _OP_CONST, _OP_ADD, _OP_MUL, _OP_INV, _OP_SQRT, _OP_ROOT = 0, 1, 2, 3, 4, 5
 
 
 def _emit_tape_shared(fexpr, gexpr, slot_of, base, allow_sqrt=False):
-    """Emit a straight-line tape over an explicit slot map of states and leaves;
-    instruction i writes slot base + i. States get their own slots, seeded from an
-    initial condition (multi-condition compiler). With `allow_sqrt` (initial-value
-    tapes), rational powers become roots modulo the prime: square roots for the powers of
-    two in the denominator, the unique odd root for the rest."""
+    """Straight-line tape over an explicit slot map of states and leaves; instruction i writes slot base + i."""
     op, a, b, cnum, cden = [], [], [], [], []
     memo = {}
 
@@ -126,9 +122,7 @@ def _emit_tape_shared(fexpr, gexpr, slot_of, base, allow_sqrt=False):
 
 
 def _compose_t0_events(ic_map, t0evs, pval, subs_map):
-    """Apply a segment's t0 events to the initial-state map in place: the jet starts
-    at x0 = E(x_ss), the f = 0 constraint stays on the pre-event x_ss. Events on
-    non-coordinate states are ignored."""
+    """Apply a segment's t0 events to the initial-state map in place: x0 = E(x_ss), f = 0 stays on x_ss."""
     for e in t0evs or []:
         Xv = spy.Symbol(str(e['var']))
         if Xv not in ic_map:
@@ -145,12 +139,7 @@ def _compose_t0_events(ic_map, t0evs, pval, subs_map):
 
 
 def _lie_reach(f_c, g_c, S, ic_c, evs, f_ss=None):
-    """Structural first Lie order at which each symbol can enter the output jets of one
-    segment, a lower bound for the order its column first becomes nonzero: 0 for the
-    symbols of the observables, else one more than the least order of a state whose
-    right-hand side holds it (L_f^{k+1} h = sum_i dL_f^k h/dx_i f_i). An initial value
-    or an event value enters with its state; at an implicit steady state (f_ss) every
-    parameter of the balance may enter with the earliest state. Returns {name: order}."""
+    """{name: order}: structural first Lie order at which each symbol can enter one segment's output jets."""
     import collections
     Sstr = [str(X) for X in S]
     rhs = {}
@@ -222,20 +211,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                                   joint_fixed_states=None, held_state_params=None,
                                   condition_obs=None, condition_times=None,
                                   keep_coords=None, condition_rest_subs=None):
-    """Compile one observability tape per experimental condition over a shared
-    coordinate space, for the multi-condition observability path.
-
-    `condition_obs` optionally replaces `observation` per condition, so an observable
-    measured in some conditions enters only their rows. `condition_subs` holds one
-    {symbol: replacement} map per condition: a number bakes the symbol, a symbol renames
-    it (e.g. a knockdown rate). `condition_ic0` holds one {state: expression} map per
-    condition with the t0+ initial values composed in R (steady state, `initial`, t0
-    events); a state without entry starts free.
-
-    Returns the per-condition tapes (each with an IC tape seeding the initial values and
-    their duals), the shared leaf/state layout and the coordinates z with dual lanes (free
-    initial values + free parameters, minus `fixed`). A non-rational right-hand side,
-    observable or initial value returns {'ok': False, 'nonrational': ...}."""
+    """Per-condition observability tapes over a shared coordinate space, or {'ok': False, 'nonrational': ...}."""
     _s = _str_memo()
     model = _as_list(model)
     observation = _as_list(observation)
@@ -503,7 +479,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         if equilibrate:
             return {'ok': False, 'why': 'equilibrate does not support logarithms, inverse '
                     'trigonometric or hyperbolic functions or non-integer powers of sums that no '
-                    'chart makes rational; give the steady state through `trafo` or start from '
+                    'change of coordinates makes rational; give the steady state through `trafo` or start from '
                     'free initial values'}
         func_recast = _apply_func_recast(S, per_cond, ev_per, tm_per, taken_names())
         if 'why' in func_recast:
@@ -596,12 +572,11 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             paramset |= set(lp_sub(pval(tm)).free_symbols)
     paramset -= set(S)
     paramset |= set(held_param_syms)   # held-variable initial-value parameters
-    # coordinates a chart absorbed stay coordinates
+    # coordinates a trafo absorbed stay coordinates
     paramset |= {local.get(_s(n), spy.Symbol(_s(n))) for n in _as_list(keep_coords)}
     params = sorted(paramset, key=spy.default_sort_key)
-    # a base seen only under a free exponent (Km in C^n/(Km^n+C^n)) vanished into its
-    # recast atom; re-add it so the recast relation ties it and the Km co-scaling is
-    # reported as an exact scaling
+    # a base seen only under a free exponent vanished into its recast atom; re-added, the
+    # recast relation ties it and its co-scaling is reported as an exact scaling
     if power_recast:
         known = set(_s(s) for s in S) | set(_s(s) for s in params) | set(forcings)
         for rc in power_recast:

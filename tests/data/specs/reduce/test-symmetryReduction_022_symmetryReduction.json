@@ -1,0 +1,29 @@
+{
+ "name": "test-symmetryReduction_022_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "p",
+    "q",
+    "r"
+   ],
+   "modelExprs": null
+  },
+  "symmetries": [
+   {
+    "type": "general",
+    "generator": null,
+    "weights": null,
+    "support": [
+     "p",
+     "q"
+    ],
+    "degree": null
+   }
+  ]
+ },
+ "args": {}
+}

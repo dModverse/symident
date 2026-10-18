@@ -1,1 +1,0 @@
-{"name":"test-symmetryExponential_006_symmetryDetection","spec":{"f":{"A":"-k*A"},"g":{"y":"s*exp(A)"}},"env":{},"options":{},"elapsed":0.0222432613372803,"result":{"method":"observability","identifiable":true,"rank":3,"dim":3,"gauge":null,"rankProven":null,"lieCertified":true,"lieOrderUsed":2,"gapOrderUsed":0,"coordinates":["A","k","s"],"symmetries":[]}}

@@ -1,0 +1,62 @@
+{
+ "name": "test-symmetryDetection_152_symmetryDetection",
+ "spec": {
+  "f": {
+   "R": "1*(kR) -1*(dR*R)",
+   "G": "1*(kG*R*(b + u)) -1*(dG*G)",
+   "u": "1*(0)"
+  },
+  "reactions": {
+   "species": [
+    "R",
+    "G",
+    "u"
+   ],
+   "smatrix": [
+    [
+     1,
+     0,
+     0
+    ],
+    [
+     -1,
+     0,
+     0
+    ],
+    [
+     0,
+     1,
+     0
+    ],
+    [
+     0,
+     -1,
+     0
+    ],
+    [
+     0,
+     0,
+     1
+    ]
+   ],
+   "rates": [
+    "kR",
+    "dR*R",
+    "kG*R*(b + u)",
+    "dG*G",
+    "0"
+   ]
+  },
+  "g": {
+   "yG": "sG*G"
+  },
+  "equilibrate": true,
+  "reconstruct": false
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

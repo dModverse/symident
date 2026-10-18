@@ -1,1 +1,0 @@
-{"name":"test-symmetryExponential_036_symmetryDetection","spec":{"f":{"x":"a*x*log(K/x)"},"g":{"y":"s*x"},"events":[{"var":"x","time":"3","value":"1","method":"add","root":null}]},"env":{},"options":{},"elapsed":0.014218807220459,"result":{"error":"symmetryDetection(): a add event on x, which is analysed as log(x), is not supported."}}

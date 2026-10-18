@@ -1,0 +1,27 @@
+{
+ "name": "test-symmetryReduction_041_symmetryDetection",
+ "spec": {
+  "f": {
+   "m": "ktx - dm*m",
+   "P": "-k_p*s*ktx*P + k_d*pP",
+   "pP": "k_p*s*ktx*P - k_d*pP"
+  },
+  "g": {
+   "yA": "s*m",
+   "yB": "pP"
+  },
+  "trafo": {
+   "m": "m",
+   "P": "q_1*s/q_2",
+   "pP": "pP",
+   "dm": "dm",
+   "k_d": "q_2^2*pP/(q_1*s + q_2*pP)",
+   "k_p": "q_1*q_2/(q_1*s + q_2*pP)",
+   "ktx": "1",
+   "s": "s"
+  },
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

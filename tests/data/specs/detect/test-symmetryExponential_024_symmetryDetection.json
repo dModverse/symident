@@ -1,0 +1,14 @@
+{
+ "name": "test-symmetryExponential_024_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "A*exp(-lam*time) - d*x"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "reconstruct": true
+ },
+ "env": {},
+ "options": {}
+}

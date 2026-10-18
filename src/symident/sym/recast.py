@@ -12,8 +12,7 @@ from .parse import _as_list, _is_rational_expr, _make_local_parse
 
 
 def _canon_exp_base(b):
-    """(r, k) with b = r^k, r = E or a positive rational that is not a perfect power;
-    None for any other base."""
+    """(r, k) with b = r^k, r = E or a positive rational that is no perfect power, else None."""
     if b == spy.E:
         return spy.E, 1
     b = spy.nsimplify(b, rational=True)
@@ -59,9 +58,7 @@ def _log_basis(r):
 
 
 def _terms_independent(atoms):
-    """True if 1 and the exponents tau*log(r) of the atoms [(r, tau)] are linearly
-    independent over Q, with 1 and the logs of the primes independent. Checked at
-    random integer points."""
+    """True if 1 and the exponents tau*log(r) of the atoms [(r, tau)] are linearly independent over Q."""
     if not atoms:
         return True
     comps = [_log_basis(r) for r, _ in atoms]
@@ -96,8 +93,7 @@ def _terms_independent(atoms):
 
 
 class _ExpCtx:
-    """Fresh symbols and constant leaves shared by one exponential rewrite: e^(1/L0)
-    as `ec` (a power of it until L0 is known), log(p) as one leaf per prime p."""
+    """Fresh symbols and constant leaves of one rewrite: e^(1/L0) as `ec`, log(p) as one leaf per prime."""
     def __init__(self, taken):
         self.taken = set(taken)
         self.ec = self.fresh('_e_', positive=True)
@@ -149,9 +145,7 @@ class _ExpCtx:
 
 
 def _exp_leaf_canon(exprs, ctx):
-    """Every exponential in `exprs`, innermost first, as a product of generic leaves
-    W = r^(tau/L), one per term tau, and powers of ctx.ec. Returns {'exprs', 'atoms'}
-    with atoms [{'W', 'r', 'tau', 'L'}], after ec -> ec^L0; or {'why': ...}."""
+    """{'exprs', 'atoms'} with every exponential as a product of leaves W = r^(tau/L), or {'why': ...}."""
     exprs = [ctx.numbers(e) for e in exprs]
     atoms = []
     while True:
@@ -214,12 +208,7 @@ def _exp_back(atoms, ctx, used):
 
 
 def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken):
-    """Replace every exponential in the per-condition model by auxiliary states and
-    generic exponential leaves (see above). `ev_per` holds each condition's later
-    events as {'var', 'value', 'method'} with sympy values, `tm_per` its segment start
-    time or None. Returns a dict with the extended S, per_cond, ev_per and tm_per, the
-    relation list [(W, z, expr)], the fixed constant leaves, the back-substitution map
-    and the codimension added; or {'why': ...} for an unsupported form."""
+    """The model with exponentials as auxiliary states and generic leaves, or {'why': ...} if unsupported."""
     ctx = _ExpCtx(taken)
     rpow, const = ctx.rpow, ctx.const
     S = list(S)
@@ -400,8 +389,7 @@ def _trig_basic(e):
 
 
 def _trig_terms(fn, u):
-    """fn(u) with u = c0 + cp*pi + sum q*t as (c0, cp, {t: q}), all rational; tan in
-    the doubled argument, tan(u) = sin(2u)/(1 + cos(2u)). None for another form."""
+    """(c0, cp, {t: q}) of u = c0 + cp*pi + sum q*t, rational, doubled for tan; None for another form."""
     if fn is spy.tan:
         u = 2 * u
     u = spy.expand(spy.nsimplify(u, rational=True))
@@ -420,8 +408,7 @@ def _trig_terms(fn, u):
 
 
 def _trig_value(fn, factors, k, rest):
-    """fn(u) for e^(i*v) = i^k e^(i*rest) prod ((1 + i*T)/(1 - i*T))^m over factors
-    [(T, m)], v = u or 2u for tan; cos and sin of rest stay as they are."""
+    """fn(u) for e^(i*v) = i^k e^(i*rest) prod ((1 + i*T)/(1 - i*T))^m, v = u, or 2u for tan."""
     I = spy.I
     reps, A, n = {}, spy.Integer(1), spy.Integer(1)
     for T, m in factors:
@@ -442,8 +429,7 @@ def _trig_value(fn, factors, k, rest):
 
 
 def _trig_find(exprs, in_scope, why):
-    """Innermost trig atoms of `exprs` whose argument `in_scope` accepts, with their
-    decomposition; {'why': ...} for an unsupported argument."""
+    """Innermost trig atoms accepted by `in_scope` with their decomposition, or {'why': ...}."""
     found = {}
     for e in exprs:
         for at in e.atoms(*_TRIG):
@@ -469,9 +455,7 @@ def _trig_den(found, keep):
 
 
 def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken):
-    """Replace every sin, cos and tan (and cot, sec, csc) in the per-condition model by
-    auxiliary half-angle states and generic half-angle leaves (see above). Arguments
-    and return as _apply_exp_recast, or {'why': ...} for an unsupported form."""
+    """The model with trigonometric functions as half-angle states and leaves, as _apply_exp_recast."""
     ctx = _ExpCtx(taken)
     pis = ctx.fresh('_pi_', positive=True)
     S = list(S)
@@ -677,10 +661,7 @@ def _tidy_logs(e):
 
 
 def drop_monomial_content(vector, skip=None):
-    """A direction {coordinate: component} with denominators cleared, divided by the
-    power product of symbols common to every component and signed so that the first
-    coordinate has a positive component: the same direction. Components in `skip`
-    are scaled along but do not set the factor."""
+    """The same direction with denominators and common monomials cleared, first component positive."""
     skip = set(_as_list(skip)) if skip is not None else set()
     items = [(str(k), str(v)) for k, v in dict(vector).items()]
     local, parse = _make_local_parse([v for _, v in items])
@@ -714,8 +695,7 @@ def drop_monomial_content(vector, skip=None):
 
 
 def exp_backsub_expr(expr, names, values):
-    """A reported component in the exponential leaves back in the model symbols:
-    each name is replaced by its value until none is left."""
+    """A component in the exponential leaves back in the model symbols."""
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     names, values = as_list(names), as_list(values)
@@ -732,11 +712,7 @@ def exp_backsub_expr(expr, names, values):
 
 
 def trig_full_angle(vector, skip=None):
-    """A direction {coordinate: component} over half-angle leaves V = tan(u/2) in
-    sin(u) and cos(u): denominators cleared and common factors divided out in V, then
-    divided by (1 + V^2)^k with the least k that makes every component a polynomial
-    in sin(u) and cos(u). Components in `skip` are scaled along but do not set the
-    factor."""
+    """A direction over leaves V = tan(u/2) as the same direction polynomial in sin(u) and cos(u)."""
     skip = set(_as_list(skip)) if skip is not None else set()
     items = [(str(k), str(v)) for k, v in dict(vector).items()]
     local, parse = _make_local_parse([v for _, v in items])
@@ -784,7 +760,7 @@ def trig_full_angle(vector, skip=None):
 # ---- elementary functions of states ----
 # log, inverse trigonometric and hyperbolic functions and non-integer powers of sums become
 # auxiliary states with d phi(u)/dt = phi'(u)*du/dt; a transcendental function of leaves
-# only becomes a generic leaf tied by relation rows, an algebraic one is left to the charts.
+# only becomes a generic leaf tied by relation rows, an algebraic one is left to log coordinates.
 _FUNCS = (spy.log, spy.atan, spy.atanh, spy.asin, spy.acos, spy.asinh, spy.acosh)
 
 
@@ -823,9 +799,7 @@ def _func_derivative(a, u):
 
 
 def _engine_holds(constants=(), degrees=()):
-    """Whether every prime of the analysis holds the roots and the denominators (see
-    gfp.holds_roots); raises NeedPrimesError otherwise, so that the analysis reruns over
-    primes that do."""
+    """True if every prime holds the roots and denominators, else raises NeedPrimesError."""
     from ..gfp import NeedPrimesError, all_primes, holds_roots
     if not all(holds_roots(constants, q, degrees) for q in all_primes()):
         raise NeedPrimesError(constants, degrees)
@@ -833,8 +807,7 @@ def _engine_holds(constants=(), degrees=()):
 
 
 def _is_sqrt_rational(e):
-    """Whether e is rational in its symbols and rational powers of such expressions; a
-    root only where the engine's primes hold it (raises NeedPrimesError otherwise)."""
+    """Whether e is rational in its symbols and roots that the engine's primes hold."""
     e = spy.sympify(e)
     roots = [a for a in e.atoms(spy.Pow) if a.exp.is_Rational and not a.exp.is_Integer]
     for a in roots:
@@ -858,9 +831,7 @@ def _func_arg(a):
 
 
 def _apply_func_recast(S, per_cond, ev_per, tm_per, taken):
-    """Replace the elementary functions of states (see above) by auxiliary states, and
-    the transcendental ones of leaves by generic leaves. Arguments and return as
-    _apply_exp_recast, or {'why': ...} for an unsupported form."""
+    """The model with elementary functions as auxiliary states and leaves, as _apply_exp_recast."""
     ctx = _ExpCtx(taken)
     S = list(S)
     K = len(per_cond)
@@ -989,7 +960,7 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken):
         if not found:
             break
         vals = [e.xreplace(found) for e in vals]
-    # a leaf can cancel, as log(1 + x) in atanh(x/(1 + x)); one in no value is no coordinate
+    # a leaf that cancels from every value is no coordinate
     used = set().union(*(spy.sympify(e).free_symbols for e in vals))
     atoms = [a for a in atoms if a['V'] in used]
     # pi and e left by an evaluated function value are transcendental constants

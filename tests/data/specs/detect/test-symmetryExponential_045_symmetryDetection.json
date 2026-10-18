@@ -1,0 +1,14 @@
+{
+ "name": "test-symmetryExponential_045_symmetryDetection",
+ "spec": {
+  "f": {
+   "th": "om",
+   "om": "-grav/len*sin(th) - b*om"
+  },
+  "g": {
+   "y": "th"
+  }
+ },
+ "env": {},
+ "options": {}
+}

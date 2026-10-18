@@ -1,0 +1,50 @@
+{
+ "name": "test-symmetryReduction_096_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "Km",
+    "kdg",
+    "ksec",
+    "ktl",
+    "R1",
+    "R2"
+   ],
+   "modelExprs": null
+  },
+  "symmetries": [
+   {
+    "type": "general",
+    "generator": {
+     "Km": "Km + R1 + R2",
+     "kdg": "kdg"
+    },
+    "weights": null,
+    "support": [
+     "Km",
+     "kdg"
+    ],
+    "degree": null
+   },
+   {
+    "type": "general",
+    "generator": {
+     "Km": "ksec*(Km + R1 + R2)^2",
+     "ksec": "kdg*ksec",
+     "ktl": "-kdg*ktl"
+    },
+    "weights": null,
+    "support": [
+     "Km",
+     "ksec",
+     "ktl"
+    ],
+    "degree": null
+   }
+  ]
+ },
+ "args": {}
+}

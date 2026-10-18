@@ -1,0 +1,24 @@
+{
+ "name": "test-symmetryDetection_117_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k1*A + k2*B",
+   "B": "k1*A - k2*B"
+  },
+  "g": {
+   "Aobs": "alpha*A"
+  },
+  "trafo": {
+   "k1": "k2*B/A"
+  },
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

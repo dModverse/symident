@@ -1,0 +1,15 @@
+{
+ "name": "test-symmetryExponential_027_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "a*x*log(K/x)"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "reconstruct": true,
+  "method": "scaling"
+ },
+ "env": {},
+ "options": {}
+}

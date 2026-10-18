@@ -1,0 +1,104 @@
+{
+ "name": "test-symmetryReduction_030_symmetryDetection",
+ "spec": {
+  "f": {
+   "EGF": "-1*(k_bind * EGF * EGFR) +1*(k_unbind * EGF_EGFR)",
+   "EGFR": "-1*(k_bind * EGF * EGFR) +1*(k_unbind * EGF_EGFR)",
+   "EGF_EGFR": "1*(k_bind * EGF * EGFR) -1*(k_unbind * EGF_EGFR)",
+   "MEK": "-1*(k_phos_MEK * EGF_EGFR * MEK) +1*(k_dephos_MEK * pMEK)",
+   "pMEK": "1*(k_phos_MEK * EGF_EGFR * MEK) -1*(k_dephos_MEK * pMEK)",
+   "ERK": "-1*(k_phos_ERK * pMEK * ERK) +1*(k_dephos_ERK * pERK)",
+   "pERK": "1*(k_phos_ERK * pMEK * ERK) -1*(k_dephos_ERK * pERK)"
+  },
+  "reactions": {
+   "species": [
+    "EGF",
+    "EGFR",
+    "EGF_EGFR",
+    "MEK",
+    "pMEK",
+    "ERK",
+    "pERK"
+   ],
+   "smatrix": [
+    [
+     -1,
+     -1,
+     1,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     1,
+     1,
+     -1,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     -1,
+     1,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     1,
+     -1,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     0,
+     0,
+     -1,
+     1
+    ],
+    [
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     -1
+    ]
+   ],
+   "rates": [
+    "k_bind * EGF * EGFR",
+    "k_unbind * EGF_EGFR",
+    "k_phos_MEK * EGF_EGFR * MEK",
+    "k_dephos_MEK * pMEK",
+    "k_phos_ERK * pMEK * ERK",
+    "k_dephos_ERK * pERK"
+   ]
+  },
+  "totals": {
+   "totalEGF": "-1*EGF+1*EGFR",
+   "totalEGF_2": "1*EGF+1*EGF_EGFR",
+   "totalMEK": "1*MEK+1*pMEK",
+   "totalERK": "1*ERK+1*pERK"
+  },
+  "g": {
+   "pMEK_obs": "scale_pMEK * pMEK",
+   "pERK_obs": "scale_pERK * pERK"
+  },
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

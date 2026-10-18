@@ -1,0 +1,25 @@
+{
+ "name": "test-symmetryDetection_089_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k1*A + k2*B",
+   "B": "k1*A - k2*B"
+  },
+  "g": {
+   "y": "log10(s*A)"
+  },
+  "trafo": {
+   "k1": "exp(lk1)",
+   "k2": "exp(lk2)",
+   "s": "exp10(ls)",
+   "B": "10^lB"
+  },
+  "symEngine": "symbolic"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

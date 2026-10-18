@@ -147,7 +147,8 @@ def _guarded(recast=(), joint=True, gaps=False, ss=True, transient=False, at_one
     rec = Reconstruction.__new__(Reconstruction)
     rec.an = SimpleNamespace(recast=list(recast), joint=joint, transient=transient, znames=["k", "tau"],
                              multi={"tapes": [{"ver_time": tau}]},
-                             run=SimpleNamespace(ss_constraint=ss, has_gaps=gaps, timing=False, leaf_names=["k"]))
+                             run=SimpleNamespace(ss_constraint=ss, has_gaps=gaps, series_gaps=False, timing=False,
+                                                 leaf_names=["k"]))
     rec.sc = {"ref": {"at_one": at_one}}
     rec.ctrl = reconst_control(**ctrl)
     rec.residual = [3]
@@ -227,3 +228,37 @@ def test_homotopy_follows_lines_through_events_after_the_start():
     gen = [d for d in r["symmetries"] if d["type"] == "general"]
     assert len(gen) == 2 and all(d["explicit"] for d in gen)
     assert {d["route"] for d in gen} == {"homotopy fit in the parameters and the resting states"}
+
+
+def test_continuation_moves_held_moiety_pivots_as_parameters():
+    from symident.sym.continuation import continue_resting_state
+
+    a0 = 5 * 7 * pow(3, -1, P) % P
+    sol = continue_resting_state(["A = -k1*A + k2*B", "B = k1*A - k2*B"], ["A", "B"], ["k1", "k2"],
+                                 {"k1": 3, "k2": 5}, {"k1": 1}, {"A": a0, "B": 7}, P, 4, held={"B": 0})
+    assert sol["ok"] and sol["df_state_cols"] == ["A"] and sol["df_param_cols"] == ["k1", "k2", "B"]
+    assert sol["val_by"]["A"] == [a0 * pow(-pow(3, -1, P), k, P) % P for k in range(5)]
+    assert sol["val_by"]["B"] == [7, 0, 0, 0, 0]
+
+
+@pytest.mark.parametrize("tail, at_one", [
+    ({0: 1, 1: 1}, (1, P - pow(2, -1, P))),
+    ({0: 1}, (1, P - 1)),
+    (None, None),
+])
+def test_the_series_kernel_is_read_at_one_where_it_is_rational(tail, at_one):
+    import math
+
+    from symident import _core
+    N = 8
+    S = np.zeros((1, 2 * N), dtype=np.int64)
+    if tail is None:
+        S[0, 0] = 1
+        for k in range(N):
+            S[0, N + k] = (P - pow(math.factorial(k), -1, P)) % P
+    else:
+        for k, v in tail.items():
+            S[0, k] = v
+        S[0, N] = P - 1
+    R = _core.sym_series_rank(S, 2, N, P, [], at_one_below=2).get("R")
+    assert (None if R is None else tuple(int(x) for x in R[0])) == at_one

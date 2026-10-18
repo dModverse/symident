@@ -1,4 +1,4 @@
-"""The detection pipeline: model preprocessing, charts, conditions and the engines."""
+"""The detection pipeline: model preprocessing, coordinate trafos, conditions and the engines."""
 
 import time
 import warnings
@@ -51,9 +51,7 @@ def _sub_or_none(fn, e):
 
 
 def _ode_zero_states(fdyn, forcings):
-    """States of an ODE model that rest at zero: with the inputs and the zero states found
-    so far at zero, the right-hand side vanishes at zero and is linear in the state with a
-    generically nonzero slope, so zero is its only resting value."""
+    """States whose right-hand side, with inputs and earlier zero states at zero, has zero as its only root."""
     import sympy as spy
 
     from ..sym.parse import _make_local_parse
@@ -84,9 +82,7 @@ def _ode_zero_states(fdyn, forcings):
 
 
 def _drop_sinks(fdyn, g_exprs, trafo, events, reactions, totals, keep, zero=()):
-    """States that act on nothing: no right-hand side, observable, event or trafo value holds
-    them, the states in `zero` (zero at rest) set to zero when no event leaves the rest. At
-    rest their value is undetermined and irrelevant, so they leave the model."""
+    """The model without the states that no right-hand side, observable, event or trafo value holds."""
     import sympy as spy
     trafos = (trafo if isinstance(trafo, (list, tuple)) else [trafo]) if trafo is not None else []
     rhs = list(fdyn.values())
@@ -119,8 +115,7 @@ def _drop_sinks(fdyn, g_exprs, trafo, events, reactions, totals, keep, zero=()):
 
 
 def _off_domain(exprs, positive, states):
-    """A logarithm or fractional power of a state term whose argument the declared signs
-    do not make positive, as a string; None when every such argument is positive."""
+    """A log or fractional power of a state term not positive under the declared signs, as a string, or None."""
     import sympy as spy
     names = None if positive is True else set(positive or [])
     for e in exprs:
@@ -212,6 +207,7 @@ def symmetry_detection(*args, **kw):
         if outer and isinstance(res, dict) and isinstance(res.get("info"), dict):
             _gap_settled(res["info"])
             _bound_needs_orders(res["info"])
+            _checked_without_bound(res)
         if outer and isinstance(res, dict) and isinstance(res.get("info"), dict) and \
                 res.get("method") == "observability":
             res["info"]["rank_status"] = _rank_status(res)
@@ -225,7 +221,31 @@ def symmetry_detection(*args, **kw):
                   switches={n: v for n, v in state.active().items()
                             if state.SWITCHES.get(n, ("",))[0] != "install"},
                   primes=ses.primes, version=__version__)
+        res["info"]["assumptions"] = _assumptions(res)
     return res
+
+
+def _checked_without_bound(res):
+    """A verified direction whose error bound has no probability is checked, not verified."""
+    b = res["info"].get("bound")
+    if isinstance(b, dict) and b.get("probability") is not None:
+        return
+    for s in res.get("symmetries") or []:
+        if s.get("level") == "verified":
+            s["level"] = "checked"
+
+
+def _assumptions(res):
+    """The declared domain and switch starts the result assumes, and its error probability."""
+    info = res["info"]
+    b = info.get("bound")
+    levels = [s.get("level") for s in res.get("symmetries") or []]
+    starts = {c["name"]: c["declared"] for c in (info.get("switching") or {}).get("conditions") or []
+              if c.get("declared")}
+    rs = info.get("rank_status") or {}
+    return {"domain": (info.get("settings") or {}).get("positive", True), "starts": starts or None,
+            "error_bound": b.get("probability") if isinstance(b, dict) and "verified" in levels else
+            (rs.get("probability") if rs.get("status") == "verified" else None)}
 
 
 def _rank_status(res):
@@ -243,10 +263,13 @@ def _rank_status(res):
                 "why": "the rule of the switches is not proven for every direction"}
     if info.get("rank_fields") is not None:
         b = info.get("rank_fields_bound") or {}
-        return {"status": "verified", "probability": b.get("probability"),
+        if b.get("probability") is not None:
+            return {"status": "verified", "probability": b["probability"],
+                    "why": "invariant fields hold the kernel at every order, checked at random points "
+                           "modulo a prime"}
+        return {"status": "lower bound", "probability": None,
                 "why": "invariant fields hold the kernel at every order, checked at random points modulo "
-                       "a prime" + ("" if b.get("probability") is not None else
-                                    f"; no bound on the chance of a wrong pass ({b.get('why') or 'not taken'})")}
+                       f"a prime without an error bound ({b.get('why') or 'not taken'})"}
     syms = res.get("symmetries") or []
     if info.get("engine") == "symbolic" and not info.get("lie_certified"):
         why = "the Lie order of the symbolic engine is not proven sufficient" + \
@@ -257,30 +280,34 @@ def _rank_status(res):
         why = "the rank grows past the orders used"
     elif info.get("gap_certified") is False:
         why = "the gap order is not proven sufficient"
+    elif info.get("series_certified") is False:
+        why = "the series order of the resting states is not proven sufficient"
     elif any(not s.get("explicit") for s in syms):
         why = "a direction has no closed form"
+    elif any(s.get("level") == "checked" for s in syms):
+        why = "a closed form is checked without an error bound"
+    elif not isinstance(info.get("bound"), dict) or info["bound"].get("probability") is None:
+        why = "the closed forms have no error bound"
     else:
-        b = info.get("bound")
-        prob = b.get("probability") if isinstance(b, dict) else None
-        return {"status": "verified", "probability": prob,
+        return {"status": "verified", "probability": info["bound"]["probability"],
                 "why": "every direction is closed and lies in the kernel; the rank holds unless a "
                        "verified closed form is wrong"}
     return {"status": "lower bound", "why": why, "probability": None}
 
 
 def _gap_settled(info):
-    """A proven rank proves the gap order sufficient; otherwise the stopped gap order is a limit."""
-    if info.get("gap_certified") is not False:
-        return
-    if info.get("rank_proven") is not None:
-        info["gap_certified"], info["gap_certificate"] = True, None
-        return
-    session.note("limits", f"gap order: {info.get('gap_certificate')}; the order is not proven sufficient")
+    """A proven rank proves the gap and series orders sufficient; otherwise a stopped order is a limit."""
+    for key, what in (("gap", "gap order"), ("series", "series order of the resting states")):
+        if info.get(f"{key}_certified") is not False:
+            continue
+        if info.get("rank_proven") is not None:
+            info[f"{key}_certified"], info[f"{key}_certificate"] = True, None
+            continue
+        session.note("limits", f"{what}: {info.get(f'{key}_certificate')}; the order is not proven sufficient")
 
 
 def _bound_needs_orders(info):
-    """The probability of info["bound"] dropped where the Lie or gap order is not proven sufficient
-    and the rank does not settle the kernel."""
+    """Drops the probability of info["bound"] where an unproven Lie or gap order leaves the kernel open."""
     b = info.get("bound")
     if not isinstance(b, dict) or b.get("probability") is None or info.get("engine") == "symbolic" or \
             info.get("rank_proven") is not None or info.get("rank_fields") is not None:
@@ -298,8 +325,7 @@ def _bound_needs_orders(info):
 
 
 def _kernel_bound(kw, res):
-    """The bound of detection.bound for the directions that rest on the kernel check alone,
-    or why it does not apply; None without such directions."""
+    """The kernel-check error bound of the verified directions, or why it does not apply; None without them."""
     from ..gfp import verify_prime
     from .bound import kernel_bound
     vecs = [s["generator"] for s in res.get("symmetries") or []
@@ -362,8 +388,7 @@ def _subs(text, sub):
 
 
 def detection_with_primes(kw):
-    """_symmetry_detection on the keyword arguments `kw`; reruns under primes that hold the
-    square roots of the model's constants when the default ones do not."""
+    """_symmetry_detection on `kw`, rerun under primes that hold the square roots the model needs."""
     import contextlib
 
     from ..gfp import NeedPrimesError, all_primes, use_primes
@@ -391,12 +416,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                        positive=True, verify=True, cores=1, control=None, scalings_only=False,
                        sym_engine="modular", verbose=False, reactions=None, totals=None,
                        regimes=None):
-    """The detection on plain inputs; returns the result dictionary.
-
-    `f` maps states to right-hand sides; `reactions` (species, smatrix, rates) and
-    `totals` give the network structure that `reduce_cq` and `equilibrate` use;
-    `regimes` restricts the regimes of a model with switches (symmetry_detection()).
-    """
+    """The result dictionary of the detection on plain inputs."""
     control = {**reconst_control(), **dict(control or {})}
     equilibrate = bool(equilibrate)
     method = "scaling" if scalings_only else "observability"
@@ -435,6 +455,8 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         res = finalize(raw, method, settings, elapsed=time.monotonic() - t0clock,
                        coordinates=coordinates)
         res["info"]["model_exprs"] = model_exprs_box["v"]
+        res["info"]["model_rhs"] = model_exprs_box["rhs"]
+        res["info"]["model_inputs"] = list(forcings)
         if raw.get("kernel") is not None and not state.get("inner") and not state.get("keep_kernel"):
             try:
                 res["info"]["gauge_suggestion"] = gauge_suggest(res["symmetries"], raw["kernel"],
@@ -474,6 +496,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                                            if trafo_list else list(dict(trafo).values()))
     model_exprs_box["v"] = list(dict.fromkeys(list(fdyn.values()) + g_char() +
                                             [str(v) for v in trafo_vals]))
+    model_exprs_box["rhs"] = {k: str(v) for k, v in fdyn.items()}
     initial_box = {"v": None}
     cond_initial_box = {"v": None}
 
@@ -486,7 +509,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
 
     if "time" not in states and "time" in get_symbols(list(fdyn.values()) + g_char()):
         evt = [float(e["time"]) for e in events if is_number(e["time"])]
-        tt0 = min(evt) if evt else 0
+        tt0 = min(evt + [0])
         fdyn = dict(fdyn, time="1")
         states = list(fdyn)
         if method == "observability":

@@ -1,5 +1,4 @@
-"""The kernel without a resting state: all conditions stacked, with the relation rows of
-recast atoms (E = base^exp, L = log base, exponential leaves) where present."""
+"""Kernel without a resting state: all conditions stacked, with relation rows of recast atoms where present."""
 
 import numpy as np
 import sympy as spy
@@ -36,7 +35,7 @@ class PlainSystem:
             for rc in self.recast]
 
     def relation_rows(self, point, p):
-        """The linearised recast relations at the point; None where a base vanishes."""
+        """The linearized recast relations at the point; None where a base vanishes."""
         run = self.run
         nz = len(run.znames)
         rel, seen_l = [], set()
@@ -92,8 +91,7 @@ class PlainSystem:
         return res
 
     def kcall(self, point, p, Nt, Mtot=0, solve_fn=None, rank_only=False):
-        """The observability kernel over all tapes or gap chains at `point` mod `p`, with the relation rows
-        when transient."""
+        """Observability kernel over all tapes or gap chains at `point` mod `p`, with relation rows when transient."""
         run = self.run
         pt = np.asarray(point, dtype=np.int64)
         if run.has_gaps:

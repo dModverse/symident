@@ -15,15 +15,7 @@ def _lie_deriv(h, states, rhs):
 def observability_sympy_multi(model, observation, condition_subs=None, condition_ic0=None,
                             fixed=None, parameters=None, inputs=None, backend='sympy',
                             condition_obs=None, condition_rest_subs=None):
-    """Multi-condition pure-symbolic observability, the exact cross-check of the
-    modular multi-condition engine (same coordinate and substitution semantics as
-    compile_observability_tape_multi()).
-
-    Condition k substitutes `condition_subs[k]` into f and g, starts the jet at
-    `condition_ic0[k]` and may replace `observation` by `condition_obs[k]`. A direction
-    is non-identifiable iff it lies in the nullspace of the observability matrices
-    stacked over one shared coordinate space. Single segment only and no equilibrate;
-    give a steady state through the initial values (`trafo`)."""
+    """Pure-symbolic multi-condition observability, the exact cross-check of the modular multi-condition engine."""
     def as_l(v):
         return list(v) if isinstance(v, (list, tuple)) else ([] if v is None else [v])
     model = [str(l) for l in as_l(model)]

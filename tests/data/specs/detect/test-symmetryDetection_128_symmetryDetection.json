@@ -1,0 +1,29 @@
+{
+ "name": "test-symmetryDetection_128_symmetryDetection",
+ "spec": {
+  "f": {
+   "x1": "a - (d + f)*x1",
+   "x2": "b - (d + f)*x2",
+   "f": "-c*f"
+  },
+  "g": {
+   "y": "x1 + x2"
+  },
+  "trafo": {
+   "x1": "a/d",
+   "x2": "b/d",
+   "f": "1",
+   "a": "a",
+   "b": "b",
+   "c": "c",
+   "d": "d"
+  },
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

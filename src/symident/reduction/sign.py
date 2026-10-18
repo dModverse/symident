@@ -1,5 +1,6 @@
 """Signs and positivity over the declared domain."""
 
+import contextlib
 import math
 import re
 import time
@@ -50,6 +51,17 @@ def positive_set_of(positive, coords):
 DOMAIN = {"positive": None, "real_carriers": [], "no_roots": False, "sgn_cache": None, "deadline": None}
 
 
+@contextlib.contextmanager
+def carriers_real(names):
+    """Signs decided with the carriers `names` over R and every other carrier positive."""
+    old = DOMAIN["real_carriers"]
+    DOMAIN["real_carriers"] = list(names)
+    try:
+        yield
+    finally:
+        DOMAIN["real_carriers"] = old
+
+
 def positive_set():
     """The declared positive coordinates; None for the positive orthant."""
     return DOMAIN["positive"]
@@ -77,8 +89,7 @@ def _num_val(e):
 
 
 def num_sign(e):
-    """The sign of a number: exact for a rational, else by evaluation with guaranteed
-    precision; None where neither decides."""
+    """The sign of a number, exact for a rational, else by evaluation with guaranteed precision; None if undecided."""
     try:
         e = spy.sympify(e)
         if e.is_Rational:
@@ -114,9 +125,9 @@ def sgn_poly(pp):
     cf = []
     for t in tm:
         c = t[1]
-        # rational coefficients stay exact, so that a sign is certified without rounding
+        # a float coefficient enters by its exact binary value, so that no sign rests on rounding
         if c.is_Float:
-            c = spy.Rational(str(c))
+            c = spy.Rational(c)
         if c.is_Rational:
             cf.append(Fraction(int(c.p), int(c.q)))
             continue
@@ -128,22 +139,22 @@ def sgn_poly(pp):
     algebraic = not all(isinstance(c, Fraction) for c in cf)
     cf = np.array(cf, dtype=object)
     pos = positive_set()
+    real = set(DOMAIN["real_carriers"])
+    try:
+        gens = [str(g) for g in P.gens]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return 0
+    if len(gens) != expts.shape[1]:
+        return 0
     if pos is not None:
-        try:
-            gens = [str(g) for g in P.gens]
-        except SYMPY_FAILS as exc:
-            sympy_fail(exc)
-            return 0
-        if len(gens) != expts.shape[1]:
-            return 0
         pos_s = set(pos)
-        real = set(DOMAIN["real_carriers"])
         free = [g not in pos_s and not (re.match(r"^si_red_c[0-9]+$", g) and g not in real) for g in gens]
-        for j, fr in enumerate(free):
-            if fr and np.any(expts[:, j] % 2 != 0):
-                return 0
     else:
-        free = [False] * expts.shape[1]
+        free = [g in real for g in gens]
+    for j, fr in enumerate(free):
+        if fr and np.any(expts[:, j] % 2 != 0):
+            return 0
     fcols = [j for j, fr in enumerate(free) if fr]
 
     def anchored(sg):
@@ -163,11 +174,7 @@ def sgn_poly(pp):
 
 
 def absorb(expts, cf):
-    """AM-GM absorption of every negative term by two positive ones whose exponents average
-    to its own: a u + b v >= 2 sqrt(a b) w when u v = w^2 on the domain. With rational
-    coefficients the budgets are kept in exact rationals; the part 2 sqrt(alpha beta) a pair
-    gives is split as alpha = t*take/2, beta = take/(2t) with a rational t that keeps both
-    within budget, so no shortfall is rounded away."""
+    """Whether AM-GM absorbs every negative term by two positive ones whose exponents average to its own."""
     return _absorb_exact(expts, cf)
 
 
@@ -354,7 +361,7 @@ def _rads(e, half_only=False, symbol_base=False):
 
 
 def rad_norm(e, rounds=3):
-    """Radical denominators rationalised by conjugate multiplication."""
+    """Radical denominators rationalized by conjugate multiplication."""
     for _ in range(rounds):
         try:
             num, den = spy.fraction(spy.cancel(spy.together(e)))

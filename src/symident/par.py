@@ -1,5 +1,4 @@
-"""Parallel maps: threads for kernel calls (the kernel releases the GIL), forked
-processes for Python-heavy tasks such as symbolic steady-state solves."""
+"""Parallel maps: threads for kernel calls, which release the GIL, forked processes for Python-heavy tasks."""
 
 import itertools
 import multiprocessing as mp
@@ -35,12 +34,7 @@ def _call(token, i):
 
 
 def process_map(fn, xs, n, on_error=None):
-    """fn over xs in forked workers (fn may be a closure); serial with n = 1, off Unix or
-    under the NOFORK switch.
-
-    An item that raises gives on_error(item) on either path; without on_error a failed
-    worker item is recomputed serially, so its error is raised as on the serial path. A
-    worker that dies raises RuntimeError."""
+    """fn over xs in forked workers, serial with n = 1, off Unix or under NOFORK; errors as on the serial path."""
     xs = list(xs)
     n = max(1, min(int(n), len(xs)))
     if n == 1 or sys.platform == "win32":

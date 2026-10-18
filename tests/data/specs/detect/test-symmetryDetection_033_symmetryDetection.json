@@ -1,0 +1,99 @@
+{
+ "name": "test-symmetryDetection_033_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "1*(k1) -1*(d1*A) +1*(kx*X)",
+   "B": "1*(k2*A) -1*(d2*B)",
+   "X": "1*(kp*plasmid) -1*(dx*X)"
+  },
+  "reactions": {
+   "species": [
+    "A",
+    "B",
+    "X"
+   ],
+   "smatrix": [
+    [
+     1,
+     0,
+     0
+    ],
+    [
+     -1,
+     0,
+     0
+    ],
+    [
+     0,
+     1,
+     0
+    ],
+    [
+     0,
+     -1,
+     0
+    ],
+    [
+     0,
+     0,
+     1
+    ],
+    [
+     0,
+     0,
+     -1
+    ],
+    [
+     1,
+     0,
+     0
+    ]
+   ],
+   "rates": [
+    "k1",
+    "d1*A",
+    "k2*A",
+    "d2*B",
+    "kp*plasmid",
+    "dx*X",
+    "kx*X"
+   ]
+  },
+  "g": {
+   "yA": "s*(A + X)",
+   "yB": "B"
+  },
+  "conditions": {
+   "rows": [
+    "ctrl",
+    "oe"
+   ],
+   "cols": {
+    "plasmid": [
+     0,
+     1
+    ],
+    "dose": [
+     1,
+     1
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "A",
+    "time": "0",
+    "value": "dose",
+    "method": "add",
+    "root": null
+   }
+  ],
+  "equilibrate": true,
+  "reduceCQ": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": ""
+ },
+ "options": {}
+}

@@ -1,0 +1,159 @@
+{
+ "name": "test-symmetryDetection_136_symmetryDetection",
+ "spec": {
+  "f": {
+   "m": "1*(ktx*(b0 + C)) -1*(dm*m)",
+   "P": "1*(ktl*m) -1*(kdg*P/(Km + R1 + R2 + R3)) -1*(ksec*P)",
+   "L": "1*(ksec*P) -1*(kL*L) -1*(kon*L*R) +1*(koff*C)",
+   "R": "1*(ksR) -1*(kdR*R) -1*(kon*L*R) +1*(koff*C)",
+   "C": "1*(kon*L*R) -1*(koff*C) -1*(kint*C)"
+  },
+  "reactions": {
+   "species": [
+    "m",
+    "P",
+    "L",
+    "R",
+    "C"
+   ],
+   "smatrix": [
+    [
+     1,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     -1,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     1,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     -1,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     -1,
+     1,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     -1,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     1,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     -1,
+     0
+    ],
+    [
+     0,
+     0,
+     -1,
+     -1,
+     1
+    ],
+    [
+     0,
+     0,
+     1,
+     1,
+     -1
+    ],
+    [
+     0,
+     0,
+     0,
+     0,
+     -1
+    ]
+   ],
+   "rates": [
+    "ktx*(b0 + C)",
+    "dm*m",
+    "ktl*m",
+    "kdg*P/(Km + R1 + R2 + R3)",
+    "ksec*P",
+    "kL*L",
+    "ksR",
+    "kdR*R",
+    "kon*L*R",
+    "koff*C",
+    "kint*C"
+   ]
+  },
+  "g": {
+   "ym": "sm*m",
+   "yC": "sC*C",
+   "yL": "L",
+   "yR1": "R1",
+   "yR2": "R2",
+   "yR3": "R3"
+  },
+  "trafo": {
+   "m": "ktx*(C + b0)/dm",
+   "P": "ktl*ktx*(C + b0)*(Km + R1 + R2 + R3)/(dm*(Km*ksec + R1*ksec + R2*ksec + R3*ksec + kdg))",
+   "kint": "ksec*ktl*ktx*r_C_1*r_L_1*(C + b0)*(Km + R1 + R2 + R3)/(C*dm*(r_C_1*r_L_1 + r_C_1 + 1)*(Km*ksec + R1*ksec + R2*ksec + R3*ksec + kdg))",
+   "koff": "ksec*ktl*ktx*r_L_1*(C + b0)*(Km + R1 + R2 + R3)/(C*dm*(r_C_1*r_L_1 + r_C_1 + 1)*(Km*ksec + R1*ksec + R2*ksec + R3*ksec + kdg))",
+   "ksR": "(R*kdR*r_C_1*r_L_1 + R*kdR*r_C_1 + R*kdR*r_L_1 + R*kdR + ksec*ktl*ktx*r_C_1*r_L_1**2*(C + b0)*(Km + R1 + R2 + R3)/(dm*(r_C_1*r_L_1 + r_C_1 + 1)*(Km*ksec + R1*ksec + R2*ksec + R3*ksec + kdg)) + ksec*ktl*ktx*r_C_1*r_L_1*(C + b0)*(Km + R1 + R2 + R3)/(dm*(Km*ksec + R1*ksec + R2*ksec + R3*ksec + kdg)))/(r_C_1*r_L_1 + r_C_1 + r_L_1 + 1)",
+   "kon": "ksec*ktl*ktx*r_L_1*(C + b0)*(r_L_1/(r_C_1*r_L_1 + r_C_1 + 1) + 1)*(Km + R1 + R2 + R3)/(L*R*dm*(r_L_1 + 1)*(Km*ksec + R1*ksec + R2*ksec + R3*ksec + kdg))",
+   "kL": "ksec*ktl*ktx*(C + b0)*(r_L_1/(r_C_1*r_L_1 + r_C_1 + 1) + 1)*(Km + R1 + R2 + R3)/(L*dm*(r_L_1 + 1)*(Km*ksec + R1*ksec + R2*ksec + R3*ksec + kdg))"
+  },
+  "conditions": {
+   "rows": [
+    "ctrl",
+    "stim"
+   ],
+   "cols": {
+    "dose": [
+     0,
+     1
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "L",
+    "time": "0",
+    "value": "dose",
+    "method": "add",
+    "root": null
+   }
+  ],
+  "reconstruct": true
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_NOGROUP": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

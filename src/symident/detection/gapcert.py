@@ -1,9 +1,4 @@
-"""An upper bound of the rank over the gap series that makes a gap order provably sufficient.
-
-With every gap on the line Delta t = eps * delta, the bound is the rank of the eps coefficient
-rows L_{F1}^k (L_{F2}^j h2 o E) at the start of each segment, nested through every earlier gap,
-up to the order where their span is stationary (Hermann, Krener). A truncated rank that reaches
-the bound proves the gap order."""
+"""An upper bound of the rank over the gap series; a truncated rank that reaches it proves the gap order."""
 
 import numpy as np
 import sympy as spy
@@ -58,8 +53,7 @@ def _event_map(tape, S):
 
 
 def _stationary(F, fam, W, p, rng, top):
-    """The order after which the rows d_W L_F^k of `fam` add nothing generically, and the
-    functions up to it; None past `top`."""
+    """The order after which the rows d_W L_F^k of `fam` add nothing generically, with the functions up to it."""
     gen = {w: spy.Integer(rng.randrange(2, p)) for w in W}
     jets, out, rows, prev = list(fam), [], [], -1
     for k in range(top + 1):
@@ -79,9 +73,7 @@ def _stationary(F, fam, W, p, rng, top):
 
 
 class _Chain:
-    """The coefficient rows of one chain over the states and parameters of its first segment.
-    The family of a segment is that of the next one composed with the event between them,
-    with its own outputs, closed under its field up to the stationary order."""
+    """The coefficient rows of one chain over the states and parameters of its first segment."""
 
     def __init__(self, tapes, chain, n_lie, p, rng):
         segs = [tapes[i] for i in chain]

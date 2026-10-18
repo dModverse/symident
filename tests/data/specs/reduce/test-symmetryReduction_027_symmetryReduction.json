@@ -1,0 +1,20 @@
+{
+ "name": "test-symmetryReduction_027_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": true,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "x",
+    "k"
+   ],
+   "modelExprs": [
+    "-k*x",
+    "x"
+   ]
+  },
+  "symmetries": []
+ },
+ "args": {}
+}

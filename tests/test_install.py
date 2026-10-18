@@ -151,3 +151,21 @@ def test_install_msolve_build_errors(monkeypatch, returncode, working, match):
     stub_build(monkeypatch, returncode, working)
     with pytest.raises(RuntimeError, match=match):
         install.install_msolve(ask=False, quiet=True, jobs=1)
+
+
+def test_install_msolve_takes_version_and_jobs_from_the_switches(monkeypatch, tmp_path):
+    import symident as si
+    monkeypatch.setattr(sys, "platform", "linux")
+    tools(monkeypatch, {"curl", "make", "m4"})
+    seen = {}
+
+    def run(args, **kw):
+        seen.update(kw["env"])
+        return subprocess.CompletedProcess(args, 1, stdout="")
+    monkeypatch.setattr(install.subprocess, "run", run)
+    with si.switches(MSOLVE_VERSION="0.9.9", JOBS=3), pytest.raises(RuntimeError, match="build failed"):
+        install.install_msolve(dir=str(tmp_path), ask=False, quiet=True)
+    assert seen["SYMIDENT_MSOLVE_VERSION"] == "0.9.9" and seen["SYMIDENT_JOBS"] == "3"
+    with pytest.raises(RuntimeError, match="build failed"):
+        install.install_msolve(dir=str(tmp_path), version="0.10.1", jobs=2, ask=False, quiet=True)
+    assert seen["SYMIDENT_MSOLVE_VERSION"] == "0.10.1" and seen["SYMIDENT_JOBS"] == "2"

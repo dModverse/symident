@@ -1,0 +1,59 @@
+{
+ "name": "test-symmetryReduction_073_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "A",
+    "lB",
+    "lk1",
+    "lk2",
+    "ls"
+   ],
+   "modelExprs": [
+    "-k1*A + k2*B",
+    "k1*A - k2*B",
+    "log10(s*A)",
+    "exp(lk1)",
+    "exp(lk2)",
+    "exp10(ls)",
+    "10^lB"
+   ]
+  },
+  "symmetries": [
+   {
+    "type": "general",
+    "generator": {
+     "lB": "1/(A*log(10))",
+     "ls": "-1/(A*log(10))",
+     "A": "1"
+    },
+    "weights": null,
+    "support": [
+     "A",
+     "lB",
+     "ls"
+    ],
+    "degree": null
+   },
+   {
+    "type": "general",
+    "generator": {
+     "lk1": "exp(lk2)/(10^lB*exp(lk1) + A*exp(lk1))",
+     "lk2": "-1/(10^lB + A)",
+     "lB": "1/(10^lB*log(10))"
+    },
+    "weights": null,
+    "support": [
+     "lB",
+     "lk1",
+     "lk2"
+    ],
+    "degree": -1
+   }
+  ]
+ },
+ "args": {}
+}

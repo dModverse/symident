@@ -50,10 +50,13 @@ def _lift(d, gen):
 
 
 def level_of(d, gen):
-    """exact: proven over Q; verified: checked modulo a prime at random points; open: no closed form."""
+    """"exact" when proven over Q, "verified" when checked modulo a prime on every entry, "checked" when on part
+    of them, "open" without a closed form."""
     if gen is None:
         return "open"
-    return "exact" if d.get("exact") else "verified"
+    if d.get("exact"):
+        return "exact"
+    return "checked" if d.get("partial_check") else "verified"
 
 
 def display_form(syms):
@@ -173,6 +176,7 @@ def finalize(raw, method, settings, call=None, elapsed=None, coordinates=None):
             "rank_fields": raw.get("rank_fields"), "rank_fields_bound": raw.get("rank_fields_bound"),
             "gap_order_used": raw.get("gap_order_used"), "gap_certified": raw.get("gap_certified"),
             "gap_certificate": raw.get("gap_certificate"),
+            "series_certified": raw.get("series_certified"), "series_certificate": raw.get("series_certificate"),
             "conditions": raw.get("conditions"),
             "segments": raw.get("segments"),
             "coordinates": list(raw["coordinates"]) if raw.get("coordinates") is not None else coordinates,

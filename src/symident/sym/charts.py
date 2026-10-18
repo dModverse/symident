@@ -1,4 +1,4 @@
-"""Coordinate charts: signs, logarithms, exponents and their back-substitution."""
+"""Coordinate changes: signs, logarithms, exponents and their back-substitution."""
 
 import sympy as spy
 
@@ -24,10 +24,7 @@ def _has_exp(e):
 
 
 def _strip_log_obs(g):
-    """An observable kappa*(sum a_i log(h_i)) + c, with a_i rational and kappa 1 or
-    1/log(b) for a numeric b, is a strictly monotone function of exp(g/kappa) =
-    prod h_i^a_i * exp(c/kappa) and holds the same information; that expression is
-    returned. Anything else comes back unchanged."""
+    """kappa*(sum a_i log(h_i)) + c as the equivalent prod h_i^a_i * exp(c/kappa), anything else unchanged."""
     g = spy.sympify(g)
     logs = [a for a in g.atoms(spy.log) if not a.args[0].is_number]
     if not logs:
@@ -67,9 +64,7 @@ def _exp_atom(e):
 
 
 def _detect_log_params(exprs, states):
-    """Parameters that occur only in exponents of numeric-base powers, base^(c*theta +
-    ...) with c rational and one base per parameter. Returns {theta: base}. A constant
-    term in the exponent must leave a rational factor base^k."""
+    """{theta: base} of parameters that occur only in exponents base^(c*theta + k), c rational."""
     base_of, bad = {}, set()
     for e in exprs:
         for at in spy.sympify(e).atoms(spy.exp, spy.Pow):
@@ -91,8 +86,7 @@ def _detect_log_params(exprs, states):
 
 
 def _log_param_denominators(base_of, exprs):
-    """Per parameter the lcm L of the denominators of its exponent coefficients, so that
-    X = base^(theta/L) enters with integer powers only."""
+    """Per parameter the lcm L of its exponent denominators, so X = base^(theta/L) has integer powers."""
     den = {t: 1 for t in base_of}
     for e in exprs:
         for at in spy.sympify(e).atoms(spy.exp, spy.Pow):
@@ -106,8 +100,7 @@ def _log_param_denominators(base_of, exprs):
 
 
 def _log_param_sub(lp):
-    """Rewrite base^(sum c_i theta_i + k) as base^k * prod X_i^(c_i L_i), X_i = base^(theta_i/L_i);
-    `lp` maps theta to (X, base) or (X, base, L)."""
+    """Rewriter of base^(sum c_i theta_i + k) to base^k * prod X_i^(c_i L_i), lp: theta -> (X, base[, L])."""
     def repl(at):
         be = _exp_atom(at)
         if be is None:
@@ -132,8 +125,7 @@ def _log_param_sub(lp):
 
 
 def _log_params_only_in_atoms(base_of, exprs):
-    """Drop every candidate that still occurs after the rewrite: it enters somewhere
-    other than an exponent and cannot be traded for base^theta."""
+    """The candidates that the rewrite removes, i.e. that enter only through exponents."""
     base_of = dict(base_of)
     while base_of:
         sub = _log_param_sub({t: (spy.Dummy(), b) for t, b in base_of.items()})
@@ -149,10 +141,7 @@ def _log_params_only_in_atoms(base_of, exprs):
 
 
 def sign_chart(f, gs, positive):
-    """abs() and sign() resolved with the declared signs (abs(v) = v for positive
-    v). `f` maps state -> rhs, `gs` is a list of observable dicts. Returns {'f',
-    'g'} as strings, or {'why': ...} for max, min, a step (not analytic) or an
-    abs() of undecided sign."""
+    """abs() and sign() resolved by the declared signs as {'f', 'g'}, or {'why': ...} when undecided."""
     fl = dict(f)
     gl = [dict(g) for g in gs]
     lines = list(fl.values()) + [v for g in gl for v in g.values()] + [str(k) for k in fl]
@@ -185,9 +174,7 @@ def sign_chart(f, gs, positive):
 
 
 def _log_numbers(e, consts):
-    """Rewrite log of a positive rational as sum e_p*lognum_p over its prime factors,
-    collecting the constants lognum_p in `consts`. Exact: log 4 = 2 log 2 is kept, and
-    logs of distinct primes are independent (Schanuel)."""
+    """Logs of positive rationals as sums of lognum_p over their prime factors, collected in consts."""
     rep = {}
     for a in e.atoms(spy.log):
         n = a.args[0]
@@ -207,14 +194,7 @@ def _log_numbers(e, consts):
 
 
 def log_arg_chart(f, gs, positive, taken, ics=None):
-    """Log chart for positive arguments of log() and fractional powers: log(a + b*v),
-    a and b free of v, a + b*v positive, becomes L with v = (exp(L) - a)/b; log(v) and
-    v^(p/q) are a = 0, b = 1. Powers of products are split into powers of their positive
-    factors, non-integer powers of sums become exp(exponent*log(sum)). A state v becomes
-    L with rhs u'*exp(-L), u = a + b*v, and initial value log(u) at the initial values.
-    `f` maps state -> rhs, `gs` and `ics` are lists of dicts, `positive` True or a list
-    of names. Returns None when nothing qualifies, else {'f', 'g', 'ic', 'consts',
-    'map': [{'v', 'L', 'a', 'b'}]}, or {'why': ...}."""
+    """Model in L = log(a + b*v) for positive log() and fractional-power arguments; None if none qualify."""
     fl = dict(f)
     gl = [dict(g) for g in gs]
     il = [dict(ic) for ic in (ics or [])]
@@ -228,7 +208,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
         return pos is None or str(sym) in pos
 
     # a power of a product splits into powers of its positive factors, and a non-integer
-    # power of a sum becomes exp(exponent*log(sum)), which the chart makes rational
+    # power of a sum becomes exp(exponent*log(sum)), which the log coordinates make rational
     def norm(e):
         P = {x: spy.Symbol(str(x), positive=True) for x in e.free_symbols if is_pos(x)}
         e = spy.expand_power_base(e.xreplace(P), deep=True)
@@ -237,7 +217,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
                          lambda x: spy.exp(x.exp * spy.log(x.base)))
 
     def sum_powers(e):
-        # u^c of a sum u with c not an integer is exp(c*log(u)): its base is charted like log(u)
+        # u^c of a sum u with c not an integer is exp(c*log(u)): its base is treated like log(u)
         return [pw.base for pw in e.atoms(spy.Pow) if pw.base.is_Add and pw.exp.is_Rational
                 and not pw.exp.is_Integer]
     F = {k: norm(parse(str(v))) for k, v in fl.items()}
@@ -262,7 +242,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
         if v in chart and (spy.simplify(chart[v][0] - a) != 0 or
                            spy.simplify(chart[v][1] - b) != 0):
             raise InapplicableError('%s enters two different logarithms, which no single '
-                             'chart makes rational' % v)
+                             'change of coordinates makes rational' % v)
         chart[v] = (a, b)
 
     # pass 0 claims log(v) and v^(p/q) of symbols, pass 1 the affine arguments, so a
@@ -282,7 +262,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
             if ps == 0:
                 continue
             # affine in one symbol, a state first, then a parameter; a and b may hold
-            # other coordinates (log(1 + x + y) in the chart of y)
+            # other coordinates
             if not positive_on(arg):
                 continue
             done = False
@@ -317,7 +297,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
             for pw in e.atoms(spy.Pow):
                 if pw.base in given and not pw.exp.is_number and is_pos(pw.base):
                     claim(pw.base, zero, one)
-        # an initial value of a charted state enters as the logarithm of its argument
+        # an initial value of a transformed state enters as the logarithm of its argument
         while True:
             n0 = len(chart)
             for ic in I:
@@ -344,7 +324,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
         used.add(nm)
         L[v] = spy.Symbol(nm, real=True)
     sub0 = {v: (spy.exp(L[v]) - chart[v][0]) / chart[v][1] for v in chart}
-    # a and b may hold other charted symbols
+    # a and b may hold other transformed symbols
     sub = dict(sub0)
     for _ in chart:
         sub = {v: e.xreplace(sub) for v, e in sub0.items()}
@@ -392,10 +372,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
 
 
 def log_arg_event(var, value, method, maps):
-    """One event in the log chart: v -> (exp(L) - a)/b in its value, and an event
-    on a charted state acts on L: a replacement by log(a + b*value), and for
-    a = 0 a multiplication as the addition of log(value). Returns {'var',
-    'value', 'method', 'consts'} as strings or {'why': ...}."""
+    """One event in the log coordinates as {'var', 'value', 'method', 'consts'}, or {'why': ...}."""
     maps = list(maps)
     lines = [str(value)] + [str(m[k]) for m in maps for k in ('v', 'L', 'a', 'b')]
     local, parse = _make_local_parse(lines)
@@ -430,9 +407,7 @@ def log_arg_event(var, value, method, maps):
 
 
 def log_arg_back_vec(vec, maps):
-    """A generator of the log chart back in the user's symbols. L -> log(a + b*v)
-    everywhere; for a component eta_v = ((a + b*v)*eta_L - eta(a) - v*eta(b))/b with
-    eta(a) = grad(a) . eta."""
+    """A generator in the log coordinates back in the user's symbols."""
     maps = list(maps)
     lines = [str(x) for x in vec.values()] + [str(k) for k in vec] + \
         [str(m[k]) for m in maps for k in ('v', 'L', 'a', 'b')]
@@ -444,7 +419,7 @@ def log_arg_back_vec(vec, maps):
     vp = {v: spy.Symbol(str(v), positive=True) for v, _, _, _ in ent}
     to_l = {parse(Ln): spy.log(a + b * v) for v, Ln, a, b in ent}
     out = {k: e.subs(to_l) for k, e in V.items() if k not in Lnames}
-    # charts whose a, b hold another charted symbol come after it
+    # a coordinate whose a, b hold another transformed symbol comes after it
     order = sorted(ent, key=lambda t: len((t[2].free_symbols | t[3].free_symbols) &
                                           set(vp)))
     for v, Ln, a, b in order:
@@ -464,8 +439,7 @@ def log_arg_back_vec(vec, maps):
 
 
 def scaling_weights(comps):
-    """{name: component} -> {name: weight} when every component is a number times
-    its own coordinate, else None."""
+    """{name: weight} when every component is a number times its own coordinate, else None."""
     local, parse = _make_local_parse([str(v) for v in comps.values()] +
                                      [str(k) for k in comps])
     out = {}
@@ -478,11 +452,7 @@ def scaling_weights(comps):
 
 
 def log_chart_generators(gens, coords):
-    """Generators in the chart X = b^theta for every coordinate theta that enters
-    them only through b^(c*theta), or whose own component contains 1/log(b): there
-    they are rational. `gens` is a list of {name: expression} (None for a support-only
-    direction). Returns {'map': [...], 'gens': [...]} or None when there is no such
-    coordinate or the chart does not make every component rational."""
+    """Generators in X = b^theta for coordinates entering only through b^(c*theta), None unless rational."""
     exprs_of = []
     names = [str(c) for c in coords]
     for g in gens:
@@ -549,11 +519,7 @@ def log_chart_generators(gens, coords):
 
 
 def exp_chart_generators(gens, coords, positive):
-    """Generators in the chart L = log(v) for every positive coordinate v that enters
-    them through log(v), or that a scaling with symbolic weights moves:
-    eta_L = eta_v/v, v = exp(L). `gens` as in log_chart(),
-    `positive` True or a list of names. Returns {'map': [{'v', 'L'}], 'gens': [...]}
-    or None when no coordinate qualifies or a component stays transcendental."""
+    """Generators in L = log(v) for positive v in log(v) or in a symbolic scaling, None unless rational."""
     names = [str(c) for c in coords]
     pos = None if positive is True else {str(x) for x in (positive or [])}
     exprs_of = []
@@ -616,8 +582,7 @@ def exp_chart_generators(gens, coords, positive):
 
 
 def exp_chart_back(expr, v_names, l_names, solve_for=None):
-    """An expression of the chart L = log(v) back in v; with `solve_for` naming an L
-    the expression is its value and exp() of it, the value of v, is returned."""
+    """An expression in L = log(v) back in v; with solve_for naming an L, exp() of it, the value of v."""
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     v_names, l_names = as_list(v_names), as_list(l_names)
@@ -632,9 +597,7 @@ def exp_chart_back(expr, v_names, l_names, solve_for=None):
 
 
 def log_chart_back(expr, x_names, thetas, bases, solve_for=None):
-    """An expression of the chart X = b^theta back in theta. With `solve_for` naming
-    an X, the expression is the value of that X and log_b of it is returned, the
-    value of theta."""
+    """An expression in X = b^theta back in theta; with solve_for naming an X, log_b of it, the value of theta."""
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     x_names, thetas, bases = as_list(x_names), as_list(thetas), as_list(bases)
@@ -654,9 +617,7 @@ def log_chart_back(expr, x_names, thetas, bases, solve_for=None):
 
 
 def log_param_backsub(expr, comp, x_names, thetas, bases):
-    """A reported component in the rational coordinates X = base^theta back in theta:
-    X -> base^theta everywhere, and the component of X itself divided by X*log(base)
-    when `comp` names an X."""
+    """A component in X = base^theta back in theta, divided by X*log(base) when comp names an X."""
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     x_names, thetas, bases = as_list(x_names), as_list(thetas), as_list(bases)
@@ -673,10 +634,7 @@ def log_param_backsub(expr, comp, x_names, thetas, bases):
 
 
 def _detect_power_atoms(per_cond, states=()):
-    """Find base^exp terms with a non-numeric exponent. base must be a single
-    symbol and exp = c*n (c rational, n a symbol other than a state); returns the
-    unique (base, n) pairs, or None if a power is outside this form (then it stays
-    non-rational). A numeric base is an exponential, see _apply_exp_recast."""
+    """Sorted (base, n) of the symbolic powers base^(c*n), n not a state, or None for another power."""
     pairs = set()
     states = set(states)
     for (f_c, g_c, ic_c, f_ss) in per_cond:
@@ -694,10 +652,7 @@ def _detect_power_atoms(per_cond, states=()):
 
 
 def _apply_power_recast(pairs, S, per_cond):
-    """Recast each base^(c*n) as E^c with E = base^n a new state, and add a
-    companion L = log(base) per base. E' = n*E*base'/base, L' = base'/base when
-    base is a state (0 when it is a parameter). E, L are appended to the state
-    list; f_ss keeps only the real states (E is held generic in the solve)."""
+    """States, conditions and meta with E = base^n per pair and L = log(base) per base as new states."""
     recast = {}
     Lof = {}
     for (base, n) in pairs:
@@ -740,9 +695,7 @@ def _apply_power_recast(pairs, S, per_cond):
 
 
 def recast_backsub_expr(expr, e_names, l_names, bases, exps):
-    """Substitute recast coordinates back, E -> base**exp and L -> log(base), and
-    cancel. The name vectors are aligned per recast atom; the shared symbol table
-    keeps names like E, I, N as symbols."""
+    """An expression with E -> base**exp and L -> log(base) substituted back, cancelled."""
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     e_names, l_names, bases, exps = (as_list(e_names), as_list(l_names),

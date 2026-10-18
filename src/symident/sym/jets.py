@@ -7,28 +7,7 @@ from .parse import _as_list, _make_local_parse
 
 
 def jet_generator(conds, support, anchor, max_order=8, max_chars=200000, work_limit=None):
-    """A direction with support S in closed form from the jets.
-
-    Every Lie derivative L_f^k h evaluated at the initial values is invariant under
-    the direction X, so X_S is orthogonal to the S-gradient of every jet. With
-    |S| - 1 jets whose S-gradients are independent, X_S is their generalised cross
-    product: X_i = (-1)^i det(M without column i), M the gradient rows. For |S| = 2
-    this is X = (d_b Phi, -d_a Phi), the Hamiltonian field of one jet Phi.
-
-    `conds` holds per condition {'f': ['x = rhs', ...], 'g': [h, ...],
-    'ic': ['x = x0', ...]} over the leaves, or a chain {'segments': [...]} whose later
-    segments start from their boundary events ('ev') instead of initial values: at order 0
-    in every gap length the state does not move across a gap, so a later segment
-    starts from the earlier initial values with its events applied, and its jets
-    there are invariant like any other (each gap monomial of a row annihilates X).
-    A segment whose boundary time depends on the coordinates ends the chain. The
-    first segments are tried alone first (fewer, smaller jets); the later ones join
-    only when those fall short of the rank.
-    Jets are taken order by order, lowest first, rows kept greedily while they raise
-    the rank at a random rational point. The work counts the characters of every jet and
-    row formed and stops at `work_limit` (50 * max_chars by default). Returns {'ok': True,
-    'vector': {z: entry}} normalized to 1 at `anchor`, or {'ok': False, 'reason': ...}.
-    The caller verifies the result."""
+    """{'ok': True, 'vector'} with support S from |S| - 1 independent jet gradients, else {'ok': False}."""
     work = [0, 50 * max_chars if work_limit is None else int(work_limit)]
     primary, extra = _jet_expand_chains(conds)
     res = _jet_core(primary, support, anchor, max_order, max_chars, work)
@@ -38,8 +17,7 @@ def jet_generator(conds, support, anchor, max_order=8, max_chars=200000, work_li
 
 
 def _jet_core(conds, support, anchor, max_order, max_chars, work):
-    """jet_generator() on a fixed list of jet conditions; work = [done, limit] is shared
-    between the calls."""
+    """jet_generator() on a fixed list of jet conditions; `work` = [done, limit] is shared between calls."""
     support = [str(s) for s in _as_list(support)]
     anchor = str(anchor)
     m = len(support)
@@ -139,9 +117,7 @@ def _jet_core(conds, support, anchor, max_order, max_chars, work):
 
 
 def _jet_expand_chains(conds):
-    """Chains of segments as independent jet conditions at gap order 0: segment k starts
-    from segment k-1's initial values with its own boundary events applied. Returns the
-    first segments and the later ones as two lists."""
+    """Chains of segments as jet conditions at gap order 0: the first and the later segments as two lists."""
     out, extra = [], []
     for c in _as_list(conds):
         c = dict(c)

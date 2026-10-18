@@ -1,0 +1,52 @@
+{
+ "name": "test-symmetryReduction_004_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "a",
+    "b",
+    "c",
+    "other"
+   ],
+   "modelExprs": null
+  },
+  "symmetries": [
+   {
+    "type": "scaling",
+    "generator": {
+     "a": "a",
+     "b": "-b"
+    },
+    "weights": {
+     "a": "1",
+     "b": "-1"
+    },
+    "support": [
+     "a",
+     "b"
+    ],
+    "degree": null
+   },
+   {
+    "type": "scaling",
+    "generator": {
+     "c": "c",
+     "a": "-a"
+    },
+    "weights": {
+     "c": "1",
+     "a": "-1"
+    },
+    "support": [
+     "c",
+     "a"
+    ],
+    "degree": null
+   }
+  ]
+ },
+ "args": {}
+}

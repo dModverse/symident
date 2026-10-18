@@ -50,8 +50,7 @@ def direction_relevance(f, ref, pivots, z_slots, n_leaves, point0, rel_probe, re
 
 
 def dense_need(rel_by_entry, ctrl, degrees=None):
-    """Sample count the dense interpolation needs, and whether any entry is dense. `degrees`
-    holds per entry the degree its fit needs (None: up to degree_cap)."""
+    """Sample count the dense interpolation needs, and whether any entry is dense."""
     def is_dense(r):
         return 1 <= len(r) <= ctrl["relevance_cap"]
     degs = degrees or [None] * len(rel_by_entry)

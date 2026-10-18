@@ -1,0 +1,21 @@
+{
+ "name": "test-symmetryDetection_056_symmetryDetection",
+ "spec": {
+  "f": {
+   "p": "kpr/(1+kinh*p^nhill) - dp*p"
+  },
+  "g": {
+   "y": "s*p"
+  },
+  "equilibrate": false,
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

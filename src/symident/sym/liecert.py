@@ -1,13 +1,4 @@
-"""The Lie order of the symbolic engine, certified exactly.
-
-With the parameters as constant states, the rows d L^k h over states and parameters span a
-codistribution that is stationary from the first order adding nothing over the rational
-functions (Hermann, Krener). Once the rows at the initial values reach its rank r, every later
-row there is a combination of the rows so far, and the kernel of the restricted rows is final.
-
-Exponentials exp(w), b^w of single symbols and one logarithm of a number enter as new symbols.
-They are algebraically independent of the symbols and of each other, so a minor nonzero with
-them as free symbols is nonzero on the model."""
+"""The Lie order of the symbolic engine, certified exactly."""
 
 import numpy as np
 import sympy as spy
@@ -37,8 +28,7 @@ def _exp_atom(a):
 
 
 class Atoms:
-    """Symbols for the exponentials of single symbols (one base per symbol, integer multiples
-    as powers) and for one logarithm of a positive rational, collected over calls."""
+    """Symbols for exponentials of single symbols and one logarithm of a positive rational, collected over calls."""
 
     def __init__(self):
         self.sig, self.base_of, self.const = {}, {}, None
@@ -86,9 +76,7 @@ def _values(rows, env, p, memo):
 
 
 class _Condition:
-    """The rows of one condition over its states and parameters, order by order. States resting at
-    their initial value whatever the others do are replaced by it, which changes neither the outputs
-    nor their rows at the initial values."""
+    """Rows of one condition over its states and parameters, order by order, resting states at their initial value."""
 
     def __init__(self, f, g, ic, S, fixed):
         ic = {X: spy.sympify(ic[X]) for X in S}

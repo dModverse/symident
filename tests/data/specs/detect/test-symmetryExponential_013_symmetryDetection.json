@@ -1,0 +1,15 @@
+{
+ "name": "test-symmetryExponential_013_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "kA - kd*A",
+   "B": "kB - kE*exp(A)*B"
+  },
+  "g": {
+   "y": "s*B"
+  },
+  "equilibrate": true
+ },
+ "env": {},
+ "options": {}
+}

@@ -70,8 +70,7 @@ def _coords_of(d):
 
 
 def gauge_suggest(syms, kernel, coordinates, pref=None, fixed=()):
-    """The suggested scaling gauge with the sizes of the general directions it leaves, and the plain choice
-    for comparison; None without both scalings and general directions."""
+    """The suggested scaling gauge and the plain choice, with the sizes of the general directions each leaves."""
     scal = [d for d in syms if d["type"] == "scaling"]
     gen = [d for d in syms if d["type"] != "scaling"]
     if not scal or not gen:

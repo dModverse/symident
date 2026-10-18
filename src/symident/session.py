@@ -1,5 +1,4 @@
-"""The state one detection shares across nested analyses: the seed of every random choice,
-the reconstruction deadline, and the limits that fired."""
+"""The state one detection shares across nested analyses: seed, reconstruction deadline, limits that fired."""
 
 import contextlib
 import hashlib

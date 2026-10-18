@@ -5,7 +5,7 @@ import os
 
 import numpy as np
 import pytest
-from golden_util import snake
+from spec_util import snake
 from tjson import tload
 
 from symident import _core

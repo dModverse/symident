@@ -92,8 +92,7 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
 
 
 def peel_scalings(scal_res, znames, nz, zval, P, N, exact=False):
-    """Scalings common to all conditions whose tangent lies in the nullspace, independent;
-    `exact` marks them proven (the integer kernel took every term)."""
+    """Independent scalings common to all conditions whose tangent lies in the nullspace, proven if `exact`."""
     scaling = []
     Bmat = np.zeros((nz, 0), dtype=np.int64)
     env = {z: int(v) for z, v in zip(znames, zval)}

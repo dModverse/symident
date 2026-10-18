@@ -1,0 +1,61 @@
+{
+ "name": "test-symmetryDetection_039_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-(k1 + u*k2)*A + b",
+   "u": "0"
+  },
+  "g": {
+   "y": "s*A"
+  },
+  "conditions": {
+   "rows": [
+    "c1",
+    "c2",
+    "c3",
+    "c4"
+   ],
+   "cols": {
+    "var_u": [
+     0,
+     1,
+     0,
+     1
+    ],
+    "dose": [
+     1,
+     1,
+     2,
+     2
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "A",
+    "time": "0",
+    "value": "dose",
+    "method": "add",
+    "root": null
+   },
+   {
+    "var": "u",
+    "time": "-1",
+    "value": "var_u",
+    "method": "replace",
+    "root": null
+   }
+  ],
+  "forcings": [
+   "u"
+  ],
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability",
+  "cores": 1
+ },
+ "env": {
+  "DMOD_MSOLVE": ""
+ },
+ "options": {}
+}

@@ -1,0 +1,51 @@
+{
+ "name": "test-symmetryDetection_058_symmetryDetection",
+ "spec": {
+  "f": {
+   "FB": "1*(k_pr_FB) -1*(d_FB * FB)",
+   "x": "1*(k_pr_x * K^n / (K^n + FB^n)) -1*(d_x * x)"
+  },
+  "reactions": {
+   "species": [
+    "FB",
+    "x"
+   ],
+   "smatrix": [
+    [
+     1,
+     0
+    ],
+    [
+     -1,
+     0
+    ],
+    [
+     0,
+     1
+    ],
+    [
+     0,
+     -1
+    ]
+   ],
+   "rates": [
+    "k_pr_FB",
+    "d_FB * FB",
+    "k_pr_x * K^n / (K^n + FB^n)",
+    "d_x * x"
+   ]
+  },
+  "g": {
+   "xobs": "scale * x"
+  },
+  "equilibrate": true,
+  "reduceCQ": false,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

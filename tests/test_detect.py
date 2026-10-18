@@ -1415,3 +1415,47 @@ def test_a_start_on_a_curved_invariant_set_leaves_the_lie_order_unproven():
     assert r.info["lie_certified"] is False
     assert r.info["rank_status"] == {"status": "lower bound", "why": "the Lie order is not proven sufficient",
                                      "probability": None}
+
+
+def _autocrine(times, **kw):
+    f = {"L": "ksec*m/(V*vf) - kon*L*R + koff*C - kdL*L", "R": "kR - kon*L*R + koff*C - kdR*R",
+         "C": "kon*L*R - koff*C - kc*C", "m": "kb + ka*C - dm*m"}
+    return detect(f, {"y": "s*m", "yC": "C"}, conditions=grid(["a", "b"], vf=[1, 1.5], dose=[1, 1]),
+                  events=[event("L", t, "dose", "add") for t in times], equilibrate=True, reconstruct=True,
+                  **kw)
+
+
+@pytest.mark.parametrize("times", [[0], [0, 10]])
+def test_the_diagonal_start_lifts_coupled_conditions_without_a_resting_solve(monkeypatch, times):
+    from symident.detection.observability import rest
+
+    with si.switches(NODIAG=True):
+        ref = _autocrine(times)
+
+    def no_solve(*a, **k):
+        raise AssertionError("resting state solved at a point")
+    monkeypatch.setattr(rest, "solve_steady_state_modular", no_solve)
+    r = _autocrine(times)
+    assert (r.rank, r.dim) == (ref.rank, ref.dim)
+    assert sorted(map(tuple, (s.support for s in r.symmetries))) == \
+        sorted(map(tuple, (s.support for s in ref.symmetries)))
+
+
+def test_the_diagonal_start_zeroes_the_secretion_that_couples_the_conditions():
+    from symident.detection.observability.start import DiagonalStart
+
+    m = ["L = ksec*m/(V*vf) - kon*L*R + koff*C - kdL*L", "R = kR - kon*L*R + koff*C - kdR*R",
+         "C = kon*L*R - koff*C - kc*C", "m = kb + ka*C - dm*m"]
+    models = [[s.replace("vf", "1") for s in m], [s.replace("vf", "1.5") for s in m]]
+    ds = DiagonalStart(models, [0, 1], 0, lambda ci: [], ["ksec", "kon", "koff", "kdL", "kR", "kdR", "kc", "kb",
+                                                          "ka", "dm", "V"])
+    assert ds.ok and ds.Z == ["ksec"] and ds.S == ["C", "L"]
+    bad = DiagonalStart(models, [0, 1], 0, lambda ci: [], ["V"])
+    assert not bad.ok
+
+
+def test_an_event_after_the_start_leaves_the_start_at_zero():
+    f = {"x": "-k*x + u*(1 - s)", "s": "0"}
+    ev = [{"var": "s", "time": 5, "value": "1", "method": "replace"}]
+    r = si.detect(si.Model(f, {"y": "c*x"}, trafo={"x": "0", "s": "0", "u": "1"}, events=ev))
+    assert (r.rank, r.dim) == (2, 2) and r.info["rank_status"]["status"] == "proven"

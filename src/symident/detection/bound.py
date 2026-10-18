@@ -1,10 +1,4 @@
-"""A bound on the chance that the kernel check at random points passes a wrong closed form,
-for rational models that start from closed-form initial values, with events at times that
-are rational in the coordinates.
-
-Bounds the degree d of the cleared identity sum_j O_kj v_j = 0 of the rows up to Lie order N;
-m wrong directions pass k independent points modulo q with probability at most m (d/q)^k
-(Schwartz, Zippel)."""
+"""Schwartz-Zippel bound on the chance that the kernel check at random points passes a wrong closed form."""
 
 import functools
 
@@ -48,9 +42,7 @@ def _model_degrees(f_items, g_items, x0_items):
 
 
 def identity_degree(f, g, x0, order, vector):
-    """Degree bound of the cleared identity sum_j O_kj v_j for the rows up to Lie order
-    `order`; None where a right-hand side, observable, initial value or component is not
-    rational. `f` maps states to right-hand sides, `g` observables, `x0` initial values."""
+    """Degree bound of the cleared identity sum_j O_kj v_j up to Lie order `order`, None where not rational."""
     try:
         md = _model_degrees(tuple(sorted(f.items())), tuple(sorted(g.items())), tuple(sorted(x0.items())))
         if md is None:

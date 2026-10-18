@@ -142,7 +142,7 @@ def test_without_a_certified_lie_order_the_symbolic_engine_proves_by_lifts():
     m = si.Model({"x1": "-k*x1 + a*(x2 - x1)", "x2": "-k*x2 + a*(x1 - x2)"}, {"y": "s*x1/q"},
                  trafo={"x1": "1", "x2": "1"})
     r = si.detect(m, engine="symbolic")
-    assert {tuple(s.support): s.level for s in r.symmetries} == {("a",): "verified", ("q", "s"): "exact"}
+    assert {tuple(s.support): s.level for s in r.symmetries} == {("a",): "checked", ("q", "s"): "exact"}
     assert not r.info["lie_certified"]
     st = r.info["rank_status"]
     assert st["status"] == "lower bound" and st["why"].endswith("stay below the generic rank")
@@ -299,7 +299,8 @@ def test_the_bound_needs_proven_orders():
         assert r.unproven() and r.info["bound"]["probability"] is None
         assert r.info["bound"]["why"].endswith(", and the check runs at the order reached")
         text = " ".join(repr(r).split())
-        assert "no bound on the chance that a wrong closed form passes" in text and "at the orders used" in text
+        assert "checked = in the kernel at random points" in text and "no bound on the chance" in text
+        assert {s.level for s in r.unproven()} == {"checked"}
 
 
 def _fields_model():
@@ -358,3 +359,17 @@ def test_the_field_check_bounds_its_random_points():
     out = check("y = s*x", {"x": "x", "s": "-s"}, {"x": 3, "s": p - 7})
     assert out["ok"] is True and out["bound"]["prime"] == q and 0 < out["bound"]["probability"] < 1e-12
     assert check("y = s*x", {"x": "x", "s": f"-s + {p}*s"}, {"x": 3, "s": p - 7})["ok"] is False
+
+
+def test_a_kernel_check_on_part_of_the_entries_is_checked_not_verified(monkeypatch):
+    from symident.detection import finalize, verify
+    entry = {"vector": {"a": "1"}}
+    monkeypatch.setattr(verify, "_in_nullspace_at", lambda *a: "partial")
+    assert verify.verify_in_nullspace(entry, 0, ["a"], [], [1], 1, None, None, 0, 1)
+    assert entry["partial_check"]
+    assert finalize.level_of(entry, entry["vector"]) == "checked"
+    full = {"vector": {"a": "1"}}
+    monkeypatch.setattr(verify, "_in_nullspace_at", lambda *a: True)
+    assert verify.verify_in_nullspace(full, 0, ["a"], [], [1], 1, None, None, 0, 1)
+    assert finalize.level_of(full, full["vector"]) == "verified"
+    assert finalize.level_of(dict(entry, exact=True), entry["vector"]) == "exact"

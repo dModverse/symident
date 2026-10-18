@@ -1,0 +1,14 @@
+{
+ "name": "test-symmetryExponential_009_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "tanh((u - Vh)/k) - x",
+   "u": "a - u"
+  },
+  "g": {
+   "y": "x"
+  }
+ },
+ "env": {},
+ "options": {}
+}

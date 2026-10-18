@@ -1,0 +1,52 @@
+{
+ "name": "test-symmetryDetection_106_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-1*(k1 * A) +1*(k2 * B)",
+   "B": "1*(k1 * A) -1*(k2 * B)"
+  },
+  "reactions": {
+   "species": [
+    "A",
+    "B"
+   ],
+   "smatrix": [
+    [
+     -1,
+     1
+    ],
+    [
+     1,
+     -1
+    ]
+   ],
+   "rates": [
+    "k1 * A",
+    "k2 * B"
+   ]
+  },
+  "totals": {
+   "total_1": "1*A+1*B"
+  },
+  "g": {
+   "Aobs": "alpha * A"
+  },
+  "events": [
+   {
+    "var": "A",
+    "time": "0",
+    "value": "2",
+    "method": "replace",
+    "root": null
+   }
+  ],
+  "reduceCQ": false,
+  "method": "scaling"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

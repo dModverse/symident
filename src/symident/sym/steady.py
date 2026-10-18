@@ -25,11 +25,7 @@ _FORCE_CONSTRAINT_SEED = False
 
 
 def _solve_states_fast(dps, solve_states, p):
-    """Interior point of f = 0 over GF(p) from the per-point state polynomials in dict
-    form. Linear elimination by dict-polynomial substitution mod p, then numeric
-    back-substitution; a coupled residual goes to _solve_states_reduced (core of at most
-    two states) or _solve_states_msolve. Returns (sol {Symbol: Integer}, None) or
-    (None, fail-dict)."""
+    """Interior point of f = 0 over GF(p) by linear elimination mod p: (sol, None) or (None, fail-dict)."""
     nv = len(solve_states)
     names = [str(x) for x in solve_states]
     dps0 = dps
@@ -101,9 +97,7 @@ def _solve_states_fast(dps, solve_states, p):
 
 
 def _compile_t0events(events, param_names):
-    """Compile each t0 event's value and its parameter derivatives to
-    prime-independent term lists over the parameters, so a point evaluates by
-    integer arithmetic. Keyed by the event tuple and parameter order."""
+    """Value and parameter-derivative term lists of each t0 event, keyed by event tuple and parameter order."""
     key = (tuple((str(e['var']), str(e['value']), str(e['method'])) for e in events),
            tuple(param_names))
     compiled = _event_compile_cache.get(key)
@@ -126,23 +120,39 @@ def _compile_t0events(events, param_names):
     return compiled
 
 
-def _ss_compile(model, state_names, param_names, forcings, held_state_names=()):
-    """Prime-independent compile of f = 0 for the modular steady-state solve,
-    memoized in _ss_modular_cache. Inputs are the already-normalized model/state/param
-    lists and the forcings set. Returns the cached tuple (param_syms, solve_states,
-    polys, Jx, Jt, gens, jx_terms, jt_terms, poly_bi, generic_linear, lin_terms, point_plan).
-
-    `held_state_names` are conserved-moiety pivot states with a free resting value
-    (without reduce_cq). f = 0 is rank-deficient by one equation per moiety, so these
-    states act as parameters of the point solve and their dependent equations are
-    dropped, leaving a square system (`point_plan`, None when nothing is held).
-    `solve_states` and Jx/Jt still cover all non-forcing states, so the joint
-    determining system leaves the pivot directions free."""
+def _ss_compile(model, state_names, param_names, forcings, held_state_names=(), linear=True):
+    """Memoized prime-independent compile of f = 0 for the modular solve; `held_state_names` act as parameters."""
     key = (tuple(model), tuple(state_names), tuple(param_names), tuple(sorted(forcings)),
            tuple(sorted(held_state_names)))
     cached = _ss_modular_cache.get(key)
     if cached is not None:
         return cached
+    base = _ss_base_cache.get(key)
+    if base is None:
+        base = _ss_base(model, state_names, param_names, forcings, held_state_names)
+        _ss_base_cache[key] = base
+    if not linear:
+        return base
+    (param_syms, solve_states, polys, Jx, Jt, gens, jx_terms, jt_terms, poly_bi, _gl, _lt,
+     point_plan) = base
+    generic_linear, lin_terms = _compile_linear_plan(polys, solve_states, param_syms)
+    if point_plan is not None:
+        point_states, point_params, held_syms, point_poly_bi, keep_polys = point_plan
+        point_generic_linear, point_lin_terms = _compile_linear_plan(
+            keep_polys, point_states, point_params)
+        point_plan = (point_states, point_params, held_syms, point_poly_bi,
+                      point_generic_linear, point_lin_terms)
+    cached = (param_syms, solve_states, polys, Jx, Jt, gens, jx_terms, jt_terms,
+              poly_bi, generic_linear, lin_terms, point_plan)
+    _ss_modular_cache[key] = cached
+    return cached
+
+
+_ss_base_cache = {}
+
+
+def _ss_base(model, state_names, param_names, forcings, held_state_names):
+    """_ss_compile without the linear plans; the point plan holds its kept numerators instead."""
     local, parse = _make_local_parse(model + list(param_names))
     rhs_by_name = {}
     for raw in model:
@@ -175,7 +185,6 @@ def _ss_compile(model, state_names, param_names, forcings, held_state_names=()):
     jt_terms = {str(th): [_poly_terms(Jt[str(th)][i], gens) for i in range(n_sc)]
                 for th in param_syms}
     poly_bi = [_bipoly(pl, list(solve_states), list(param_syms)) for pl in polys]
-    generic_linear, lin_terms = _compile_linear_plan(polys, solve_states, param_syms)
     # held states are a moiety pivot set (detection.cq), so their own
     # equations are exactly the dependent rows of f = 0
     held_set = set(held_state_names)
@@ -186,14 +195,9 @@ def _ss_compile(model, state_names, param_names, forcings, held_state_names=()):
         point_params = list(param_syms) + held_syms
         keep_polys = [polys[i] for i, s in enumerate(solve_states) if str(s) not in held_set]
         point_poly_bi = [_bipoly(pl, list(point_states), list(point_params)) for pl in keep_polys]
-        point_generic_linear, point_lin_terms = _compile_linear_plan(
-            keep_polys, point_states, point_params)
-        point_plan = (point_states, point_params, held_syms, point_poly_bi,
-                      point_generic_linear, point_lin_terms)
-    cached = (param_syms, solve_states, polys, Jx, Jt, gens, jx_terms, jt_terms,
-              poly_bi, generic_linear, lin_terms, point_plan)
-    _ss_modular_cache[key] = cached
-    return cached
+        point_plan = (point_states, point_params, held_syms, point_poly_bi, keep_polys)
+    return (param_syms, solve_states, polys, Jx, Jt, gens, jx_terms, jt_terms,
+            poly_bi, None, None, point_plan)
 
 
 _NAMES = {}
@@ -214,8 +218,7 @@ def _names(cached):
 
 def resting_kind(model, state_names, param_names, param_vals, prime, forcings=None,
                  held_states=None):
-    """How the resting state depends on the parameters: "rational" (a compiled rational
-    function), "core" (a coupled core that a resultant solves) or "msolve"."""
+    """How the resting state depends on the parameters: "rational", "core" (solved by a resultant) or "msolve"."""
     state_names, param_names, p = _as_list(state_names), _as_list(param_names), int(prime)
     held_states = {str(k): int(v) % p for k, v in (held_states or {}).items()}
     cached = _ss_compile(_as_list(model), state_names, param_names, set(_as_list(forcings)),
@@ -243,14 +246,7 @@ def solve_steady_state_modular(model, state_names, param_names, param_vals, prim
                             forcings=None, backend='sympy', t0events=None,
                             recast=None, l_vals=None, joint_mode=False,
                             held_states=None):
-    """Numeric point on the interior component of f = 0 over GF(prime) with its
-    implicit-function-theorem parameter sensitivities.
-
-    `model` is a list of "X = rhs" lines; `state_names`/`param_names` the state and
-    parameter order; `param_vals` a {name: int} map of residues mod `prime`;
-    `forcings` are held at 0; `t0events` are dose-style events composed onto the
-    point after the solve. Returns {'ok': True, 'xstar': [...], 'dx': {param:
-    [...]}} (state-ordered) or {'ok': False, 'why': ...}."""
+    """Point on the interior component of f = 0 over GF(prime) with its sensitivities: {'ok', 'xstar', 'dx'}."""
     model = _as_list(model)
     forcings = set(_as_list(forcings))
     state_names = _as_list(state_names)
@@ -342,8 +338,7 @@ def solve_steady_state_modular(model, state_names, param_names, param_vals, prim
         df_param_cols = [str(th) for th in param_syms]
 
     if joint_mode:
-        # joint mode needs only val_by and df_rest; returning here also skips the
-        # (occasionally singular) dual solve, which would reject a good point
+        # joint mode needs only val_by and df_rest; a singular dual solve would reject a good point
         return {'ok': True, 'state_names': list(state_names), 'val_by': dict(val_by),
                 'df_jx': df_jx, 'df_jt': df_jt, 'df_state_cols': df_state_cols,
                 'df_param_cols': df_param_cols}

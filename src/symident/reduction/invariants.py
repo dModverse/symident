@@ -16,9 +16,7 @@ from .scaling import mono_string, primitive_rows
 
 
 def exact_rank(rows):
-    """Rank of a matrix of exact rationals (int, Fraction or SymPy Rational) modulo the
-    first engine prime, None when an entry is not rational or has the prime in its
-    denominator. A rank mod p at a rational point is a lower bound of the rank over Q."""
+    """Rank modulo the first engine prime of a matrix of exact rationals, a lower bound over Q; None if not rational."""
     p = PRIMES[0]
     if not len(rows):
         return 0
@@ -35,6 +33,35 @@ def exact_rank(rows):
             out.append(int(q.p) % p * invmod(int(q.q) % p, p) % p)
         M.append(out)
     return int(rref_modp(np.array(M, dtype=np.int64), p)["rank"])
+
+
+def certified_rank(rows):
+    """A lower bound of the rank of a matrix of exact numbers, modulo a prime or by a certified nonzero minor."""
+    import scipy.linalg
+    r = exact_rank(rows)
+    if r is not None:
+        return r
+    sel, fl = [], []
+    for row in rows:
+        try:
+            f = [float(spy.N(x)) for x in row]
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            continue
+        if not np.all(np.isfinite(f)):
+            continue
+        cand = sel + [row]
+        cols = sorted(scipy.linalg.qr(np.array(fl + [f]), pivoting=True)[2][:len(cand)])
+        try:
+            det = spy.Matrix([[r_[c] for c in cols] for r_ in cand]).det(method="berkowitz")
+            ok = det.evalf(30, strict=True) != 0
+        except (SYMPY_FAILS + (spy.core.evalf.PrecisionExhausted,)) as exc:
+            sympy_fail(exc)
+            ok = False
+        if ok:
+            sel.append(row)
+            fl.append(f)
+    return len(sel)
 
 
 def qr_rank(M, tol=1e-7):
@@ -72,8 +99,7 @@ def gcd(a, b):
 
 
 def modular_nullspace(rows_at, n, eval_vars, primes=PRIMES, min_rows=0):
-    """Common nullspace of sampled rows over the primes as primitive integer columns; the
-    sampling stops on a flat rank only past `min_rows` rows."""
+    """Common nullspace of sampled rows over the primes as primitive integer columns, sampled past `min_rows` rows."""
     basis_per, pivots_per, n_rows = {}, {}, 0
     nv = len(eval_vars)
     for pi, p in enumerate(primes, start=1):
@@ -199,9 +225,7 @@ def _rows_mono(preps, vars_, expts):
 
 
 def _direction_rank(preps, moved, vars_, ipt):
-    """Rank of the block directions on the moved coordinates at the integer point `ipt`:
-    exact where the components are rational, by pivoted QR otherwise."""
-    from ..rexpr import eval_numeric
+    """A certified lower bound of the rank of the block directions on the moved coordinates at the point `ipt`."""
     from ..sym.modp import eval_rational_mod
     P = PRIMES[0]
     rows = []
@@ -217,48 +241,43 @@ def _direction_rank(preps, moved, vars_, ipt):
         return int(rref_modp(np.array(rows, dtype=np.int64).reshape(len(preps), len(moved)), P)["rank"])
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
-        pt = dict(zip(vars_, [float(x) for x in ipt]))
-        Xi = np.array([[eval_numeric(pr["comps"][v], pt) if v in pr["comps"] else 0.0 for v in moved]
-                       for pr in preps], dtype=float)
-        return qr_rank(Xi, tol=1e-9)
+    sub = {spy.Symbol(v): spy.Integer(int(x)) for v, x in zip(vars_, ipt)}
+    loc = red_locals([str(x) for pr in preps for x in pr["comps"].values()])
+    try:
+        M = [[red_sympify(str(pr["comps"][v]).replace("^", "**"), loc).xreplace(sub) if v in pr["comps"]
+              else spy.Integer(0) for v in moved] for pr in preps]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return 0
+    return certified_rank(M)
 
 
 def independent_poly(B, expts, vars_, moved, preps):
-    """A functionally independent subset by a greedy Jacobian rank test."""
-    pool = Pool()
-    ptv = [float(x) for x in pool(np.arange(1, len(vars_) + 1) + 5)]
-    target = len(moved) - _direction_rank(preps, moved, vars_, [int(x) for x in ptv])
-    mv = np.exp(expts @ np.log(np.array(ptv)))
+    """A functionally independent subset by a greedy Jacobian rank test modulo a prime at an integer point."""
+    ip = [int(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 5)]
+    target = len(moved) - _direction_rank(preps, moved, vars_, ip)
     m_idx = [vars_.index(m) for m in moved]
-
-    def grad(cf):
-        return np.array([np.sum(cf * mv * expts[:, i] / ptv[i]) for i in m_idx])
     deg = expts.sum(axis=1)
     key = [float(np.max(deg[B[:, j] != 0])) * 1e4 + float(np.sum(B[:, j] != 0)) for j in range(B.shape[1])]
-    J = np.zeros((0, len(moved)))
-    sel = []
-    P = PRIMES[0]
-    ip = [int(x) for x in ptv]
+    cfs = [[spy.Rational(x) for x in B[:, j]] for j in range(B.shape[1])]
+    P = next((q for q in PRIMES if all(int(c.q) % q for col in cfs for c in col)
+              and all(x % q for x in ip)), None)
+    if P is None:
+        return list(range(min(1, B.shape[1])))
     mvp = [int(np.prod([pow(ip[k], int(e), P) for k, e in enumerate(row)], dtype=object) % P) for row in expts]
 
     def grad_p(cf):
         # the gradient of sum_i cf_i m_i at the integer point, exactly modulo P
-        return [sum(int(cf[i]) * int(expts[i, k]) * mvp[i] for i in range(len(cf))) % P * invmod(ip[k] % P, P) % P
+        c = [int(x.p) % P * invmod(int(x.q) % P, P) % P for x in cf]
+        return [sum(c[i] * int(expts[i, k]) * mvp[i] for i in range(len(c))) % P * invmod(ip[k] % P, P) % P
                 for k in m_idx]
-    exact = all(float(x).is_integer() for x in B.ravel()) and all(float(x).is_integer() for x in expts.ravel())
-    Jp = []
+    Jp, sel = [], []
     for j in sorted(range(B.shape[1]), key=lambda j: key[j]):
         if len(sel) >= target and target > 0:
             break
-        if exact:
-            r = grad_p([int(x) for x in B[:, j]])
-            if int(rref_modp(np.array(Jp + [r], dtype=np.int64), P)["rank"]) > len(Jp):
-                Jp.append(r)
-                sel.append(j)
-            continue
-        Jc = np.vstack([J, grad(B[:, j].astype(float))])
-        if qr_rank(Jc, tol=1e-9) > J.shape[0]:
-            J = Jc
+        r = grad_p(cfs[j])
+        if int(rref_modp(np.array(Jp + [r], dtype=np.int64), P)["rank"]) > len(Jp):
+            Jp.append(r)
             sel.append(j)
     if not sel:
         sel = list(range(min(1, B.shape[1])))
@@ -293,9 +312,7 @@ def poly_invariants(preps, d_poly):
 
 
 def _checked_nullspace(preps, vars_, expts, N):
-    """The sampled nullspace with every basis vector checked exactly as an invariant before any
-    is chosen; a failing vector means the sampling stopped short, and it is sampled again with
-    four times the rows. `note` says what was left out."""
+    """The sampled nullspace with every basis vector checked exactly as an invariant; `note` says what was left out."""
     ns = modular_nullspace(_rows_mono(preps, vars_, expts), N, vars_)
     ns["note"] = ""
     for attempt in range(2):
@@ -308,6 +325,8 @@ def _checked_nullspace(preps, vars_, expts, N):
                                     for j in range(B.shape[1])], gens)
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
+            ns["basis"] = None
+            ns["note"] += "; the exact check X(I) = 0 failed to run"
             return ns
         if all(ok):
             return ns

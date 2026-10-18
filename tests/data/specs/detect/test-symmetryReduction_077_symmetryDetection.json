@@ -1,0 +1,26 @@
+{
+ "name": "test-symmetryReduction_077_symmetryDetection",
+ "spec": {
+  "f": {
+   "V": "(gL*(EL - V) + gt*(Es - V))/C"
+  },
+  "g": {
+   "y": "V"
+  },
+  "trafo": {
+   "V": "V",
+   "C": "2/q_1",
+   "EL": "0",
+   "Es": "2*q_2/q_1",
+   "gL": "1",
+   "gt": "1"
+  },
+  "positive": [
+   "C",
+   "gL",
+   "gt"
+  ]
+ },
+ "env": {},
+ "options": {}
+}

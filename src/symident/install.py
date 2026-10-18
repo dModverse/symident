@@ -9,15 +9,23 @@ import sys
 import tempfile
 from importlib import resources
 
+from . import state
+
 MSOLVE_VERSION = "0.10.1"
 _TESTED = "0.10."
 _EXE = "msolve.exe" if sys.platform == "win32" else "msolve"
 
 
 def cache_dir():
-    """The per-user cache of symident: `SYMIDENT_CACHE`, else the platform's cache directory."""
-    if os.environ.get("SYMIDENT_CACHE"):
-        return os.environ["SYMIDENT_CACHE"]
+    """The per-user cache of symident.
+
+    Returns
+    -------
+    str
+        ``SYMIDENT_CACHE`` if set, else the platform's cache directory.
+    """
+    if state.env_value("CACHE"):
+        return state.env_value("CACHE")
     if sys.platform == "darwin":
         return os.path.join(os.path.expanduser("~"), "Library", "Caches", "symident")
     if sys.platform == "win32":
@@ -65,10 +73,17 @@ def find_msolve():
     """The msolve to use and where it was found, (path, source), or (None, None).
 
     Searched in order: `SYMIDENT_MSOLVE`, the builds in the cache, each
-    ``deps-msolve-<version>/bin/msolve`` (``msolve.exe`` on Windows) next to a file
-    ``.msolve-complete``, then `msolve` on the `PATH` if it is a tested version. Each
-    candidate must solve a test system."""
-    p = os.environ.get("SYMIDENT_MSOLVE", "")
+    ``deps-msolve-<version>/bin/msolve`` (``msolve.exe`` on Windows) with an empty file
+    ``deps-msolve-<version>/.msolve-complete``, then `msolve` on the `PATH` if it is a tested
+    version. Each candidate must solve a test system.
+
+    Returns
+    -------
+    tuple
+        ``(path, source)`` with source ``"SYMIDENT_MSOLVE"``, ``"cache"`` or ``"PATH"``, or
+        ``(None, None)``.
+    """
+    p = state.env_value("MSOLVE", "")
     if p and msolve_check(p):
         return p, "SYMIDENT_MSOLVE"
     for p in _cache_bins():
@@ -82,22 +97,24 @@ def find_msolve():
     return None, None
 
 
-def install_msolve(dir=None, version=MSOLVE_VERSION, jobs=None, quiet=False, ask=None):
+def install_msolve(dir=None, version=None, jobs=None, quiet=False, ask=None):
     """Build msolve from source into a per-user cache.
 
     msolve solves the coupled resting-state systems of ``detect(..., equilibrate=True)``.
     It is built with static GMP, MPFR and FLINT; the build needs a C compiler, ``make``,
     ``m4`` and ``curl`` or ``wget``, network access and a few minutes. Not available on
-    Windows. symident finds the build without further settings.
+    Windows. With the default ``dir`` symident finds the build without further settings; for
+    another ``dir`` set ``SYMIDENT_CACHE`` to it.
 
     Parameters
     ----------
     dir : str, optional
         Cache directory; defaults to :func:`cache_dir`.
-    version : str
-        msolve release.
+    version : str, optional
+        msolve release; defaults to ``SYMIDENT_MSOLVE_VERSION``, else the tested release.
     jobs : int, optional
-        Parallel ``make`` jobs; defaults to the available cores, at most 8.
+        Parallel ``make`` jobs; defaults to ``SYMIDENT_JOBS``, else the available cores, at
+        most 8.
     quiet : bool
         Suppress the build output.
     ask : bool, optional
@@ -107,7 +124,14 @@ def install_msolve(dir=None, version=MSOLVE_VERSION, jobs=None, quiet=False, ask
     -------
     str or None
         Path of the msolve executable, None if the user declined.
+
+    Raises
+    ------
+    RuntimeError
+        On Windows, without ``curl``/``wget``, ``make`` or ``m4``, or when the build fails.
     """
+    version = version or state.env_value("MSOLVE_VERSION") or MSOLVE_VERSION
+    jobs = jobs or state.env_value("JOBS")
     if jobs is None:
         jobs = max(1, min(8, len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity")
                           else (os.cpu_count() or 2)))
@@ -132,7 +156,10 @@ def install_msolve(dir=None, version=MSOLVE_VERSION, jobs=None, quiet=False, ask
     os.makedirs(dir, exist_ok=True)
     script = resources.files("symident").joinpath("tools", "build-msolve.sh")
     with resources.as_file(script) as sp:
-        env = dict(os.environ, SYMIDENT_LIBS_CACHE=dir, SYMIDENT_MSOLVE_VERSION=str(version),
+        env = dict(os.environ, **{"SYMIDENT_" + k: state.env_value(k) for k in
+                                  ("GMP_VERSION", "MPFR_VERSION", "FLINT_VERSION", "OMP_STUB_H")
+                                  if state.env_value(k)},
+                   SYMIDENT_LIBS_CACHE=dir, SYMIDENT_MSOLVE_VERSION=str(version),
                    SYMIDENT_JOBS=str(int(jobs)), CC=os.environ.get("CC", "cc"))
         r = subprocess.run(["sh", str(sp)], env=env, stdout=subprocess.PIPE, text=True,
                            stderr=subprocess.DEVNULL if quiet else None)

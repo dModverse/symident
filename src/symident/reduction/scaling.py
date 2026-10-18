@@ -14,10 +14,6 @@ from ..rexpr import sym_sort
 from ..sym.linalg import exact_int_kernel
 
 
-def _canon(syms):
-    return [d for d in syms]
-
-
 def red_coordinates(obj):
     """The coordinates of the detection result, else those moved by some direction, with a warning."""
     co = obj["info"].get("coordinates")
@@ -102,8 +98,7 @@ def mono_string(a, vars_):
 
 
 def scaling_fixed(W, cols, fixed):
-    """The scalings of `W` that leave `fixed` unmoved, with the count removed, the redundant fixed
-    coordinates and the combinations taken."""
+    """The scalings of `W` that leave `fixed` unmoved, the count removed, redundant fixed coordinates, combinations."""
     S = [c for c in fixed if c in cols]
     k = W.shape[0]
     if not S:
@@ -139,13 +134,13 @@ def certify_transversal(W, cols, T):
 
 
 def transversal(Wres, cols, fixed, allowed=None):
-    """A certified transversal, the admissible family and the survivor meanings."""
+    """A certified transversal, the family of valid transversals and the survivor meanings."""
     k = Wres.shape[0]
     supp = [c for j, c in enumerate(cols) if np.any(Wres[:, j] != 0) and c not in set(fixed)]
     supp_all = list(supp)
     if allowed is not None:
         supp = [c for c in supp if c in set(allowed)]
-    out = {"T": None, "M": None, "admissible": None, "matroid": None, "survivor_meaning": None}
+    out = {"T": None, "M": None, "choices": None, "matroid": None, "new_parameters": None}
     if not k:
         return out
     occ = {c: int(np.sum(Wres[:, cols.index(c)] != 0)) for c in supp}
@@ -154,8 +149,8 @@ def transversal(Wres, cols, fixed, allowed=None):
     if enumerate_:
         combos = [list(c) for c in itertools.combinations(supp, k)]
         adm = [T for T in combos if rank_modp(Wres[:, [cols.index(t) for t in T]]) == k]
-        out["admissible"] = adm
-        # reduce() asks for a later certified transversal when it collects alternative charts
+        out["choices"] = adm
+        # reduce() asks for a later certified transversal when it collects alternative trafos
         skip = int(state.get("transversal_skip") or 0)
         certified = []
         for T in adm:
@@ -187,7 +182,7 @@ def transversal(Wres, cols, fixed, allowed=None):
                 continue
             ex = [1] + [-int(out["M"][i, cols.index(j)]) for i in range(len(Tn))]
             sm[j] = mono_string(ex, [j] + Tn)
-        out["survivor_meaning"] = sm
+        out["new_parameters"] = sm
     return out
 
 
@@ -207,8 +202,8 @@ def scaling_block(W, cols, labels, fixed, allowed=None):
     blk["inv_exps"] = K
     blk["invariants"] = [mono_string(K[:, j], support) for j in range(K.shape[1])]
     tv = transversal(Wres, cols, fixed, allowed)
-    blk.update(transversal=tv["T"], admissible=tv["admissible"], matroid=tv["matroid"],
-               survivor_meaning=tv["survivor_meaning"], Wres=Wres, Wcols=cols)
+    blk.update(transversal=tv["T"], choices=tv["choices"], matroid=tv["matroid"],
+               new_parameters=tv["new_parameters"], Wres=Wres, Wcols=cols)
     if tv["T"] is not None:
         blk["status"] = "reduced"
         blk["gauge_note"] = ("each fixed coordinate may take any nonzero value (here 1); "

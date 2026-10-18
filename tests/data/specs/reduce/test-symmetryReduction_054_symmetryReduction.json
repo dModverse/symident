@@ -1,0 +1,43 @@
+{
+ "name": "test-symmetryReduction_054_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "x",
+    "y",
+    "k1",
+    "k2",
+    "k3",
+    "k4"
+   ],
+   "modelExprs": null
+  },
+  "symmetries": [
+   {
+    "type": "polynomial",
+    "generator": {
+     "x": "(k1 + k2 + k3 + k4)*x**2",
+     "y": "(k1 + k2 + k3 + k4)*y**2"
+    },
+    "weights": null,
+    "support": [
+     "x",
+     "y"
+    ],
+    "degree": null
+   }
+  ]
+ },
+ "args": {
+  "dPoly": [
+   0
+  ],
+  "dDarboux": [
+   1
+  ],
+  "separable": false
+ }
+}

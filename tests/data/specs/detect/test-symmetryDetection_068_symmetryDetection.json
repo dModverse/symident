@@ -1,0 +1,47 @@
+{
+ "name": "test-symmetryDetection_068_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k*A"
+  },
+  "g": {
+   "y": "A"
+  },
+  "conditions": {
+   "rows": [
+    "c1",
+    "c2"
+   ],
+   "cols": {
+    "d": [
+     "d",
+     "d2"
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "A",
+    "time": "0",
+    "value": "0",
+    "method": "replace",
+    "root": null
+   },
+   {
+    "var": "A",
+    "time": "1",
+    "value": "d",
+    "method": "add",
+    "root": null
+   }
+  ],
+  "reduceCQ": false,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

@@ -8,14 +8,14 @@ symident analyzes ODE models
 
 .. math::
 
-   \dot x = f(x, u, p), \qquad x(t_0) = x_0(p), \qquad y = h(x, p),
+   \dot x = f(x, u, \eta), \qquad x(t_0) = x_0(\eta), \qquad y = h(x, \eta),
 
-with states :math:`x \in \mathbb{R}^n`, parameters :math:`p`, an input
-:math:`u = u(t, p)` and an observation function :math:`h`. The parameters may be given by
-a *parametrization* :math:`\theta \mapsto p(\theta)`, with :math:`\theta` in an open
+with states :math:`x \in \mathbb{R}^n`, parameters :math:`\eta`, an input
+:math:`u = u(t, \eta)` and an observation function :math:`h`. The parameters may be given by
+a *parametrization* :math:`\theta \mapsto \eta(\theta)`, with :math:`\theta` in an open
 *parameter space* :math:`\Theta \subseteq \mathbb{R}^d`; :math:`\theta` holds the estimated
 parameters and the initial values that are not fixed. The *prediction* is
-:math:`g(t; \theta) = h\big(x(t), p(\theta)\big)`. The right-hand sides, initial values and
+:math:`g(t; \theta) = h\big(x(t), \eta(\theta)\big)`. The right-hand sides, initial values and
 observables are rational functions, or become rational after the recasts described below.
 
 Structural identifiability
@@ -26,9 +26,7 @@ The model is *locally structurally identifiable* at :math:`\theta` if no
 :math:`g(\cdot; \tilde\theta) = g(\cdot; \theta)`. The property is *structural* because it
 is decided by the model equations alone, as if the observables were known exactly and
 continuously in time, and it is stated for generic :math:`\theta`, that is for all values
-outside a set of measure zero. A structurally non-identifiable model cannot be fitted
-uniquely from any amount of data; practical identifiability, which asks whether the data
-at hand suffice, is a separate question.
+outside a set of measure zero.
 
 A continuous family of parameter values with the same prediction is the orbit of a *Lie
 symmetry*, a local one-parameter group of transformations :math:`\Phi_s` of
@@ -41,53 +39,33 @@ symmetry*, a local one-parameter group of transformations :math:`\Phi_s` of
    \xi(\theta) = \partial_s \Phi_s(\theta)\big|_{s = 0},
 
 and the integral curve of :math:`X` through :math:`\theta` is the *orbit*
-:math:`\mathcal{O}(\theta)`. The components :math:`\xi_i` say how fast each coordinate
-moves along the orbit, and the coordinates with :math:`\xi_i \ne 0` are the *support* of
+:math:`\mathcal{O}(\theta)`. The coordinates with :math:`\xi_i \ne 0` are the *support* of
 the direction. A function :math:`I` with :math:`X(I) = 0` is an *invariant*: it is
 constant on orbits, and the prediction depends on :math:`\theta` only through the
-invariants. Each independent generator removes one identifiable combination, so the number
-of identifiable combinations is :math:`d` minus the number of independent generators.
+invariants. The number of identifiable combinations is :math:`d` minus the number of
+independent generators.
 
 Lie derivatives
 ---------------
 
-The parameters and the time are added to the states, :math:`z = (x, p, t)` with
-:math:`\dot p = 0` and :math:`\dot t = 1`, so that the model is the vector field
+The parameters and the time are added to the states, :math:`z = (x, \eta, t)` with
+:math:`\dot \eta = 0` and :math:`\dot t = 1`, so that the model is the vector field
+:math:`F = f\, \partial_x + \partial_t` with initial value :math:`z_0(\theta)`. Applied to
+a function :math:`\varphi(z)`, it gives the rate of change along a solution,
+:math:`F(\varphi) = \frac{\mathrm{d}}{\mathrm{d}t}\, \varphi\big(z(t)\big)`. The *Lie
+derivatives* of the output are
 
 .. math::
 
-   F = \sum_{j=1}^n f_j\big(x, u(t, p), p\big)\, \partial_{x_j} + \partial_t ,
+   L_F^0 h = h, \qquad L_F^{k+1} h = F\big(L_F^k h\big).
 
-written :math:`F = f\, \partial_x + \partial_t` for short, with initial value
-:math:`z_0(\theta)`. A vector field is written in the basis of partial derivatives: the
-coefficient of :math:`\partial_{z_j}` is the velocity of the coordinate :math:`z_j`, here
-:math:`f_j` for a state, :math:`0` for a parameter and :math:`1` for the time. The
-notation reads the field as the derivative along the flow: applied to a function
-:math:`\varphi(z)`, it gives the rate of change of :math:`\varphi` along a solution,
-
-.. math::
-
-   F(\varphi) = \sum_{j=1}^n f_j\, \frac{\partial \varphi}{\partial x_j}
-   + \frac{\partial \varphi}{\partial t} = \frac{\mathrm{d}}{\mathrm{d}t}\,
-   \varphi\big(z(t)\big)
-
-(see `Vector field
-<https://en.wikipedia.org/wiki/Vector_field#Vector_fields_on_subsets_of_Euclidean_space>`_
-on Wikipedia). The generator :math:`X` above is a vector field of the same kind, on the
-parameter space. The *Lie derivatives* of the output along :math:`F` are
-
-.. math::
-
-   L_F^0 h = h, \qquad L_F^{k+1} h = F\big(L_F^k h\big),
-
-the time derivatives of the prediction along a solution. For analytic models the
-prediction is fixed by them at the initial time,
+For analytic models they fix the prediction at the initial time,
 
 .. math::
 
    g(t; \theta) = \sum_{k \ge 0} \frac{(t - t_0)^k}{k!}\, L_F^k h\big(z_0(\theta)\big),
 
-and two parameter values with the same Lie derivatives at :math:`t_0` have the same
+so two parameter values with the same Lie derivatives at :math:`t_0` have the same
 prediction [Pohjanpalo1978]_. Collected up to order :math:`N`,
 
 .. math::
@@ -96,54 +74,34 @@ prediction [Pohjanpalo1978]_. Collected up to order :math:`N`,
    \mathrm{OIM}_N(\theta) = \frac{\partial \Psi_N}{\partial \theta},
 
 where :math:`\mathrm{OIM}_N` is the *observability-identifiability matrix* of order
-:math:`N`. A generator leaves every component of :math:`\Psi_N` unchanged,
-:math:`X\big(L_F^k h(z_0)\big) = 0`, so its tangent vector :math:`X|_\theta` lies in
-:math:`\ker \mathrm{OIM}_N(\theta) \subseteq T\Theta|_\theta`. At a generic
-:math:`\theta` the kernel consists exactly of these tangent vectors, and the model is
-locally structurally identifiable when :math:`\mathrm{OIM}_N` has full rank :math:`d` for
-some order :math:`N`.
+:math:`N`. A generator leaves every component of :math:`\Psi_N` unchanged, so its tangent
+vector lies in :math:`\ker \mathrm{OIM}_N(\theta)`. At a generic :math:`\theta` the kernel
+consists exactly of these tangent vectors, and the model is locally structurally
+identifiable when :math:`\mathrm{OIM}_N` has full rank :math:`d` for some order :math:`N`.
 
 Rank over finite fields
 -----------------------
 
-Symbolic Lie derivatives grow quickly with the order. symident evaluates
-:math:`\mathrm{OIM}_N` in exact arithmetic modulo a prime :math:`p < 2^{31}`, over the
-finite field :math:`\mathbb{F}_p`. The model is compiled to an instruction tape; the Lie
-derivatives are computed as truncated power series in time and the derivatives with
-respect to :math:`\theta` as dual numbers, so one pass of the tape yields all rows of
-:math:`\mathrm{OIM}_N` at a random point. This follows the probabilistic approach of
-[Sedoglavic2002]_. Exact arithmetic avoids the conditioning problems of floating point. A
-random point can only underestimate the generic rank, and it falls short with small
-probability [Schwartz1980]_ [Zippel1979]_; the rank is confirmed at further primes and
-points.
+symident evaluates :math:`\mathrm{OIM}_N` in exact arithmetic over the finite field
+:math:`\mathbb{F}_p`, :math:`p < 2^{31}`. The Lie derivatives are computed as truncated
+power series in time and the derivatives with respect to :math:`\theta` as dual numbers,
+so one pass yields all rows of :math:`\mathrm{OIM}_N` at a random point, following the
+probabilistic approach of [Sedoglavic2002]_. A random point can only underestimate the
+generic rank, and it falls short with small probability [Schwartz1980]_ [Zippel1979]_;
+the rank is confirmed at further primes and points.
 
 The rank grows with the order :math:`N` until it stops. With the parameters fixed, the
-states through the start of a segment lie on a smallest invariant affine space, and on it
-the rows have a generic rank that no order exceeds [HermannKrener1977]_. Where the rows at
-the start reach this rank, the order is proven *sufficient* per condition and segment:
-beyond it the rank does not grow, so the reported rank is the generic one and not a false
-plateau. Where it does not apply, for example for large stacked systems or a non-affine
-invariant set, the order stops after a plateau of constant rank, and the result says that
-the Lie order is not proven sufficient. For the gap order :math:`M` the rows after a gap
-are power series in :math:`\varepsilon`, and their rank over
-:math:`\mathbb{F}_p((\varepsilon))` is at most the rank of all their coefficients. These
-are the rows of :math:`L_{F_1}^k \big( L_{F_2}^j h_2 \circ E \big)` at the start of the
-segment before the gap, nested through the earlier gaps: Lie derivatives along one field of
-a fixed family of functions, so the same argument makes their rank final from the first
-order that adds nothing, once the rows at the start reach it. :math:`M` is raised until the
-truncated rank reaches this bound, which proves it sufficient; where no bound applies or the
-cap ``reconst_control(gap_order_cap=)`` comes first, the rank is a lower bound and
-``info["limits"]`` says where :math:`M` stopped. A verified direction is checked at the
-orders used, so its bound holds only where both orders are proven sufficient.
+states at the start of a segment lie on a smallest invariant affine space, on which the
+rows have a generic rank that no order exceeds [HermannKrener1977]_. Where the rows at the
+start reach this rank, the order is proven *sufficient*: the reported rank is the generic
+one and not a false plateau. Otherwise the order stops after a plateau of constant rank,
+and the result says that the Lie order is not proven sufficient.
 
-``engine="symbolic"`` proves its order exactly. With the parameters as constant states,
-the rows :math:`\partial_z L_F^k h` stop growing at the first order that adds no rank over
-the rational functions [HermannKrener1977]_; that order is found at a point and confirmed
-by an exact rank. Where the rows at the initial values reach this rank, a nonvanishing
-minor makes every later row there a combination of the earlier ones: the kernel is final,
-and a direction that annihilates the rows identically is proven. States that stay at
-their initial value are replaced by it; exponentials of single symbols and one logarithm
-of a number enter as further symbols.
+``engine="symbolic"`` computes the Lie derivatives over the rational functions. Its order
+is found at a point and confirmed by an exact rank; where the rows at the initial values
+reach the generic rank [HermannKrener1977]_, a nonvanishing minor makes every later row a
+combination of the earlier ones, so the kernel is final and a direction that annihilates
+the rows identically is proven.
 
 Conditions and events
 ---------------------
@@ -155,18 +113,24 @@ leave the prediction of every condition unchanged.
 
 An *event* changes a state or an input instantaneously at a known or estimated time and
 splits a condition into segments. The state at the start of a segment is the state of the
-previous segment propagated over the gap :math:`\Delta t` between the events. The gaps
-enter as formal power series variables: every gap is put on the line through the actual
-gaps, :math:`\Delta t_i = \varepsilon\, \delta_i`, and the rank is taken over
-:math:`\mathbb{F}_p((\varepsilon))`, the field of formal Laurent series in
-:math:`\varepsilon`. Directions that hold only for particular event timings are thereby
-separated from generic ones.
+previous segment propagated over the gap :math:`\Delta t` between the events. Every gap is
+put on the line through the actual gaps, :math:`\Delta t_i = \varepsilon\, \delta_i`, and
+the rank is taken over :math:`\mathbb{F}_p((\varepsilon))`, the field of formal Laurent
+series in :math:`\varepsilon`, which separates directions that hold only for particular
+event timings from generic ones.
+
+The rows after a gap are power series in :math:`\varepsilon` of a fixed family of
+functions, so the argument above bounds their rank by the rank of all coefficients. The gap
+order :math:`M` is raised until the truncated rank reaches this bound, which proves it
+sufficient. Without a bound (under ``equilibrate`` or with recast terms) or at
+``reconst_control(gap_order_cap=)``, the rank is a lower bound and ``info["limits"]`` says
+where :math:`M` stopped.
 
 Switches
 --------
 
-Each condition of a switch, a comparison or the argument of a step, ``sign()``,
-``abs()``, ``max()`` or ``min()``, is a sign condition :math:`\gamma_j(x, p, t) > 0`.
+Each condition of a switch, a comparison or the argument of ``Heaviside()``, ``sign()``,
+``abs()``, ``max()`` or ``min()``, is a sign condition :math:`\gamma_j(x, \eta, t) > 0`.
 Conditions the declared signs decide are resolved; an odd factor of an undecided
 condition is a *switching function* :math:`\gamma_j`, and
 :math:`\Gamma_j = \{\gamma_j = 0\}` its surface. A sign vector
@@ -176,12 +140,9 @@ function and resets its state on :math:`\Gamma_j`.
 
 **Regimes.** Without ``regimes``, every sign vector counts as a regime unless the
 declared signs prove it empty: when :math:`\gamma_a - \gamma_b` or
-:math:`\gamma_a + \gamma_b` has a sign that the declared positivity decides in every
-condition, the sign vectors that contradict it are dropped (``x > c`` with ``x < c - d``
-for positive ``d``). No regime is dropped because of parameter values or because a
-trajectory does not reach it; the result holds for every initial state. With
-``regimes``, each condition uses the regimes it lists, and the result holds for that
-experiment (see below).
+:math:`\gamma_a + \gamma_b` has a sign that the declared positivity decides, the sign
+vectors that contradict it are dropped. No regime is dropped because of parameter values or
+because a trajectory does not reach it, so the result holds for every initial state.
 
 **Visibility.** Two regimes :math:`\sigma, \sigma'` of a condition are neighbors at
 :math:`\Gamma_j` when they differ only in the sign of :math:`\gamma_j`. The switch on
@@ -193,13 +154,11 @@ experiment (see below).
    \big(L_{F_\sigma}^k h_{\sigma,y} - L_{F_{\sigma'}}^k h_{\sigma',y}\big)\big|_{\Gamma_j}
    \ne 0 .
 
-It is decided exactly: :math:`\gamma_j = 0` is solved for a symbol in which it is linear,
-a state first, and a nonzero Taylor coefficient of the difference at a seeded point of
-:math:`\Gamma_j`, modulo a prime, proves visibility. The switch is *invisible* when, for every pair, the observables agree
-and every state that reaches them (the closure of the states in the observables under the
-right-hand sides of both regimes) has the same right-hand side in both regimes; then every
-Lie derivative agrees. Otherwise, or when :math:`\gamma_j` is linear in no symbol, the
-switch is *undecided*. The surface of a root event is always treated as visible.
+A nonzero Taylor coefficient of the difference at a point of :math:`\Gamma_j`, modulo a
+prime, proves visibility. The switch is *invisible* when, for every pair, the observables
+agree and every state that reaches them has the same right-hand side in both regimes, so
+that every Lie derivative agrees. Otherwise it is *undecided*. The surface of a root event
+is always treated as visible.
 
 **The rule.** A direction :math:`v` of the coordinates is reported non-identifiable
 when, in every condition, it lies at the start in a distribution
@@ -223,32 +182,28 @@ neighbors
 .. math::
 
    \big(F_\sigma - F_{\sigma'}\big)\big|_{\Gamma_j} \in \Delta, \qquad
-   \big(h_\sigma - h_{\sigma'}\big)\big|_{\Gamma_j} = 0 ;
+   \big(h_\sigma - h_{\sigma'}\big)\big|_{\Gamma_j} = 0 .
 
-no :math:`Y_i` moves a fixed symbol, an input or time, and :math:`v` is
-:math:`\big(\xi, X(x_0)\big)` with the given initial values :math:`x_0`, its own value at a
-free initial value, at each resting state of each regime under ``equilibrate``. Along the
-flow of every regime the direction stays in :math:`\Delta`, so every observable keeps its
-value to first order; at a visible surface the direction is tangent, so the crossing time
-does not change; at a hidden one the crossing may move, but the jump of the dynamics lies
-in :math:`\Delta` and the observables agree there. The rule therefore never reports a
-direction along which the observables change, for any sequence of the listed regimes. It
-is a rule over regimes, not over one trajectory: without ``regimes``, a parameter that
-acts only in a regime the trajectory never reaches is still reported identifiable.
+No :math:`Y_i` moves a fixed symbol, an input or time. The direction is
+:math:`v = \big(\xi, X(x_0)\big)`: its state part is the derivative of the initial values
+along :math:`X`, under ``equilibrate`` of the resting state of each regime. Along the flow
+of every regime :math:`v` stays in :math:`\Delta`, so the observables keep their value to
+first order. At a visible surface it is tangent, so the crossing time does not change; at a
+hidden one the crossing may move, but the jump lies in :math:`\Delta` and the observables
+agree there. The rule therefore never reports a direction along which the observables
+change, for any sequence of the listed regimes.
 
 **Lower bound.** Every direction of the rule satisfies linear conditions at a point,
-and their rank bounds the rank from below. They are the observability rows, over
-:math:`\mathbb{F}_p` as above, of copies of the model that share the parameters:
+and their rank bounds the rank from below. They are the observability rows of copies of
+the model that share the parameters:
 
 - each regime from the start of each condition, with its events;
 - each regime from a generic point of each visible surface that is linear in a state,
-  the free coordinates of the point shared by the regimes and projected out: there a
-  direction of the rule is tangent to the surface;
+  where a direction of the rule is tangent to the surface;
 - each regime from a generic point, when a switch of the condition is not visible;
-- each copy switched at a fixed time into every other regime of the condition: the
-  outputs after the switch contain the Lie derivatives along words of two regimes,
-  :math:`L_{F_\sigma}^a L_{F_{\sigma'}}^b h_{\sigma'}`, which a direction of an invariant
-  distribution leaves unchanged;
+- each copy switched at a fixed time into every other regime of the condition, whose
+  outputs contain the Lie derivatives along words of two regimes,
+  :math:`L_{F_\sigma}^a L_{F_{\sigma'}}^b h_{\sigma'}`;
 - the switching time :math:`\tau_j(\theta)` of every visible switch in time alone.
 
 The kernel of the stacked rows, projected onto the coordinates, contains every direction
@@ -256,55 +211,72 @@ of the rule; its dimension :math:`k` gives the lower bound :math:`d - k`. A mino
 nonzero at the sample point is nonzero as a rational function, so the bound needs no
 probabilistic argument.
 
-**Upper bound.** Candidates are the scalings of the integer kernel (the terms of every
-visible :math:`\gamma_j` scaled alike, initial values and events as constraints), the
-closed forms of the stacked kernel and the unit field of every coordinate. With the unit
-fields of the states they form the family :math:`Y_i`; a member that fails a condition of
-the rule is dropped until the family passes, and a candidate counts when its start vector
-lies in :math:`\Delta`. Every identity, membership in :math:`\Delta` included, is proven
-by symbolic simplification to zero, after a nonzero value at a rational point has had the
-chance to refute it; :math:`\ell` such candidates independent at a rational point bound the
-rank from above by :math:`d - \ell`.
+**Upper bound.** The candidates are the scalings of the integer kernel, the closed forms of
+the stacked kernel and the unit field of every coordinate. A candidate that fails a
+condition of the rule is dropped until the family passes. Every identity is first tested at
+a rational point and then proven by symbolic simplification to zero; :math:`\ell`
+remaining candidates independent at a rational point bound the rank from above by
+:math:`d - \ell`.
 
 When :math:`\ell = k`, the rank is :math:`d - k` and the candidates span the
-non-identifiable directions. Otherwise the directions of the stacked kernel that the rule
-does not prove are reported as ``verified``, the rank :math:`d - k` is a lower bound, and
-``info["switching"]["uncertified"]`` lists the rejected candidates. For an undecided switch the rule accepts either the tangency or the
-hidden jump; neither option reports a direction along which the observables change, and
-the rows of its surface are left out, so the two bounds stay valid. ``scalings_only``
-returns the proven scalings alone.
+non-identifiable directions. Otherwise :math:`d - k` is a lower bound and
+``info["switching"]["uncertified"]`` names the rejected candidates. The directions of the
+stacked kernel that the rule does not prove satisfy only the necessary conditions of the
+stacked rows, so they are listed under ``info["switching"]["candidates"]``, not as
+symmetries. For an undecided switch the rule accepts either the tangency or the hidden jump
+and leaves out the rows of its surface, so both bounds stay valid.
 
-**Listed regimes.** ``regimes`` lists, per condition, the regimes an experiment visits:
-each entry is a comparison or a list of them and selects the regimes on those sides; the
-first entry is the regime at the start. The rule, the rows and the candidates then use
-these regimes, and a surface counts only when listed regimes lie on both of its sides.
-Parameters of the other regimes stay coordinates, so a parameter that acts only outside
-the listed regimes is reported non-identifiable. The start is checked: a sign of
-:math:`\gamma_j(x_0)` that the declared signs decide must agree with the first entry, else
-the analysis raises an error; an undecided sign is an assumption, listed under
-``info["switching"]["conditions"]``.
+**Listed regimes.** With ``regimes``, the rule, the rows and the candidates use the listed
+regimes of each condition, and a surface counts only when listed regimes lie on both of its
+sides. Parameters of the other regimes stay coordinates, so a parameter that acts only
+outside the listed regimes is reported non-identifiable. A sign of :math:`\gamma_j(x_0)`
+that the declared signs decide must agree with the first entry, else the analysis raises an
+error; an undecided sign is declared by ``regimes`` and listed under ``declared`` in
+``info["switching"]["conditions"]`` and under ``info["assumptions"]["starts"]``.
 
 **Limits.** Each is an error, never a result: a surface in the parameters alone whose
-side ``regimes`` does not give; a condition on a switched expression; a visible surface
-that is linear in no symbol when a candidate must be checked on it; more than
-:math:`2^{12}` sign vectors; ``gauge``, ``reduce_cq`` and ``free_initial``; under
-``equilibrate``, a resting state without a closed form; a listed regime that is not
-feasible; and a start that contradicts the initial values.
+side ``regimes`` does not give; a condition on a switched expression; more than 4096 sign
+vectors; ``gauge``, ``reduce_cq``, ``free_initial`` and ``engine="symbolic"``; a state
+named ``time``; under ``equilibrate``, a resting state without a closed form; a listed
+regime that is not feasible; and a start that contradicts the initial values.
 
 Steady states
 -------------
 
 With ``equilibrate=True`` every condition starts at its resting state
-:math:`f(x^\ast, p) = 0`, which binds :math:`x_0 = x^\ast` to :math:`\theta`. The resting
-state is solved over :math:`\mathbb{F}_p` at each sample point: by linear elimination
-where possible, by resultants for small coupled cores, and by msolve [Berthomieu2021]_
-for coupled nonlinear systems; no closed form is needed. The kernel is taken in the joint
-coordinates of parameters and resting states, with the tangency condition
+:math:`f(x^\ast, \eta) = 0`, which binds :math:`x_0 = x^\ast` to :math:`\theta`. No closed
+form is needed: the resting state is solved over :math:`\mathbb{F}_p` at each sample
+point, by linear elimination, by resultants for small coupled cores, or by msolve
+[Berthomieu2021]_. The kernel is taken in the joint coordinates of parameters and resting
+states, with the tangency condition
 :math:`\partial_x f\, \xi_x + \partial_\theta f\, \xi_\theta = 0` as additional rows. By
 default the first condition draws its resting states and solves for the turnover rates
-instead (the forward seed); the other conditions solve for their states. Where several
-resting branches exist, the solve takes the first nonzero branch over
-:math:`\mathbb{F}_p`.
+instead (the forward seed). Where several resting branches exist, the first nonzero branch
+over :math:`\mathbb{F}_p` is taken, and ``info["branches"]`` names it.
+
+**Diagonal start.** Conditions that share :math:`\theta` have coupled resting states. Rank
+and kernel are generic properties of the joint variety
+:math:`W = \{(\theta, x_1, \dots, x_C) : f_c(x_c, \theta) = 0\}`, so any point of
+:math:`W` over :math:`\mathbb{F}_p((\varepsilon))` outside an exceptional set gives them.
+symident looks for free parameters :math:`Z` whose zero makes every condition coincide with
+the first, and the largest set :math:`S` of states whose zero is then invariant. At
+:math:`\theta_Z = 0, x_S = 0` the forward seed is a resting point :math:`P_0` of every
+condition at once. Along :math:`\theta(\varepsilon) = \theta_0 + \varepsilon\, \delta`,
+with :math:`\delta` the values of :math:`Z` at the sample point, each condition is lifted by
+Newton steps
+
+.. math::
+
+   x_{c,k} = -J_c(P_0)^{-1}\, [\varepsilon^k]\, f_c\big(x_{c,<k}, \theta(\varepsilon)\big),
+   \qquad J_c = \partial_x f_c .
+
+If :math:`J_c(P_0)` is invertible, the series is a germ of the unique component of
+:math:`W` through :math:`P_0`; a trial at a random point checks this and that the states of
+:math:`S` leave zero. The truncated series rank bounds the generic rank from below; whether
+the series order is proven sufficient is ``info["series_certified"]``. The kernel at the
+sample point itself, :math:`\varepsilon = 1`, is read from Padé forms of its entries, each
+accepted only when the coefficients beyond those that determine it agree with it.
+``SYMIDENT_NODIAG`` switches the diagonal start off.
 
 Non-rational terms
 ------------------
@@ -321,28 +293,23 @@ right-hand side follows from the chain rule, :math:`\varphi'(v)\, \sum_j \partia
    \arctan(v):\ \ \frac{1}{1 + v^2}, \qquad \operatorname{artanh}(v):\ \ \frac{1}{1 - v^2},
 
 and for :math:`\arcsin`, :math:`\arccos`, :math:`\operatorname{arsinh}` and
-:math:`\operatorname{arcosh}` contains a square root, which is recast in turn.
-:math:`\sin` and :math:`\cos` are expressed through the half-angle tangent
-:math:`\tan(v/2)`. A free exponent :math:`b^n` becomes :math:`E = b^n` with the companion
-:math:`L = \log b`, after which the field is rational and :math:`n` enters through
+:math:`\operatorname{arcosh}` contains a square root, which is recast in turn. The
+trigonometric functions are expressed through the half-angle tangent :math:`\tan(v/2)`. A
+free exponent :math:`b^n` becomes :math:`E = b^n` with the companion :math:`L = \log b`,
+after which the field is rational and :math:`n` enters through
 :math:`\partial E / \partial n = E L`.
 
 The initial value of a new state is :math:`\varphi(v)` at the initial state. Where it
-depends on coordinates, a transcendental function (exponential, logarithm, arctangent)
-becomes a generic leaf tied to its argument by the linearized relation
-:math:`\mathrm{d}w = \varphi'(v)\, \mathrm{d}v`: a transcendental graph lies in no proper
-algebraic set, so a random point on it is generic. An algebraic function has no such
-generic point and is handled exactly instead. When its argument is affine in one
-coordinate, :math:`v = a + b\,\theta_i`, the analysis runs in :math:`L = \log v` in place
-of :math:`\theta_i`; otherwise the root is taken modulo the prime at every sample point. A
-square root exists for half the points, and a point without one is redrawn; an odd root of
-degree :math:`\ell` is unique for every value once :math:`\ell` is prime to
-:math:`p - 1`, since :math:`x \mapsto x^\ell` is then a bijection of
-:math:`\mathbb{F}_p`, and a rational power :math:`v^{k/\ell}` combines the two. Roots of
-numeric constants and odd degrees choose the primes: the analysis runs over primes that
-contain every root of the model. A logarithm or fractional power needs an argument that is
-positive on the parameter space. An observable :math:`a \log h + c` with a numeric
-:math:`a` contains the same information as :math:`h` and is analyzed as such.
+depends on the coordinates, a transcendental :math:`\varphi` becomes a generic leaf tied to
+its argument by :math:`\mathrm{d}w = \varphi'(v)\, \mathrm{d}v`: a transcendental graph
+lies in no proper algebraic set, so a random point on it is generic. An algebraic
+:math:`\varphi`, a root or rational power, has no such point and is handled exactly:
+through :math:`L = \log v` when :math:`v` is affine in one coordinate, otherwise by taking
+the root modulo the prime at each sample point, over primes in which every root of the
+model exists. A logarithm or fractional power needs an argument positive on
+:math:`\Theta`. An observable :math:`\kappa \sum_i a_i \log h_i + c` is a strictly
+monotone function of :math:`\prod_i h_i^{a_i} e^{c/\kappa}` and is analyzed as that
+product.
 
 Closed forms
 ------------
@@ -364,41 +331,36 @@ rational coefficients by the Chinese remainder theorem and rational reconstructi
 [Wang1982]_. Every closed form is checked at fresh seeded points before it is reported.
 
 A direction that no sampling route closes is fitted along lines
-:math:`\theta^0 + \lambda\,\delta` through the base point. Under ``equilibrate`` the
-resting state is continued as a power series in :math:`\lambda`; without it the leaves
-follow the line and the initial values with radicals become series. The kernel entries
-become series, and their Padé approximants give the entries on a star of lines, from
-which each entry is fitted as a rational function of the parameters. An entry that is not
-rational in the parameters alone is fitted in the parameters and the resting states (or
-the initial values with radicals), modulo their equations: states held at zero drop out,
-and states that enter an equation linearly are eliminated or, when all do, substituted. A
-remaining state of condition :math:`k` is named ``x_c<k>``, or ``x`` when the direction
-needs a single condition. With events after the start the kernel takes the series along
-the line on an axis of its own, separate from the formal gaps between the events, and the
-resting state seeds the first segment. Each entry is checked at a prime outside its lift
-and the direction against the kernel at a fresh point. In the recast coordinates of a free
-exponent, :math:`L = \log b` moves with the parameters, and :math:`E = b^n` and :math:`L`
-are substituted back into the closed form. The route does not apply to the transient
-recast coordinates, to kernels that depend on the gaps between events, or to event times
-that depend on the coordinates; ``reconst_control(homotopy=False)`` turns it off.
+:math:`\theta^0 + \lambda\,\delta` through the base point. Its kernel entries become power
+series in :math:`\lambda`, under ``equilibrate`` with the resting state continued along the
+line; their Padé approximants give the entries on a star of lines, from which each entry is
+fitted as a rational function. An entry that is not rational in the parameters alone is
+fitted in the parameters and the resting states modulo their equations, with a state of
+condition :math:`k` named ``x_c<k>``. Each entry is checked at a prime outside its lift, and
+the direction against the kernel at a fresh point. ``reconst_control(homotopy=False)``
+turns the route off.
 
-Every closed form has a *level*. It is ``exact`` when proven over Q: a scaling from the
-integer kernel, or a direction lifted to a vector field on parameters and states (the
-closed form itself, its canonical representative, its multiple by the common denominator,
-or a combination of the fields of each regime) whose identities per state equation,
-observable, initial value and event cancel symbolically. Otherwise it is ``verified``: it
-lies in the kernel at two seeded points modulo a verification prime :math:`q`, and from a
-degree bound :math:`D` of the observability rows a wrong closed form passes with
-probability at most :math:`(D/q)^2` per direction [Schwartz1980]_ (``info["bound"]``).
-The check runs at the Lie and gap orders used, so the bound holds only where both are
-proven sufficient. A direction without closed form is ``open``.
+Every closed form has a *level*:
 
-A rank is *proven* when the rank plus the number of independent exact scalings (and
-static symmetries) equals :math:`d`, or when every direction is proven over Q. When every
-direction lies in the span of invariant vector fields of the model, the invariance covers
-every Lie order, but it is checked modulo a prime at one point, so the rank is *verified*,
-not proven. It is also *verified* when both orders are proven sufficient and every
-direction has a closed form, and a *lower bound* otherwise (``info["rank_status"]``).
+- ``exact``: proven over Q, as a scaling from the integer kernel or as a vector field on
+  parameters and states whose identities per state equation, observable, initial value and
+  event cancel symbolically.
+- ``verified``: in the kernel at two seeded points modulo a verification prime :math:`q`.
+  With a degree bound :math:`D` of the cleared kernel identity, a wrong closed form passes
+  with probability at most :math:`(D/q)^2` [Schwartz1980]_; ``info["bound"]`` holds the sum
+  over the verified directions. The bound needs a rational model without resting states or
+  root events, with numeric event times, and Lie and gap orders proven sufficient, since
+  the check runs at the orders used.
+- ``checked``: the same test where no bound applies, or a test on the entries that can be
+  evaluated at the points; ``info["bound"]`` says why a bound does not apply.
+- ``open``: no closed form.
+
+The rank is *proven* when it is full, when it plus the number of independent exact
+directions equals :math:`d`, or when every direction is proven over Q. It is *verified*,
+always with a probability, when the Lie, gap and series orders are proven sufficient and
+every direction is verified with a bound, or when every direction lies in the span of
+invariant vector fields of the model, checked at random points with a bound
+(``info["rank_fields_bound"]``). Otherwise it is a *lower bound* (``info["rank_status"]``).
 
 Reduction
 ---------
@@ -409,17 +371,80 @@ monomial, polynomial and rational invariants, Darboux polynomials and exponentia
 [Goriely2001]_ within degree bounds.
 
 The invariants become new parameters, :math:`I_l(\theta) = q_l`, and the remaining
-coordinates are expressed through them. The result is a *global section*: it maps the new
+coordinates are expressed through them. A scaling is removed by fixing one of its
+coordinates at one, for example an initial value or a scale. Every orbit of a scaling is a
+ray and meets that value once, so the result is a *global section*: it maps the new
 parameters one-to-one onto a *global cross-section*, a set that meets every orbit exactly
-once, so the invariants are global coordinates on the orbit space :math:`\Theta / G`. A
-scaling is removed by fixing one of its coordinates, for example an initial value or a
-scale at one; every orbit of a scaling is a ray and meets such a value once. Positivity
-of the resulting expressions on the parameter space is certified, and a block whose
-cross-section is not met by every orbit in the parameter space is reported as partial.
-The trafo is checked over Q, and the detection on the reduced model has to leave exactly
-the remaining directions. Each block is ``exact`` when every claim is proven,
-``verified`` when a direction rests on a verified closed form, and ``assumed`` when a
-claim rests on an assumption that the result names.
+once, and the invariants are global coordinates on the orbit space :math:`\Theta / G`.
+
+For a block of :math:`r` general generators, the invariants are solved for coordinates
+:math:`c = C(q, g)`, with :math:`r` gauge coordinates :math:`g` left. Every level set
+:math:`L_q = \{\theta \in \Theta : I(\theta) = q\}` is one orbit when
+
+1. :math:`C(q, g)` is the unique solution for every gauge value, so :math:`L_q` is the
+   graph of :math:`C(q, \cdot)` over :math:`G_q = \{g : C(q, g) \in \Theta\}`;
+2. the :math:`r \times r` minor of the generator components on :math:`g` has one sign on
+   :math:`\Theta`, so every orbit is :math:`r`-dimensional and open in :math:`L_q` (for
+   generators with poles, the minor of the fields times their denominators);
+3. :math:`G_q` is connected.
+
+:math:`G_q` is given by one condition :math:`p > 0` per positive solved coordinate and
+square-root factor. It is connected when every condition is convex in :math:`g` (affine, a
+concave quadratic, or, in one positive gauge coordinate, a polynomial with at most one sign
+change, hence at most one positive root by Descartes' rule of signs), or when a gauge
+coordinate enters every condition affinely with a coefficient of known sign: the fibers are
+then intervals, and the set is connected when its projection is, which is decided the same
+way. Square roots in :math:`g`, or of a single positive invariant, are first removed by a
+square substitution, which is one to one on the positive half-line. The section point
+:math:`T(q)` then lies in :math:`L_q` and, by the positivity certificate, in
+:math:`\Theta`, so every orbit meets the section (``reach``). Under partial coverage the
+level sets are still single orbits, and an orbit meets the section exactly when its
+invariants lie where the solved entries are positive.
+
+A section on a face, :math:`Z = 0` for coordinates :math:`Z` of the block, lies outside
+:math:`\Theta` and is reached only in a limit. With :math:`Z` as the gauge, the conditions
+above make every level set one orbit, and :math:`C(q, Z) \to C(q, 0) > 0` puts the face
+point :math:`F(q) = (0, C(q, 0))` in the closure of every orbit of :math:`L_q`. The output
+is constant along the orbit, so :math:`F(q)` gives it when the model is continuous there:
+no model expression has a pole at the face, every denominator in the parameters of the
+block has one sign there, and under ``equilibrate`` the resting state :math:`x^\ast(\theta)`
+has a limit. For that limit each generator is lifted to a field
+:math:`\tilde X = X + \xi_x \partial_x` tangent to :math:`f = 0`, by the state components
+of an exact direction or by the implicit derivative
+:math:`\xi_x = -J^{-1} f_\theta \xi_\theta`; invariants of the lifted fields, verified
+exactly, that solve for the moved states and stay positive at :math:`Z = 0` give the limit
+along every orbit. The implicit derivative needs :math:`J` regular: proven when
+:math:`\det J` has one sign on :math:`\Theta`, else checked at random points. Without a
+lift, the resting state is continuous when :math:`f` is affine in the states with a
+resting Jacobian of one sign at the face, else checked at random points of the face. A
+checked resting state sets the block's ``face_level`` and ``level`` to ``checked``.
+
+That every orbit meets the section :math:`S` at most once (``injective``) is proven, for any
+number of generators, when the solved coordinates give back every point of :math:`S` from
+its invariants, :math:`T(I(\theta)) = \theta` for :math:`\theta \in S`: two points of one
+orbit have the same invariants and therefore coincide. The identity is shown over Q on a
+parametrization of the positive points of :math:`S`, monomial for a section of balances,
+else by solving each equation for a coordinate of degree one. The claim is made for
+sections with total coverage that do not lie on a face. For a block with one generator it
+also holds when :math:`X` changes the pinned coordinate, or the log-ratio of the two sides
+of the section, with one sign on :math:`\Theta`.
+
+A claim that is not proven is listed under the block's ``unproven`` and makes the block
+``open``; a block is ``verified`` or ``checked`` when a direction or a face resting state
+has that level, and ``exact`` otherwise. The transformation is checked over Q, and with
+``check=True`` the detection runs again on the reduced model (``Reduction.checks["loop"]``).
+
+What a result rests on
+----------------------
+
+Besides proofs, a result rests on two assumptions, which ``info["assumptions"]`` and
+``Reduction.assumptions`` list: the declared domain :math:`\Theta` (``positive``) and, for a
+model with switches, the sides that ``regimes`` declares at the start where the initial
+values do not decide them. Both are part of the model as declared. A verified closed form
+or rank is wrong with probability at most ``error_bound`` [Schwartz1980]_. The other steps
+are proven, or the result names them: a ``checked`` direction, a rank that is a ``lower
+bound``, a section claim under ``unproven``, a limit under ``info["limits"]`` and a resting
+branch under ``info["branches"]``.
 
 References
 ----------

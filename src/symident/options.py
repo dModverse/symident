@@ -37,7 +37,8 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
     general_deg_num, general_deg_den : int
         Numerator and denominator degree of the general sparse rational fit.
     gap_order_cap : int
-        Order of the power series in the time between events.
+        Highest order of the power series in the time between events; reaching it is an
+        entry in ``info["limits"]``.
     minsupport_cand_cap : int
         Column subsets searched for directions with small support.
     perprime_cap : int
@@ -45,8 +46,7 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
     perprime_min_primes : int
         Primes with samples for a reconstruction under a steady state.
     homotopy : bool
-        Whether directions still open under a steady state are fitted along parameter lines
-        as a last route.
+        Whether directions still open are fitted along parameter lines as a last route.
     homotopy_degree : int
         Total degree bound of the entries fitted by the homotopy route.
     timeout : float

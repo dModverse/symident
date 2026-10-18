@@ -1,0 +1,16 @@
+{
+ "name": "test-symmetryReduction_011_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k1*A + k2*B",
+   "B": "k1*A - k2*B"
+  },
+  "g": {
+   "y": "alpha*A"
+  },
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

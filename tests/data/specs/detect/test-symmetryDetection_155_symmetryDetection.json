@@ -1,0 +1,133 @@
+{
+ "name": "test-symmetryDetection_155_symmetryDetection",
+ "spec": {
+  "f": {
+   "m": "1*(km*plasmid) -1*(dm*m)",
+   "E": "1*(kt*m) -1*(dE*E) -1*(kex*E)",
+   "X": "1*(kex*E) +1*(kx) -1*(dX*X*(1 + L))",
+   "L": "1*(kL) -1*(dL*L)"
+  },
+  "reactions": {
+   "species": [
+    "m",
+    "E",
+    "X",
+    "L"
+   ],
+   "smatrix": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    [
+     -1,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     1,
+     0,
+     0
+    ],
+    [
+     0,
+     -1,
+     0,
+     0
+    ],
+    [
+     0,
+     -1,
+     1,
+     0
+    ],
+    [
+     0,
+     0,
+     1,
+     0
+    ],
+    [
+     0,
+     0,
+     -1,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     1
+    ],
+    [
+     0,
+     0,
+     0,
+     -1
+    ]
+   ],
+   "rates": [
+    "km*plasmid",
+    "dm*m",
+    "kt*m",
+    "dE*E",
+    "kex*E",
+    "kx",
+    "dX*X*(1 + L)",
+    "kL",
+    "dL*L"
+   ]
+  },
+  "g": {
+   "yX": "sX*(X + E)",
+   "ym": "sm*m",
+   "yL": "L"
+  },
+  "conditions": {
+   "rows": [
+    "ctrl",
+    "oe"
+   ],
+   "cols": {
+    "plasmid": [
+     0,
+     1
+    ],
+    "dose": [
+     1,
+     1
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "L",
+    "time": "0",
+    "value": "dose",
+    "method": "add",
+    "root": null
+   },
+   {
+    "var": "L",
+    "time": "5",
+    "value": "dose",
+    "method": "add",
+    "root": null
+   }
+  ],
+  "equilibrate": true,
+  "reduceCQ": true,
+  "reconstruct": true,
+  "gaugePreference": "AUTO"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

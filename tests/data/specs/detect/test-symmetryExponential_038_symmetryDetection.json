@@ -1,0 +1,13 @@
+{
+ "name": "test-symmetryExponential_038_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "-k*max(x, c)"
+  },
+  "g": {
+   "y": "s*x"
+  }
+ },
+ "env": {},
+ "options": {}
+}

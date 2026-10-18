@@ -1,0 +1,213 @@
+{
+ "name": "test-symmetryExponential_022_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "csei",
+    "cneg",
+    "tsei",
+    "alpha",
+    "ce",
+    "T",
+    "Ae",
+    "Ane",
+    "Ape",
+    "Asei",
+    "Ee",
+    "Ene",
+    "Epe",
+    "Esei",
+    "He",
+    "Hne",
+    "Hpe",
+    "Hsei",
+    "Ta",
+    "Wc",
+    "We",
+    "Wp",
+    "hA",
+    "rhocp",
+    "tref"
+   ],
+   "modelExprs": [
+    "-Asei*exp(-Esei/T)*csei",
+    "-Ane*exp(-tsei/tref)*exp(-Ene/T)*cneg",
+    "Ane*exp(-tsei/tref)*exp(-Ene/T)*cneg",
+    "Ape*exp(-Epe/T)*alpha*(1 - alpha)",
+    "-Ae*exp(-Ee/T)*ce",
+    "(Hsei*Wc*Asei*exp(-Esei/T)*csei + Hne*Wc*Ane*exp(-tsei/tref)*exp(-Ene/T)*cneg + Hpe*Wp*Ape*exp(-Epe/T)*alpha*(1 - alpha) + He*We*Ae*exp(-Ee/T)*ce - hA*(T - Ta))/rhocp",
+    "T"
+   ]
+  },
+  "symmetries": [
+   {
+    "type": "scaling",
+    "generator": {
+     "Hsei": "Hsei",
+     "csei": "-csei"
+    },
+    "weights": {
+     "Hsei": "1",
+     "csei": "-1"
+    },
+    "support": [
+     "Hsei",
+     "csei"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "scaling",
+    "generator": {
+     "Hsei": "Hsei",
+     "We": "We",
+     "Wp": "Wp",
+     "cneg": "cneg",
+     "hA": "hA",
+     "rhocp": "rhocp",
+     "tref": "tref",
+     "tsei": "tsei"
+    },
+    "weights": {
+     "Hsei": "1",
+     "We": "1",
+     "Wp": "1",
+     "cneg": "1",
+     "hA": "1",
+     "rhocp": "1",
+     "tref": "1",
+     "tsei": "1"
+    },
+    "support": [
+     "Hsei",
+     "We",
+     "Wp",
+     "cneg",
+     "hA",
+     "rhocp",
+     "tref",
+     "tsei"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "scaling",
+    "generator": {
+     "We": "We",
+     "ce": "-ce"
+    },
+    "weights": {
+     "We": "1",
+     "ce": "-1"
+    },
+    "support": [
+     "We",
+     "ce"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "scaling",
+    "generator": {
+     "He": "He",
+     "We": "-We"
+    },
+    "weights": {
+     "He": "1",
+     "We": "-1"
+    },
+    "support": [
+     "He",
+     "We"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "scaling",
+    "generator": {
+     "Hne": "Hne",
+     "Hsei": "Hsei",
+     "We": "We",
+     "Wp": "Wp",
+     "hA": "hA",
+     "rhocp": "rhocp"
+    },
+    "weights": {
+     "Hne": "1",
+     "Hsei": "1",
+     "We": "1",
+     "Wp": "1",
+     "hA": "1",
+     "rhocp": "1"
+    },
+    "support": [
+     "Hne",
+     "Hsei",
+     "We",
+     "Wp",
+     "hA",
+     "rhocp"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "scaling",
+    "generator": {
+     "Hpe": "Hpe",
+     "Wp": "-Wp"
+    },
+    "weights": {
+     "Hpe": "1",
+     "Wp": "-1"
+    },
+    "support": [
+     "Hpe",
+     "Wp"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "scaling",
+    "generator": {
+     "Wc": "Wc",
+     "We": "We",
+     "Wp": "Wp",
+     "hA": "hA",
+     "rhocp": "rhocp"
+    },
+    "weights": {
+     "Wc": "1",
+     "We": "1",
+     "Wp": "1",
+     "hA": "1",
+     "rhocp": "1"
+    },
+    "support": [
+     "Wc",
+     "We",
+     "Wp",
+     "hA",
+     "rhocp"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "general",
+    "generator": {
+     "Ane": "Ane",
+     "tsei": "tref"
+    },
+    "weights": null,
+    "support": [
+     "Ane",
+     "tsei"
+    ],
+    "degree": 1
+   }
+  ]
+ },
+ "args": {}
+}

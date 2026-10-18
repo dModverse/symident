@@ -23,9 +23,7 @@ SYMPY_FAILS = (BasePolynomialError, NotImplementedError, TypeError, ValueError, 
 
 
 def swallow(exc, where):
-    """Record `exc`, which the route at `where` turns into a failure, in
-    info["errors"]; with the DEBUG switch, or for a missing msolve or a prime rerun, raise
-    it instead."""
+    """Record `exc` from the route at `where` in info["errors"]; raise it on DEBUG, missing msolve or a prime rerun."""
     from .gfp import NeedPrimesError
     from .sym.msolve import MsolveMissingError
     if state.env("DEBUG") or isinstance(exc, (NeedPrimesError, MsolveMissingError)):
@@ -38,8 +36,7 @@ ERRORS_KEPT = 200
 
 
 def sympy_fail(exc):
-    """Record a failure of SymPy that the caller turns into a failed route; with the DEBUG
-    switch, raise a TypeError or ValueError that SymPy did not raise."""
+    """Record a failure of SymPy; with DEBUG, raise a TypeError or ValueError that SymPy did not raise."""
     tb, in_sympy = exc.__traceback__, False
     while tb is not None:
         in_sympy = in_sympy or "/sympy/" in tb.tb_frame.f_code.co_filename.replace("\\", "/")

@@ -1,0 +1,26 @@
+{
+ "name": "test-symmetryExponential_055_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "k1*(a*y)^n - d1*x",
+   "y": "k2 - d2*y"
+  },
+  "g": {
+   "h1": "x",
+   "h2": "y"
+  },
+  "positive": [
+   "x",
+   "y",
+   "k1",
+   "k2",
+   "d1",
+   "d2",
+   "K",
+   "a"
+  ],
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

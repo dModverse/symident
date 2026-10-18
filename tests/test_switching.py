@@ -228,7 +228,8 @@ def test_named_regimes():
     r = det(f, {"y": "x"}, trafo={"x": "2"}, regimes=["x > c"], reconstruct=True)
     assert (r.rank, r.dim) == (1, 3)
     same_span(r, [{"k2": "1"}, {"c": "1"}])
-    assert r.info["switching"]["conditions"][0]["assumptions"] == ["c - x < 0 at the start"]
+    assert r.info["switching"]["conditions"][0]["declared"] == ["c - x < 0 at the start"]
+    assert list(r.info["assumptions"]["starts"].values()) == [["c - x < 0 at the start"]]
     # a start that contradicts the known initial values is an error
     with pytest.raises(ValueError, match="initial values give"):
         det({"x": "piecewise(-k1*x, x > 1, -k2*x)"}, {"y": "x"}, trafo={"x": "2"},
@@ -373,14 +374,25 @@ def test_a_field_with_integer_weights_is_a_scaling():
     assert {tuple(s.support): s.weights for s in r.symmetries}[("a",)] == {"a": "1"}
 
 
-def test_a_direction_the_rule_does_not_prove_is_verified_with_its_probability():
+def test_a_direction_the_rule_does_not_prove_is_a_candidate_not_a_symmetry():
     m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"},
                  inputs=["u"], events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"},
                                        {"var": "x2", "root": "x1 - c", "value": "0", "method": "replace"}],
                  conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
     r = si.detect(m, equilibrate=True, reconstruct=True)
     assert (r.rank, r.dim) == (5, 7)
-    assert {s.level for s in r.symmetries} == {"exact", "verified"}
-    assert 0 < r.info["bound"]["probability"] < 1e-10
+    assert {s.level for s in r.symmetries} == {"exact"}
+    cands = r.info["switching"]["candidates"]
+    assert len(r.symmetries) + len(cands) == r.dim - r.rank
+    assert all(c["support"] and c["type"] in ("scaling", "general") for c in cands)
     assert r.info["rank_status"]["status"] == "lower bound" and r.info["switching"]["uncertified"]
-    assert r.info["proof"][0]["reason"].startswith("the rule of the switches is not proven")
+    assert "up to" in repr(r) and "Candidates, not proven" in repr(r)
+
+
+def test_a_direction_that_moves_a_root_surface_is_no_symmetry():
+    m = si.Model({"x": "-k*x", "z": "a"}, {"y": "s*x"},
+                 events=[{"var": "x", "root": "z - c", "value": "x0", "method": "replace"}])
+    r = si.detect(m, reconstruct=True)
+    assert all(s.level == "exact" for s in r.symmetries)
+    assert {"a", "z"} not in [set(s.support) for s in r.symmetries]
+    assert r.info["rank_status"]["status"] == "lower bound"

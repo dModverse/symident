@@ -1,0 +1,21 @@
+{
+ "name": "test-symmetryDetection_112_symmetryDetection",
+ "spec": {
+  "f": {
+   "m": "ktx - dm*m",
+   "p": "ktl*m - dp*p"
+  },
+  "g": {
+   "y": "p"
+  },
+  "equilibrate": true,
+  "method": "observability",
+  "symEngine": "symbolic"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

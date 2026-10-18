@@ -1,0 +1,20 @@
+{
+ "name": "test-symmetryDetection_051_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "-k * x"
+  },
+  "g": {
+   "y": "s*a*b*c*d*e*x"
+  },
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

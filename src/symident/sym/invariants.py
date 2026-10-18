@@ -18,11 +18,7 @@ def _parse_generators(gens, extra_lines):
 
 
 def module_reduce_replay(rows, cols, schedule):
-    """Exact sympy replay of a module-reduction pivot schedule, one call for the
-    whole block. `rows`: per-generator dicts {col: expr-string} (missing = 0)
-    over the coordinate list `cols`; `schedule`: 1-based [row, col] pivot pairs.
-    Returns {'rows': [{col: string} nonzero entries], 'combo': [[strings]]}, the
-    combination coefficients tracking each reduced row over the originals."""
+    """Exact sympy replay of a module-reduction pivot schedule: the reduced 'rows' and their 'combo'."""
     cols = [str(c) for c in _as_list(cols)]
     rows = _as_list(rows)
     k = len(rows)
@@ -51,10 +47,7 @@ def module_reduce_replay(rows, cols, schedule):
 
 
 def darboux_cofactors(candidates, generators):
-    """Batch Darboux division test with proportionality dedup. For each candidate
-    polynomial string, X(P)/P must be polynomial for EVERY generator (dicts
-    {coord: xi-string}); duplicates proportional to an earlier keeper are
-    dropped. Returns {'Ps': [strings], 'lams': [[cofactor strings per gen]]}."""
+    """{'Ps', 'lams'}: candidates P with X(P)/P polynomial for every generator, proportional ones dropped."""
     cands = [str(c) for c in _as_list(candidates)]
     xis, parse = _parse_generators(generators, cands)
     Ps, lams, kept = [], [], []
@@ -88,9 +81,7 @@ def darboux_cofactors(candidates, generators):
 
 
 def verify_invariants(invariants, generators):
-    """Batch exact verification X(I) = 0: for each invariant string, the Lie
-    derivative along every generator must cancel to literal 0 (a proof, not a
-    sample). Returns a list of booleans."""
+    """Per invariant, whether its Lie derivative along every generator cancels to literal 0."""
     invs = [str(i) for i in _as_list(invariants)]
     xis, parse = _parse_generators(generators, invs)
     out = []
@@ -121,10 +112,7 @@ def verify_invariants(invariants, generators):
 
 
 def integrating_factor_integral(Mstr, xi1, xi2, z1, z2):
-    """First integral by quadrature from a 2D integrating factor:
-    dI = M*(xi2 dz1 - xi1 dz2), so I = int M*xi2 dz1 + phi(z2) with phi fixed by
-    the z2-part. Returns the integral string, or None when the quadrature stays
-    unevaluated or the exactness check X(I) = 0 fails."""
+    """First integral by quadrature from a 2D integrating factor, or None if unevaluated or X(I) != 0."""
     local, parse = _make_local_parse([str(Mstr), str(xi1), str(xi2),
                                       str(z1), str(z2)])
     try:

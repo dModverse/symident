@@ -1,0 +1,28 @@
+{
+ "name": "test-symmetryReduction_093_symmetryDetection",
+ "spec": {
+  "f": {
+   "x1": "-(k01 + kf1)*x1 + kb1*x2",
+   "x2": "-(k02 + kf2 + kb1)*x2 + kf1*x1 + kb2*x3",
+   "x3": "-(k03 + kb2)*x3 + kf2*x2"
+  },
+  "g": {
+   "y": "x1"
+  },
+  "trafo": {
+   "x1": "D",
+   "x2": "0",
+   "x3": "0",
+   "D": "D",
+   "k01": "q_1",
+   "k02": "0",
+   "k03": "0",
+   "kb1": "q_2",
+   "kb2": "q_3",
+   "kf1": "q_4",
+   "kf2": "q_5"
+  }
+ },
+ "env": {},
+ "options": {}
+}

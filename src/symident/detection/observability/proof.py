@@ -1,13 +1,13 @@
-"""Exact proofs over Q of the closed directions; d["proof"] of an unproven direction lists the reasons
-of its failed attempts."""
+"""Exact proofs over Q of the closed directions; d["proof"] of an unproven one lists why each attempt failed."""
 
 import math
 
+import numpy as np
 import sympy as spy
 
 from ... import session, state
 from ...errors import SYMPY_FAILS, RouteError, swallow, sympy_fail
-from ...gfp import PRIMES
+from ...gfp import PRIMES, rref_modp
 from ...sym.direction import classify_generator
 from ...sym.exact import (
     _rhs,
@@ -81,8 +81,7 @@ def representatives(d):
 
 
 def lift_of(d, rep, states):
-    """The state components `states` of the lift of `rep`, with `rep` kept to rescale them to the
-    published generator."""
+    """State components `states` of the lift of `rep`, with `rep` kept to rescale them to the published generator."""
     d["lift_form"] = dict(rep) if states else None
     return states
 
@@ -191,7 +190,7 @@ def _rest_proof(an, d):
     const = {model_sympify(v): spy.Symbol(n) for n, v in zip(eb.get("names") or [], eb.get("values") or [])
              if v in ("pi", "exp(1)")}
     back.update(const)
-    conds, rest, eqs, base = [], [], [], {}
+    conds, base = [], {}
     pivot = _pivots(sys_)
     for mi, ci in enumerate(sys_.equil_conds, start=1):
         tape = an.multi["tapes"][ci]
@@ -200,6 +199,7 @@ def _rest_proof(an, d):
         held = set(sys_.held_of(ci))
         names = [x for x in sys_.real_state_names if x not in held and spy.Symbol(x) not in pivot]
         if len(names) > _REST_STATES:
+            session.note("limits", f"resting proof: {len(names)} resting states, over the {_REST_STATES} parametrized")
             return f"more than {_REST_STATES} resting states per condition"
         ren = {spy.Symbol(x): spy.Symbol(f"{x}_c{mi}") for x in names}
         ren.update({spy.Symbol(x): spy.Integer(0) for x in held})
@@ -212,31 +212,50 @@ def _rest_proof(an, d):
         xs = [ren[spy.Symbol(x)] for x in names]
         obs = [model_sympify(l.split("=", 1)[1]).xreplace(back).xreplace(ren) for l in _lines(tape.get("obs_lines"))]
         conds.append(({ren[k]: v for k, v in F.items() if str(k) in names}, xs, obs))
-        rest += xs
-        eqs += [F[spy.Symbol(x)] for x in names]
         sol = sys_.solve_cond(an.sc["point0"], PRIMES[0], ci)
         if sol is not None:
             base.update({y: spy.Integer(int(sol["ptc"][run.slot(x)])) for x, y in zip(names, xs)
                          if run.slot(x) is not None})
-    params = sorted(set().union(*[e.free_symbols for e in eqs]) - set(rest), key=str) if eqs else []
-    par = rest_parametrization(eqs, rest, params)
-    if par is None:
-        return "the resting states have no rational parametrization"
-    sub = par["sub"]
-    if par["params"]:
-        # the solved rates describe the resting branch where their Jacobian is regular
-        base.update({spy.Symbol(n): spy.Integer(int(an.sc["point0"][run.slot(n)]))
-                     for n in map(str, params) if run.slot(n) is not None})
-        A = spy.Matrix([[spy.diff(n, q) for q in par["params"]] for n in par["eqs"]])
-        det = _mod(A.det(), base, PRIMES[0]) if len(base) >= len(rest) + len(params) else None
-        if not det:
-            return "the parametrization does not reach the resting branch at the base point"
     vec = {k: str(model_sympify(v).xreplace(const)) for k, v in representatives(d)[0].items()}
     if len(sys_.equil_conds) == 1:
         one = {spy.Symbol(x): spy.Symbol(f"{x}_c1") for x in sys_.real_state_names}
         one.update(pivot)
         vec = {k: str(model_sympify(v).xreplace(one)) for k, v in vec.items()}
-    ids = [(lab, e.xreplace(sub)) for lab, e in rest_identities(conds, vec)]
+    # an identity free of resting states holds one condition's own; with every resting Jacobian regular
+    # at the base point each resting variety is a graph over the parameters, the joint one projects
+    # dominantly onto each, and each condition is proven on its own; else all are parametrized together
+    rest = [x for _, xs, _ in conds for x in xs]
+    vsyms = set().union(*[model_sympify(v).free_symbols for v in vec.values()]) if vec else set()
+    pt = dict(base)
+    pt.update({spy.Symbol(n): spy.Integer(int(an.sc["point0"][run.slot(n)]))
+               for n in {str(s_) for F, _, _ in conds for e in F.values() for s_ in e.free_symbols}
+               if run.slot(n) is not None})
+
+    def regular(F, xs):
+        J = [[_mod(spy.diff(F[x], y), pt, PRIMES[0]) for y in xs] for x in xs]
+        if any(v is None for r in J for v in r):
+            return False
+        return int(rref_modp(np.array(J, dtype=np.int64).reshape(len(xs), len(xs)), PRIMES[0])["rank"]) == len(xs)
+    split = not vsyms & set(rest) and all(regular(F, xs) for F, xs, _ in conds)
+    groups = [[c] for c in conds] if split else [conds]
+    ids = []
+    for group in groups:
+        xs = [x for _, xg, _ in group for x in xg]
+        eqs = [F[x] for F, xg, _ in group for x in xg]
+        params = sorted(set().union(*[e.free_symbols for e in eqs]) - set(xs), key=str) if eqs else []
+        par = rest_parametrization(eqs, xs, params)
+        if par is None:
+            return "the resting states have no rational parametrization"
+        if par["params"]:
+            # the solved rates describe the resting branch where their Jacobian is regular
+            bc = {k: v for k, v in base.items() if k in set(xs)}
+            bc.update({spy.Symbol(n): spy.Integer(int(an.sc["point0"][run.slot(n)]))
+                       for n in map(str, params) if run.slot(n) is not None})
+            A = spy.Matrix([[spy.diff(n, q) for q in par["params"]] for n in par["eqs"]])
+            det = _mod(A.det(), bc, PRIMES[0]) if len(bc) >= len(xs) + len(params) else None
+            if not det:
+                return "the parametrization does not reach the resting branch at the base point"
+        ids += [(lab, e.xreplace(par["sub"])) for lab, e in rest_identities(group, vec)]
     return certify(ids)
 
 
@@ -333,7 +352,7 @@ def chain_bound(an, result):
                 d = chain_degree(fs, g, x0, events, order, int(run.mtot), v, times) if run.has_gaps else \
                     identity_degree(f, g, x0, order, v)
                 if d is not None and getattr(an, "transient", False):
-                    # the linearised recast relations: entries of degree up to three
+                    # the linearized recast relations: entries of degree up to three
                     d = max(d, _vector_degree([model_sympify(str(c)) for c in v.values()]) + 3)
             except SYMPY_FAILS as exc:
                 sympy_fail(exc)
@@ -384,6 +403,7 @@ def prove_exact(an, result):
             sympy_fail(exc)
             st = None
         for d in left if st is not None else []:
+            ex = {}
             for vec in representatives(d):
                 ex = exact_direction(st, vec, an.field_chains, joint)
                 if ex["ok"] is True:
@@ -403,6 +423,7 @@ def prove_exact(an, result):
         if not an.ctrl.get("exact_proof", True):
             return _fail(dirs, "combined lift switched off (reconst_control(exact_proof=False))")
         if len(set(regime_keys(an.multi["tapes"]))) > EXACT_REGIMES:
+            session.note("limits", f"combined lift: more than {EXACT_REGIMES} regimes")
             return _fail(dirs, f"no combined lift: more than {EXACT_REGIMES} regimes")
         work = combined_work(an, light)
         if an.run.timing:

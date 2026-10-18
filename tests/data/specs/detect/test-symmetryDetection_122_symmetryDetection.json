@@ -1,0 +1,44 @@
+{
+ "name": "test-symmetryDetection_122_symmetryDetection",
+ "spec": {
+  "f": {
+   "x1": "x2",
+   "x2": "x3",
+   "x3": "x4",
+   "x4": "x5",
+   "x5": "-(a + u*b)*x1"
+  },
+  "g": [
+   {
+    "y1": "x1",
+    "y2": "x2",
+    "y3": "x3",
+    "y4": "x4",
+    "y5": "x5",
+    "y6": "a*x1"
+   },
+   {
+    "w": "x1"
+   }
+  ],
+  "conditions": {
+   "rows": [
+    "rich",
+    "sparse"
+   ],
+   "cols": {
+    "u": [
+     0,
+     1
+    ]
+   }
+  },
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

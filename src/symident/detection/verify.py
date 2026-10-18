@@ -13,10 +13,7 @@ _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 
 
 def verify_direction(entry, f, znames, leaf_names, point0, nt_used, kcall, residue_fn=None, tries=4):
-    """Reconstructed direction against the null vector of the gauge modulo the verification
-    prime, at the first of `tries` fresh seeded points where the kernel exists. A component
-    over the leaves that does not evaluate there fails the check; components that name
-    other coordinates, such as resting states, are compared where they evaluate."""
+    """Whether the direction matches the gauge null vector modulo the verification prime at a fresh seeded point."""
     if entry.get("vector") is None:
         return True
     q = verify_prime()
@@ -33,9 +30,10 @@ def verify_direction(entry, f, znames, leaf_names, point0, nt_used, kcall, resid
         for nm, ex in entry["vector"].items():
             if nm not in znames:
                 continue
-            got = eval_modq(ex, env, q)
+            on_leaves = set(_IDENT.findall(str(ex))) <= leaves
+            got = eval_modq(ex, env, q) if on_leaves else None
             if got is None:
-                if set(_IDENT.findall(str(ex))) <= leaves:
+                if on_leaves:
                     return False
                 continue
             if got % q != int(aq[znames.index(nm)]) % q:
@@ -46,12 +44,9 @@ def verify_direction(entry, f, znames, leaf_names, point0, nt_used, kcall, resid
 
 def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, pool, pool_next, nz,
                         dir_call=None, tries=6, need=2):
-    """Gauge-independent check that a direction lies in the nullspace at `need` fresh points
-    drawn uniformly from the seed, out of `tries`.
+    """Gauge-independent check that a direction lies in the nullspace at `need` of `tries` fresh seeded points.
 
-    The components on the free columns fix the kernel vector, so they must evaluate; the
-    others are compared where they evaluate (resting-state coordinates are not leaves).
-    """
+    A check on part of the entries sets ``entry["partial_check"]``: the error bound does not cover it."""
     if entry.get("vector") is None:
         return True
     q = verify_prime()
@@ -63,13 +58,15 @@ def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, po
         ok_ = _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q)
         if ok_ is False:
             return False
-        passed += ok_ is True
+        if ok_ == "partial":
+            entry["partial_check"] = True
+        passed += ok_ in (True, "partial")
     return passed >= need
 
 
 def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q):
-    """The check of verify_in_nullspace() at one point: True, False, or None where the kernel
-    does not exist there."""
+    """The check of verify_in_nullspace() at one point: True, False, "partial" when only the entries it can
+    evaluate pass, or None where the kernel does not exist."""
     rq = kcall(pt, q, int(nt_used))
     if not rq.get("ok"):
         return None
@@ -81,7 +78,7 @@ def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_c
         if nm not in znames:
             continue
         col = znames.index(nm)
-        got = eval_modq(ex, env, q)
+        got = eval_modq(ex, env, q) if set(_IDENT.findall(str(ex))) <= set(env) else None
         if got is None:
             known[col] = False
         else:
@@ -99,9 +96,10 @@ def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_c
         for j, fcol in enumerate(free):
             if v[fcol] % q:
                 recon = (recon + mulmod(basis[j], int(v[fcol]) % q, q)) % q
-        return bool(np.all(((recon - v) % q == 0)[known]))
+        ok = bool(np.all(((recon - v) % q == 0)[known]))
+        return "partial" if ok and not known.all() else ok
     # the free columns do not all evaluate: membership of the known part in the kernel
-    return _core.sym_solve_mod(basis[:, known].T, v[known] % q, q) is not None
+    return "partial" if _core.sym_solve_mod(basis[:, known].T, v[known] % q, q) is not None else False
 
 
 def verify_perprime(entry, f, znames, leaf_names, point0, nt_used, kcall, pivots, pool, pool_next,

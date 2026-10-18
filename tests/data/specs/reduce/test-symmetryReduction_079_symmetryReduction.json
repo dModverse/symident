@@ -1,0 +1,73 @@
+{
+ "name": "test-symmetryReduction_079_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "V",
+    "EL",
+    "Es",
+    "lC",
+    "lgL",
+    "lgt"
+   ],
+   "modelExprs": [
+    "(gL*(EL - V) + gt*(Es - V))/C",
+    "V",
+    "exp10(lC)",
+    "exp10(lgL)",
+    "exp10(lgt)"
+   ]
+  },
+  "symmetries": [
+   {
+    "type": "general",
+    "generator": {
+     "lC": "1",
+     "lgL": "1",
+     "lgt": "1"
+    },
+    "weights": null,
+    "support": [
+     "lC",
+     "lgL",
+     "lgt"
+    ],
+    "degree": 0
+   },
+   {
+    "type": "general",
+    "generator": {
+     "Es": "-10^(lgL - lgt)",
+     "EL": "1"
+    },
+    "weights": null,
+    "support": [
+     "EL",
+     "Es"
+    ],
+    "degree": -1
+   },
+   {
+    "type": "general",
+    "generator": {
+     "lC": "-10^lgL/(10^lgt*EL*log(10) - 10^lgt*Es*log(10))",
+     "lgL": "(-10^lgL - 10^lgt)/(10^lgt*EL*log(10) - 10^lgt*Es*log(10))",
+     "EL": "1"
+    },
+    "weights": null,
+    "support": [
+     "EL",
+     "lC",
+     "lgL"
+    ],
+    "degree": -1
+   }
+  ]
+ },
+ "args": {
+  "positive": false
+ }
+}

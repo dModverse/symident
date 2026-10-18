@@ -1,0 +1,25 @@
+{
+ "name": "test-symmetryReduction_016_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k1*A + k2*B",
+   "B": "k1*A - k2*B"
+  },
+  "g": {
+   "y": "alpha*A"
+  },
+  "trafo": {
+   "A": "A",
+   "B": "q_2/q_1",
+   "alpha": "alpha",
+   "k1": "A*q_1^2/(A*q_1 + q_2)",
+   "k2": "q_1*q_2/(A*q_1 + q_2)"
+  },
+  "fixed": [
+   "alpha"
+  ],
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

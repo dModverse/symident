@@ -1,0 +1,15 @@
+{
+ "name": "test-symmetryExponential_033_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "-k*sqrt(x)"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "reconstruct": true,
+  "method": "scaling"
+ },
+ "env": {},
+ "options": {}
+}

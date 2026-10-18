@@ -1,6 +1,4 @@
-"""Closed forms for the residual kernel directions: narrow fits, static subsystems, the
-forward route, invariant fields, gauged and dense interpolation, each verified at a
-fresh prime before it is adopted."""
+"""Closed forms for the residual kernel directions, each verified at a fresh prime before it is adopted."""
 
 import re
 import time
@@ -30,6 +28,13 @@ from ..verify import verify_direction, verify_in_nullspace, verify_perprime
 from .context import ints, ok, strs
 from .homotopy import Homotopy
 from .narrow import _CSUFFIX, Narrow
+
+_STATE_COL = re.compile(r"\|c([0-9]+)$")
+
+
+def _coord(nm):
+    """The symbol of a coordinate column: a resting-state column x|c1 is x_c1."""
+    return _STATE_COL.sub(r"_c\1", nm)
 
 
 def _actionable(reason):
@@ -81,8 +86,7 @@ class Reconstruction:
         self.tlog(f"{route}: {reason}")
 
     def with_attempts(self, entries):
-        """The open entries with the attempts on their support; a reason that names no cap is
-        replaced by the last attempt that does."""
+        """Open entries with the attempts on their support; a reason naming no cap yields to the last one that does."""
         out = []
         for e in entries:
             if e.get("closed_form") or not self.attempts:
@@ -148,8 +152,7 @@ class Reconstruction:
         return rp
 
     def probe_groups(self, kb, piv0, first, res_fn, ref, base=None):
-        """The probe by bisection over leaf groups: a group whose joint perturbation leaves
-        the residues unchanged is irrelevant as a whole."""
+        """Relevance probe by bisection over leaf groups; a group that leaves the residues unchanged is irrelevant."""
         an, sc, ctrl, P = self.an, self.sc, self.ctrl, PRIMES[0]
         if base is None:
             base = sc["point0"]
@@ -238,7 +241,7 @@ class Reconstruction:
                 e = Narrow(self, v, anchor).run()
             except Exception as exc:
                 swallow(exc, "narrow route")
-                if state.env("ROBUSTDIAG"):
+                if state.env("ROUTEDIAG"):
                     import traceback
                     traceback.print_exc()
                 e = None
@@ -358,8 +361,7 @@ class Reconstruction:
             run.cores_call, sys.warm_off = saved
 
     def rest_kind(self):
-        """How the resting state depends on the parameters (sym.steady.resting_kind), read
-        from the structure of the first resting system."""
+        """How the resting state depends on the parameters (sym.steady.resting_kind), from the first resting system."""
         if self._rest_kind is None:
             an, sys = self.an, self.an.sys
             pv = sys.joint_pv(random_point(an.run.n_leaves, 104729), PRIMES[0])
@@ -367,8 +369,7 @@ class Reconstruction:
         return self._rest_kind
 
     def forward_first(self, stacked_ss, late=False):
-        """Every residual direction from the forward route, ahead of the backward routes when
-        the resting state needs msolve, after the fast ones when a resultant gives it."""
+        """Residual directions from the forward route, first under msolve, after the fast routes under a resultant."""
         an, sys = self.an, self.an.sys
         if not (an.run.ss_constraint and not stacked_ss and self.residual and an.joint
                 and len({sys.model_key[c] for c in sys.equil_conds}) == 1):
@@ -386,12 +387,12 @@ class Reconstruction:
                 map_fn=self.fork_map)
         except SYMPY_FAILS as err:
             sympy_fail(err)
-            if state.env("ROBUSTDIAG"):
+            if state.env("ROUTEDIAG"):
                 print(f"[fwds] error: {err}")
             fwd = None
         except Exception as err:
             swallow(err, "forward route")
-            if state.env("ROBUSTDIAG"):
+            if state.env("ROUTEDIAG"):
                 print(f"[fwds] error: {err}")
             fwd = None
         if fwd is None:
@@ -424,7 +425,7 @@ class Reconstruction:
         why = ("switched off (reconst_control(homotopy=False))" if not self.ctrl.get("homotopy", True) else
                "needs the joint resting state" if run.ss_constraint and not an.joint else
                "not run where the kernel depends on the time between events"
-               if run.has_gaps and (self.sc.get("ref") or {}).get("at_one") else
+               if run.has_gaps and not run.series_gaps and (self.sc.get("ref") or {}).get("at_one") else
                "not run where an event time depends on the parameters" if run.has_gaps and self._moving_times() else
                "not run in transient recast coordinates" if getattr(an, "transient", False) else
                "timeout" if expired(self.ctrl) else None)
@@ -452,7 +453,7 @@ class Reconstruction:
         return out
 
     def fields(self, partial=False):
-        """Directions from invariant fields of the unspecialised system."""
+        """Directions from invariant fields of the unspecialized system."""
         an = self.an
         out = None
         try:
@@ -507,7 +508,7 @@ class Reconstruction:
         e = dict(d["entry"])
         rel_leaves = e.pop("relevant_leaves", None)
         if log_coords and e.get("closed_form"):
-            e["vector"] = {nm: simplify(f"({x})*{nm}") for nm, x in e["vector"].items()}
+            e["vector"] = {nm: simplify(f"({x})*{_coord(nm)}") for nm, x in e["vector"].items()}
         verified = False
         if e.get("closed_form"):
             vargs = (e, fc, an.znames, an.leaf_names_aug, sc["point0"], sc["nt_used"], an.kcall)
@@ -594,8 +595,7 @@ class Reconstruction:
         return rec if all(e.get("closed_form") for e in rec) else None
 
     def dense(self, ms):
-        """Each direction from a shared sample bank, per prime where the bank is missing,
-        then rescued in the canonical and log-coordinate gauges."""
+        """Each direction from a shared sample bank, per prime where it is missing, then in canonical and log gauges."""
         an, sc, run = self.an, self.sc, self.an.run
         metas = [direction_relevance(fc, sc["ref"], sc["pivots"], an.z_slots, an.n_aug, sc["point0"],
                                      self.rel_probe, None) for fc in self.residual]
@@ -666,8 +666,7 @@ class Reconstruction:
     # ---- the sequence -----------------------------------------------------------------
 
     def run(self):
-        """All directions, scalings first; None when the stacked first step must rerun
-        condition by condition."""
+        """All directions, scalings first; None when the stacked first step must rerun condition by condition."""
         an, run = self.an, self.an.run
         if an.joint and self.residual:
             self.tlog("solve fill: " + ("serial" if run.cores <= 1 else f"fork, {run.cores} cores"))

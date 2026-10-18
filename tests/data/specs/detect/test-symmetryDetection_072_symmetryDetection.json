@@ -1,0 +1,33 @@
+{
+ "name": "test-symmetryDetection_072_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k1*A",
+   "B": "-k2*B"
+  },
+  "g": [
+   {
+    "yA": "A"
+   }
+  ],
+  "conditions": {
+   "rows": [
+    "c1",
+    "c2"
+   ],
+   "cols": {
+    "q": [
+     "q1",
+     "q2"
+    ]
+   }
+  },
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

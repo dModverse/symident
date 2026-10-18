@@ -25,8 +25,7 @@ def _clean(line):
 
 
 def _build_symbol_table(all_lines):
-    """Map every non-function identifier but pi to a sympy Symbol, so names like
-    E, I, S, O, Q, N are taken as model variables, not sympy constants."""
+    """Map every non-function identifier but pi to a sympy Symbol, so E, I, S, N are model variables."""
     syms, funcs = set(), set()
     for raw in all_lines:
         line = _clean(raw)
@@ -111,16 +110,14 @@ def _make_parse(local_dict):
 
 
 def _make_local_parse(all_lines):
-    """Symbol table (model names as symbols, not sympy constants) with the
-    function aliases, plus a parser bound to it."""
+    """Symbol table with model names as symbols and the function aliases, plus a parser bound to it."""
     local = _build_symbol_table(all_lines)
     local.update(_function_aliases())
     return local, _make_parse(local)
 
 
 def model_sympify(text):
-    """`text` (R syntax) as a SymPy expression whose names but pi are Symbols, also names
-    such as S, N, E, I or beta that SymPy holds as constants or functions."""
+    """`text` (R syntax) as a SymPy expression with every name but pi a Symbol, also S, N, E, I or beta."""
     _, parse = _make_local_parse([str(text)])
     return spy.sympify(parse(str(text)))
 
@@ -147,8 +144,7 @@ class _NotRationalError(Exception):
 
 
 def _is_rational_expr(e):
-    """True if e is a rational function of its symbols (no transcendental
-    function, no non-integer power)."""
+    """True if e is a rational function of its symbols: no transcendental function, no non-integer power."""
     e = spy.sympify(e)
     for a in spy.preorder_traversal(e):
         if a.is_Function:

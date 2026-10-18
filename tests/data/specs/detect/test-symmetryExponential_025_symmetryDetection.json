@@ -1,0 +1,14 @@
+{
+ "name": "test-symmetryExponential_025_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "A*exp(-lam*time) - d*x"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "method": "scaling"
+ },
+ "env": {},
+ "options": {}
+}

@@ -11,7 +11,7 @@ from . import report, state
 from .detection import symmetry_detection
 from .options import reconst_control
 from .reduction import symmetry_reduction
-from .reduction.core import check_levels
+from .reduction.core import check_levels, finish_reduction
 
 
 def _rhs_from_reactions(species, smatrix, rates):
@@ -54,7 +54,10 @@ class Model:
     events : list of dict, optional
         Events with keys ``var``, ``time``, ``value`` and ``method`` (``replace``,
         ``add`` or ``multiply``); ``root`` in place of ``time`` resets ``var`` each time
-        the root expression changes sign.
+        the root expression changes sign, and ``cond`` lists the conditions (from 0) an
+        event belongs to, all by default. Each condition starts at :math:`t = 0`, or at its
+        earliest event when that comes before; an event at the start applies to the initial
+        values.
     inputs : sequence of str
         Input states, zero at rest.
     fixed : sequence of str
@@ -66,10 +69,17 @@ class Model:
         comparison or a list of comparisons that selects the regimes on those sides, the
         first entry the regime at the start; a dict gives one list per condition name.
         Without it every regime counts. See the user guide.
+    equilibrate : bool, optional
+        The default of :func:`detect`'s ``equilibrate`` for this model.
+    positive : bool or sequence of str, optional
+        The default of :func:`detect`'s ``positive`` for this model.
+    reduce_cq : bool, optional
+        The default of :func:`detect`'s ``reduce_cq`` for this model.
     """
 
     def __init__(self, odes=None, observables=None, *, reactions=None, totals=None, trafo=None,
-                 conditions=None, events=None, inputs=(), fixed=(), parameters=(), regimes=None):
+                 conditions=None, events=None, inputs=(), fixed=(), parameters=(), regimes=None,
+                 equilibrate=None, positive=None, reduce_cq=None):
         if reactions is not None:
             sp = list(reactions["species"])
             Sm = reactions.get("stoichiometry", reactions.get("smatrix"))
@@ -94,6 +104,15 @@ class Model:
         self.fixed = list(fixed)
         self.parameters = list(parameters)
         self.regimes = regimes
+        self.equilibrate = equilibrate
+        self.positive = positive
+        self.reduce_cq = reduce_cq
+
+    @classmethod
+    def from_petab(cls, path):
+        """The model of a PEtab problem; see :func:`read_petab`."""
+        from .petab import read_petab
+        return read_petab(path)
 
     def _kwargs(self):
         return dict(f=self.odes, g=self.observables, trafo=self.trafo, conditions=self.conditions,
@@ -126,21 +145,17 @@ class Symmetry(dict):
         Component :math:`\\xi_i` per coordinate as a string; ``None`` when not
         reconstructed.
     weights : dict or None
-        Integer weights :math:`w_i` of a scaling, :math:`\\xi_i = w_i \\theta_i`.
+        Integer weights :math:`w_i` of a scaling as strings, :math:`\\xi_i = w_i \\theta_i`.
     degree : int or None
         Total degree of the components.
     level : str
         How far the direction is established:
 
-        * ``"exact"``: proven over the rationals, as a scaling from the integer kernel, a
-          symmetry of the model whose identities, one per equation, cancel exactly, or a
-          direction along which the output is shown unchanged.
-        * ``"verified"``: in the kernel of the observability matrix at random points modulo a
-          large prime, at the Lie and gap orders used, not proven. ``info["bound"]`` bounds
-          the probability that a wrong closed form passes where both orders are proven
-          sufficient; otherwise a direction that exists only because rows were cut also
-          passes, and the bound has no probability. ``info["proof"]`` says why the exact
-          proof did not apply.
+        * ``"exact"``: proven over Q.
+        * ``"verified"``: in the kernel at random points modulo a verification prime
+          :math:`q`, with the error probability in ``info["bound"]``.
+        * ``"checked"``: the same test without an error bound, or on part of the entries
+          only; ``info["bound"]`` says why a bound does not apply.
         * ``"open"``: no closed form; ``reason`` says why.
     state_components : dict or None
         For an exact direction, the components :math:`\\xi_x` on the states of the field that
@@ -164,7 +179,13 @@ class Symmetry(dict):
             raise AttributeError(k) from e
 
     def sympy(self):
-        """The generator components as sympy expressions."""
+        """The generator components as sympy expressions.
+
+        Returns
+        -------
+        dict or None
+            Coordinate to expression; ``None`` without a closed form.
+        """
         from .sym.parse import model_sympify
         if self.get("generator") is None:
             return None
@@ -181,36 +202,39 @@ class Symmetries:
         ``scalings_only``. ``True`` is proven. ``False`` holds as far as
         ``info["rank_status"]`` says: with a lower bound the model may still be
         identifiable.
-    rank, dim : int
-        Rank of the observability matrix and number of coordinates.
+    rank, dim : int or None
+        Rank of the OIM and number of coordinates; ``None`` with ``scalings_only``.
     symmetries : list of Symmetry
         The non-identifiable directions; a direction is the generator
         :math:`X = \\sum_i \\xi_i \\, \\partial_{\\theta_i}`.
     info : dict
-        Lie order and whether it is proven sufficient (``lie_certified``), gap order of the
-        events after the start and whether it is proven sufficient (``gap_certified``,
-        ``None`` without such events), rank proof, coordinates and settings. ``limits``
-        lists the time limits, work budgets and orders that stopped part of the analysis;
-        while it is not empty, a direction reported without closed form may have one.
-        ``branches`` lists the resting states that have several interior roots modulo
-        a prime at a point; the first root is taken, and the result holds for that branch.
-        ``proof`` says per ``"verified"`` direction why the exact proof did not apply.
-        ``lie_certificate`` says why ``engine="symbolic"`` could not prove its Lie order
-        sufficient. ``bound`` holds the probability that a wrong closed form passes the
-        kernel check, or why none applies. ``attempts`` lists per direction without closed
-        form the routes tried, ``errors`` the exceptions turned into failed routes,
-        ``switching`` the surfaces and regimes of a model with switches. ``rank_status``
-        holds ``status``, ``why`` and ``probability``; the status is one of:
+        The computation; the main keys:
 
-        * ``"proven"``;
-        * ``"verified"``: the Lie and gap orders are proven sufficient and every direction
-          has a closed form, so the rank is exact unless a verified closed form is wrong
-          (``probability`` from ``bound``), or invariant fields hold the kernel at every
-          order, checked at random points modulo the verification prime (``rank_fields``,
-          ``probability`` from ``rank_fields_bound``);
-        * ``"lower bound"``: the number of directions is then an upper bound.
+        * ``rank_status``: ``status`` (``"proven"``, ``"verified"`` or ``"lower bound"``),
+          ``why`` and ``probability``; with a lower bound the number of directions is an
+          upper bound.
+        * ``lie_certified``, ``gap_certified``, ``series_certified``: whether the Lie order,
+          the gap order of events after the start and the series order of resting states
+          are proven sufficient (``None`` where they do not apply).
+        * ``bound``: the probability that a wrong closed form passes the kernel check, or
+          why none applies; ``proof``: per verified or checked direction, why the exact
+          proof did not apply.
+        * ``assumptions``: the declared ``domain`` and switch ``starts`` the result assumes,
+          and the ``error_bound`` of a verified closed form or rank.
+        * ``limits``: the time limits, budgets and orders that stopped part of the
+          analysis; while it is not empty, a direction without closed form may have one.
+        * ``branches``: resting states with several roots modulo a prime; the result holds
+          for the first.
+        * ``switching``: the surfaces and regimes of a model with switches; where the rule of
+          the switches is not proven, ``uncertified`` says why and ``candidates`` lists the
+          directions it leaves open, which are not reported as symmetries.
+        * ``attempts``, ``errors``, ``settings``.
     gauge : list of str or None
         The coordinates fixed by a gauged detection.
+    model : Model or None
+        The model detected.
+    method : str
+        ``"observability"``, or ``"scaling"`` with ``scalings_only``.
     """
 
     def __init__(self, raw, model=None):
@@ -228,24 +252,47 @@ class Symmetries:
         return "\n".join(report.result_lines(self._raw))
 
     def unproven(self):
-        """The directions of level ``"verified"``, whose closed form is checked but not proven.
+        """The directions of level ``"verified"`` or ``"checked"``, whose closed form is checked but
+        not proven.
 
         Returns
         -------
         list of Symmetry
         """
-        return [s for s in self.symmetries if s.get("level") == "verified"]
+        return [s for s in self.symmetries if s.get("level") in ("verified", "checked")]
 
     def summary(self, verbose=False):
-        """The computation report and the result."""
+        """The computation report and the result.
+
+        Parameters
+        ----------
+        verbose : bool
+            Also the settings ``verify``, ``sym_engine`` and ``degree_cap``, and the reason of
+            each direction without closed form.
+
+        Returns
+        -------
+        str
+        """
         return _Text("\n".join(report.summary_lines(self._raw, verbose)))
 
     def reduce(self, **kwargs):
-        """Shortcut for :func:`reduce`."""
+        """Shortcut for :func:`reduce` with this result; `kwargs` are passed on.
+
+        Returns
+        -------
+        Reduction
+        """
         return reduce(self, **kwargs)
 
     def to_dict(self):
-        """The raw result as nested dicts and lists."""
+        """The raw result.
+
+        Returns
+        -------
+        dict
+            Nested dicts and lists.
+        """
         return self._raw
 
 
@@ -257,10 +304,16 @@ class Reduction:
     trafo : dict or None
         Parameter transformation over all coordinates; ``None`` if nothing was reduced.
     blocks : list of dict
-        One entry per set of coupled directions: ``invariants``, ``section``,
-        ``survivor_meaning`` (the invariant each new parameter ``q_<k>`` stands for),
-        ``carrier_domain``, ``coverage``, ``status``, ``level`` and, for a curved block,
-        ``count`` (``"exact"`` or ``"upper bound"``, the number of invariants).
+        One entry per set of coupled directions, with ``status``, ``level``,
+        ``generator_level``, ``unproven`` (the claims of its section not proven) and
+        ``pins``. A general block holds ``invariants`` and ``new_parameters`` (the invariant
+        each ``q_<k>`` stands for); a curved one also ``section``, ``solved_domain``,
+        ``count``, ``injective`` (every orbit meets the section at most once; not claimed
+        under partial coverage or on a face) and ``reach`` (every level set of the
+        invariants is one orbit). ``coverage`` is ``"partial"`` when the section covers part
+        of the positive orthant only. A face section (``face``) holds ``face_why``, why the
+        model is not shown continuous up to the face (``None`` when it is), and
+        ``face_level``.
     removed, remaining : list of str
         Labels of the directions.
     dependent : list of str
@@ -273,20 +326,28 @@ class Reduction:
         Removed directions whose section covers only part of the positive orthant: some
         positive coordinates have no positive preimage in the new parameters.
     level : str
-        How far the reduction is established, the lowest over the reduced blocks:
-        ``"exact"`` (every claim proven), ``"verified"`` (a direction rests on a verified
-        closed form) or ``"assumed"`` (a claim rests on an assumption that nothing checks
-        yet). Every block holds its own ``level``, the lowest level of its directions
-        (``generator_level``) and names its ``assumptions``.
+        The lowest level of the reduced blocks: ``"exact"``, ``"verified"``, ``"checked"``
+        or ``"open"``, the last when a claim of a section is not proven.
+    assumptions : dict
+        What the reduction assumes: ``domain`` (the declared positive coordinates, ``True``
+        for all) and ``starts`` (the sides of switches declared at the start by ``regimes``,
+        per condition), together with ``error_bound``, the probability that a verified
+        closed form or rank of the detection is wrong (``None`` without one).
     checks : dict
         ``pins`` and ``invariants``: whether every pin holds under the trafo and every
         invariant of a block maps to its new parameter, over Q (``failed`` lists the
         others); ``loop``: the closed loop of ``reduce(check=True)``, with the number of
         directions the reduced model has, the number expected and its ``rank_status``.
     errors : list of str
-        Exceptions that left an alternative section out (see the ``DEBUG`` switch).
+        Exceptions that the reduction turned into failed routes, such as an alternative
+        section left out (see the ``DEBUG`` switch).
     limits : list of str
-        The work budgets and time limits that stopped a section search.
+        The work budgets and time limits that stopped a section or invariant search.
+    coordinates : list of str
+        The coordinates of the detection.
+    fixed : list of str
+        The coordinates held fixed: the ``fixed`` argument of :func:`reduce`, else the gauge
+        of the detection.
     """
 
     def __init__(self, raw):
@@ -304,16 +365,35 @@ class Reduction:
         self.partial = report.partial_labels(raw)
         self.coordinates = raw.get("coordinates")
         self.fixed = raw.get("fixed")
+        self.assumptions = raw.get("assumptions") or {}
 
     def __repr__(self):
         return "\n".join(report.reduction_lines(self._raw))
 
     def summary(self, verbose=False, detailed=False):
-        """The verdict, the reparametrization and one line per block. `detailed` explains each section."""
+        """The verdict, the reparametrization and one line per block.
+
+        Parameters
+        ----------
+        verbose : bool
+            Also the invariants of reduced and fixed blocks.
+        detailed : bool
+            Explain each section.
+
+        Returns
+        -------
+        str
+        """
         return _Text("\n".join(report.reduction_summary_lines(self._raw, verbose, detailed=detailed)))
 
     def to_dict(self):
-        """The raw reduction as nested dicts and lists."""
+        """The raw reduction.
+
+        Returns
+        -------
+        dict
+            Nested dicts and lists.
+        """
         return self._raw
 
 
@@ -322,8 +402,8 @@ class _Text(str):
         return str(self)
 
 
-def detect(model, *, scalings_only=False, equilibrate=False, reduce_cq=False, free_initial=None,
-           reconstruct=False, positive=True, verify=True, gauge=False, cores=1, control=None,
+def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free_initial=None,
+           reconstruct=False, positive=None, verify=True, gauge=False, cores=1, control=None,
            engine="modular", trace=False):
     """Structural non-identifiabilities of a model.
 
@@ -332,17 +412,19 @@ def detect(model, *, scalings_only=False, equilibrate=False, reduce_cq=False, fr
     model : Model
     scalings_only : bool
         Only the scaling symmetries, from an exact integer kernel.
-    equilibrate : bool
-        Start at a steady state with the inputs at zero.
-    reduce_cq : bool
-        Report moiety freedoms on conserved totals instead of single species.
+    equilibrate : bool, optional
+        Start at a steady state with the inputs at zero; defaults to ``model.equilibrate``,
+        else ``False``.
+    reduce_cq : bool, optional
+        Report moiety freedoms on conserved totals instead of single species; defaults to
+        ``model.reduce_cq``, else ``False``.
     free_initial : sequence of str, optional
         States that hold the free resting value of their moiety (``equilibrate``
         without ``reduce_cq``).
     reconstruct : bool
         Return general directions as exact rational functions.
-    positive : bool or sequence of str
-        Coordinates known to be positive.
+    positive : bool or sequence of str, optional
+        Coordinates known to be positive; defaults to ``model.positive``, else ``True``.
     verify : bool
         Check the rank where the Lie order is not proven sufficient.
     gauge : bool, None or sequence of str
@@ -362,6 +444,12 @@ def detect(model, *, scalings_only=False, equilibrate=False, reduce_cq=False, fr
     -------
     Symmetries
     """
+    if equilibrate is None:
+        equilibrate = bool(getattr(model, "equilibrate", None))
+    if positive is None:
+        positive = True if getattr(model, "positive", None) is None else model.positive
+    if reduce_cq is None:
+        reduce_cq = bool(getattr(model, "reduce_cq", None))
     with _trace(trace):
         raw = symmetry_detection(**model._kwargs(), gauge_preference=gauge, equilibrate=equilibrate,
                                  reduce_cq=reduce_cq, free_initial=free_initial,
@@ -371,8 +459,8 @@ def detect(model, *, scalings_only=False, equilibrate=False, reduce_cq=False, fr
     return Symmetries(raw, model)
 
 
-def reduce(result, *, fixed=None, positive=True, d_poly=3, d_darboux=2, d_exp=2, separable=True,
-           zero_limits=False, timeout=math.inf, alternatives=False, verbose=False, allow_open=False, check=True,
+def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2, separable=True,
+           zero_limits=False, timeout=math.inf, alternatives=False, allow_open=False, check=True,
            work_cap=4000):
     """Reparametrization that removes the directions of a detection result.
 
@@ -381,11 +469,12 @@ def reduce(result, *, fixed=None, positive=True, d_poly=3, d_darboux=2, d_exp=2,
 
     Parameters
     ----------
-    result : Symmetries
+    result : Symmetries or dict
+        A detection result, or its raw form from ``to_dict()``.
     fixed : sequence of str, optional
         Coordinates with known values; defaults to the gauge of the result.
-    positive : bool or sequence of str
-        Coordinates known to be positive.
+    positive : bool or sequence of str, optional
+        Coordinates known to be positive; defaults to the setting of the detection.
     d_poly, d_darboux, d_exp : int
         Degree bounds of polynomial and rational invariants, Darboux polynomials and
         exponential-factor numerators.
@@ -400,29 +489,36 @@ def reduce(result, *, fixed=None, positive=True, d_poly=3, d_darboux=2, d_exp=2,
         Candidate sections the search of one block may try; reaching it is an entry in
         ``Reduction.limits``.
     alternatives : bool
-        Build the sections of every allowed choice of pinned coordinates, not only when
+        Build alternative sections from other choices of pinned coordinates, not only when
         the first one contains a root that does not simplify.
     allow_open : bool
         Reduce the directions with a closed form and leave those of level ``"open"`` in
-        place; without it such a direction is an error. A direction of level
-        ``"verified"`` gives a warning, and the result says which blocks rest on one.
+        place; without it such a direction is an error.
     check : bool
         Run the detection again on the model with the trafo applied (closed loop) and
         record in ``Reduction.checks`` whether exactly the remaining directions are
-        left; needs the model of a :class:`Symmetries` result. Large models may turn
-        it off.
+        left; needs the model of a :class:`Symmetries` result of a detection without
+        ``scalings_only``. Large models may turn it off.
+
+    Warns
+    -----
+    UserWarning
+        When a direction is verified or checked, or a claim of a section is not proven.
 
     Returns
     -------
     Reduction
     """
     raw = result.to_dict() if isinstance(result, Symmetries) else result
+    if positive is None:
+        positive = ((raw.get("info") or {}).get("settings") or {}).get("positive", True)
     check_levels(raw, allow_open)
     red = symmetry_reduction(raw, fixed=fixed, positive=positive, d_poly=d_poly, d_darboux=d_darboux,
                              d_exp=d_exp, separable_=separable, zero_compatibility=zero_limits,
-                             timeout=timeout, alternatives=alternatives, verbose=verbose, work_cap=work_cap)
+                             timeout=timeout, alternatives=alternatives, work_cap=work_cap)
     if check and isinstance(result, Symmetries) and isinstance(red, dict) and red.get("trafo"):
         red.setdefault("checks", {})["loop"] = _closed_loop(result, red)
+    finish_reduction(raw, red)
     return Reduction(red)
 
 

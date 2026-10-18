@@ -1,0 +1,37 @@
+{
+ "name": "test-symmetryDetection_024_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "b - a*x"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "trafo": {
+   "x": "b/a"
+  },
+  "conditions": {
+   "rows": [
+    "stim"
+   ],
+   "cols": {
+    "dose": [
+     2
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "x",
+    "time": "0",
+    "value": "dose",
+    "method": "replace",
+    "root": null
+   }
+  ],
+  "reduceCQ": false,
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

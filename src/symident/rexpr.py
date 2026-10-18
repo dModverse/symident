@@ -1,9 +1,4 @@
-"""Expressions as strings in R syntax: tokens, symbols, substitution, numeric evaluation.
-
-Model equations are kept as strings with `^` for powers, the form the engine parses.
-Substitution works on tokens and inserts the replacement text as it is, without
-parentheses, as `cOde::replaceSymbols()` does.
-"""
+"""Expressions as strings in R syntax: tokens, symbols, substitution, numeric evaluation."""
 
 import math
 import re
@@ -92,11 +87,7 @@ def _replace_one(expr, table):
 
 
 def replace_symbols(what, by, x):
-    """Replace tokens named in `what` by `by` (cOde::replaceSymbols).
-
-    `x` is a string, a list of strings or a dict name -> string; the result has the
-    same shape. `by` is recycled to the length of `what`.
-    """
+    """Replace tokens named in `what` by `by` without parentheses, as cOde::replaceSymbols(); shape is kept."""
     what = [str(w) for w in _as_list(what)]
     by = [str(b) for b in _as_list(by)]
     if not what:

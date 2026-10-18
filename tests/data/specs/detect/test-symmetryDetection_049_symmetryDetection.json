@@ -1,0 +1,20 @@
+{
+ "name": "test-symmetryDetection_049_symmetryDetection",
+ "spec": {
+  "f": {
+   "S": "-kcat*Etot*S/(Km + S)"
+  },
+  "g": {
+   "y": "s*S"
+  },
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

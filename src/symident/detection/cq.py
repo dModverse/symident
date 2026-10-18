@@ -130,9 +130,7 @@ def conserved_totals(smatrix, species):
 
 
 def _expr_is_zero(expr, dead, ntry=4):
-    """Whether `expr` vanishes with the symbols in `dead` at zero: modulo a prime at seeded
-    points for a rational expression, else by cancellation over Q; a value that is not shown
-    to vanish counts as nonzero."""
+    """Whether `expr` vanishes with the symbols in `dead` at zero; what is not shown to vanish counts as nonzero."""
     vars_ = get_symbols(expr)
     rng = session.current().rng("cq.zero", expr)
     q = verify_prime()
@@ -152,8 +150,7 @@ def _expr_is_zero(expr, dead, ntry=4):
 
 
 def _exact_lp(M, c):
-    """A vertex minimizing c.w over M w <= 0, 0 <= w <= 1, by the simplex method over Q with
-    Bland's rule, which cannot cycle; M and c are Fractions."""
+    """A vertex minimizing c.w over M w <= 0, 0 <= w <= 1, by the simplex method over Q with Bland's rule."""
     m, n = len(M), len(c)
     zero, one = Fraction(0), Fraction(1)
     # columns: w, then the slacks of M w <= 0, then those of w <= 1, then the right-hand side
@@ -185,8 +182,7 @@ def _exact_lp(M, c):
 
 
 def _sink_cluster(M):
-    """Species zero at rest: reactants of positive weight in reactions that lower a weight no
-    reaction raises. The weights solve an LP over Q, the stoichiometry taken exactly."""
+    """Species zero at rest: reactants of positive weight in reactions that lower a weight no reaction raises."""
     n_f, n_s = M.shape
     if n_f == 0 or n_s == 0:
         return []

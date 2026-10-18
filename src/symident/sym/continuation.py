@@ -30,8 +30,7 @@ def _ser_inv(a, p, T):
 
 
 def _ser_terms(terms, gser, p, T, pw):
-    """A term list at series values of the generators, truncated at eps^T; `pw` caches
-    the powers of each generator."""
+    """Term list at series values of the generators, truncated at eps^T; `pw` caches generator powers."""
     out = [0] * (T + 1)
     for expo, (cn, cd) in terms:
         c = cn % p * pow(cd % p, p - 2, p) % p
@@ -63,24 +62,20 @@ _cont_cache = {}
 
 
 def continue_resting_state(model, state_names, param_names, param_vals, dirs, rest_vals, prime,
-                         order, forcings=None):
-    """Resting state of `model` as a power series in eps along the parameters
-    param_vals + eps dirs, continued from rest_vals, a resting state at eps = 0, by
-    Newton steps: x_k = -J0^-1 [eps^k] f(x_<k). Returns {'ok', 'val_by': {state:
-    [x_0, ..., x_T]}, 'df_jx': [[series]], 'df_jt': {param: [series per balance]},
-    'df_state_cols', 'df_param_cols'} or {'ok': False, 'why'}."""
+                         order, forcings=None, held=None):
+    """Resting state as a power series in eps along param_vals + eps dirs, or {'ok': False, 'why'}."""
     p, T = int(prime), int(order)
     model = _as_list(model)
     forcings = set(_as_list(forcings))
     state_names = _as_list(state_names)
     param_names = _as_list(param_names)
     (param_syms, solve_states, polys, Jx, Jt, gens, jx_terms, jt_terms, poly_bi, gen_lin,
-     lin_terms, point_plan) = _ss_compile(model, state_names, param_names, forcings)
+     lin_terms, point_plan) = _ss_compile(model, state_names, param_names, forcings, linear=False)
     key = (tuple(model), tuple(state_names), tuple(param_names), tuple(sorted(forcings)))
     cached = _cont_cache.get(key)
     if cached is None:
         f_t = [_poly_terms(pl, gens) for pl in polys]
-        # Newton linearises the cleared numerators, not f
+        # Newton linearizes the cleared numerators, not f
         jn_t = [[_poly_terms(spy.diff(pl, s_), gens) for s_ in solve_states] for pl in polys]
         cached = (f_t, jn_t)
         _cont_cache[key] = cached
@@ -88,10 +83,14 @@ def continue_resting_state(model, state_names, param_names, param_vals, dirs, re
     pv = {str(k): int(v) % p for k, v in dict(param_vals).items()}
     dv = {str(k): int(v) % p for k, v in dict(dirs).items()}
     rv = {str(k): int(v) % p for k, v in dict(rest_vals).items()}
+    hv = {str(k): int(v) % p for k, v in dict(held or {}).items()}
     n_s = len(solve_states)
     pser = [[pv.get(str(th), 0)] + [dv.get(str(th), 0)] + [0] * (T - 1) if T >= 1
             else [pv.get(str(th), 0)] for th in param_syms]
-    xser = [[rv.get(str(s_), 0)] + [0] * T for s_ in solve_states]
+    xser = [[rv.get(str(s_), 0)] + ([hv[str(s_)]] + [0] * (T - 1) if str(s_) in hv and T >= 1
+                                     else [0] * T) for s_ in solve_states]
+    keep = [i for i, s_ in enumerate(solve_states) if str(s_) not in hv]
+    held_idx = [i for i, s_ in enumerate(solve_states) if str(s_) in hv]
 
     def f_series():
         pw = {}
@@ -104,19 +103,19 @@ def continue_resting_state(model, state_names, param_names, param_vals, dirs, re
         return out
 
     f0 = f_series()
-    if f0 is None or any(v[0] for v in f0):
+    if f0 is None or any(f0[i][0] for i in keep):
         return {'ok': False, 'why': 'the start is not a resting state at eps = 0'}
     g0 = [pv.get(str(th), 0) for th in param_syms] + [rv.get(str(s_), 0) for s_ in solve_states]
-    J0 = [[_eval_terms(jn_t[i][j], g0, p) for j in range(n_s)] for i in range(n_s)]
+    J0 = [[_eval_terms(jn_t[i][j], g0, p) for j in keep] for i in keep]
     for k in range(1, T + 1):
         fs = f_series()
         if fs is None:
             return {'ok': False, 'why': 'a pole along the continuation'}
-        X = _solve_mod(J0, [[(-fs[i][k]) % p] for i in range(n_s)], p)
+        X = _solve_mod(J0, [[(-fs[i][k]) % p] for i in keep], p)
         if X is None:
             return {'ok': False, 'why': 'a singular resting Jacobian'}
-        for i in range(n_s):
-            xser[i][k] = X[i][0] % p
+        for r, i in enumerate(keep):
+            xser[i][k] = X[r][0] % p
     pw = {}
     gser = pser + xser
 
@@ -124,10 +123,12 @@ def continue_resting_state(model, state_names, param_names, param_vals, dirs, re
         v = _ser_value(terms, gser, p, T, pw)
         return v if v is not None else [0] * (T + 1)
 
-    df_jx = [[ser_of(jx_terms[i][j]) for j in range(n_s)] for i in range(n_s)]
-    df_jt = {str(th): [ser_of(jt_terms[str(th)][i]) for i in range(n_s)] for th in param_syms}
+    df_jx = [[ser_of(jx_terms[i][j]) for j in keep] for i in keep]
+    df_jt = {str(th): [ser_of(jt_terms[str(th)][i]) for i in keep] for th in param_syms}
+    for hj in held_idx:
+        df_jt[str(solve_states[hj])] = [ser_of(jx_terms[i][hj]) for i in keep]
     return {'ok': True, 'val_by': {str(solve_states[i]): xser[i] for i in range(n_s)},
             'df_jx': df_jx, 'df_jt': df_jt,
-            'df_state_cols': [str(x) for x in solve_states],
-            'df_param_cols': [str(x) for x in param_syms]}
+            'df_state_cols': [str(solve_states[j]) for j in keep],
+            'df_param_cols': [str(x) for x in param_syms] + [str(solve_states[j]) for j in held_idx]}
 

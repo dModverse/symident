@@ -1,0 +1,39 @@
+{
+ "name": "test-symmetryReduction_064_symmetryDetection",
+ "spec": {
+  "f": {
+   "P": "-1*(k_p*P) +1*(k_d*pP)",
+   "pP": "1*(k_p*P) -1*(k_d*pP)"
+  },
+  "reactions": {
+   "species": [
+    "P",
+    "pP"
+   ],
+   "smatrix": [
+    [
+     -1,
+     1
+    ],
+    [
+     1,
+     -1
+    ]
+   ],
+   "rates": [
+    "k_p*P",
+    "k_d*pP"
+   ]
+  },
+  "totals": {
+   "total_1": "1*P+1*pP"
+  },
+  "g": {
+   "y": "s*pP"
+  },
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

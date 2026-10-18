@@ -1,5 +1,4 @@
-"""Gap series helpers, exact scalings, field analyses per regime and the proof
-that the Lie order is sufficient."""
+"""Gap series, exact scalings, field analyses per regime and the proof that the Lie order suffices."""
 
 import json
 import re
@@ -262,9 +261,7 @@ _CSUFFIX = re.compile(r"\|c[0-9]+$")
 
 
 def field_check(setup, V, znames, leaf_names, point, chains, joint):
-    """Certificate that the kernel vectors V lie in the kernel of every order; the checks at
-    random points run modulo the verification prime, and 'bound' holds the chance that a
-    wrong certificate passes."""
+    """Certificate that V lies in the kernel of every order, with 'bound' the chance a wrong one passes."""
     P = PRIMES[0]
     leaf_val = {nm: int(point[i]) % P for i, nm in enumerate(leaf_names)}
     V = np.asarray(V, dtype=np.int64).reshape(len(znames), -1)
@@ -331,8 +328,7 @@ _IDENT = re.compile(r"[A-Za-z._][A-Za-z0-9._]*")
 
 
 def extended_fields(setup, chains):
-    """The fields of the first chain's regime with their components on the parameters that
-    are initial values or event values of that chain (sym.fields.extend_fields)."""
+    """Fields of the first chain's regime, extended to its initial-value and event-value parameters."""
     reg1 = setup["regime_of"][chains[0][0]]
     t1 = setup["tapes"][chains[0][0]]
     groups = [_evs(t1.get("ver_t0"))] + [_evs(setup["tapes"][i].get("ver_ev")) for i in chains[0][1:]]
@@ -342,8 +338,7 @@ def extended_fields(setup, chains):
 
 def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chains, joint,
                      partial=False):
-    """Closed forms of the residual kernel from the fields of the first regime; RouteError
-    with the reason where they do not close it."""
+    """Closed forms of the residual kernel from the first regime's fields; RouteError where they do not close it."""
     P = PRIMES[0]
     stset = set(setup["states"])
     p_cols = [i for i, z in enumerate(znames) if not _CSUFFIX.search(z) and z not in stset]
@@ -520,11 +515,7 @@ def restricted_setup(setup, chains, joint):
 
 
 def exact_direction(setup, field, chains, joint, init=()):
-    """Whether the regime field `field` is a symmetry of every regime the chains visit,
-    proven over Q: in each regime it, or a field of that regime with the same parameter
-    part, satisfies the regime identities, and every join, initial value (unless `joint`,
-    where the chains start at rest) and start event maps it into itself. `init` names the
-    states whose initial value coordinate is X + INIT in `field`."""
+    """Whether `field` is, proven over Q, a symmetry of every regime, join, initial value and start event."""
     regimes, states = setup["regimes"], setup["states"]
     used = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
     extra = {k: v for k, v in dict(field).items() if k.endswith(INIT)}
@@ -587,11 +578,12 @@ def _in_span_at_a_point(A, b):
 
 
 def combined_field(gens, vec, states):
-    """A combination sum_i c_i(theta) g_i of the regime fields `gens` whose parameter part
-    is the closed form `vec`, with its state components, or None."""
+    """Combination of the regime fields `gens` whose parameter part is `vec`, with state components, or None."""
     sts = set(states)
     vp = {k: v for k, v in dict(vec).items() if k not in sts and not k.endswith(INIT)}
     use = [g for g in gens if any(k not in sts for k in g)]
+    if len(use) > _COMBINE_CAP:
+        session.note("limits", f"combined lift: {len(use)} regime fields, over the {_COMBINE_CAP} solved for")
     if not vp or not use or len(use) > _COMBINE_CAP:
         return None
     try:
@@ -676,8 +668,7 @@ def _reach_at(r, rho):
 
 def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=None, threads=1,
                     start=None):
-    """Certified Lie order per block: None where the generic rank is not reached. The
-    search of block b begins at order `start[b]` (at most 16), then 16, 32, ..."""
+    """Certified Lie order per block, None where the generic rank is not reached."""
     none = np.zeros((0, 0), dtype=np.int64)
 
     def one(b):
@@ -748,8 +739,7 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
 
 
 def rescaled_lift(target, form, states):
-    """The state components `states` of the lift of `form`, rescaled to `target`, a multiple of
-    `form`; None where it is no multiple."""
+    """State components of the lift of `form` rescaled to its multiple `target`, None if it is no multiple."""
     if not states:
         return states
     try:

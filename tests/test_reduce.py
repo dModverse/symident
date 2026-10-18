@@ -131,7 +131,7 @@ def test_one_scaling_pin_family_identifiable():
     # the invariant lattice is spanned by ktx*ktl and ktx/m
     assert any(expr_equal(iv, "ktx*ktl") or expr_equal(iv, "1/(ktx*ktl)") for iv in b["invariants"])
     # every listed transversal is one coordinate of the support
-    adm = r.to_dict()["family"][0]["admissible"]
+    adm = r.to_dict()["family"][0]["choices"]
     assert all(t in b["support"] for T in adm for t in T)
     assert identifiable(F_MRNA, {"y": "p"}, trafo=r.trafo)
 
@@ -205,12 +205,67 @@ def test_module_reduction_collapses_pair():
 
 
 def test_multi_generator_block_common_invariants_only():
-    # X1 scales (a, b), X2 scales (b, c): only a*b*c is invariant under both
     obj = mkobj([mkdir({"a": "a", "b": "-b"}, "general"), mkdir({"b": "b", "c": "-c"}, "general")],
                 ["a", "b", "c"])
     b = red(obj).blocks[0]
     assert len(b["invariants"]) == 1
     assert expr_equal(b["invariants"][0], "a*b*c") or expr_equal(b["invariants"][0], "1/(a*b*c)")
+    assert len(b["transversal"]) == 2 and b["injective"] and b["reach"]
+    assert b["unproven"] == [] and b["level"] == "exact"
+    assert any("at most once" in c for c in b["certificates"])
+    assert any("one orbit" in c for c in b["certificates"])
+
+
+def test_a_level_set_is_one_orbit_when_it_is_a_connected_graph_over_the_gauge():
+    from symident.reduction.sections import _interval, orbits_reach
+    a, b, k1, k2, t, u = spy.symbols("a b k1 k2 t u")
+    rot = [{"a": "b", "b": "-a"}]
+    assert orbits_reach([a**2 + b**2], [{"b": spy.sqrt(t - a**2)}], ["b"], ["a"], ["t"], rot, [])
+    assert not orbits_reach([a**2 + b**2], [{"b": -spy.sqrt(t - a**2)}], ["b"], ["a"], ["t"], rot, [])
+    assert not orbits_reach([a**2 + b**2], [{"b": spy.sqrt(t - a**2)}], ["b"], ["a"], ["t"],
+                            [{"a": "b - a", "b": "a"}], [])
+    assert orbits_reach([k1 + k2, (b + 1) * k2], [{"k2": t - k1, "b": (u - t + k1) / (t - k1)}],
+                        ["k2", "b"], ["k1"], ["t", "u"], [{"k1": "k2", "k2": "-k2", "b": "1 + b"}], [])
+    x = spy.Symbol("x")
+    assert _interval(spy.Poly((u - t) * x**2 + t * x - u, x), True)
+    assert not _interval(spy.Poly(x**2 - 3 * x + 2, x), True)
+    assert not _interval(spy.Poly(x**2 - 3 * x + 2, x), True)
+    assert _interval(spy.Poly(-x**2 + u * x - t, x), False)
+
+
+def test_a_gauge_set_is_connected_by_eliminating_an_affine_coordinate():
+    from symident.reduction.sections import _connected
+    g, h, p, r = spy.symbols("g h p r")
+    assert _connected([p - g, (r - h) * (p - g) - 1], [g, h])
+    assert not _connected([(g - 1) * (g - 2) * (h - g)], [g, h])
+
+
+def test_a_root_in_the_gauge_is_removed_by_a_square_substitution():
+    from symident.reduction.sections import _rational_gauges, orbits_reach
+    names = ["k_bind", "EGF_EGFR", "k_phos_MEK", "k_unbind"]
+    inv = [spy.sympify(x) for x in ["EGFR*k_bind**2", "EGF_EGFR*k_bind", "EGFR*k_phos_MEK**2",
+                                    "(EGFR**2*k_bind + EGFR*k_bind + EGFR*k_unbind + EGF_EGFR*k_unbind)/EGFR"]]
+    tmp = [f"si_red_c{i}" for i in range(1, 5)]
+    brs = [{str(k): v for k, v in d.items()} for d in
+           spy.solve([e - spy.Symbol(t) for e, t in zip(inv, tmp)], spy.symbols(names), dict=True)]
+    gens = [{"EGFR": "2*EGFR*(EGFR + EGF_EGFR)", "EGF_EGFR": "EGF_EGFR*(EGFR + EGF_EGFR)",
+             "k_bind": "-k_bind*(EGFR + EGF_EGFR)", "k_phos_MEK": "-k_phos_MEK*(EGFR + EGF_EGFR)",
+             "k_unbind": "-EGFR**2*k_bind + EGFR*k_bind + EGF_EGFR*k_unbind"}]
+    assert orbits_reach(inv, brs, names, ["EGFR"], tmp, gens, []) is not None
+    forms = [f for br in brs for f, _ in _rational_gauges(br, ["EGFR"])]
+    assert any(all("sqrt" not in str(v) for v in f.values()) for f in forms)
+
+
+def test_a_section_is_met_at_most_once_when_the_invariants_give_back_its_points():
+    from symident.reduction.sections import section_injective
+    a, b, c, t = spy.symbols("a b c t")
+    root = {"a": spy.sqrt(t), "b": spy.sqrt(t)}
+    assert section_injective([a * b], root, ["t"], [], [(a, b)])
+    assert section_injective([a * b], {"a": spy.sqrt(t / 2), "b": spy.sqrt(2 * t)}, ["t"], [], [(2 * a, b)])
+    assert section_injective([a * b * c], root, ["t"], [(c, 1)], [(a, b), (c, 1)])
+    assert not section_injective([a * b], root, ["t"], [], [(a, b * c)])
+    assert not section_injective([a * b], root, ["t"], [], [(a + b, 2)])
+    assert not section_injective([(a - 1)**2], {"a": 1 + spy.sqrt(t)}, ["t"], [])
 
 
 def test_support_only_directions_and_missing_coordinates():
@@ -244,7 +299,7 @@ def test_identifiable_result_reduces_to_nothing():
     assert "Nothing to reduce" in repr(r)
 
 
-def test_print_lean_summary_carries_block_report():
+def test_print_lean_summary_holds_block_report():
     res = det(F_MRNA, {"y": "p"}, reconstruct=True)
     r = red(res)
     out = lines(repr(r))
@@ -252,15 +307,14 @@ def test_print_lean_summary_carries_block_report():
     assert grep("Trafo", out)
     # the monomial of a scaling survivor is not printed; it stays on the object
     assert not grep(r"ktx\*ktl", out)
-    assert any("ktx*ktl" in v for v in r.blocks[0]["survivor_meaning"].values())
-    assert not grep(r"Scaling block|transversal:|admissible|\[", out)
+    assert any("ktx*ktl" in v for v in r.blocks[0]["new_parameters"].values())
+    assert not grep(r"Scaling block|transversal:|\[", out)
     assert len(out) < 12
     # one line per block; a reduced block repeats no invariants and no certificate
     rep = lines(r.summary())
     assert grep(r"^Blocks$", rep)
     assert grep(r"\{X[^}]+\}  scaling, reduced +\| ktl = 1 \(one of \d+ choices\)", rep)
     assert not grep("transversal|section ", rep)
-    assert not grep("admissible", rep)
     assert not grep(r"ktx\*ktl", rep)
     assert not grep(r"invariants  |certificate|certified", rep)
     assert len(rep) < 20
@@ -292,7 +346,7 @@ def test_egf_mek_erk_cascade_reduced_end_to_end():
     # a positive chart requires an offset
     assert cb["status"] == "reduced"
     assert not r.remaining
-    assert any("carrier offset" in c for c in cb["certificates"])
+    assert any("offsets of the new parameters" in c for c in cb["certificates"])
     # the chart stays positive for every positive outer value
     vals = [0.7, 2.3, 1.9, 0.31, 1.7, 0.45, 1.1, 0.9]
     outer = list(dict.fromkeys(r.coordinates + [v for e in r.trafo.values() for v in variables(e)]))
@@ -306,15 +360,15 @@ def test_egf_mek_erk_cascade_reduced_end_to_end():
     for scale in (1e-3, 1, 1e3):
         z = chart(u_at(scale))
         assert all(math.isfinite(v) and v > 0 for v in z.values())
-    # survivor_meaning at the chart point returns the outer value
+    # new_parameters at the chart point returns the outer value
     u = u_at(1)
     z = chart(u)
-    for nm, m in cb["survivor_meaning"].items():
+    for nm, m in cb["new_parameters"].items():
         assert ev(m, z) == pytest.approx(u[nm], rel=1e-8)
     # the invariants behind the new parameters are positive at arbitrary inner points
     for z0 in ({"EGF": 1.3, "EGFR": 0.2, "EGF_EGFR": 2.5, "k_bind": 0.8, "k_phos_MEK": 0.3, "k_unbind": 1.9},
                {"EGF": 1e-4, "EGFR": 1e-4, "EGF_EGFR": 50, "k_bind": 3, "k_phos_MEK": 2, "k_unbind": 1e-3}):
-        for m in cb["survivor_meaning"].values():
+        for m in cb["new_parameters"].values():
             assert ev(m, z0) > 0
 
 
@@ -328,7 +382,7 @@ def test_exponential_factor_invariant_solved_and_reported():
     assert len(b["invariants"]) == 1
     assert abs(lie_at(gen, b["invariants"][0], {"x": 1.7, "y": 0.9})) < 1e-4
     # I(trafo(u)) is u or 1/u
-    assert list(b["survivor_meaning"]) == ["q_1"]
+    assert list(b["new_parameters"]) == ["q_1"]
     z = {nm: ev(e, {"x": 5, "y": 3, "q_1": 3}) for nm, e in r.trafo.items()}
     Iv = ev(b["invariants"][0], z)
     assert abs(Iv - 3) < 1e-10 or abs(Iv - 1 / 3) < 1e-10
@@ -390,7 +444,7 @@ def test_positive_declares_certificate_domain():
     # k_d left real holds the real invariant k_p + k_d; the chart still holds
     short = red(res, fixed=["s"], positive=["P", "pP", "k_p"])
     assert curved(short)["status"] == "reduced"
-    assert "real" in curved(short)["carrier_domain"].values()
+    assert "real" in curved(short)["solved_domain"].values()
     assert identifiable(f, g, trafo=short.trafo, fixed=["s"])
     with pytest.warns(UserWarning, match="not a coordinate"):
         si.reduce(res, positive=["P", "nonesuch"])
@@ -480,22 +534,22 @@ def test_integrating_factor_liouvillian_integral():
 
 def test_sign_changing_carrier_real_with_covering_pin():
     # a - b is the only invariant and takes both signs on the positive orthant
-    r = red(det({"x": "-(a - b)*x"}, {"y": "x"}, reconstruct=True), verbose=False)
+    r = red(det({"x": "-(a - b)*x"}, {"y": "x"}, reconstruct=True))
     b1 = r.blocks[0]
     assert b1["status"] == "reduced"
     assert b1["coverage"] == "total"
-    assert b1["carrier_domain"]["q_1"] == "real"
+    assert b1["solved_domain"]["q_1"] == "real"
     # positive for every real carrier value, and on the orbit the carrier names
     for q in (-50, -3, -1, -0.4, 0, 0.4, 1, 3, 50):
         z = {k: ev(r.trafo[k], {"q_1": q}) for k in ("a", "b")}
         assert z["a"] > 0 and z["b"] > 0
-        assert ev(b1["survivor_meaning"]["q_1"], z) == pytest.approx(q, abs=1e-12)
+        assert ev(b1["new_parameters"]["q_1"], z) == pytest.approx(q, abs=1e-12)
 
 
 def test_certified_positive_carrier_keeps_positive_domain():
     # the moiety total A + B is positive on the orthant by inspection
-    r = red(det(F_AB, {"y": "A + B"}, reconstruct=True, reduce_cq=False), verbose=False)
-    dom = [v for b in r.blocks for v in (b.get("carrier_domain") or {}).values()]
+    r = red(det(F_AB, {"y": "A + B"}, reconstruct=True, reduce_cq=False))
+    dom = [v for b in r.blocks for v in (b.get("solved_domain") or {}).values()]
     assert all(v == "positive" for v in dom)
 
 
@@ -634,18 +688,16 @@ def test_carriers_matched_not_greedy():
 
 
 def test_face_section_switches_leaks_off():
-    # catenary compartments with leaks from all: every orbit reaches two leaks at zero
-    f = {"x1": "-(k01 + kf1)*x1 + kb1*x2",
-         "x2": "-(k02 + kf2 + kb1)*x2 + kf1*x1 + kb2*x3",
-         "x3": "-(k03 + kb2)*x3 + kf2*x2"}
-    tr = {"x1": "D", "x2": "0", "x3": "0"}
+    # catenary compartments with leaks from all: every orbit reaches a leak at zero
+    f = {"x1": "-(k01 + kf1)*x1 + kb1*x2", "x2": "-(k02 + kb1)*x2 + kf1*x1"}
+    tr = {"x1": "D", "x2": "0"}
     res = det(f, {"y": "x1"}, trafo=tr, reconstruct=True)
-    assert len(res.symmetries) == 2
+    assert len(res.symmetries) == 1
     r = red(res)
     assert not r.remaining
     zeros = [k for k, v in r.trafo.items() if v == "0"]
-    assert len(zeros) == 2
-    assert set(zeros) <= {"k01", "k02", "k03"}
+    assert len(zeros) == 1
+    assert set(zeros) <= {"k01", "k02"}
     b = blocks_of(r, "curved")[0]
     assert any("face section" in c for c in b["certificates"])
     # the face is a zero set every orbit reaches
@@ -657,7 +709,7 @@ def test_face_section_switches_leaks_off():
     # each rate the face keeps becomes a fresh q_<k>
     kept = [k for k in b["support"] if k not in zeros]
     assert all(re.fullmatch(r"q_[0-9]+", r.trafo[k]) for k in kept)
-    assert set(b["survivor_meaning"]) == {r.trafo[k] for k in kept}
+    assert set(b["new_parameters"]) == {r.trafo[k] for k in kept}
     others = list(tr.values()) + [v for k, v in r.trafo.items() if k not in kept]
     assert not any(v.startswith("q_") for v in others)
     out = lines(repr(r))
@@ -709,11 +761,11 @@ def test_unmoved_monomial_searched_as_one_symbol():
     for iv in cb["invariants"]:
         assert abs(lie_at(g1, iv, pt)) < 1e-4
         assert abs(lie_at(g2, iv, pt)) < 1e-4
-    texts = cb["invariants"] + list(r.trafo.values()) + list(cb["survivor_meaning"].values())
+    texts = cb["invariants"] + list(r.trafo.values()) + list(cb["new_parameters"].values())
     assert not any("si_w" in s for s in texts)
 
 
-def test_chart_search_stops_at_timeout():
+def test_section_search_stops_at_timeout():
     f = {"c": "k0 - kd*c", "x": "w*(q + b*c) - x"}
     pos = ["c", "k0", "kd", "w", "b", "x"]
     res = det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos)
@@ -729,11 +781,8 @@ def test_square_root_of_a_perfect_square_is_taken():
 
 
 def test_partial_chart_is_named_in_the_verdict():
-    f = {"x1": "kin1*u - k2*x1 - d3*x1 + k4*x2", "x2": "k2*x1 - k4*x2 + k5*x3", "x3": "-k5*x3"}
-    m = si.Model(f, {"y0": "x2", "y1": "s1*x2"}, trafo={"x2": "1", "x3": "0"},
-                 conditions={"rows": ["a", "b"], "cols": {"u": [1, 3]}})
-    red = si.detect(m, reconstruct=True).reduce()
-    assert red.partial == ["X₂"]
+    red = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}), positive=["k"], reconstruct=True).reduce()
+    assert red.partial == ["X₁"]
     assert "covers only part of the positive orthant" in str(red).splitlines()[0]
 
 
@@ -762,12 +811,11 @@ def test_dependent_scaling_is_named_not_reduced():
 
 def test_alternative_charts_are_valid_and_ranked():
     from symident.reduction.core import _chart_valid
-    m = si.Model({"x1": "kin1*u - k2*x1 - d3*x1 + k4*x2", "x2": "k2*x1 - k4*x2 + k5*x3", "x3": "-k5*x3"},
-                 {"y0": "x2", "y1": "s1*x2"}, trafo={"x2": "1", "x3": "0"},
+    m = si.Model({"x": "kin*u - (k1 - k2)*x"}, {"y": "s*x"}, trafo={"x": "0"},
                  conditions={"rows": ["a", "b"], "cols": {"u": [1, 3]}})
-    det = si.detect(m, reconstruct=True, control=si.reconst_control(exact_proof=False))
+    det = si.detect(m, reconstruct=True)
     red = det.reduce(alternatives=True)
-    assert _chart_valid(red._raw, det.dim)
+    assert _chart_valid(red._raw, det.dim) and red.alternatives
     for alt in red.alternatives:
         assert set(alt) == {"trafo", "pins", "removed", "remaining", "rational"}
         assert len(alt["removed"]) <= len(red.removed)
@@ -815,7 +863,8 @@ def test_the_reduction_reads_the_level_of_the_directions():
     assert [s.level for s in r.symmetries] == ["verified"]
     with pytest.warns(UserWarning, match="verified, not proven"):
         red = r.reduce()
-    assert red.level == "assumed" and [b["generator_level"] for b in red.blocks] == ["verified"]
+    assert red.level == "verified" and [b["generator_level"] for b in red.blocks] == ["verified"]
+    assert red.blocks[0]["unproven"] == []
     assert "rests on a verified closed form" in " ".join(repr(red).split())
     exact = si.detect(si.Model({"A": "-k1*A", "B": "k1*A - k2*B"}, {"y": "s*B"}), reconstruct=True).reduce()
     assert exact.level == "exact" and "verified" not in repr(exact)
@@ -883,21 +932,41 @@ def test_the_rank_of_a_weight_matrix_is_exact():
     assert rank_modp(W) == 2 and rank_modp(W, p) == 1
 
 
-def test_the_reduction_names_what_it_assumes():
+def test_a_face_section_is_proven_where_the_model_is_continuous_up_to_the_face():
     m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"},
                  inputs=["u"], events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"}],
                  conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
     r = red(si.detect(m, equilibrate=True, reconstruct=True))
     scal, curved = r.blocks
-    assert scal["level"] == "exact" and scal["assumptions"] == []
-    assert curved["level"] == "assumed" and r.level == "assumed"
-    assert curved["assumptions"] == ["every level set of the invariants is one orbit",
-                                     "the section kl = 0 lies on a face and is met only in a limit"]
-    assert "{X₂} assumes: every level set" in repr(r)
-    assert red(det(F_AB, {"y": "s*A"}, reconstruct=True), fixed=["k1"]).level in ("exact", "assumed")
+    assert scal["level"] == "exact" and scal["unproven"] == []
+    assert curved["face"] and curved["reach"] and curved["unproven"] == [] and r.level == "exact"
+    assert any("face reached in the limit" in c for c in curved["certificates"])
+    assert r.assumptions == {"domain": True, "starts": None, "error_bound": None}
+    assert red(det(F_AB, {"y": "s*A"}, reconstruct=True), fixed=["k1"]).level in ("exact", "open")
 
 
-def test_chart_search_stops_at_its_work_cap_and_says_so():
+def test_continuity_up_to_a_face_is_checked_on_the_model():
+    from symident.reduction.sections import face_regular
+    co, su = ["kb", "k1", "kl"], ["k1", "kl"]
+
+    def why(*a, **kw):
+        return face_regular(*a, **kw)[0]
+    lin = {"x1": "kb - (k1 + kl)*x1"}
+    assert face_regular(["kl"], list(lin.values()), lin, True, co, su) == (None, "exact")
+    sq = {"x1": "kb - (k1 + kl)*x1^2"}
+    assert face_regular(["kl"], list(sq.values()), sq, True, co, su) == (None, "checked")
+    assert why(["kl"], list(sq.values()), sq, True, co, su, rest=True) is None
+    cas = {"x1": "kb - (k1 + kl)*x1", "x2": "k1*x1*x1 - kb*x2"}
+    assert face_regular(["kl"], list(cas.values()), cas, True, co, su)[1] in ("exact", "checked")
+    assert face_regular(["kl"], list(sq.values()), sq, False, co, su) == (None, "exact")
+    assert "vanishes" in why(["kl"], ["kb - k1/kl*x1"], {"x1": "kb - k1/kl*x1"}, False, co, su)
+    assert "pole" in why(["kl"], ["kb - log(kl)*x1"], {"x1": "kb - log(kl)*x1"}, False, co, su)
+    assert "not known" in why(["kl"], list(lin.values()), None, True, co, su)
+    dead = {"x1": "kb - kl*x1"}
+    assert "not found regular" in why(["kl"], list(dead.values()), dead, True, co, su)
+
+
+def test_section_search_stops_at_its_work_cap_and_says_so():
     f = {"c": "k0 - kd*c", "x": "w*(q + b*c) - x"}
     pos = ["c", "k0", "kd", "w", "b", "x"]
     res = det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos)
@@ -908,12 +977,20 @@ def test_chart_search_stops_at_its_work_cap_and_says_so():
     assert red(res, positive=pos).trafo == red(res, positive=pos).trafo
 
 
-def test_a_section_of_several_coordinates_is_an_assumption():
-    from symident.reduction.core import assumptions_of
+def test_a_product_at_one_covers_orbits_that_a_pin_misses():
+    obj = mkobj([mkdir({"x": "(k1 + k2)*x**2", "y": "(k1 + k2)*y**2"}, "general")], ["x", "y", "k1", "k2"])
+    r = red(obj)
+    b = r.blocks[0]
+    assert b["section"] == ["x*y = 1"] and b["coverage"] == "total" and not r.partial
+    assert b["unproven"] == [] and r.level == "exact"
+
+
+def test_a_section_claim_without_proof_is_named():
+    from symident.reduction.core import unproven_of
     b = {"status": "reduced", "type": "curved", "pins": {"a": "q_1"}, "section": ["a*b = c"],
          "transversal": ["a", "b"], "face": False, "count": "exact"}
-    assert assumptions_of(b) == ["every level set of the invariants is one orbit",
-                                 "each orbit meets the section a*b = c at most once"]
+    assert unproven_of(b) == ["every level set of the invariants is one orbit",
+                              "each orbit meets the section a*b = c at most once"]
 
 
 def test_real_coordinates_are_not_claimed_positive():
@@ -949,9 +1026,98 @@ def test_a_sampled_vector_is_checked_before_it_is_chosen(monkeypatch):
 
 
 def test_a_constant_pin_of_one_monotone_generator_is_proven():
-    from symident.reduction.core import assumptions_of, monotone_pins
+    from symident.reduction.core import monotone_pins, unproven_of
     b = {"status": "reduced", "type": "curved", "pins": {"a": "1", "c": "q_1"}, "face": False, "count": "exact"}
     assert monotone_pins(b, [{"generator": {"a": "a*b", "c": "-c"}}]) == ["a"]
     assert monotone_pins(b, [{"generator": {"a": "a - b", "c": "-c"}}]) == []
     b["monotone"] = ["a"]
-    assert assumptions_of(b) == ["every level set of the invariants is one orbit"]
+    assert unproven_of(b) == ["every level set of the invariants is one orbit"]
+
+
+def test_a_direction_without_state_components_lifts_tangent_to_the_resting_variety():
+    from symident.reduction.core import lifted_generators
+    rhs = {"x1": "kb - (k1 + kl)*x1", "u": "0"}
+    gen = {"X1": {"generator": {"kb": "kb", "k1": "k1", "kl": "kl"}}}
+    (g,), level = lifted_generators(["X1"], gen, rhs)
+    f = spy.sympify(rhs["x1"])
+    lie = sum(spy.sympify(c) * spy.diff(f, spy.Symbol(k)) for k, c in g.items())
+    assert spy.cancel(lie) == 0 and level == "exact" and "u" not in g
+    _, level = lifted_generators(["X1"], gen, {"x1": "kb - (k1 - kl)*x1"})
+    assert level == "checked"
+    assert lifted_generators(["X1"], gen, {"x1": "kb - k1*x1^2 + k1*x1^2"}) is None
+
+
+def test_a_real_carrier_has_no_sign_unless_the_carriers_are_taken_positive():
+    from symident.reduction.sign import DOMAIN, carriers_real, sgn
+    c = spy.Symbol("si_red_c1")
+    old = DOMAIN["positive"]
+    DOMAIN["positive"] = None
+    try:
+        with carriers_real(["si_red_c1"]):
+            assert sgn(c + 1) == 0 and sgn(c**2 + 1) == 1
+        with carriers_real([]):
+            assert sgn(c + 1) == 1
+    finally:
+        DOMAIN["positive"] = old
+
+
+def test_the_sign_changes_of_undecided_coefficients_are_counted_without_enumeration():
+    from symident.reduction.sections import _interval, _max_variations
+    from symident.reduction.sign import carriers_real
+    assert _max_variations([{1}, {1, -1}, {1}]) == 2 and _max_variations([{1}, {1}, {-1}]) == 1
+    x, a = spy.symbols("x si_red_c1")
+    with carriers_real(["si_red_c1"]):
+        assert _interval(spy.Poly(-x**2 + a * x + 1, x), False)
+        assert not _interval(spy.Poly(x**3 + a * x**2 + a * x + 1, x), True)
+        assert _interval(spy.Poly(sum((a**2 + 1) * x**k for k in range(1, 12)) - 1, x), True)
+
+
+def test_a_triangular_solve_says_when_a_branch_may_be_missing():
+    from symident.reduction.expr import tri_solve
+    x, y = spy.symbols("x y")
+    info = {"complete": True}
+    assert len(tri_solve([x**2 - 2, y - x], ["x", "y"], info)) == 2 and info["complete"]
+    info = {"complete": True}
+    tri_solve([x**3 + x + 1, y - x], ["x", "y"], info)
+    assert not info["complete"]
+    info = {"complete": True}
+    assert tri_solve([spy.Integer(1)], ["x"], info) == [] and info["complete"]
+
+
+def test_a_rank_of_exact_numbers_is_certified():
+    from symident.reduction.invariants import certified_rank
+    assert certified_rank([[1, 2], [2, 4]]) == 1
+    assert certified_rank([[spy.sqrt(2), 1], [2, spy.sqrt(2)]]) == 1
+    assert certified_rank([[spy.exp(1), 1], [1, spy.pi]]) == 2
+
+
+def test_a_ratio_with_a_real_coordinate_to_an_odd_power_has_no_sign():
+    from symident.reduction.darboux import apply_x
+    from symident.reduction.expr import red_locals
+    from symident.reduction.sections import section_monotone
+    from symident.reduction.sign import set_positive
+    loc = red_locals(["a", "b"])
+    pr = {"comps": {"a": "a", "b": "-b"}}
+    xi = [{spy.Symbol("a"): spy.Symbol("a"), spy.Symbol("b"): -spy.Symbol("b")}]
+    pts = [{"a": spy.Rational(3, 2), "b": spy.Rational(5, 4)}] * 2
+    assert apply_x is not None
+    old = set_positive(["a", "b"])
+    try:
+        assert section_monotone(["a", "b"], [pr], xi, loc, pts) is not None
+        set_positive(["a"])
+        assert section_monotone(["a", "b"], [pr], xi, loc, pts) is None
+    finally:
+        set_positive(old)
+
+
+def test_a_resting_state_without_a_point_over_the_field_is_redrawn():
+    from symident.reduction.sections import rest_checked
+    assert rest_checked({"x": "a - b*x^2"}, [], [])
+    assert not rest_checked({"x": "a"}, [], [])
+
+
+def test_an_undecided_zero_limit_is_unknown_not_no():
+    from symident.reduction.zero import zero_compat
+    b = {"support": ["a", "b"], "invariants": ["a**3 + a**2*b + b**3 + 2*a"], "status": "reduced",
+         "type": "curved", "preps": None, "target": None}
+    assert {r["verdict"] for r in zero_compat(b)} == {"unknown"}

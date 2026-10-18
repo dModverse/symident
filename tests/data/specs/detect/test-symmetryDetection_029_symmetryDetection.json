@@ -1,0 +1,19 @@
+{
+ "name": "test-symmetryDetection_029_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "b - a*x"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "trafo": {
+   "x": "x0"
+  },
+  "equilibrate": true,
+  "reduceCQ": false,
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

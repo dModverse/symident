@@ -1,1 +1,0 @@
-{"name":"test-symmetryExponential_051_symmetryDetection","spec":{"f":{"x":"-k*sin(exp(x))"},"g":{"y":"x"}},"env":{},"options":{},"elapsed":0.0139243602752686,"result":{"error":"symmetryDetection(): the argument of sin(exp(x)) is not supported by symEngine = \"modular\"; try symEngine = \"symbolic\"."}}

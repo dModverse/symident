@@ -1,0 +1,48 @@
+{
+ "name": "test-symmetryReduction_088_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "k1",
+    "k2",
+    "k3",
+    "k4",
+    "ka",
+    "kb",
+    "kc"
+   ],
+   "modelExprs": [
+    "-(ka + kb)*A",
+    "ka*A - k1*B1",
+    "kb*A - k2*B2",
+    "k3*B1 + k4*B2 - kc*C",
+    "C",
+    "A0",
+    "0"
+   ]
+  },
+  "symmetries": [
+   {
+    "type": "general",
+    "generator": {
+     "k3": "k3*kb",
+     "k4": "-k4*ka",
+     "ka": "-ka*kb",
+     "kb": "ka*kb"
+    },
+    "weights": null,
+    "support": [
+     "k3",
+     "k4",
+     "ka",
+     "kb"
+    ],
+    "degree": 2
+   }
+  ]
+ },
+ "args": {}
+}

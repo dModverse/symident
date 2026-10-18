@@ -1,0 +1,19 @@
+{
+ "name": "test-symmetryReduction_075_symmetryDetection",
+ "spec": {
+  "f": {
+   "V": "(gL*(EL - V) + gt*(Es - V))/C"
+  },
+  "g": {
+   "y": "V"
+  },
+  "reconstruct": true,
+  "positive": [
+   "C",
+   "gL",
+   "gt"
+  ]
+ },
+ "env": {},
+ "options": {}
+}

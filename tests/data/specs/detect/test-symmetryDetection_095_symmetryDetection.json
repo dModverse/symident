@@ -1,0 +1,47 @@
+{
+ "name": "test-symmetryDetection_095_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "kpr/(1 + kinh*inh) - kdeg*x + kstim*stim",
+   "inh": "0",
+   "stim": "0"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "conditions": {
+   "rows": [
+    "c1"
+   ],
+   "cols": {}
+  },
+  "events": [
+   {
+    "var": "inh",
+    "time": "-30",
+    "value": "1",
+    "method": "replace",
+    "root": null
+   },
+   {
+    "var": "stim",
+    "time": "0",
+    "value": "1",
+    "method": "replace",
+    "root": null
+   }
+  ],
+  "forcings": [
+   "inh",
+   "stim"
+  ],
+  "equilibrate": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

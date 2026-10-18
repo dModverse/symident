@@ -10,9 +10,7 @@ from .parse import _PRIMES
 
 
 def _rref_mod_p(A, p):
-    """Vectorized int64 Gauss-Jordan over GF(p); returns (R, pivots). Eliminates
-    only rows nonzero in the pivot column (the scaling matrix is sparse) by a rank-1
-    update; products < p^2 < 2^62 fit int64."""
+    """Vectorized int64 Gauss-Jordan over GF(p): (R, pivots); products < p^2 < 2^62 fit int64."""
     A = (np.asarray(A, dtype=np.int64) % p)
     nrows, ncols = A.shape
     pivots = []
@@ -57,10 +55,7 @@ def _rational_reconstruct(a, m):
 
 
 def sym_rat_recon_big(residues, primes):
-    """Arbitrary-precision per-row CRT + rational reconstruction, free of the u128
-    cap (4 primes) of the C++ sym_rat_recon. Each row of `residues` is one coefficient
-    across `primes`; returns {'num', 'den'} as decimal strings, den '0' where no lift
-    exists. For coefficients with logarithms whose height exceeds the 4-prime bound."""
+    """Per-row CRT and rational reconstruction in arbitrary precision: {'num', 'den'}, den '0' where no lift."""
     from sympy.ntheory.modular import crt
     mods = [int(p) for p in primes]
     M = 1
@@ -83,11 +78,7 @@ def sym_rat_recon_big(residues, primes):
 
 
 def _crt_nullspace(reduce_mod_p, ncols):
-    """Multi-prime GF(p) + CRT + rational-reconstruction nullspace, shared by the
-    two exact nullspace routines below. `reduce_mod_p(p)` yields the matrix mod p.
-    Primes whose pivot set differs from the first (unlucky rank drop) are skipped;
-    the first four agreeing ones are lifted to Q. Returns the unvalidated basis as
-    sympy column vectors (callers validate), or None if no residue lifts."""
+    """Nullspace basis by GF(p), CRT and rational reconstruction over agreeing primes, unvalidated; None if no lift."""
     ref_pivots = None
     free = None
     residues = {}
@@ -139,9 +130,7 @@ def _crt_nullspace(reduce_mod_p, ncols):
 
 
 def _modular_nullspace(M):
-    """Exact nullspace of sympy Matrix M via _crt_nullspace, validated symbolically.
-    Returns list of sympy column vectors, or None if reconstruction/validation
-    fails (caller falls back to sympy)."""
+    """Exact nullspace of a sympy Matrix via _crt_nullspace, validated symbolically; None if that fails."""
     nrows, ncols = M.shape
     if nrows == 0:
         return [spy.Matrix([1 if j == c else 0 for j in range(ncols)])
@@ -164,9 +153,7 @@ def _modular_nullspace(M):
 
 
 def _modular_nullspace_int(rows_int, ncols):
-    """Integer-matrix analogue of _modular_nullspace (scaling determining matrix),
-    in numpy int with no per-entry sympy. Returns sympy column vectors, or None if
-    reconstruction or validation fails."""
+    """Exact nullspace of an integer matrix via _crt_nullspace in numpy int, validated; None if that fails."""
     A0 = np.asarray(rows_int, dtype=np.int64)
     basis = _crt_nullspace(lambda p: A0 % p, ncols)
     if basis is None:
@@ -188,8 +175,7 @@ def _modular_nullspace_int(rows_int, ncols):
 
 
 def exact_int_kernel(rows, ncols):
-    """Primitive integer basis of the kernel of an integer matrix, as plain int
-    lists: exact_nullspace + the _scaling_gens content clearing."""
+    """Primitive integer basis of the kernel of an integer matrix, as int lists."""
     basis = exact_nullspace([[int(x) for x in r] for r in rows], int(ncols),
                            integer=True)
     out = []
@@ -208,8 +194,7 @@ def exact_int_kernel(rows, ncols):
 
 
 def exact_nullspace(rows, ncols, integer=False):
-    """Nullspace basis as sympy column vectors. integer=True (integer rows) tries
-    the numpy-int GF(p) + CRT path first, falling back to sympy."""
+    """Nullspace basis as sympy column vectors; integer=True tries the modular path first."""
     if not rows:
         return [spy.Matrix([1 if j == c else 0 for j in range(ncols)])
                 for c in range(ncols)]

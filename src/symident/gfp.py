@@ -21,9 +21,7 @@ _ROOTS = [(), ()]
 
 
 def verify_prime():
-    """The prime of the fresh-point checks: in a detection drawn once from its seed among
-    the primes in [2^30, 1.4e9) that hold the roots of the model, so that no fixed prime is
-    assumed generic; outside one the default verification prime."""
+    """The prime of the fresh-point checks: in a detection drawn from its seed among primes holding the roots."""
     from . import state
     s = state.get("session")
     if s is None:
@@ -42,8 +40,7 @@ def verify_prime():
 
 
 def all_primes():
-    """The engine primes, the verification prime and three more, in that order; read at
-    the call, so that use_primes() switches them together."""
+    """The engine primes, the verification prime and three more, read at the call so use_primes() switches them."""
     return list(PRIMES) + [_VERIFY[0]] + list(_EXTRA)
 
 
@@ -53,8 +50,7 @@ def extra_primes():
 
 
 def prime_run(n):
-    """`n` primes: the engine primes, then primes below them that hold the roots of the
-    model, the verification prime left out."""
+    """`n` primes: the engine primes, then lower primes holding the roots, without the verification prime."""
     from sympy import prevprime
     out, q = list(PRIMES), min(PRIMES)
     while len(out) < n:
@@ -65,9 +61,7 @@ def prime_run(n):
 
 
 class NeedPrimesError(Exception):
-    """Raised when some engine prime does not hold a root of the model: a rational constant
-    under a square root that is no square, or an odd root degree sharing a factor with
-    p - 1. The analysis reruns under use_primes(constants, degrees)."""
+    """Raised when an engine prime does not hold a root of the model; the analysis reruns under use_primes()."""
 
     def __init__(self, constants=(), degrees=()):
         super().__init__("roots of degree %s and square roots of %s" % (
@@ -77,8 +71,7 @@ class NeedPrimesError(Exception):
 
 
 def holds_roots(constants, q, degrees=()):
-    """Whether every (c, k), c a rational whose denominator q does not divide, has k nested
-    square roots modulo the prime q, and every odd degree is prime to q - 1."""
+    """Whether every (c, k) has k nested square roots modulo the prime q and every odd degree is prime to q - 1."""
     if any(math.gcd(int(d), q - 1) != 1 for d in degrees):
         return False
     for c, k in constants:
@@ -94,8 +87,7 @@ def holds_roots(constants, q, degrees=()):
 
 @contextlib.contextmanager
 def use_primes(constants=(), degrees=()):
-    """Eight primes below the default ones that hold every root of the model (see
-    holds_roots): four for the analysis, one for the checks and three more."""
+    """Eight primes below the default ones that hold every root of the model: four engine, one check, three more."""
     from sympy import Rational, prevprime
     consts = [(Rational(c), int(k)) for c, k in constants]
     found, q = [], PRIMES[0] + 1
@@ -133,8 +125,7 @@ def sieve(n):
 
 
 def random_point(n, seed=1):
-    """Residues below the smallest prime by the MINSTD generator, deterministic in seed and
-    the session seed."""
+    """Residues below the smallest prime by the MINSTD generator, deterministic in seed and the session seed."""
     from .session import current
     m = 2147483647
     x = current().seed("point", int(seed)) % m
@@ -347,15 +338,7 @@ def logcoord_gauge(residual_free, scal_rows, P, nz, sc, zvals0):
 
 
 def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20000):
-    """Residual directions of minimal support, as residue functions on their supports.
-
-    In the r-dimensional span of the kernel basis, a vector has minimal support exactly
-    when it is, up to a factor, the only one that vanishes on some r - 1 independent
-    columns: a row of the RREF for some choice of pivots. Candidates come from the column
-    subsets of small support while they are few, from every choice of r - 1 columns when
-    those are few, and from seeded random pivot orders otherwise, within `cand_cap`
-    eliminations. The directions are then taken greedily by support size, outside the
-    span of the scalings and of the directions taken before."""
+    """Residual directions of minimal support as residue functions on their supports, outside the scalings."""
     from .session import current
     k = len(residual_free)
     raw = {"anchors": list(residual_free), "residue_fns": [None] * k}
@@ -485,16 +468,14 @@ def bigmod(s, p):
 
 
 def sqrt_mod(a, p):
-    """The smaller square root of a modulo the odd prime p, as the kernel takes it; None
-    for a non-residue."""
+    """The smaller square root of a modulo the odd prime p, as the kernel takes it; None for a non-residue."""
     from sympy.ntheory import sqrt_mod as _sqrt
     r = _sqrt(int(a) % p, p)
     return None if r is None else min(r, p - r)
 
 
 def tape_fn(tp, n_leaves):
-    """Evaluator of a straight-line tape (0 const, 1 add, 2 mul, 3 inv, 4 sqrt, 5 odd root
-    of degree b) modulo p."""
+    """Evaluator of a straight-line tape (0 const, 1 add, 2 mul, 3 inv, 4 sqrt, 5 odd root of degree b) mod p."""
     op = [int(x) for x in np.atleast_1d(tp["op"])]
     a = [int(x) for x in np.atleast_1d(tp["a"])]
     b = [int(x) for x in np.atleast_1d(tp["b"])]
@@ -589,9 +570,7 @@ def mono_table(nvar, degree):
 
 
 def rat_recon(residues, primes):
-    """Per-row CRT over `primes` and rational reconstruction as {'num', 'den'} strings,
-    den '0' where no bounded rational exists; in arbitrary precision where the kernel
-    has no 128-bit integers."""
+    """Per-row CRT and rational reconstruction as {'num', 'den'} strings, den '0' where no bounded rational exists."""
     if getattr(_core, "has_int128", True):
         return _core.sym_rat_recon(residues, primes)
     from .sym.linalg import sym_rat_recon_big

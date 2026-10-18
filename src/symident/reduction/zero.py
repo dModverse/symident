@@ -1,5 +1,6 @@
 """Compatibility with states held at zero."""
 
+import math
 import re
 
 import sympy as spy
@@ -79,7 +80,13 @@ def condition(e):
     return {"sign": None, "cond": ineq_str(q)}
 
 
-def zero_compat(b, fixed=(), verbose=False):
+def _any3(vals):
+    """True if one value is True, None if none is but one is unknown, else False."""
+    vals = list(vals)
+    return True if any(v is True for v in vals) else (None if any(v is None for v in vals) else False)
+
+
+def zero_compat(b, fixed=()):
     """Which coordinate sets the orbit can drive to zero with nothing diverging."""
     supp = [v for v in b["support"] if v not in set(fixed)]
     invs = b.get("invariants") or []
@@ -98,8 +105,10 @@ def zero_compat(b, fixed=(), verbose=False):
     comp_loc = red_locals([x for pr in b["preps"] for x in pr["comps"].values()]) if b.get("preps") else None
 
     def darboux_(v):
-        if b.get("preps") is None:
+        if b.get("type") == "scaling":
             return True
+        if b.get("preps") is None:
+            return None
         for pr in b["preps"]:
             if v not in pr["comps"]:
                 continue
@@ -112,14 +121,14 @@ def zero_compat(b, fixed=(), verbose=False):
                 return False
         return True
 
-    def face_solve(eqs, unk):
+    def face_solve(eqs, unk, info):
         if not unk:
             return [{}]
         if len(eqs) >= len(unk):
-            return tri_solve(eqs, unk)
+            return tri_solve(eqs, unk, info)
         out = []
-        for cols in first_subsets(len(unk), len(eqs), 12):
-            out += tri_solve(eqs, [unk[c] for c in cols])
+        for cols in first_subsets(len(unk), len(eqs), math.comb(len(unk), len(eqs))):
+            out += tri_solve(eqs, [unk[c] for c in cols], info)
         return out
 
     def face_eqs(Z):
@@ -147,11 +156,12 @@ def zero_compat(b, fixed=(), verbose=False):
             return {"verdict": "unknown"}
         if f == "blocked":
             return {"verdict": "no"}
+        info = {"complete": True}
         try:
-            sols = face_solve(f["eqs"], f["unk"])
+            sols = face_solve(f["eqs"], f["unk"], info)
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
-            sols = []
+            sols, info["complete"] = [], False
         grow, unclear = [], False
         for br in sols:
             free = [br.get(u) is None for u in f["unk"]]
@@ -197,7 +207,7 @@ def zero_compat(b, fixed=(), verbose=False):
             return {"verdict": "if" if cnd else "yes", "condition": " & ".join(cnd), "at": at}
         if grow:
             return {"verdict": "grow", "grow": grow}
-        return {"verdict": "unknown" if unclear or not sols else "no"}
+        return {"verdict": "no" if info["complete"] and not unclear else "unknown"}
     rows, seen = [], set()
     for v0 in supp:
         Z = [v0]
@@ -207,7 +217,7 @@ def zero_compat(b, fixed=(), verbose=False):
                 break
             Z2 = sym_sort(list(dict.fromkeys(Z + a["grow"])))
             if len(Z2) == len(Z):
-                a["verdict"] = "no"
+                a["verdict"] = "unknown"
                 break
             Z = Z2
         key = ", ".join(Z)
@@ -217,12 +227,12 @@ def zero_compat(b, fixed=(), verbose=False):
         if b.get("face") and key == ", ".join(sym_sort(b.get("transversal") or [])):
             continue
         rows.append({"coordinates": key, "verdict": a["verdict"],
-                     "limit": any(darboux_(z) for z in Z) if a["verdict"] in ("yes", "if") else None,
+                     "limit": _any3(darboux_(z) for z in Z) if a["verdict"] in ("yes", "if") else None,
                      "certain": certain or a["verdict"] == "no",
                      "condition": a.get("condition") or "", "at": a.get("at") or ""})
     if b.get("face") and b.get("transversal"):
         Z = sym_sort(b["transversal"])
-        sm = b.get("survivor_meaning") or {}
+        sm = b.get("new_parameters") or {}
         pins_inv = {v: k for k, v in (b.get("pins") or {}).items()}
         parts = [f"{z} = 0" for z in Z] + [f"{pins_inv.get(cn, cn)} = {m}" for cn, m in sm.items()]
         rows = [{"coordinates": ", ".join(Z), "verdict": "yes", "limit": False, "certain": True,

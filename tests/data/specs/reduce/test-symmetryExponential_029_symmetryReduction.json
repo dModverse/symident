@@ -1,0 +1,42 @@
+{
+ "name": "test-symmetryExponential_029_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "x",
+    "a",
+    "K",
+    "s"
+   ],
+   "modelExprs": [
+    "a*x*log(K/x)",
+    "s*x"
+   ]
+  },
+  "symmetries": [
+   {
+    "type": "scaling",
+    "generator": {
+     "s": "-s",
+     "K": "K",
+     "x": "x"
+    },
+    "weights": {
+     "s": "-1",
+     "K": "1",
+     "x": "1"
+    },
+    "support": [
+     "K",
+     "s",
+     "x"
+    ],
+    "degree": 1
+   }
+  ]
+ },
+ "args": {}
+}

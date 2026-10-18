@@ -1,0 +1,44 @@
+{
+ "name": "test-symmetryDetection_054_symmetryDetection",
+ "spec": {
+  "f": {
+   "p": "kpr/(1+kinh*p^nhill) - dp*p + kin*u",
+   "u": "0"
+  },
+  "g": {
+   "y": "s*p"
+  },
+  "conditions": {
+   "rows": [
+    "stim"
+   ],
+   "cols": {
+    "var": [
+     1
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "u",
+    "time": "-1",
+    "value": "1",
+    "method": "replace",
+    "root": null
+   }
+  ],
+  "forcings": [
+   "u"
+  ],
+  "equilibrate": true,
+  "reduceCQ": false,
+  "reconstruct": false,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

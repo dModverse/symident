@@ -1,0 +1,36 @@
+{
+ "name": "test-symmetryDetection_149_symmetryDetection",
+ "spec": {
+  "f": {
+   "P1": "k1*(T1 - P1) - (l1 + c1*u)*P1",
+   "P2": "k2*(T2 - P2) - (l2 + c2*u)*P2",
+   "u": "0"
+  },
+  "g": {
+   "y1": "P1^2/(K^2 + P1^2)",
+   "y2": "P2^2/(K^2 + P2^2)"
+  },
+  "conditions": {
+   "rows": [
+    "ctrl",
+    "stim"
+   ],
+   "cols": {
+    "u": [
+     0,
+     1
+    ]
+   }
+  },
+  "reconstruct": true,
+  "gaugePreference": "AUTO"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {
+  "dMod.sym.stackedMin": 0
+ }
+}

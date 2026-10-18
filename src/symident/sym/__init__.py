@@ -1,1 +1,1 @@
-"""Symbolic engine: parsing, tapes, charts, steady states, scalings and fields."""
+"""Symbolic engine: parsing, tapes, trafos, steady states, scalings and fields."""

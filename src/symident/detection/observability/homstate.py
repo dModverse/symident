@@ -1,7 +1,4 @@
-"""Kernel entries as rational functions of the parameters and the resting state of one
-condition: :math:`e = N(\\theta, x)/D(\\theta, x)` from the series identity
-:math:`N - e\\,D \\equiv 0 \\bmod t^T` along lines :math:`\\theta_0 + t\\,d`, with the
-monomials reduced modulo the leading terms of the resting equations."""
+"""Kernel entries as rational functions N/D of parameters and one condition's resting state, from series on lines."""
 
 import itertools
 import re
@@ -37,8 +34,7 @@ def _monomials(nv, deg, banned):
 
 
 def _leading(lines, names):
-    """Leading exponents (graded reverse lexicographic, states first) of the numerators of
-    the resting equations `lhs = rhs` in the variables `names` alone."""
+    """Grevlex leading exponents, states first, of the resting-equation numerators in the variables `names` alone."""
     out = []
     syms = [spy.Symbol(n) for n in names]
     for ln in lines:
@@ -154,8 +150,7 @@ class StateFit:
 
 
     def resting_subs(self):
-        """The resting states of the used conditions as rational functions of the parameters,
-        where their equations are linear in the states; an empty dict otherwise."""
+        """Resting states as rational functions of the parameters where their equations are linear, else {}."""
         subs = {}
         for mi in self.mis:
             ren = {nm: v for v, (m, nm) in self.var.items() if m == mi}
@@ -203,8 +198,7 @@ class StateFit:
         return out
 
     def _series(self, ns, nm, reli, d, p, T, base):
-        """Series of a variable along the line: a state from the continuation, a parameter
-        linear in t."""
+        """Series of a variable along the line: a state from the continuation, a parameter linear in t."""
         if nm in self.var:
             mi, sn = self.var[nm]
             v = ns["states"][mi][sn]
@@ -259,8 +253,7 @@ class StateFit:
         return any(int(x) % p for x in M @ np.asarray(dv, dtype=object))
 
     def _line(self, d, T, p, seed):
-        """The series kernel along base + t d from the last base point that served at p,
-        else from fresh points until every condition has a resting state modulo p."""
+        """Series kernel along base + t d from the last base point that served at p, else from fresh resting points."""
         hom = self.hom
         key = ("tx", T, p, seed, tuple(sorted(d.items())))
         if key in self.lines:
@@ -284,9 +277,7 @@ class StateFit:
         return out
 
     def _null(self, R, p, order):
-        """The canonical solution: the nullspace in row echelon form over the columns in
-        `order` (state monomials first), its last row whose denominator does not vanish
-        on the resting states; None without one."""
+        """Echelon nullspace row over `order` whose denominator is nonzero on the resting states; None without one."""
         rr = _core.sym_rref_mod(R.astype(np.float64), p)
         n = R.shape[1]
         piv = [int(x) for x in np.atleast_1d(rr["piv"])]

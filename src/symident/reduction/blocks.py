@@ -24,9 +24,7 @@ from .sign import sgn
 
 
 def block_corank(preps, exact=False):
-    """Number of moved coordinates minus the rank of the block directions at a point; with
-    `exact` also whether that rank is proven generic, which it is when it equals the number
-    of directions or of moved coordinates (a rank at a point only underestimates)."""
+    """Moved coordinates minus the block direction rank at a point; with `exact` also whether that rank is generic."""
     moved, vars_ = _moved_vars(preps)
     ipt = [int(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 5)]
     r = _direction_rank(preps, moved, vars_, ipt)
@@ -36,9 +34,7 @@ def block_corank(preps, exact=False):
 
 
 def independent_set(invs, vars_, target, moved=None, keep_order=False):
-    """A functionally independent subset of invariants: a nonzero minor of the Jacobian at a point,
-    modulo a prime where every gradient is rational, else shown nonzero by evaluation with
-    guaranteed precision."""
+    """A functionally independent subset of invariants by a nonzero minor of the Jacobian, certified at a point."""
     if moved is None:
         moved = vars_
     if not invs or target <= 0:
@@ -114,7 +110,7 @@ def independent_set(invs, vars_, target, moved=None, keep_order=False):
     return out if out is not None else select(False)
 
 
-def solve_block(preps, d_poly, d_darboux, d_exp, verbose=False, sep=True):
+def solve_block(preps, d_poly, d_darboux, d_exp, sep=True):
     """The invariant stages on one module-reduced sub-block."""
     moved, vars_ = _moved_vars(preps)
     target, count_exact = block_corank(preps, exact=True)
@@ -258,14 +254,14 @@ def fixed_reduce(preps, fixed):
             "removed_idx": [i for i in range(k) if used_pivot[i]], "fixed_cols": fixed_cols}
 
 
-def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, verbose=False, sep=True, pins=None):
+def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=None):
     """Curved directions: prep, group, fixed elimination, compressions, module reduction, search."""
     blocks = []
 
     def unresolved(labs, support, reason):
         return {"labels": labs, "type": "curved", "support": support, "stage": "none",
                 "status": "unresolved", "invariants": [], "certificates": [], "reason": reason,
-                "module_combos": None, "transversal": None, "survivor_meaning": None, "pins": None}
+                "module_combos": None, "transversal": None, "new_parameters": None, "pins": None}
     scal_labs = {labels[i] for i, d in enumerate(syms) if d.get("type") == "scaling"}
 
     def kind_of(labs):
@@ -300,7 +296,7 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, verbose=False, se
                            "support": sym_sort(list(dict.fromkeys(c for g in grp for c in preps[g]["support"]))),
                            "stage": "fixed", "status": "fixed", "removed_by_fixed": fx["removed"],
                            "invariants": [], "certificates": fix_cert, "reason": None,
-                           "module_combos": None, "transversal": None, "survivor_meaning": None,
+                           "module_combos": None, "transversal": None, "new_parameters": None,
                            "pins": None, "gauge_note": "removed entirely by the user's fixed coordinates"})
         if not fx["preps"]:
             continue
@@ -349,7 +345,7 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, verbose=False, se
                 # a direction along one coordinate: its orbit is that axis, pinned like a scaling
                 blocks.append(scaling_block(np.array([[1]], dtype=np.int64), supp, sub_labs, fixed))
                 continue
-            sol = solve_block([mr["preps"][j] for j in sub], d_poly, d_darboux, d_exp, verbose, sep)
+            sol = solve_block([mr["preps"][j] for j in sub], d_poly, d_darboux, d_exp, sep)
             face_inv = None
             if sol["invariants"]:
                 if uc is not None:
@@ -373,7 +369,7 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, verbose=False, se
                            "invariants": sol["invariants"],
                            "certificates": fix_cert + sol["certificates"], "reason": sol["reason"],
                            "module_combos": mr["combos"], "transversal": None,
-                           "survivor_meaning": None, "pins": None, "preps": preps_orig,
+                           "new_parameters": None, "pins": None, "preps": preps_orig,
                            "originals": originals, "face_invariants": face_inv,
                            "face_back": uc["back"] if uc is not None else None})
     return blocks

@@ -26,9 +26,7 @@ class _DistCheck:
         return spy.sympify(self.parse(str(text)))
 
     def value(self, e, syms, vals, p, skey=None):
-        """e at the point vals (Fractions aligned with syms) mod p; None on a pole or a
-        non-rational value. `skey` names the symbol list in the cache key, which saves
-        hashing a long list of symbols on every call."""
+        """e at the point vals mod p, None on a pole or a non-rational value; `skey` names syms in the cache key."""
         key = (e, tuple(syms) if skey is None else skey)
         fn = self.fns.get(key)
         if fn is None:
@@ -53,9 +51,7 @@ class _DistCheck:
 
 
 def _span_coeffs(B, v, p):
-    """Coefficients of v over the vectors B (lists of residues) mod p, earlier vectors
-    first and dependent ones at zero, or None if v is not in their span. An incremental
-    echelon that stores each row's combination of B; p < 2^31 keeps products in int64."""
+    """Coefficients of v over the vectors B mod p, dependent ones at zero, or None if v is not in the span."""
     n = len(B)
     rows = []
     for k, b in enumerate(B):
@@ -86,8 +82,7 @@ def _span_coeffs(B, v, p):
 
 
 class _DualMod:
-    """a + b*eps over GF(p) with eps^2 = 0, for directional derivatives of lambdified
-    rational expressions; constants are ints or Fractions."""
+    """a + b*eps over GF(p) with eps^2 = 0, for directional derivatives of lambdified rational expressions."""
     __slots__ = ('a', 'b', 'p')
 
     def __init__(self, a, b, p):
@@ -155,18 +150,7 @@ class _DualMod:
 
 
 def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None):
-    """Certificate that every direction of `lifts` lies in the kernel of all orders.
-
-    `regimes`: list of {'f': ["X = rhs"], 'g': ["y = h"]}; `gens[r]`: fields of regime r,
-    each a {coordinate: expression}; `lifts`: one per chain, {'regime': r, 'point':
-    {coordinate: int}, 'vectors': [{coordinate: int}], 'times': [expression]}, the start
-    state and the kernel directions lifted onto it; `events`: the joins between
-    consecutive segments in chain order, {'from', 'to', 'ev': [{var, method, value}],
-    'lift'}. Per chain the fields that the directions reach are closed under the
-    brackets with each regime's field and propagated through the joins; (A) and (B) are
-    checked on them. The lifts are residues modulo `p`; the checks at random points run
-    modulo `q`, `p` by default. Returns {'ok': bool, 'why': str}, with `q` also 'bound',
-    the chance that a wrong certificate passes (distribution_bound)."""
+    """Certificate that every direction of `lifts` is in the kernel of all orders: {'ok', 'why'}, 'bound' with q."""
     p, npts = int(p), int(npts)
     q = p if q is None else int(q)
     mod = p
@@ -499,13 +483,7 @@ _BOUND_OPS = 5000
 
 
 def distribution_bound(rows, visits, crossed, q, npts):
-    """{"degree", "points", "prime", "probability"} of the checks of verify_distribution, or
-    {"applies": False, "why"} where an expression is not rational.
-
-    A check passes wrongly only where a nonzero minor of the span rows with the tested row
-    vanishes, a polynomial of degree at most the sum of the row degrees once each row is
-    cleared of its denominator (Schwartz, Zippel); each identity and each decomposition is
-    tested at `npts` independent points of [2, q-2]."""
+    """{'degree', 'points', 'prime', 'probability'} of verify_distribution's checks, or {'applies': False}."""
     from ..detection.bound import _rational, _vector_degree
     zero = spy.Integer(0)
     sym = rows['sym']
@@ -562,13 +540,7 @@ def distribution_bound(rows, visits, crossed, q, npts):
 
 
 def static_fields_symbolic(conds, param_names, forcings=None):
-    """Symmetries from the static subsystems of resting conditions.
-    `conds` lists per condition {'rest': resting model lines, 'segs': [{'f', 'g', 'ev'}],
-    't0': events at the start}; lines are "X = expr", events {'var', 'value', 'method'}.
-    A state is static if no event changes it and its right-hand side in every segment
-    depends on static states and parameters only and equals the resting one. Returns
-    {'fields': [{param: expr}], 'absorbed': [...], 'static': [[...] per condition]} or
-    {'fields': [], 'why': ...}."""
+    """Fields from the static subsystems of resting conditions: {'fields', 'absorbed', 'static'} or a 'why'."""
     forcings = set(_as_list(forcings))
     pnames = [str(x) for x in _as_list(param_names)]
     pset = set(pnames)
@@ -720,12 +692,7 @@ def static_fields_symbolic(conds, param_names, forcings=None):
 
 
 def extend_fields(fields, ic_lines, event_groups, states):
-    """Components of each field on the parameters that are the value of an initial value
-    or an event, from compatibility with that map. `event_groups` holds the events of one
-    time each, applied together as E. x0 = X gives eta_X = eta_x(x0); an event x -> x + v,
-    v, x v on a state s gives eta_v = eta_s(E x) - eta_s(x), eta_s(E x),
-    (eta_s(E x) - v eta_s(x)) / x_s. A component that depends on the states means no
-    extension, and the field is dropped. Returns the extended fields."""
+    """Fields extended to the parameters set by initial values or events; a state-dependent one is dropped."""
     ic_lines = _as_list(ic_lines)
     groups = [_as_list(g) for g in _as_list(event_groups)]
     lines = list(ic_lines) + ['_ = %s' % e['value'] for g in groups for e in g]
@@ -775,10 +742,7 @@ def extend_fields(fields, ic_lines, event_groups, states):
 
 
 def lift_start(ic_lines, t0events, point, vector, p, joint=False):
-    """Start state of a chain and a direction lifted onto it: the initial values `ic_lines`
-    ("X = e", unless `joint`, where the resting state and its direction are in `point`
-    and `vector`), then the t0 events. Returns {'point', 'vector'} over states and
-    parameters, or None on a pole."""
+    """{'point', 'vector'}: start state of a chain and a direction lifted onto it, or None on a pole."""
     p = int(p)
     ic_lines = _as_list(ic_lines)
     evs = _as_list(t0events)

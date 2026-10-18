@@ -1,0 +1,34 @@
+{
+ "name": "test-symmetryDetection_098_symmetryDetection",
+ "spec": {
+  "f": {
+   "x1": "v1 - k*x1/(K + x1)",
+   "x2": "v2 - k*x2/(K + x2)"
+  },
+  "g": {
+   "y": "s*(x1 + x2)"
+  },
+  "conditions": {
+   "rows": [
+    "c1",
+    "c2"
+   ],
+   "cols": {
+    "k": [
+     "k1",
+     "k2"
+    ]
+   }
+  },
+  "equilibrate": true,
+  "reduceCQ": false,
+  "reconstruct": false,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

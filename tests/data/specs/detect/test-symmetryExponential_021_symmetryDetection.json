@@ -1,0 +1,19 @@
+{
+ "name": "test-symmetryExponential_021_symmetryDetection",
+ "spec": {
+  "f": {
+   "csei": "-Asei*exp(-Esei/T)*csei",
+   "cneg": "-Ane*exp(-tsei/tref)*exp(-Ene/T)*cneg",
+   "tsei": "Ane*exp(-tsei/tref)*exp(-Ene/T)*cneg",
+   "alpha": "Ape*exp(-Epe/T)*alpha*(1 - alpha)",
+   "ce": "-Ae*exp(-Ee/T)*ce",
+   "T": "(Hsei*Wc*Asei*exp(-Esei/T)*csei + Hne*Wc*Ane*exp(-tsei/tref)*exp(-Ene/T)*cneg + Hpe*Wp*Ape*exp(-Epe/T)*alpha*(1 - alpha) + He*We*Ae*exp(-Ee/T)*ce - hA*(T - Ta))/rhocp"
+  },
+  "g": {
+   "y": "T"
+  },
+  "reconstruct": true
+ },
+ "env": {},
+ "options": {}
+}

@@ -1,0 +1,37 @@
+{
+ "name": "test-symmetryReduction_061_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "x",
+    "a",
+    "b"
+   ],
+   "modelExprs": [
+    "-(a - b)*x",
+    "x"
+   ]
+  },
+  "symmetries": [
+   {
+    "type": "general",
+    "generator": {
+     "a": "1",
+     "b": "1"
+    },
+    "weights": null,
+    "support": [
+     "a",
+     "b"
+    ],
+    "degree": 0
+   }
+  ]
+ },
+ "args": {
+  "verbose": false
+ }
+}

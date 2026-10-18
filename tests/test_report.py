@@ -83,7 +83,8 @@ def test_summary_saturation_and_guard_variants():
         out = report.summary_lines(res([], info={"engine": "x", **info}), width=80)
         return out[out.index("Computation:") + 1:out.index("")] if "Computation:" in out else []
     assert comp(rank_proven=2, rank_proof="proven symmetries") == ["  rank: proven (2 directions, proven symmetries)"]
-    assert comp(rank_fields=2) == ["  rank: verified (2 directions, invariant fields at random points)"]
+    assert comp(rank_fields=2) == ["  rank: lower bound (2 directions, invariant fields at random points "
+                                   "without an error bound)"]
     assert comp(rank_fields=2, rank_fields_bound={"probability": 3e-12}) == \
         ["  rank: verified (2 directions, invariant fields at random points, probability of a wrong pass at "
          "most 3.0e-12)"]
@@ -107,14 +108,14 @@ SEC = {"removed": ["X₁", "X₂", "X₃", "X₄"], "remaining": [], "blocks": [
     {"labels": ["X₁"], "type": "scaling", "status": "reduced", "support": ["K", "P"],
      "transversal": ["P"], "pins": {"P": "1"}},
     {"labels": ["X₂"], "type": "curved", "status": "reduced", "support": ["kL", "kS"], "face": True,
-     "section": ["kL = 0"], "pins": {"kL": "0", "kS": "q_1"}, "survivor_meaning": {"q_1": "kL + kS"},
+     "section": ["kL = 0"], "pins": {"kL": "0", "kS": "q_1"}, "new_parameters": {"q_1": "kL + kS"},
      "coverage": "total"},
     {"labels": ["X₃"], "type": "curved", "status": "reduced", "support": ["c", "k"], "face": False,
-     "section": ["c*k = 1"], "pins": {"k": "sqrt(q_2)"}, "survivor_meaning": {"q_2": "k/c"},
+     "section": ["c*k = 1"], "pins": {"k": "sqrt(q_2)"}, "new_parameters": {"q_2": "k/c"},
      "coverage": "total", "gauge_note": "a solved entry contains a square root"},
     {"labels": ["X₄"], "type": "curved", "status": "reduced", "support": ["a", "b"], "face": False,
-     "transversal": ["a"], "pins": {"a": "1", "b": "q_3"}, "survivor_meaning": {"q_3": "a - b"},
-     "coverage": "partial", "carrier_domain": {"q_3": "real"}}]}
+     "transversal": ["a"], "pins": {"a": "1", "b": "q_3"}, "new_parameters": {"q_3": "a - b"},
+     "coverage": "partial", "solved_domain": {"q_3": "real"}}]}
 
 
 def test_sections_short_list_the_equations_and_point_to_the_details():
@@ -126,6 +127,21 @@ def test_sections_short_list_the_equations_and_point_to_the_details():
     assert "explains each section." in " ".join(report.reduction_summary_lines(SEC, width=80))
 
 
+def test_a_section_of_several_generators_is_explained_by_its_proof():
+    b = {"labels": ["X₁", "X₂"], "type": "curved", "status": "reduced", "support": ["a", "b", "c"],
+         "face": False, "section": ["a = b", "b = 1"], "transversal": ["a", "b"],
+         "pins": {"a": "1", "b": "1", "c": "q_1"}, "new_parameters": {"q_1": "a*b*c"}, "coverage": "total"}
+    x = {"removed": ["X₁", "X₂"], "remaining": [], "blocks": [b]}
+    txt = "\n".join(report.reduction_summary_lines(x, width=200, detailed=True))
+    assert "at most once is not proven" in txt
+    txt = "\n".join(report.reduction_summary_lines({**x, "blocks": [dict(b, injective=True)]},
+                                                     width=200, detailed=True))
+    assert "The invariants determine each point with a = b, b = 1" in txt and "at most once." in txt
+    txt = "\n".join(report.reduction_summary_lines({**x, "blocks": [dict(b, reach=True)]},
+                                                     width=200, detailed=True))
+    assert "graph of these values over a connected set of a, b, and X₁, X₂ are independent" in txt
+
+
 def test_sections_detailed_explain_each_choice():
     txt = "\n".join(report.reduction_summary_lines(SEC, width=200, detailed=True))
     assert "explains each section" not in txt
@@ -133,6 +149,6 @@ def test_sections_detailed_explain_each_choice():
     assert "sets coordinates to 0 is preferred" in txt and "exactly one point with kL = 0" in txt
     assert "      kS = q_1" in txt and "      q_1 = kL + kS" in txt
     assert "c*k = 1 at most once" in txt and "the positive one is taken" in txt
-    assert "positive only where q_3 > 0" in txt
+    assert "certified positive where q_3 > 0" in txt and "does not represent it" in txt
     for word in ("face", "balance", "pin:", "orthant reaches it"):
         assert word not in txt

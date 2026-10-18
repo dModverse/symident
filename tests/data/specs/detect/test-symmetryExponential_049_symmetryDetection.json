@@ -1,0 +1,29 @@
+{
+ "name": "test-symmetryExponential_049_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "-k*sin(x)"
+  },
+  "g": {
+   "y": "c*x"
+  },
+  "events": [
+   {
+    "var": "x",
+    "time": "0",
+    "value": "x0",
+    "method": "replace",
+    "root": null
+   },
+   {
+    "var": "x",
+    "time": "1",
+    "value": "x1",
+    "method": "replace",
+    "root": null
+   }
+  ]
+ },
+ "env": {},
+ "options": {}
+}

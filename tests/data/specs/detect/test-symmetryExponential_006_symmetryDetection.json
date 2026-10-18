@@ -1,0 +1,13 @@
+{
+ "name": "test-symmetryExponential_006_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k*A"
+  },
+  "g": {
+   "y": "s*exp(A)"
+  }
+ },
+ "env": {},
+ "options": {}
+}

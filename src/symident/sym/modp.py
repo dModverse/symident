@@ -29,10 +29,7 @@ def _mono_nz(expo):
 
 
 def _poly_terms(expr, gens):
-    """Compile a rational expression in `gens` to (numerator, denominator) term
-    lists [(exponent tuple, (p, q))] with rational coefficients as integer pairs.
-    Prime-independent, so the compile is cached and only the per-prime reduction
-    (in _eval_terms) repeats."""
+    """(numerator, denominator) term lists [(exponents, (p, q))] of a rational expression, prime-independent."""
     if expr == 0:
         zero = _Mono([0] * len(gens))
         return [(zero, (0, 1))], [(zero, (1, 1))]
@@ -59,10 +56,7 @@ def _poly_terms(expr, gens):
 
 
 def _bipoly(expr, state_gens, param_gens):
-    """Compile a polynomial in (states, params) to a list of (state-monomial
-    exponent tuple, param-coefficient term list), the latter from _poly_terms, so
-    the per-point state-polynomial is rebuilt by evaluating the parameter
-    coefficients mod p."""
+    """Polynomial in (states, params) as (state exponents, parameter-coefficient term list) pairs."""
     P = spy.Poly(expr, *state_gens)
     out = []
     for sm, coef in P.terms():
@@ -72,8 +66,7 @@ def _bipoly(expr, state_gens, param_gens):
 
 
 def _solve_mod(A, B, p):
-    """Solve A X = B over GF(p) by Gauss-Jordan (A: n x n, B: n x k, integer lists
-    already reduced mod p). Returns X as a list of rows, or None if A is singular."""
+    """Solution X of A X = B over GF(p) as a list of rows, or None if A is singular."""
     n = len(A)
     if n == 0:
         return [[] for _ in range(0)]
@@ -97,8 +90,7 @@ _inv_mod_cache = {}
 
 
 def _inv_mod(a, p):
-    """Modular inverse of a mod p, memoized per (a, p): term-list denominators are
-    a small fixed set. inv(0)=0 as with Fermat."""
+    """Modular inverse of a mod p, memoized per (a, p); inv(0) = 0 as with Fermat."""
     a %= p
     if a <= 1:
         return a
@@ -111,8 +103,7 @@ def _inv_mod(a, p):
 
 
 def _eval_poly_terms(terms, ptvals, p):
-    """Value of one term list (from _poly_terms) at the integer point `ptvals`
-    (gens order, already mod p) as a residue mod p."""
+    """Residue mod p of one term list at the integer point `ptvals`, in gens order and reduced mod p."""
     acc = 0
     for monom, (cn, cd) in terms:
         if not cn:
@@ -134,8 +125,7 @@ def _eval_terms(numden, ptvals, p):
 
 
 def _eval_terms_guarded(numden, ptvals, p):
-    """Residue num/den mod p, or None when the denominator vanishes mod p (a Fermat
-    inverse of 0 would silently return 0)."""
+    """Residue num/den mod p, or None when the denominator vanishes mod p."""
     dv = _eval_poly_terms(numden[1], ptvals, p)
     if dv % p == 0:
         return None
@@ -146,9 +136,7 @@ def _eval_terms_guarded(numden, ptvals, p):
 
 
 def eval_rational_mod(expr, names, vals, q):
-    """Value of the rational expression `expr` at the integer point names -> vals,
-    reduced modulo the prime q. Returns None if the denominator vanishes mod q.
-    Used to certify a reconstructed identifiability direction at a fresh prime."""
+    """Value of `expr` at the integer point names -> vals mod the prime q, or None if the denominator vanishes."""
     q = int(q)
     if not isinstance(names, (list, tuple)):
         names = [names]
@@ -172,11 +160,7 @@ _eval_batch_cache = {}
 
 
 def eval_rational_mod_batch(exprs, names, points, q):
-    """Values of the rational expressions `exprs` (strings) at each integer point
-    (rows of `points`, columns aligned with `names`), reduced modulo the prime q.
-    The lambdified expressions are memoized on (exprs, names), since compiling
-    dominates evaluation in the sampling loops; evaluation is exact (Fraction).
-    Returns one list per point; -1 marks a vanishing denominator or a failure."""
+    """Values of `exprs` mod q at each integer point, one list per point, -1 on a zero denominator or failure."""
     q = int(q)
     exprs = [str(e) for e in _as_list(exprs)]
     names = [str(n) for n in _as_list(names)]
@@ -220,9 +204,7 @@ def eval_rational_mod_batch(exprs, names, points, q):
 
 
 def eval_rational_batch(exprs, names, points):
-    """Exact rational values of `exprs` at each integer point as decimal 'num'/'den'
-    strings (den '0' marks a failure), for cofactor-matrix sampling. Shares the
-    cache of eval_rational_mod_batch()."""
+    """Exact values of `exprs` at each integer point as decimal 'num'/'den' strings, den '0' on failure."""
     exprs = [str(e) for e in _as_list(exprs)]
     names = [str(n) for n in _as_list(names)]
     points = _as_list(points)

@@ -1,0 +1,22 @@
+{
+ "name": "test-symmetryDetection_126_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "th"
+  },
+  "g": {
+   "y": "x^5"
+  },
+  "trafo": {
+   "x": "0",
+   "th": "th"
+  },
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

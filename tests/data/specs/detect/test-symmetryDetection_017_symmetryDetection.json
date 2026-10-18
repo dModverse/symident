@@ -1,0 +1,66 @@
+{
+ "name": "test-symmetryDetection_017_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "1*(kin) -1*(k1 * A)",
+   "B": "1*(k1 * A) -1*(k2 * B)",
+   "C": "1*(k2 * B) -1*(k3 * C)",
+   "D": "1*(k3 * C) -1*(k4 * D)"
+  },
+  "reactions": {
+   "species": [
+    "A",
+    "B",
+    "C",
+    "D"
+   ],
+   "smatrix": [
+    [
+     1,
+     0,
+     0,
+     0
+    ],
+    [
+     -1,
+     1,
+     0,
+     0
+    ],
+    [
+     0,
+     -1,
+     1,
+     0
+    ],
+    [
+     0,
+     0,
+     -1,
+     1
+    ],
+    [
+     0,
+     0,
+     0,
+     -1
+    ]
+   ],
+   "rates": [
+    "kin",
+    "k1 * A",
+    "k2 * B",
+    "k3 * C",
+    "k4 * D"
+   ]
+  },
+  "g": {
+   "yD": "scale * D"
+  },
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

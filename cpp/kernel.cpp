@@ -560,10 +560,53 @@ LSer ls_axpy(const LSer& a, const LSer& b, u64 sgn, u64 p) {
   return o;
 }
 
-// Kernel of the series echelon rows U (rank r, entries mod eps^N) at eps = 1. Each
-// kernel vector is solved by back substitution in Laurent series, shifted to start
-// at eps^0, and accepted only if every entry is a polynomial whose known tail of
-// zeros is at least as long as its degree. Returns false otherwise.
+// The value at eps = 1 of the series c (n known coefficients) by its smallest Pade form
+// N/D, D(0) = 1, with n at least twice its unknowns plus one and every coefficient
+// consistent. False if none exists or D(1) = 0.
+static bool pade_at_one(const std::vector<u64>& c, int n, u64 p, u64& val) {
+  for (int tot = 0; 2 * (tot + 1) + 1 <= n; ++tot) {
+    for (int dd = 0; dd <= tot; ++dd) {
+      int dn = tot - dd;
+      // D from c[dn+1..dn+dd]: sum_{j=0..dd} D_j c[k-j] = 0 for k = dn+1..dn+dd
+      std::vector<std::vector<u64> > A(dd, std::vector<u64>(dd + 1, 0));
+      for (int i = 0; i < dd; ++i) {
+        int k = dn + 1 + i;
+        for (int j = 1; j <= dd; ++j) A[i][j - 1] = (k - j >= 0 && k - j < n) ? c[k - j] : 0;
+        A[i][dd] = submod(0, k < n ? c[k] : 0, p);
+      }
+      std::vector<u64> D(dd + 1, 0);
+      D[0] = 1;
+      if (dd) {
+        std::vector<std::vector<u64> > M = A;
+        std::vector<int> piv = rref_mod(M, p);
+        if ((int)piv.size() != dd || piv.back() == dd) continue;
+        for (int i = 0; i < dd; ++i) D[piv[i] + 1] = M[i][dd];
+      }
+      bool okc = true;
+      for (int k = dn + 1; k < n && okc; ++k) {
+        u64 acc = 0;
+        for (int j = 0; j <= dd && j <= k; ++j) acc = addmod(acc, mulmod(D[j], c[k - j], p), p);
+        if (acc) okc = false;
+      }
+      if (!okc) continue;
+      u64 num = 0, den = 0;
+      for (int k = 0; k <= dn; ++k) {
+        u64 acc = 0;
+        for (int j = 0; j <= dd && j <= k; ++j) acc = addmod(acc, mulmod(D[j], c[k - j], p), p);
+        num = addmod(num, acc, p);
+      }
+      for (int j = 0; j <= dd; ++j) den = addmod(den, D[j], p);
+      if (!den) return false;
+      val = mulmod(num, invmod(den, p), p);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Kernel of the series echelon rows U (rank r, entries mod eps^N) at eps = 1: each vector
+// by back substitution in Laurent series from eps^0, accepted only if every entry is a
+// rational function its known coefficients determine (pade_at_one).
 bool series_kernel_at_one(const std::vector<std::vector<u64> >& U, int r, int nz, int N,
                           u64 p, std::vector<std::vector<u64> >& K) {
   std::vector<int> pc(r, -1), pv(r, N);
@@ -610,9 +653,18 @@ bool series_kernel_at_one(const std::vector<std::vector<u64> >& U, int r, int nz
       for (size_t i = 0; i < e.c.size(); ++i)
         if (e.lo + (int)i < e.prec && e.c[i]) deg = e.lo + (int)i - m;
       int known = e.prec >= LS_EXACT ? LS_EXACT : e.prec - m;
-      if (deg >= 0 && known < 2 * (deg + 1) + 1) return false;
-      for (size_t i = 0; i < e.c.size(); ++i)
-        if (e.lo + (int)i < e.prec) k1[c] = addmod(k1[c], e.c[i], p);
+      if (deg < 0) continue;
+      if (known >= 2 * (deg + 1) + 1) {
+        for (size_t i = 0; i < e.c.size(); ++i)
+          if (e.lo + (int)i < e.prec) k1[c] = addmod(k1[c], e.c[i], p);
+        continue;
+      }
+      std::vector<u64> cs(known, 0);
+      for (size_t i = 0; i < e.c.size(); ++i) {
+        int k = e.lo + (int)i - m;
+        if (k >= 0 && k < known) cs[k] = e.c[i];
+      }
+      if (!pade_at_one(cs, known, p, k1[c])) return false;
     }
     K.push_back(k1);
   }

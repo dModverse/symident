@@ -12,7 +12,7 @@ from . import state
 from .detection import symmetry_detection
 from .options import reconst_control
 from .reduction import symmetry_reduction
-from .reduction.core import check_levels
+from .reduction.core import check_levels, finish_reduction
 
 
 def _default(o):
@@ -47,11 +47,7 @@ DETECT_ARGS = ("f", "g", "trafo", "conditions", "events", "reactions", "totals",
 
 
 def kwargs_of(spec):
-    """Keyword arguments of symmetry_detection from a specification.
-
-    `gauge_preference` is ``"AUTO"`` for the automatic gauge, since a host language may drop
-    a null entry; ``"Inf"`` stands for infinity in `control`.
-    """
+    """symmetry_detection() arguments of a spec; ``"AUTO"`` gauge_preference and ``"Inf"`` in control as such."""
     kw = {k: spec[k] for k in DETECT_ARGS if spec.get(k) is not None}
     if "gauge_preference" in spec:
         gp = spec["gauge_preference"]
@@ -85,7 +81,7 @@ def _messages(rec):
 
 
 def detect_json(spec, env=None, options=None):
-    """Detection from a JSON specification; the result as JSON, warnings under `warnings`."""
+    """Detection from a JSON specification; the result as JSON with the warnings and the spec."""
     with _context(env, options), warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         res = symmetry_detection(**kwargs_of(json.loads(spec)))
@@ -112,6 +108,7 @@ def reduce_json(obj, args, env=None, options=None):
         warnings.simplefilter("always")
         check_levels(o, allow_open)
         res = symmetry_reduction(o, **kw)
+        finish_reduction(o, res)
     if check and isinstance(o.get("spec"), dict) and res.get("trafo") and o.get("method") == "observability":
         with _context(env, options), warnings.catch_warnings():
             warnings.simplefilter("ignore")

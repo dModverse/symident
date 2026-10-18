@@ -1,5 +1,4 @@
-"""Expressions of the reduction: parsing, generator preparation, module reduction and small
-algebraic solvers."""
+"""Expressions of the reduction: parsing, generator preparation, module reduction and small algebraic solvers."""
 
 import numpy as np
 import sympy as spy
@@ -229,30 +228,31 @@ def module_reduce(preps, labels):
     return {"preps": out_preps, "labels_of": labels_of, "combos": combos}
 
 
-def roots_in(e, v):
-    """Roots in `v` of the linear and quadratic factors of the numerator of `e`."""
+def roots_in(e, v, info=None):
+    """Roots in `v` of the linear and quadratic numerator factors of `e`; else `info["complete"]` is False."""
     sv = spy.Symbol(v)
     try:
         num = spy.fraction(spy.together(e))[0]
         fl = spy.factor_list(num, sv)
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
+        if info is not None:
+            info["complete"] = False
         return []
     out = []
     for fm in fl[1]:
         f = fm[0]
         try:
             dg = int(spy.Poly(f, sv).degree())
-        except SYMPY_FAILS as exc:
-            sympy_fail(exc)
-            continue
-        if dg < 1 or dg > 2:
-            continue
-        try:
-            out += list(spy.solve(f, sv))
-        except SYMPY_FAILS as exc:
-            sympy_fail(exc)
-            pass
+            if dg > 2:
+                raise ValueError("degree above 2")
+            if dg >= 1:
+                out += list(spy.solve(f, sv))
+        except SYMPY_FAILS + (ValueError,) as exc:
+            if not isinstance(exc, ValueError):
+                sympy_fail(exc)
+            if info is not None:
+                info["complete"] = False
     return out
 
 
@@ -279,8 +279,8 @@ def first_subsets(n, k, m):
     return out
 
 
-def tri_solve(sys_, vars_):
-    """Triangular elimination: roots of one equation in one unknown, substituted, recursed."""
+def tri_solve(sys_, vars_, info=None):
+    """Triangular elimination of the equations; `info["complete"]` is False when a branch may be missing."""
     if not vars_:
         return [{}]
     for i, eq in enumerate(sys_):
@@ -288,7 +288,10 @@ def tri_solve(sys_, vars_):
         for v in vars_:
             if v not in fs:
                 continue
-            roots = roots_in(eq, v)
+            here = {"complete": True}
+            roots = roots_in(eq, v, here)
+            if info is not None and not here["complete"]:
+                info["complete"] = False
             if not roots:
                 continue
             out = []
@@ -297,11 +300,16 @@ def tri_solve(sys_, vars_):
                     rest = [spy.together(e.subs([(spy.Symbol(v), r)])) for j, e in enumerate(sys_) if j != i]
                 except SYMPY_FAILS as exc:
                     sympy_fail(exc)
+                    if info is not None:
+                        info["complete"] = False
                     continue
-                for s in tri_solve(rest, [x for x in vars_ if x != v]):
+                for s in tri_solve(rest, [x for x in vars_ if x != v], info):
                     s = dict(s)
                     s[v] = spy.cancel(r.subs([(spy.Symbol(k), x) for k, x in s.items()])) if s else r
                     out.append(s)
             if out:
                 return out
+    # no branch is complete only when an equation is a nonzero constant
+    if info is not None and not any(e.is_number and e != 0 for e in sys_):
+        info["complete"] = False
     return []

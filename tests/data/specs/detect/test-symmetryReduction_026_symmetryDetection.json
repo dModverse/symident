@@ -1,0 +1,14 @@
+{
+ "name": "test-symmetryReduction_026_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "-k*x"
+  },
+  "g": {
+   "y": "x"
+  },
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

@@ -1,0 +1,30 @@
+{
+ "name": "test-symmetryDetection_138_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k1*A",
+   "B": "-k2*B"
+  },
+  "g": [
+   {
+    "yA": "sA*A"
+   },
+   {
+    "yB": "sB*B"
+   }
+  ],
+  "conditions": {
+   "rows": [
+    "elisa",
+    "wb"
+   ],
+   "cols": {}
+  }
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

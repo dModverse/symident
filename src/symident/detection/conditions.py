@@ -76,8 +76,7 @@ class Grid:
 
 
 def as_events(events):
-    """Events as a list of dicts with string var, time, value, method, optional root and
-    optional cond, the conditions (0-based) an event belongs to."""
+    """Events as dicts of string var, time, value, method, optional root and optional 0-based conditions `cond`."""
     if not events:
         return []
     out = []
@@ -124,7 +123,8 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
     if t0 is None:
         nums = [as_number(e["time"].strip()) for e in ev_all]
         nums = [t for t in nums if t is not None]
-        t0 = min(nums) if nums else 0
+        # the experiment starts at 0 unless an event comes earlier
+        t0 = min(nums + [0])
     t0 = float(t0)
 
     def layout(ev):

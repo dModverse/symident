@@ -1,0 +1,32 @@
+{
+ "name": "test-symmetryDetection_135_symmetryDetection",
+ "spec": {
+  "f": {
+   "m": "ktx*(b0 + C) - dm*m",
+   "P": "ktl*m - (kdg + ksec)*P",
+   "L": "ksec*P/vol - kon*L*R + koff*C - kL*L",
+   "R": "ksR - kdR*R - kon*L*R + koff*C",
+   "C": "kon*L*R - koff*C - kint*C"
+  },
+  "g": {
+   "ym": "sm*m",
+   "yC": "sC*C",
+   "yL": "L"
+  },
+  "trafo": {
+   "m": "m0",
+   "P": "P0",
+   "L": "L0",
+   "R": "R0",
+   "C": "C0"
+  },
+  "reconstruct": true
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_NONARROW": "1",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

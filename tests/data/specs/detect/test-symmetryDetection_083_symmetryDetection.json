@@ -1,0 +1,31 @@
+{
+ "name": "test-symmetryDetection_083_symmetryDetection",
+ "spec": {
+  "f": {
+   "D": "-ka*D",
+   "A": "ka*D - k*A"
+  },
+  "g": {
+   "y": "A"
+  },
+  "trafo": {
+   "D": "0",
+   "A": "0"
+  },
+  "events": [
+   {
+    "var": "D",
+    "time": "tau",
+    "value": "d",
+    "method": "add",
+    "root": null
+   }
+  ]
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

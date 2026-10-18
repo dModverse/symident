@@ -1,5 +1,4 @@
-"""Taylor coefficients of observables along the solution from a point, modulo a prime, by
-truncated power series arithmetic on the expression trees, without symbolic Lie derivatives."""
+"""Taylor coefficients of observables along the solution modulo a prime, by truncated power series."""
 
 import math
 

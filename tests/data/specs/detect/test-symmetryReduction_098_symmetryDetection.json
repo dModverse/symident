@@ -1,0 +1,24 @@
+{
+ "name": "test-symmetryReduction_098_symmetryDetection",
+ "spec": {
+  "f": {
+   "c": "k0 - kd*c",
+   "x": "w*(q + b*c) - x"
+  },
+  "g": {
+   "y": "x"
+  },
+  "reconstruct": true,
+  "positive": [
+   "c",
+   "k0",
+   "kd",
+   "w",
+   "b",
+   "x"
+  ],
+  "gaugePreference": "AUTO"
+ },
+ "env": {},
+ "options": {}
+}

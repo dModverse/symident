@@ -1,0 +1,23 @@
+{
+ "name": "test-symmetryReduction_003_symmetryDetection",
+ "spec": {
+  "f": {
+   "m": "ktx - dm*m",
+   "p": "ktl*m - dp*p"
+  },
+  "g": {
+   "y": "p"
+  },
+  "trafo": {
+   "m": "m",
+   "p": "p",
+   "dm": "dm",
+   "dp": "dp",
+   "ktl": "1",
+   "ktx": "ktx"
+  },
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

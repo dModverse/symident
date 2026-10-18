@@ -1,0 +1,15 @@
+{
+ "name": "test-symmetryDetection_032_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "b - a*x"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "equilibrate": true,
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

@@ -1,11 +1,4 @@
-"""Hybrid models: every regime that the declared signs do not exclude, analyzed together.
-
-A direction is non-identifiable when it is an exact symmetry of every such regime, maps
-every switching surface to itself and is compatible with the events and the initial
-values. Necessary conditions on such a direction (the observability rows of every regime
-from the start of every condition and from generic points of every surface) bound the
-rank from below; exact symmetries verified symbolically bound it from above. The result
-is returned only when the two bounds meet."""
+"""Hybrid models: the rank where stacked regimes and exact symmetries of every regime give equal bounds."""
 
 import itertools
 import re
@@ -21,7 +14,7 @@ from ..sym.scaling import scaling_symmetries_multi
 from ..sym.switching import BACK, CONSTS, TIME, comparison, surface_ratios, to_str
 from ..sym.taylor import NoSeriesError, output_series
 from .conditions import Grid, as_events, num_str
-from .finalize import finalize
+from .finalize import finalize, public_symmetry
 
 _MAX_REGIMES = 4096
 _VISIBLE, _INVISIBLE, _UNDECIDED = "visible", "invisible", "undecided"
@@ -52,8 +45,7 @@ def _value(e, pt):
 
 
 def is_zero(e):
-    """Whether `e` vanishes identically: a nonzero exact value at a rational point refutes
-    it, a symbolic simplification to zero proves it."""
+    """Whether `e` vanishes identically, refuted at rational points and proven by simplification."""
     e = spy.sympify(e)
     if e == 0:
         return True
@@ -71,8 +63,7 @@ def is_zero(e):
 
 
 def solve_linear(g, prefer):
-    """(s, expr) with g = 0 solved for the first symbol of `prefer` in which its numerator
-    is linear with a coefficient free of it, else None."""
+    """(s, expr) solving g = 0 for the first symbol of `prefer` its numerator is linear in, else None."""
     num = spy.fraction(spy.together(spy.sympify(g)))[0]
     for s in prefer:
         if s not in num.free_symbols:
@@ -95,8 +86,7 @@ class HybridError(ValueError):
 
 
 class _Cond:
-    """One condition in the coordinates of the model: substitutions, initial values,
-    observables and events."""
+    """One condition in the coordinates of the model: substitutions, initial values, observables, events."""
 
     def __init__(self, index, name):
         self.index = index
@@ -133,7 +123,7 @@ class _Setup:
         self.clock = any(TIME in e.free_symbols for e in self.f.values()) or \
             any(TIME in e.free_symbols for x in hy.g for e in x.values())
         nums = [float(e["time"]) for e in self.time_events if is_number(e["time"])]
-        self.t0 = min(nums) if nums else 0.0
+        self.t0 = min(nums + [0.0])
         self.t0e = spy.Rational(num_str(self.t0))
         self.dyn = [x for x in self.f if x not in self.inputs]
         self._conditions()
@@ -221,9 +211,7 @@ class _Setup:
         return cd.apply(self.sw.funcs[j])
 
     def _regimes(self):
-        """Every sign pattern of the switching functions, less those the declared signs
-        prove infeasible: a decided sign of g_a - g_b or g_a + g_b excludes the patterns
-        it contradicts."""
+        """(kept, dropped) sign patterns of the switches; dropped ones contradict a declared sign in every condition."""
         m = len(self.sw.funcs)
         if 2 ** m > _MAX_REGIMES:
             raise HybridError(f"the switches give {2 ** m} sign patterns, more than {_MAX_REGIMES}")
@@ -277,9 +265,8 @@ class _Setup:
         return out
 
     def _select(self, cd, decl):
-        """The regimes of condition `cd`, its surfaces (those with regimes on both sides) and
-        the assumptions of a declared start."""
-        cd.assumptions = []
+        """Set the regimes, surfaces and declared start sides of condition `cd`."""
+        cd.declared = []
         if not decl:
             cd.regimes = [list(r) for r in self.regimes]
         else:
@@ -303,8 +290,7 @@ class _Setup:
                                   f"`regimes`, for instance regimes=[{self.hy.text(j, 1)!r}]")
 
     def _check_start(self, cd, pick):
-        """The declared start against the initial values: a sign of g at the start that the
-        declared signs decide must agree; an undecided one is an assumption."""
+        """Check the declared start against the initial values and record the sides they leave undecided."""
         x0 = {TIME: self.t0e}
         x0.update({_sym(u): v for u, v in _start_inputs(self, cd).items()})
         if not cd.equil:
@@ -323,7 +309,7 @@ class _Setup:
                                   f"{self.hy.text(j, side)}, but the initial values give "
                                   f"{self.hy.text(j, d) if d else self.hy.surface(j)}")
             if d is None:
-                cd.assumptions.append(f"{self.hy.text(j, side)} at the start")
+                cd.declared.append(f"{self.hy.text(j, side)} at the start")
 
     def _reach(self, cd, pair):
         """States that reach an observable in either regime of `pair`."""
@@ -342,10 +328,7 @@ class _Setup:
             out = more
 
     def visibility(self, cd, j):
-        """Whether the switch on surface j shows in the observables of condition `cd`.
-        Visible: a jet of the two neighbouring regimes differs at a rational point of the
-        surface. Invisible: the observables and every state that reaches them have the
-        same right-hand sides in both regimes, so every jet agrees. Else undecided."""
+        """Whether the switch on surface j is visible, invisible or undecided in the observables of `cd`."""
         if j in self.roots:
             return _VISIBLE
         pairs = []
@@ -454,11 +437,7 @@ def _start_inputs(st, cd):
 
 
 def _copies(st):
-    """The copies whose observability rows every direction of the rule satisfies: each
-    regime from the start of each condition, from a generic point of each visible surface
-    that a state parametrizes and, where a switch is not visible, from a generic point;
-    each switched into every other regime; the times of the visible time switches as
-    observables. Returns the copies and the fresh coordinates."""
+    """(copies, fresh coordinates): the copies whose observability rows every direction of the rule satisfies."""
     names = _Names(_model_symbols(st))
     copies, fresh = [], []
     for cd in st.conds:
@@ -508,9 +487,7 @@ def _copies(st):
 
 
 def _switched(cp, st):
-    """The copy and, for every other regime of its condition, the copy switched into it at
-    a fixed time: its rows hold Lie derivatives along words of two regimes, which every
-    direction of the rule keeps."""
+    """The copy and its versions switched at a fixed time into every other regime of its condition."""
     taken = {spy.Rational(num_str(float(e["time"]))) for e in st.time_events if is_number(e["time"])}
     ts = st.t0e + 1
     while ts in taken:
@@ -702,8 +679,7 @@ def _events_of(st, cd):
 
 
 def _starts(st, cd):
-    """The start states of condition `cd`: the given ones, or the resting states of its
-    regimes, after the events at the start."""
+    """The start states of `cd`, given or resting, after the events at the start."""
     if cd.equil:
         raw = [s for sides in cd.regimes for s in _steady_states(st, cd, sides)]
     else:
@@ -723,13 +699,7 @@ def _starts(st, cd):
 
 
 def certify_fields(st, cands, why=None):
-    """The candidates that are proven directions of the rule. Per condition the
-    candidates and the state unit fields form a family; members are dropped until the
-    family spans a distribution that every regime leaves invariant ([Y, F] in the span),
-    that kills every observable, is tangent to every visible surface, maps into itself
-    under every event, and, at a surface that is not visible and not kept, holds the jump
-    of the dynamics with equal observables. A candidate survives when its start vector
-    lies in that distribution. Every identity is proven symbolically."""
+    """Indices of the candidates proven symbolically to be directions of the rule in every condition."""
     why = [] if why is None else why
     alive = []
     for i, F in enumerate(cands):
@@ -851,8 +821,7 @@ def _event_image(st, X, e, post):
 
 
 def _hidden_jumps(st, cd, fam, keys, surf):
-    """At a surface that is not visible, a member that moves it must leave the output
-    unchanged: the jump of the dynamics lies in the span and the observables agree there."""
+    """(index, reason) of a member that moves a surface that is not visible and would see its switch, else None."""
     vecs = [X for _, X in fam]
     for j in cd.surfaces:
         if cd.vis[j] == _VISIBLE:
@@ -897,8 +866,7 @@ def _components(st, F, coords):
 
 
 def _rank_at_point(rows):
-    """The rank of the component rows at a rational point; None where a value is not
-    rational."""
+    """The rank of the component rows at a rational point; None where a value is not rational."""
     syms = set()
     for r in rows:
         for e in r:
@@ -915,8 +883,7 @@ def _rank_at_point(rows):
 
 
 def _scaling_candidates(st):
-    """Scalings proposed by the integer kernel over the regimes of every condition, with the
-    visible surfaces, initial values and events as constraints; the certificate decides."""
+    """Scalings the integer kernel proposes over every regime, constrained by surfaces, initial values, events."""
     models, obs, xm, xo = [], [], [], []
     for cd in st.conds:
         cons_m, cons_o = [], []
@@ -954,8 +921,7 @@ def _scaling_candidates(st):
 
 
 def _kernel_candidates(st, res, fresh):
-    """Closed forms of the stacked analysis that hold no fresh coordinate; a state whose
-    start is a coordinate moves as that coordinate does."""
+    """Closed forms of the stacked analysis that hold no fresh coordinate, lifted to the states."""
     out = []
     for d in res.get("symmetries") or []:
         gen = d.get("generator")
@@ -1063,7 +1029,7 @@ def _info(st, extra=None):
            "excluded": [st.text(r) for r in st.excluded],
            "conditions": [{"name": cd.name, "regimes": [st.text(r) for r in cd.regimes],
                            "visibility": {st.hy.surface(j): cd.vis[j] for j in cd.surfaces},
-                           "assumptions": list(cd.assumptions)} for cd in st.conds]}
+                           "declared": list(cd.declared)} for cd in st.conds]}
     out.update(extra or {})
     return out
 
@@ -1100,8 +1066,7 @@ def _relaxed_dim(res, coords):
 
 
 def hybrid_detection(hy, kw, regimes=None):
-    """The detection of a model with switches; `kw` holds the arguments of
-    _symmetry_detection, `regimes` the optional regimes of the experiment."""
+    """The detection result of a model with switches, `kw` the arguments of _symmetry_detection."""
     t_start = time.monotonic()
     st = _Setup(hy, kw, regimes)
     free, pars = _coords(st)
@@ -1118,20 +1083,19 @@ def hybrid_detection(hy, kw, regimes=None):
         cands = _scaling_candidates(st) + _kernel_candidates(st, res, fresh) + \
             _unit_candidates(st, coords)
         chosen, why = _certify(st, cands, coords, need)
-    uncertified = None
+    uncertified, candidates = None, None
     syms = [_entry(F, c, coords, bool(kw.get("reconstruct"))) for F, c in chosen]
     if len(chosen) < need:
         uncertified = (f"the stacked regimes leave {need} direction(s) open, and {len(chosen)} were proven "
                        "directions of the rule" + ("; rejected candidates: " + "; ".join(dict.fromkeys(why))
                                                     if why else ""))
-        syms += _stacked_entries(res, fresh, syms, need - len(chosen), uncertified)
+        candidates = [_candidate(e) for e in _stacked_entries(res, fresh, syms, need - len(chosen))]
     dim = len(coords)
     info = res["info"]
     proven = need if need and uncertified is None else None
     raw = {"rank": dim - need, "dim": dim, "coordinates": coords, "non_identifiable": syms,
            "rank_proven": proven,
            "rank_proof": "stacked regimes and exact symmetries of every regime" if proven else None,
-           "bound": info.get("bound") if uncertified is not None else None,
            "lie_order_used": info.get("lie_order_used"), "lie_certified": info.get("lie_certified"),
            "lie_block_orders": info.get("lie_block_orders"),
            "gap_order_used": info.get("gap_order_used"), "gap_certified": info.get("gap_certified"),
@@ -1141,13 +1105,21 @@ def hybrid_detection(hy, kw, regimes=None):
     out = finalize(raw, "observability", _settings(st), elapsed=time.monotonic() - t_start,
                    coordinates=coords)
     out["info"]["model_exprs"] = info.get("model_exprs")
-    out["info"]["switching"] = _info(st, {"copies": len(copies), "uncertified": uncertified})
+    out["info"]["model_rhs"] = info.get("model_rhs")
+    out["info"]["model_inputs"] = info.get("model_inputs")
+    out["info"]["switching"] = _info(st, {"copies": len(copies), "uncertified": uncertified,
+                                          "candidates": candidates})
     return out
 
 
-def _stacked_entries(res, fresh, have, n, why):
-    """Up to `n` directions of the stacked analysis that hold no fresh coordinate and are not among
-    `have`, as verified directions of the switched model; the rest by their support."""
+def _candidate(e):
+    """A direction of the stacked kernel that the rule does not prove: its support and closed form."""
+    pub = public_symmetry(e)
+    return {"type": pub["type"], "support": pub["support"], "generator": pub["generator"]}
+
+
+def _stacked_entries(res, fresh, have, n):
+    """Up to `n` directions of the stacked analysis without fresh coordinates, not among `have`."""
     sup = {tuple(sorted(d["support"])) for d in have}
     out = []
     for d in res.get("symmetries") or []:
@@ -1158,9 +1130,7 @@ def _stacked_entries(res, fresh, have, n, why):
             continue
         sup.add(tuple(sorted(support)))
         closed = d.get("generator") is not None and len(support) == len(d["support"])
-        e = {"support": support, "type": d.get("type", "general"), "closed_form": closed, "certified": False,
-             "exact": False, "route": "stacked regimes",
-             "proof": f"the rule of the switches is not proven: {why}"}
+        e = {"support": support, "type": d.get("type", "general"), "closed_form": closed}
         if closed:
             scal = d.get("type") == "scaling" and d.get("weights")
             e["vector"] = dict(d["weights"]) if scal else dict(d["generator"])

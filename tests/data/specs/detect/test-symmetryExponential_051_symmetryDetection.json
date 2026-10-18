@@ -1,0 +1,13 @@
+{
+ "name": "test-symmetryExponential_051_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "-k*sin(exp(x))"
+  },
+  "g": {
+   "y": "x"
+  }
+ },
+ "env": {},
+ "options": {}
+}

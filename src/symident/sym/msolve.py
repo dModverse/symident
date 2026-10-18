@@ -11,6 +11,7 @@ from ..install import find_msolve
 from .gfpoly import _dp_coeffs, _dp_subst_rat, _dp_value, _gf_roots, note_branch
 
 _MSOLVE_TIMEOUT = 600
+_MSOLVE_THREADS = 1
 
 
 class MsolveMissingError(RuntimeError):
@@ -28,6 +29,17 @@ def msolve_timeout(seconds):
         _MSOLVE_TIMEOUT = old
 
 
+@contextlib.contextmanager
+def msolve_threads(n):
+    """Threads of one msolve call within the block, for a call that runs alone."""
+    global _MSOLVE_THREADS
+    old, _MSOLVE_THREADS = _MSOLVE_THREADS, max(1, int(n))
+    try:
+        yield
+    finally:
+        _MSOLVE_THREADS = old
+
+
 def _msolve_binary():
     """Path of the msolve executable."""
     path, _ = find_msolve()
@@ -39,8 +51,7 @@ def _msolve_binary():
 
 
 def _const_reduce(dps, nv, p):
-    """Eliminate pivots x_i = -b/a0 with constant a0. Returns (plan, rest), plan as
-    (i, b, 1/a0) in elimination order."""
+    """(plan, rest): pivots x_i = -b/a0 with constant a0 eliminated, plan as (i, b, 1/a0) in order."""
     dps = [dict(d) for d in dps if d]
     plan = []
     while True:
@@ -68,8 +79,7 @@ def _const_reduce(dps, nv, p):
 
 
 def _msolve_points(polys, vars_idx, nv, p):
-    """Interior points of `polys` over GF(p). Returns a list of {index: value} or a
-    fail-dict."""
+    """Interior points of `polys` over GF(p) as a list of {index: value}, or a fail-dict."""
     import ast
     import subprocess
     import tempfile
@@ -89,7 +99,7 @@ def _msolve_points(polys, vars_idx, nv, p):
         with open(fi, "w") as fh:
             fh.write(", ".join(vs) + "\n" + str(p) + "\n" + ",\n".join(eqs) + "\n")
         try:
-            r = subprocess.run([_msolve_binary(), "-f", fi, "-o", fo, "-P", "1", "-t", "1"],
+            r = subprocess.run([_msolve_binary(), "-f", fi, "-o", fo, "-P", "1", "-t", str(_MSOLVE_THREADS)],
                                capture_output=True, text=True, timeout=_MSOLVE_TIMEOUT)
         except subprocess.TimeoutExpired:
             session.note("limits", f"msolve: a resting state was not solved within {_MSOLVE_TIMEOUT:g} s")
@@ -136,9 +146,7 @@ def _msolve_points(polys, vars_idx, nv, p):
 
 
 def _component_points(polys, nv, p):
-    """Interior points of `polys` over GF(p), solved per block of polynomials that share
-    variables; a block in one variable by its roots. Returns an iterator of
-    {index: value} or a fail-dict."""
+    """Interior points of `polys` over GF(p), solved per block of shared variables: an iterator or a fail-dict."""
     vs = [{i for m in d for i in range(nv) if m[i]} for d in polys]
     parent = list(range(len(polys)))
 

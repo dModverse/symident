@@ -1,0 +1,23 @@
+{
+ "name": "test-symmetryReduction_010_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "k1 + u*k2 - kdeg*A"
+  },
+  "g": {
+   "y": "A"
+  },
+  "trafo": {
+   "A": "A",
+   "k1": "q_1",
+   "k2": "0",
+   "kdeg": "kdeg"
+  },
+  "fixed": [
+   "u"
+  ],
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

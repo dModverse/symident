@@ -11,13 +11,10 @@ from .steady import _ss_compile
 
 
 def _forward_rate_pick(rhs_by_name, solve_states, param_names, forcings, keep_free=None):
-    """Match each state to a rate entering its balance linearly, preferring a negative
-    turnover term (rate times a monomial containing the state) found in few balances.
-    `keep_free` (the direction's support) is never solved for. Most-constrained states go
-    first. Returns one rate name per solve state, or None if no matching exists."""
+    """One rate per solve state entering its balance linearly, never from `keep_free`; None if no matching exists."""
     keep_free = set(keep_free or [])
-    # never solve for a recast coordinate (E, L): E multiplies a turnover rate, which
-    # would make f bilinear in the rates
+    # never solve for a recast coordinate: it multiplies a turnover rate, which would make
+    # f bilinear in the rates
     paramset = {spy.Symbol(pn) for pn in param_names
                 if pn not in keep_free and not pn.startswith('_E_') and not pn.startswith('_L_')}
     forc = {spy.Symbol(nm) for nm in forcings}
@@ -53,8 +50,7 @@ def _forward_rate_pick(rhs_by_name, solve_states, param_names, forcings, keep_fr
 
 
 def _rate_matching(cand, appear, order):
-    """A complete matching of states to candidate rates by augmenting paths, each state
-    trying its rates in preference order; None if there is none."""
+    """A complete matching of states to candidate rates by augmenting paths, or None if there is none."""
     prefs = {s: [r for _, _, r in sorted((sc, appear.get(r, 99), r) for sc, r in cand[s])]
              for s in order}
     owner = {}
@@ -76,10 +72,7 @@ def _rate_matching(cand, appear, order):
 
 
 def _forward_plan(rhs_by_name, solve_states, param_names, forcings, keep_free=None):
-    """Forward plan when balances share rates: a balance without a rate of its own is
-    solved for its own state, before the rates. Returns (state_solve, solve_rates), the
-    state-solved balances in dependency order and the rates, or None. A balance whose
-    rate coefficients depend on the others' at a random point is state-solved too."""
+    """(state_solve, solve_rates) when balances share rates: state-solved balances in dependency order, or None."""
     pre = []
     for _ in range(len(solve_states)):
         r = _forward_plan_once(rhs_by_name, solve_states, param_names, forcings, keep_free, pre)
@@ -260,20 +253,19 @@ def _forward_plan_once(rhs_by_name, solve_states, param_names, forcings, keep_fr
 _forward_cache = {}
 
 
-def _forward_compile(model, state_names, param_names, forcings, solve_rates, state_solve=()):
-    """Cached prime-independent compile of the forward solve: each solve rate's coefficient
-    and the rate-free constant per balance as term lists over rgens = (non-solve params) +
-    solve states, plus the steady-state Jacobian term lists. A balance in `state_solve` is
-    compiled as its own state's coefficient and remainder instead. Returns {'bad': reason}
-    if the balances are not linear in the chosen rates."""
+def _forward_compile(model, state_names, param_names, forcings, solve_rates, state_solve=(),
+                     held=()):
+    """Cached prime-independent compile of the forward solve, or {'bad': reason} if not linear in the rates."""
     state_solve = tuple(state_solve)
+    held = set(held)
     key = (tuple(model), tuple(state_names), tuple(param_names), tuple(sorted(forcings)),
-           tuple(solve_rates), state_solve)
+           tuple(solve_rates), state_solve, tuple(sorted(held)))
     c = _forward_cache.get(key)
     if c is not None:
         return c
     (param_syms, solve_states, polys, Jx, Jt, gens0, jx_terms, jt_terms,
-     poly_bi, gen_lin, lin_terms, _pp) = _ss_compile(model, state_names, param_names, forcings)
+     poly_bi, gen_lin, lin_terms, _pp) = _ss_compile(model, state_names, param_names, forcings,
+                                                     linear=False)
     solve_set = set(solve_rates)
     r_syms = [spy.Symbol(r) for r in solve_rates]
     rgens = [th for th in param_syms if str(th) not in solve_set] + list(solve_states)
@@ -286,7 +278,8 @@ def _forward_compile(model, state_names, param_names, forcings, solve_rates, sta
         if (c1.free_symbols | c0.free_symbols) - rgenset:
             return {'bad': 'state-solved balance %s holds a solve rate' % u}
         state_t.append((u, _poly_terms(c1, rgens), _poly_terms(c0, rgens)))
-    rate_rows = [i for i in range(len(solve_states)) if str(solve_states[i]) not in set(state_solve)]
+    rate_rows = [i for i in range(len(solve_states))
+                 if str(solve_states[i]) not in set(state_solve) | held]
     coef_t, const_t = [], []
     for i in rate_rows:
         fexp = spy.sympify(polys[i])
@@ -310,13 +303,8 @@ def _forward_compile(model, state_names, param_names, forcings, solve_rates, sta
 
 def solve_forward_modular(model, state_names, param_names, state_vals, param_vals, prime,
                         forcings=None, solve_rates=None, keep_free=None, backend='sympy',
-                        state_solve=None):
-    """Solve f = 0 over GF(prime) for a turnover subset of rates, given chosen resting
-    `state_vals` and `param_vals` (residues; forcings held at 0). `solve_rates` (one per
-    non-forcing state outside `state_solve`) is auto-picked avoiding `keep_free` if None;
-    the balances in `state_solve` are solved for their own state first. Returns the
-    joint-mode payload of the backward solve plus {'rates', 'solve_rates', 'state_solve'},
-    or {'ok': False, 'why'}."""
+                        state_solve=None, held=None):
+    """Solve f = 0 over GF(prime) for a turnover subset of rates at given resting values, or {'ok': False, 'why'}."""
     p = int(prime)
     model = _as_list(model)
     forcings = set(_as_list(forcings))
@@ -325,11 +313,12 @@ def solve_forward_modular(model, state_names, param_names, state_vals, param_val
     svd = {str(k): int(v) % p for k, v in dict(state_vals).items()}
     pvd = {str(k): int(v) % p for k, v in dict(param_vals).items()}
     state_solve = [] if state_solve is None else _as_list(state_solve)
+    held = set(_as_list(held))
     picked = solve_rates is None
     if solve_rates is None:
-        (_ps, _ss, _polys, *_r) = _ss_compile(model, state_names, param_names, forcings)
+        (_ps, _ss, _polys, *_r) = _ss_compile(model, state_names, param_names, forcings, linear=False)
         rhs_by_name = {str(_ss[i]): _polys[i] for i in range(len(_ss))}
-        ss_names = [str(s) for s in _ss]
+        ss_names = [str(s) for s in _ss if str(s) not in held]
         solve_rates = _forward_rate_pick(rhs_by_name, ss_names, param_names, forcings, keep_free=keep_free)
         state_solve = []
         if solve_rates is None:
@@ -338,18 +327,17 @@ def solve_forward_modular(model, state_names, param_names, state_vals, param_val
                 return {'ok': False, 'why': 'no complete forward rate matching'}
             state_solve, solve_rates = plan
     solve_rates = _as_list(solve_rates)
-    c = _forward_compile(model, state_names, param_names, forcings, solve_rates, state_solve)
+    c = _forward_compile(model, state_names, param_names, forcings, solve_rates, state_solve, held)
     if 'bad' in c and picked:
         # the direct pick holds two rates of one product: use the planned matching
         plan = _forward_plan(rhs_by_name, ss_names, param_names, forcings, keep_free=keep_free)
         if plan is not None:
             state_solve, solve_rates = plan
             c = _forward_compile(model, state_names, param_names, forcings, solve_rates,
-                                 state_solve)
+                                 state_solve, held)
     if 'bad' in c:
         return {'ok': False, 'why': c['bad']}
     solve_states = c['solve_states']
-    n_s = len(solve_states)
     n_r = len(c['coef_t'])
     if len(solve_rates) != n_r:
         return {'ok': False, 'why': 'rate/state count mismatch (%d rates, %d balances)'
@@ -379,11 +367,15 @@ def solve_forward_modular(model, state_names, param_names, state_vals, param_val
             return rates_dict[nm]
         return svd[nm] if nm in svd else (pvd[nm] if nm in pvd else 0)
     ptvals = [cvfull(nm) for nm in c['gens']]
-    df_jx = [[_eval_terms(c['jx_terms'][i][j], ptvals, p) for j in range(n_s)] for i in range(n_s)]
-    df_jt = {th: [_eval_terms(c['jt_terms'][th][i], ptvals, p) for i in range(n_s)]
+    keep = [i for i, s in enumerate(solve_states) if s not in held]
+    held_idx = [i for i, s in enumerate(solve_states) if s in held]
+    df_jx = [[_eval_terms(c['jx_terms'][i][j], ptvals, p) for j in keep] for i in keep]
+    df_jt = {th: [_eval_terms(c['jt_terms'][th][i], ptvals, p) for i in keep]
              for th in c['param_names']}
+    for hj in held_idx:
+        df_jt[solve_states[hj]] = [_eval_terms(c['jx_terms'][i][hj], ptvals, p) for i in keep]
     return {'ok': True, 'rates': rates_dict, 'solve_rates': list(solve_rates),
             'state_solve': list(state_solve),
             'solve_states': list(solve_states), 'val_by': {s: cvfull(s) for s in solve_states},
-            'df_jx': df_jx, 'df_jt': df_jt, 'df_state_cols': list(solve_states),
-            'df_param_cols': list(c['param_names'])}
+            'df_jx': df_jx, 'df_jt': df_jt, 'df_state_cols': [solve_states[j] for j in keep],
+            'df_param_cols': list(c['param_names']) + [solve_states[j] for j in held_idx]}

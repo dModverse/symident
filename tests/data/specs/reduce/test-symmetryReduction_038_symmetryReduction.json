@@ -1,0 +1,35 @@
+{
+ "name": "test-symmetryReduction_038_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "x",
+    "y"
+   ],
+   "modelExprs": null
+  },
+  "symmetries": [
+   {
+    "type": "polynomial",
+    "generator": {
+     "x": "x",
+     "y": "x + y"
+    },
+    "weights": null,
+    "support": [
+     "x",
+     "y"
+    ],
+    "degree": null
+   }
+  ]
+ },
+ "args": {
+  "dExp": [
+   0
+  ]
+ }
+}

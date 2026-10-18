@@ -109,16 +109,16 @@ def generators_lines(res, verbose=False, width=None):
     levels = {d.get("level") for d in syms}
     if "exact" in levels:
         out += [_wrap("exact = proven over Q.", "", width)]
+    b = (res.get("info") or {}).get("bound")
     if "verified" in levels:
-        b = (res.get("info") or {}).get("bound")
-        if isinstance(b, dict) and b.get("probability") is not None:
-            sure = f"a wrong closed form passes with probability at most {b['probability']:.1e}"
-        else:
-            sure = "no bound on the chance that a wrong closed form passes" + \
-                (f" ({b['why']})" if isinstance(b, dict) and b.get("why") else "")
-        out += [_wrap("verified = checked at random points modulo a large prime at the orders used, not proven; "
-                      f"{sure}. info['proof'] says why it is not proven.", "", width)]
-    if levels & {"exact", "verified"}:
+        out += [_wrap("verified = in the kernel at random points modulo a large prime, not proven; a wrong "
+                      f"closed form passes with probability at most {b['probability']:.1e}. info['proof'] "
+                      "says why it is not proven.", "", width)]
+    if "checked" in levels:
+        why = f" ({b['why']})" if isinstance(b, dict) and b.get("why") else ""
+        out += [_wrap("checked = in the kernel at random points modulo a large prime, with no bound on the "
+                      f"chance that a wrong closed form passes{why}.", "", width)]
+    if levels & {"exact", "verified", "checked"}:
         out.append("")
     return out
 
@@ -158,9 +158,12 @@ def result_lines(res, verbose=False, width=None, fixing=False):
     n = len(res["symmetries"])
     if is_obs and res.get("identifiable"):
         return [f"Result:  structurally locally identifiable (rank {res['rank']} / {res['dim']})"]
+    cands = (((res.get("info") or {}).get("switching") or {}).get("candidates") or []) if is_obs else []
     if is_obs:
+        more = res["dim"] - res["rank"] - n
         out = [f"Result:  rank {res['rank']} / {res['dim']}  |  "
-               f"{plural(n, 'non-identifiable direction', 'non-identifiable directions')}"]
+               f"{plural(n, 'non-identifiable direction', 'non-identifiable directions')}" +
+               (f", up to {more} more" if more > 0 and cands else "")]
         rs = (res.get("info") or {}).get("rank_status")
         if isinstance(rs, dict) and rs.get("status") == "verified" and res["info"].get("rank_fields") is not None:
             out.append(_wrap(f"The rank is verified, not proven: the {rs['why']}" +
@@ -177,8 +180,23 @@ def result_lines(res, verbose=False, width=None, fixing=False):
     else:
         out = [f"Result:  {plural(n, 'scaling symmetry', 'scaling symmetries')} (exact integer kernel)", ""]
     out += generators_lines(res, verbose, width)
+    out += candidate_lines(cands, width)
     if fixing:
         out += reduction_hint_lines(res, width)
+    return out
+
+
+def candidate_lines(cands, width=None):
+    """The directions of the stacked rows that the rule of the switches does not prove."""
+    if not cands:
+        return []
+    width = _width(width)
+    out = ["Candidates, not proven (info['switching']['candidates']):"]
+    for c in cands:
+        gen = c.get("generator")
+        text = ", ".join(f"ξ({k}) = {v}" for k, v in gen.items()) if gen else \
+            "support " + ", ".join(c.get("support") or [])
+        out.append(_wrap(text, "  ", width))
     return out
 
 
@@ -200,9 +218,11 @@ def summary_lines(res, verbose=False, width=None):
         comp.append(f"rank: proven ({info['rank_proven']} directions, {info.get('rank_proof')})")
     elif is_obs and info.get("rank_fields") is not None:
         b = info.get("rank_fields_bound") or {}
-        comp.append(f"rank: verified ({info['rank_fields']} directions, invariant fields at random points" +
-                    (f", probability of a wrong pass at most {b['probability']:.1e})"
-                     if b.get("probability") is not None else ")"))
+        comp.append((f"rank: verified ({info['rank_fields']} directions, invariant fields at random points, "
+                     f"probability of a wrong pass at most {b['probability']:.1e})")
+                    if b.get("probability") is not None else
+                    f"rank: lower bound ({info['rank_fields']} directions, invariant fields at random points "
+                    "without an error bound)")
     elif is_obs and info.get("lie_plateau") is not None:
         if info.get("lie_certified"):
             comp.append("saturation: certified (every segment at the rank bound of its invariant space)")
@@ -294,9 +314,9 @@ def red_chart_lines(x, width, domain="positive orthant"):
         out += ["", "Trafo (non-identity entries)"] + _pairs(list(nonid), list(nonid.values()), width)
     fresh, dom = {}, {}
     for b in x["blocks"]:
-        if b["type"] != "scaling" and b.get("survivor_meaning"):
-            fresh.update(b["survivor_meaning"])
-        dom.update(b.get("carrier_domain") or {})
+        if b["type"] != "scaling" and b.get("new_parameters"):
+            fresh.update(b["new_parameters"])
+        dom.update(b.get("solved_domain") or {})
     if fresh:
         real = [dom.get(k) == "real" for k in fresh]
         out += ["", "Invariants:"] + _pairs(list(fresh), [v + ("        [real-valued]" if r else "")
@@ -333,15 +353,24 @@ def _section_reason(b, what, domain):
         return [f"{labs} rescales {moved}: along an orbit each is multiplied by a power of one "
                 f"factor λ > 0, and {t} by a nonzero power. {what} therefore holds at exactly one λ."]
     out = [f"{labs} moves {moved}. Constant along each orbit:"]
-    inv = b.get("survivor_meaning") or {}
+    inv = b.get("new_parameters") or {}
     out += [("  ", k, v) for k, v in inv.items()]
     sec = set(b.get("section") or [])
     pins = b.get("pins") or {}
     pt = {k: v for k, v in pins.items() if f"{k} = {v}" not in sec}
-    real = [k for k, v in (b.get("carrier_domain") or {}).items() if v == "real"]
+    real = [k for k, v in (b.get("solved_domain") or {}).items() if v == "real"]
     if b.get("face"):
         out.append(f"A section that sets coordinates to 0 is preferred: each other coordinate then "
                    f"becomes one of the invariants. With {what} the invariants give")
+    elif b.get("section") and b.get("injective") and len(b.get("transversal") or []) > 1:
+        out.append(f"Setting coordinates to 0 gives no point with all others positive on every orbit. "
+                   f"The invariants determine each point with {what}, and two points of one orbit "
+                   f"have the same invariants, so the orbit meets {what} at most once. With {what} "
+                   f"the invariants give")
+    elif b.get("section") and (len(b.get("transversal") or []) > 1 or not b.get("section_monotone")):
+        out.append(f"Setting coordinates to 0 gives no point with all others positive on every orbit. "
+                   f"That each orbit meets {what} at most once is not proven. With {what} the invariants "
+                   f"give")
     elif b.get("section"):
         out.append(f"Setting coordinates to 0 gives no point with all others positive on every orbit. "
                    f"The ratio of the two sides of {what} changes in one direction only along "
@@ -351,9 +380,25 @@ def _section_reason(b, what, domain):
         out.append(f"Neither setting coordinates to 0 nor a ratio of them gives a section. With {what} "
                    f"the invariants give")
     out += [("  ", k, v) for k, v in pt.items()]
+    if b.get("reach"):
+        indep = f"{labs} vanishes nowhere" if len(b["labels"]) == 1 else f"{labs} are independent at every point"
+        out.append("The points with given invariants are one orbit: they are the graph of these values "
+                   f"over a connected set of {', '.join(b.get('transversal') or [])}, and {indep}.")
     if b.get("coverage") == "partial":
-        out.append(f"These values are positive only where {', '.join(real)} > 0; orbits with other "
-                   f"values of {', '.join(real)} do not reach {what} inside the {domain}.")
+        out.append(f"These values are certified positive where {', '.join(real)} > 0; an orbit with other "
+                   f"values of {', '.join(real)} may not reach {what} inside the {domain}, and the trafo "
+                   f"does not represent it.")
+    elif b.get("unproven"):
+        out.append(f"The invariants determine these values uniquely, and they are positive for all "
+                   f"values of the invariants. That every orbit in the {domain} has exactly one such "
+                   f"point rests on the claims listed as unproven.")
+    elif b.get("face"):
+        out.append(f"The invariants determine these values uniquely, and they are positive for all "
+                   f"values of the invariants. So every orbit in the {domain} approaches exactly one "
+                   f"point with {what}, where the model is continuous, and that point gives the output "
+                   f"of the orbit.")
+        if b.get("face_level") == "checked":
+            out.append("The resting state there is checked at random points, without an error bound.")
     else:
         out.append(f"The invariants determine these values uniquely, and they are positive for all "
                    f"values of the invariants. So every orbit in the {domain} contains "
@@ -423,14 +468,16 @@ def red_zero_lines(x, width):
 def _level_lines(x, width):
     """Lines on the removed directions that rest on a verified closed form and on failed checks."""
     out = []
-    ver = [l for b in x.get("blocks") or [] if b.get("generator_level", b.get("level")) == "verified"
-           and b["status"] in ("reduced", "fixed") for l in b["labels"]]
-    if ver:
-        out.append(_wrap(f"The section of {', '.join(ver)} rests on a verified closed form, checked modulo a "
-                         "prime, not proven.", "", width))
+    for lev, what in (("verified", "a verified closed form, checked modulo a prime with an error bound, "
+                                   "not proven"),
+                      ("checked", "a closed form checked modulo a prime without an error bound")):
+        labs = [l for b in x.get("blocks") or [] if b.get("generator_level", b.get("level")) == lev
+                and b["status"] in ("reduced", "fixed") for l in b["labels"]]
+        if labs:
+            out.append(_wrap(f"The section of {', '.join(labs)} rests on {what}.", "", width))
     for b in x.get("blocks") or []:
-        if b.get("assumptions") and b["status"] in ("reduced", "fixed"):
-            out.append(_wrap(f"{{{', '.join(b['labels'])}}} assumes: " + "; ".join(b["assumptions"]) + ".",
+        if b.get("unproven") and b["status"] in ("reduced", "fixed"):
+            out.append(_wrap(f"{{{', '.join(b['labels'])}}} leaves unproven: " + "; ".join(b["unproven"]) + ".",
                              "", width))
     ck = x.get("checks") or {}
     if ck.get("failed"):
@@ -469,8 +516,8 @@ def _verbose_family_lines(fam, ind, width):
         return textwrap.fill(lead + sep.join(items), width=max(40, width), initial_indent=ind,
                              subsequent_indent=ind + " " * len(lead))
     out = []
-    if fam.get("admissible") is not None:
-        out.append(wrap("choices  ", ["{" + ",".join(T) + "}" for T in fam["admissible"]]))
+    if fam.get("choices") is not None:
+        out.append(wrap("choices  ", ["{" + ",".join(T) + "}" for T in fam["choices"]]))
     for r in fam.get("matroid") or []:
         out.append(wrap("pick one of  ", list(r)))
     if fam.get("gauge_note") is not None:
@@ -479,7 +526,7 @@ def _verbose_family_lines(fam, ind, width):
 
 
 def reduction_summary_lines(x, verbose=False, width=None, detailed=False, detail_call=DETAIL_CALL):
-    """The reduction report: header, verdict, chart, sections and one entry per block."""
+    """The reduction report: header, verdict, trafo, sections and one entry per block."""
     width = _width(width)
     bar = "-" * 60
     n_dir = len(x["removed"]) + len(x["remaining"])
@@ -505,8 +552,8 @@ def reduction_summary_lines(x, verbose=False, width=None, detailed=False, detail
         elif b.get("transversal"):
             pins = b.get("pins") or {}
             gauge.append(", ".join(f"{t} = {pins.get(t, '1')}" for t in b["transversal"]))
-        if fam.get("admissible") is not None:
-            n = len(fam["admissible"])
+        if fam.get("choices") is not None:
+            n = len(fam["choices"])
             if b.get("transversal") and not b.get("section"):
                 gauge[-1] += f" (one of {n} choices)" if n > 1 else " (the only choice)"
             else:

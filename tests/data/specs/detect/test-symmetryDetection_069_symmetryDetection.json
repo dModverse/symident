@@ -1,0 +1,33 @@
+{
+ "name": "test-symmetryDetection_069_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "-k*A",
+   "B": "-q*B"
+  },
+  "g": {
+   "yA": "A",
+   "yB": "B"
+  },
+  "conditions": {
+   "rows": [
+    "elisa",
+    "wb"
+   ],
+   "cols": {
+    "q": [
+     "q1",
+     "q2"
+    ]
+   }
+  },
+  "reduceCQ": false,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

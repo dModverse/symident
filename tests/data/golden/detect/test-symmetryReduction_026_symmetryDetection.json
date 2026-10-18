@@ -1,1 +1,0 @@
-{"name":"test-symmetryReduction_026_symmetryDetection","spec":{"f":{"x":"-k*x"},"g":{"y":"x"},"method":"observability"},"env":{},"options":{},"elapsed":0.0176711082458496,"result":{"method":"observability","identifiable":true,"rank":2,"dim":2,"gauge":null,"rankProven":null,"lieCertified":true,"lieOrderUsed":1,"gapOrderUsed":0,"coordinates":["x","k"],"symmetries":[]}}

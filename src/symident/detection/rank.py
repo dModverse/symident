@@ -17,11 +17,7 @@ def _ok(r):
 def saturate_certify(kcall, n_leaves, nz, max_m=0, warm=None, probe_block=1, block_call=None,
                      budget=None, block_map=None, nt_min=0, nt_min_block=None, prep=None,
                      rank_cap=None, block_profile=None, set_caps=None, checks=True):
-    """Raise the Lie order (and the gap order up to max_m) until the rank saturates.
-
-    kcall(point, p, Nt, Mtot) returns a kernel result; block_call holds one such call per
-    block, where the Lie order is decided. Without `checks` the rank is not raised at
-    other primes and points. Returns None without a usable point."""
+    """Saturated reference rank after raising the Lie and gap orders, or None without a usable point."""
     if warm is None:
         def warm(pts, primes):
             return None

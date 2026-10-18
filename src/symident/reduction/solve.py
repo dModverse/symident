@@ -11,10 +11,18 @@ from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import Pool
 from ..rexpr import sym_sort
 from .expr import free_syms, red_locals, red_sympify, tri_solve
-from .invariants import qr_rank
-from .sections import inv_summands, match_carriers, section_cands, section_monotone
+from .invariants import certified_rank
+from .sections import (
+    inv_summands,
+    match_carriers,
+    orbits_reach,
+    section_cands,
+    section_injective,
+    section_monotone,
+)
 from .sign import (
     DOMAIN,
+    carriers_real,
     domain_name,
     entry_class,
     is_real,
@@ -42,11 +50,17 @@ def _q_names(n, coords, start):
     return out
 
 
+def _negative(entries):
+    """Whether an entry is negative for positive carriers, so not positive on any wider domain."""
+    with carriers_real([]):
+        return any(sgn(e) == -1 for e in entries)
+
+
 def _str_keys(d):
     return {str(k): v for k, v in d.items()}
 
 
-def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_pair=None):
+def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_pair=None, gens=None):
     """Invariants set equal to fresh outer parameters q_k and solved, certified positive."""
     out = {"pins": None, "meaning": None, "solved": False}
     if not b.get("invariants"):
@@ -85,6 +99,7 @@ def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_p
             cand = sorted(cand, key=lambda c: (pos is not None and c in set(pos)) or pos is None)
         exp_a = list(Ie.atoms(spy.exp))
         if len(exp_a) > 1:
+            out["reason"] = "an invariant holds more than one exponential, which the section search does not solve"
             return out
         G = exp_a[0].args[0] if exp_a else None
         R = spy.cancel(Ie / exp_a[0]) if exp_a else Ie
@@ -112,12 +127,13 @@ def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_p
     DOMAIN["real_carriers"] = real_tmp
     try:
         return _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_tmp, loc,
-                                       split_pair, out)
+                                       split_pair, out, gens)
     finally:
         DOMAIN["real_carriers"] = old_rc
 
 
-def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_tmp, loc, split_pair, out):
+def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_tmp, loc, split_pair, out,
+                            gens=None):
     best = best_root = None
     eqs = [Ies[l] - spy.Symbol(tmp_n[l]) for l in range(len(Ies))]
     try:
@@ -126,12 +142,22 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
         sympy_fail(exc)
         sol_carr = None
     gauge_all = [v for v in b["support"] if v not in carriers]
+    reach = []
+
+    def reaches():
+        if not reach:
+            ok = gens is not None and sol_carr is not None and not set(pins_in) & set(b["support"])
+            reach.append(ok and orbits_reach(Ies, sol_carr, carriers, gauge_all, tmp_n, gens,
+                                             list(pins_in.items())) is not None)
+        return reach[0]
     pos = positive_set()
     g_pos = gauge_all if pos is None else [v for v in gauge_all if v in set(pos)]
-    keep_sets = []
+    keep_sets, cut = [], []
     if len(gauge_all) > 2 or len(g_pos) < len(gauge_all):
         for k in range(1, min(2, len(g_pos)) + 1):
             keep_sets += [list(c) for c in itertools.combinations(g_pos, k)]
+        if len(g_pos) > 3:
+            cut.append(f"gauges of 3 to {len(g_pos) - 1} of the coordinates {', '.join(g_pos)} are not tried")
     if len(gauge_all) <= 2:
         keep_sets.append(list(gauge_all))
     if len(gauge_all) > 2 and len(g_pos) == len(gauge_all):
@@ -196,15 +222,15 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
         rows = None
 
         def pt_rank(M):
-            M = np.asarray(M, dtype=float)
-            return min(qr_rank(M[:, p::2], tol=1e-9) for p in (0, 1))
+            # the lower of the certified ranks at the two points
+            return min(certified_rank([list(r[p::2]) for r in M]) for p in (0, 1))
         if b.get("preps") is not None and cands:
             sec_loc = red_locals([x for g in b["preps"] for x in g["comps"].values()] +
                                 [x for c in cands for x in c])
             xi_of = [{v: red_sympify(x, sec_loc) for v, x in g["comps"].items()} for g in b["preps"]]
             eval_vars = sym_sort(list(dict.fromkeys(sec_vars + [v for g in b["preps"] for v in g["vars"]])))
-            poolv = np.array([float(x) for x in Pool()(np.arange(1, 2 * len(eval_vars) + 1) + 17)])
-            poolv = 1 + poolv / (poolv.max() + 1)
+            poolv = [int(x) for x in Pool()(np.arange(1, 2 * len(eval_vars) + 1) + 17)]
+            poolv = [1 + spy.Rational(x, max(poolv) + 1) for x in poolv]
             pts = [dict(zip(eval_vars, poolv[:len(eval_vars)])),
                    dict(zip(eval_vars, poolv[len(eval_vars):]))]
             if pos is not None:
@@ -213,33 +239,37 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                         pts[1][v] = -pts[1][v]
             need = 40 if len(gauge0) == 1 else 10
             keep, rws = [], []
+            if len(cands) > 200:
+                cut.append(f"{len(cands) - 200} of {len(cands)} candidate balances are not tried")
             for pr in cands[:200]:
                 row = section_monotone(pr, b["preps"], xi_of, sec_loc, pts)
                 if row is None:
                     continue
                 keep.append(pr)
-                row = np.array(row, dtype=float)
-                rws.append(row / np.max(np.abs(row)))
+                rws.append(row)
                 if len(keep) >= 3 * need:
+                    cut.append(f"the balances past the first {3 * need} monotone ones are not tried")
                     break
-                if len(keep) >= need and pt_rank(np.vstack(rws)) >= len(gauge0):
+                if len(keep) >= need and pt_rank(rws) >= len(gauge0):
                     break
             cands = keep
-            rows = np.vstack(rws) if rws else None
+            rows = rws or None
         if len(gauge0) > 2:
             ok_keys = [" = ".join(pr) for pr in cands]
             sets = []
             for st in share_sets:
                 ks = [" = ".join(pr) for pr in st]
                 if all(k in ok_keys for k in ks) and \
-                        (rows is None or pt_rank(rows[[ok_keys.index(k) for k in ks]]) >= len(gauge0)):
+                        (rows is None or pt_rank([rows[ok_keys.index(k)] for k in ks]) >= len(gauge0)):
                     sets.append(st)
         elif len(gauge0) == 1:
             sets = [[c] for c in cands]
         elif len(cands) > 1:
             n_c = min(len(cands), 10) if rows is None else len(cands)
+            if n_c < len(cands):
+                cut.append(f"pairs of the balances past the first {n_c} are not tried")
             sets = [[cands[i], cands[j]] for i, j in itertools.combinations(range(n_c), 2)
-                    if rows is None or pt_rank(rows[[i, j]]) >= len(gauge0)]
+                    if rows is None or pt_rank([rows[i], rows[j]]) >= len(gauge0)]
         else:
             sets = []
         carr_br = []
@@ -297,6 +327,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
         def sec_positive(st):
             sy = {m for pr in st for x in pr for m in ident_re.findall(x)}
             return bool(sy) and (pos is None or sy <= set(pos))
+        if len(sets) > 40:
+            cut.append(f"{len(sets) - 40} of {len(sets)} sets of balances are not tried")
         for st in sets[:40]:
             for order in ("carriers", "sections"):
                 if best_root is not None or time_up():
@@ -320,19 +352,21 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             break
                     if not ok_br:
                         continue
-                    if any(sgn(e) == -1 for e in es.values()):
+                    if _negative(es.values()):
                         continue
                     sh = shift_fix(es, tmp_n, Ies)
                     real_br = [t for t in real_tmp if t not in sh["shift"]]
                     ent, has_root, partial = {}, False, False
                     for v in all_unk:
                         e = None
-                        if is_real(v) and (v in carriers or sec_positive(st)):
-                            e = real_form(sh["es"][v], real_br)
+                        with carriers_real(real_br):
+                            if is_real(v) and (v in carriers or sec_positive(st)):
+                                e = real_form(sh["es"][v], real_br)
+                            if e is None:
+                                e = pos_form_real(sh["es"][v], real_br)
                         if e is None:
-                            e = pos_form_real(sh["es"][v], real_br)
-                        if e is None:
-                            e = pos_form(sh["es"][v])
+                            with carriers_real([]):
+                                e = pos_form(sh["es"][v])
                             if e is None:
                                 if red_diag:
                                     print(f"[reddiag]   {v} = {sh['es'][v]} not proven")
@@ -364,6 +398,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             sympy_fail(exc)
                             secs.append(f"{pr[0]} = {pr[1]}")
                     cand["section"] = secs + [f"{v} = {pins[v]}" for v in pinned1]
+                    cand["monotone"] = b.get("preps") is not None
                     cand["root_note"] = ("a solved entry contains a square root; the branch is the "
                                          "certified positive one") if has_root else None
                     cand["meaning"] = shifted_meaning(b["invariants"], inv_n, tmp_n, sh)
@@ -371,8 +406,12 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     cand["inv_names"] = inv_n
                     cand["solved"] = True
                     cand["coverage"] = "partial" if partial else "total"
-                    cand["carrier_domain"] = {inv_n[l]: ("real" if tmp_n[l] in real_br else "positive")
+                    cand["solved_domain"] = {inv_n[l]: ("real" if tmp_n[l] in real_br else "positive")
                                               for l in range(len(tmp_n))}
+                    cand["injective"] = not partial and section_injective(
+                        Ies, {v: br[v] for v in all_unk}, tmp_n, scal_pin_pairs,
+                        [(red_sympify(pr[0], loc), red_sympify(pr[1], loc)) for pr in st])
+                    cand["reach"] = reaches()
                     if not partial and not has_root:
                         return cand
                     if not partial and best_root is None:
@@ -414,7 +453,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             ok_pin = False
                             break
                         pinned[c] = spy.cancel(es[l].subs(pin_pairs))
-                    if ok_pin and any(sgn(e) == -1 for e in pinned.values()):
+                    if ok_pin and _negative(pinned.values()):
                         ok_pin = False
                     if ok_pin:
                         sh = shift_fix(pinned, tmp_n, Ies)
@@ -423,11 +462,13 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                 real_pin = real_tmp if sh is None else [t for t in real_tmp if t not in sh["shift"]]
                 if ok_pin:
                     for c in carriers:
-                        e = real_form(pinned[c], real_pin) if relax and is_real(c) else None
+                        with carriers_real(real_pin):
+                            e = real_form(pinned[c], real_pin) if relax and is_real(c) else None
+                            if e is None:
+                                e = pos_form_real(pinned[c], real_pin)
                         if e is None:
-                            e = pos_form_real(pinned[c], real_pin)
-                        if e is None:
-                            e = pos_form(pinned[c])
+                            with carriers_real([]):
+                                e = pos_form(pinned[c])
                             if e is None:
                                 ok_pin = False
                                 break
@@ -457,8 +498,13 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     cand["root_note"] = ("a solved entry contains a square root; the branch is the "
                                          "certified positive one") if root else None
                     cand["coverage"] = "partial" if partial else "total"
-                    cand["carrier_domain"] = {inv_n[l]: ("real" if tmp_n[l] in real_pin else "positive")
+                    cand["solved_domain"] = {inv_n[l]: ("real" if tmp_n[l] in real_pin else "positive")
                                               for l in range(len(tmp_n))}
+                    const = all(re.fullmatch(r"[0-9.]+", v) for v in gp.values())
+                    cand["injective"] = not partial and section_injective(
+                        Ies, dict(zip(carriers, es)), tmp_n, pin_pairs if const else
+                        [(spy.Symbol(nm), red_sympify(v, pin_loc)) for nm, v in pins.items()])
+                    cand["reach"] = reaches()
                     if not partial and not root:
                         return cand
                     if not partial and best_root is None:
@@ -467,10 +513,13 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                         best = cand
     if best_root is not None:
         return best_root
+    if cut:
+        from .. import session
+        session.note("limits", f"section search over {', '.join(b['support'])}: " + "; ".join(dict.fromkeys(cut)))
     if best is not None:
         return best
     if time_up():
-        out["reason"] = "the chart search stopped at reduce(work_cap=) or reduce(timeout=)"
+        out["reason"] = "the section search stopped at reduce(work_cap=) or reduce(timeout=)"
         return out
     tried = ""
     if any("exp(" in s for s in b["invariants"]):

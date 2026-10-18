@@ -1,0 +1,14 @@
+{
+ "name": "test-symmetryExponential_037_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "-k*abs(x)*x"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "reconstruct": true
+ },
+ "env": {},
+ "options": {}
+}

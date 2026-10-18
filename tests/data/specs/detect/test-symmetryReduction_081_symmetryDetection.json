@@ -1,0 +1,15 @@
+{
+ "name": "test-symmetryReduction_081_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "v*u^n/(K^n + u^n) - d*x",
+   "u": "-e*u"
+  },
+  "g": {
+   "y": "x"
+  },
+  "reconstruct": true
+ },
+ "env": {},
+ "options": {}
+}

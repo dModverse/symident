@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "symident"
-version = "0.10.1"
+version = "0.11.0"
 description = "Structural identifiability of ODE models by Lie symmetries over finite fields"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Simon Beyer", email = "simon.beyer@fdm.uni-freiburg.de" }]
 keywords = ["structural identifiability", "Lie symmetries", "ODE models", "systems biology",
-            "finite fields", "reparametrisation"]
+            "finite fields", "reparametrization"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -38,13 +38,14 @@ Source = "https://github.com/dModverse/symident"
 Issues = "https://github.com/dModverse/symident/issues"
 
 [project.optional-dependencies]
-test = ["pytest>=7", "pytest-xdist"]
+petab = ["python-libsbml>=5.20", "pyyaml>=6"]
+test = ["pytest>=7", "pytest-xdist", "pytest-timeout", "python-libsbml>=5.20", "pyyaml>=6"]
 docs = ["sphinx>=8", "numpydoc", "pydata-sphinx-theme", "myst-parser"]
 
 [tool.scikit-build]
 wheel.packages = ["src/symident"]
 cmake.build-type = "Release"
-sdist.exclude = ["tests/data", "tests/golden"]
+sdist.exclude = ["tests/data"]
 
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
@@ -52,13 +53,15 @@ skip = ["*-musllinux_*", "*-win32", "*-manylinux_i686"]
 # SciPy ships no wheels for manylinux2014 any more; the test install would build it
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
-test-requires = ["pytest", "pytest-xdist"]
+test-requires = ["pytest", "pytest-xdist", "pytest-timeout", "python-libsbml", "pyyaml"]
 # the full suite on the oldest and the newest Python; the wheels of all are built
 test-skip = "cp311-* cp312-* cp313-*"
 test-command = 'pytest -q -n auto {project}/tests'
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# a test that runs past this many seconds is a failure, not a hang
+timeout = 900
 
 [tool.ruff]
 line-length = 120

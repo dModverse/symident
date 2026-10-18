@@ -1,0 +1,21 @@
+{
+ "name": "test-symmetryDetection_116_symmetryDetection",
+ "spec": {
+  "f": {
+   "x1": "-x2",
+   "x2": "x1"
+  },
+  "g": {
+   "y": "x1^2 + x2^2"
+  },
+  "reduceCQ": false,
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

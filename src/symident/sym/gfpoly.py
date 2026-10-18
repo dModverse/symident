@@ -13,10 +13,7 @@ _LINSOLVE_OPS_CAP = 2000  # bail to the numeric solver past this elimination siz
 
 
 def _linear_solution(polys, solve_states):
-    """Solve polys = 0 for `solve_states` by generic linear elimination, each state a
-    rational function of the parameters. Returns {state: expr}, or None when a
-    coupled residual remains or an expression exceeds `_LINSOLVE_OPS_CAP`. A point
-    where a pivot denominator vanishes mod p is caught at evaluation."""
+    """{state: expr} solving polys = 0 by linear elimination, or None if coupled or past the cap."""
     rem_set = set(solve_states)
     rem_p = [spy.sympify(pl) for pl in polys]
     elim = []
@@ -61,9 +58,7 @@ def _linear_solution(polys, solve_states):
 
 
 def _compile_linear_plan(polys, solve_states, param_syms):
-    """Compile the linear-elimination solution of polys = 0 to per-state
-    prime-independent (num, den) term lists in `solve_states` order. Returns
-    (True, per_state_terms) when every state eliminates linearly, else (False, None)."""
+    """(True, per-state (num, den) term lists) of the linear solution, else (False, None)."""
     sol = _linear_solution(polys, solve_states)
     if sol is None:
         return False, None
@@ -71,8 +66,7 @@ def _compile_linear_plan(polys, solve_states, param_syms):
 
 
 def _eval_bipoly_dict(bip, paramvals, p):
-    """The state polynomial at numeric parameter values mod p, as a dict
-    {state-exponent-tuple: coeff}."""
+    """The state polynomial at numeric parameter values mod p, as {exponent tuple: coeff}."""
     d = {}
     for sm, ct in bip:
         c = _eval_terms(ct, paramvals, p)
@@ -175,9 +169,7 @@ def _dp_value(d, vals, p):
 
 
 def _reduce_system(dps, nv, p):
-    """Peel outputs and eliminate linear pivots. Returns (plan, sinks, resid, core):
-    plan and sinks as (var, a, b) with var = -b/a, in elimination order; resid the
-    remaining balances over the core states. None past _REDUCE_TERMS_CAP."""
+    """(plan, sinks, resid, core) after peeling outputs and linear pivots, None past the cap."""
     dps = [dict(d) for d in dps]
     alive = [j for j in range(len(dps)) if dps[j]]
     rem = set(range(nv))
@@ -235,8 +227,7 @@ def _reduce_system(dps, nv, p):
 
 
 def _pow_mod(base, e, f, p):
-    """base^e modulo the monic dense polynomial f over GF(p), base of lower degree than f,
-    all highest degree first; square and multiply on plain integer lists."""
+    """base^e modulo the monic dense polynomial f over GF(p), highest degree first."""
     n = len(f) - 1
     low = [c % p for c in f[1:]]                 # x^n = -(low) in the quotient ring
 
@@ -274,8 +265,7 @@ def _x_pow_mod(f, p):
 
 
 def _split_roots(g, p, a=1):
-    """The roots of the monic g over GF(p), a product of distinct linear factors: degree 2
-    by the quadratic formula, higher degrees split by gcd(g, (x + a)^((p - 1)/2) - 1)."""
+    """The roots over GF(p) of the monic g, a product of distinct linear factors."""
     from ..gfp import sqrt_mod
     if len(g) == 2:
         return [(-g[1]) % p]
@@ -297,8 +287,7 @@ def _split_roots(g, p, a=1):
 
 
 def _gf_roots(f, p):
-    """Distinct nonzero roots in GF(p), ascending, of the dense univariate polynomial
-    f (highest degree first)."""
+    """Distinct nonzero roots in GF(p), ascending, of the dense polynomial f, highest degree first."""
     f = _gft.gf_strip([int(c) % p for c in f])
     if len(f) <= 1:
         return []
@@ -334,8 +323,7 @@ def _gf_resultant(f, g, p):
 
 
 def _gf_interpolate(xs, ys, p):
-    """Dense polynomial (highest degree first) through the points (xs, ys) over GF(p),
-    by Newton's divided differences."""
+    """Dense polynomial, highest degree first, through the points (xs, ys) over GF(p)."""
     n = len(xs)
     c = list(ys)
     for j in range(1, n):
@@ -357,8 +345,7 @@ def _bi_at_u(P, a, p):
 
 
 def _core_candidates(resid, core, p):
-    """Candidate values (tuples aligned with `core`) of the core states, or None when
-    the core has more than two states."""
+    """Candidate values of the core states aligned with `core`, None for more than two states."""
     if not core:
         return [()] if not resid else []
     if len(core) > 2 or len(resid) != len(core):
@@ -410,9 +397,7 @@ def _core_candidates(resid, core, p):
 
 
 def _solve_states_reduced(dps, solve_states, p):
-    """Interior point of f = 0 over GF(p) by _reduce_system and a resultant on the
-    core. Returns (sol, None), (None, fail-dict) when no candidate is an interior
-    point, or None when the core is too large for this solve."""
+    """(sol, None) or (None, fail) for an interior point of f = 0 over GF(p), None if the core is too large."""
     nv = len(solve_states)
     red = _reduce_system(dps, nv, p)
     if red is None:

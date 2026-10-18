@@ -1,5 +1,4 @@
-"""Observability over GF(p) for all conditions: the saturated kernel, its certified
-Lie order, the exact scalings peeled off and the residual directions reconstructed."""
+"""Observability over GF(p) for all conditions: saturated kernel, certified Lie order, scalings, residual directions."""
 
 import re
 import warnings
@@ -8,7 +7,7 @@ import numpy as np
 
 from ... import _core, state
 from ...errors import SYMPY_FAILS, InapplicableError, RouteError, swallow, sympy_fail
-from ...gfp import PRIMES, in_span, null_residues
+from ...gfp import PRIMES, in_span, null_residues, random_point
 from ...par import thread_map
 from ...rexpr import sym_sort
 from ...sym.msolve import msolve_timeout
@@ -54,11 +53,7 @@ def _rational_forms(exprs):
 
 
 class Analysis:
-    """One observability analysis of the compiled tapes of all conditions.
-
-    In joint mode the coordinates are wide: the shared columns followed by one block of
-    state columns per resting condition.
-    """
+    """Observability analysis of all conditions; joint mode has shared columns, then state columns per resting one."""
 
     def __init__(self, multi, closed_form=False, cores=1, equil_zero_states=(),
                  cond_zero_states=(), t0events=(), n_conditions=None, chain_of=None, n_gaps=0,
@@ -201,8 +196,7 @@ class Analysis:
     # ---- saturation and the proven Lie order -----------------------------------------
 
     def _lower_caps(self, cap0, cap_rank):
-        """Lower the deepest chain caps by bisection while the rank score stays; False
-        when there is nothing to lower."""
+        """Lower the deepest chain caps by bisection while the rank score stays; False with nothing to lower."""
         run = self.run
         ref = cap_rank()
         levels = sorted(set(cap0), reverse=True)
@@ -327,8 +321,7 @@ class Analysis:
         return sc
 
     def _gap_proof(self, sc):
-        """The gap order raised until the truncated rank reaches the bound of gapcert, which proves
-        it sufficient; False where no bound applies or the cap comes first."""
+        """Gap order raised until the truncated rank reaches the gapcert bound; False without a bound or at the cap."""
         from ... import session
         from ..gapcert import gap_bound
         run = self.run
@@ -468,8 +461,7 @@ class Analysis:
                     self.sc["point0"][self.z_slots[col]] = 1
 
     def execute(self):
-        """The observability result: rank, saturation details and the non-identifiable directions; None
-        when the saturation fails."""
+        """Observability result: rank, saturation details, non-identifiable directions; None when saturation fails."""
         run = self.run
         sc = self.saturate()
         if sc is None:
@@ -489,12 +481,16 @@ class Analysis:
         nz, n_seg = self.nz, len(self.multi["tapes"])
         result = {"method": "observability", "engine": "analytic",
                   "conditions": n_seg if self.n_conditions is None else int(self.n_conditions),
-                  "coordinates": list(self.znames), "segments": n_seg, "gap_order_used": run.mtot,
+                  "coordinates": list(self.znames), "segments": n_seg,
+                  "gap_order_used": 0 if run.series_gaps else run.mtot,
                   "identifiable": sc["rank_s"] == nz, "rank": int(sc["rank_s"]), "dim": int(nz),
                   "lie_order_used": int(sc["nt_used"]), "lie_order_driver": sc.get("block_driver"),
                   "lie_uncertified": sc.get("uncertified"), "lie_plateau": sc.get("plateau"),
                   "lie_certified": bool(sc.get("certified")), "lie_block_orders": sc.get("block_orders"),
-                  "gap_certified": None if not run.has_gaps else gap_why is None, "gap_certificate": gap_why,
+                  "gap_certified": None if not run.has_gaps or run.series_gaps else gap_why is None,
+                  "gap_certificate": None if run.series_gaps else gap_why,
+                  "series_certified": gap_why is None if run.series_gaps else None,
+                  "series_certificate": gap_why if run.series_gaps else None,
                   "sat_score": rank_score(sc["ref"]), "non_identifiable": []}
         self.phys_params0 = [z for z in self.znames if z not in self.zsn]
         if self.joint:
@@ -556,9 +552,7 @@ class Analysis:
                              strs(self.multi.get("forcings")), [sys.zero_of(ci) for ci in sys.equil_conds])
 
     def _continued(self, result):
-        """Continued conditions give the kernel over the series only: the exact scalings and
-        static fields name the directions, or the kernel is retaken at a point where all
-        conditions solve directly. None to go on with the residual directions."""
+        """Kernel directions of continued conditions by scalings, static fields or a direct point; None to go on."""
         sc = self.sc
         ker_dim = int(self.nz - sc["rank_s"])
         rank0, coords0 = result["rank"], result["coordinates"]
@@ -569,6 +563,7 @@ class Analysis:
                 not self.stacked_first and self._direct_kernel(ker_dim):
             result["rank"] = rank0
             result["coordinates"] = coords0
+            result["series_certified"] = result["series_certificate"] = None
             self.gap_dirs = self._gap_dirs()
             return None
         result["non_identifiable"] = chosen + [
@@ -627,15 +622,25 @@ class Analysis:
     def _direct_kernel(self, ker_dim):
         """The kernel at a point where all conditions solve without continuation."""
         sc, sys, nz = self.sc, self.sys, self.nz
+        chained = sys.chained
+        if chained:
+            sys.unchain()
         cont_saved = list(sys.cont_off)
         for i in range(len(sys.cont_off)):
             sys.cont_off[i] = True
+        # under the diagonal start the base point need not solve directly, other points may
+        bases = [self.point0_solved] + ([random_point(len(self.point0_solved), seed=k)
+                                        for k in range(1, 4)] if sys.diag is not None else [])
         with msolve_timeout(float(state.env_value("DIRECTSECS", "120"))):
-            try:
-                pt_d = sys.sat_prep(self.point0_solved, rounds=2)
-            except Exception as exc:
-                swallow(exc, "direct kernel point")
-                pt_d = None
+            pt_d = None
+            for base in bases:
+                try:
+                    pt_d = sys.sat_prep(base, rounds=2)
+                except Exception as exc:
+                    swallow(exc, "direct kernel point")
+                    pt_d = None
+                if pt_d is not None:
+                    break
             if pt_d is None:
                 pt_d = self.point0_solved
             try:
@@ -651,6 +656,8 @@ class Analysis:
                    f"series kernel {ker_dim}"))
         if not direct:
             sys.cont_off[:] = cont_saved
+            if chained:
+                sys.chain()
             return False
         sc.update(ref=rc, rank=rc["rank"], rank_s=rank_of(rc), pivots=rc["pivots"])
         self.point0_solved = np.array(pt_d, dtype=np.int64)
@@ -756,8 +763,7 @@ class Analysis:
         return result
 
     def _kernel_point(self):
-        """Leaf values of the base point with the resting states the kernel solved there;
-        None where one resting value is not well defined (several equilibrated conditions)."""
+        """Base-point leaf values with the resting states solved there; None where a resting value is ill defined."""
         env = {nm: int(v) for nm, v in zip(self.leaf_names_aug, self.sc["point0"])}
         if not self.joint:
             return env
@@ -791,8 +797,7 @@ class Analysis:
         return v
 
     def _in_kernel(self, vec, env):
-        """Whether the closed form {name: expr} lies in the kernel at the base point on the
-        physical coordinates; None when it does not evaluate there."""
+        """Whether the closed form {name: expr} is in the kernel at the base point; None where it does not evaluate."""
         P = PRIMES[0]
         v = self._phys_vector(vec, env)
         if v is None:
@@ -802,9 +807,7 @@ class Analysis:
         return bool(in_span(Nphys, v, len(phys), P)) if np.any(v) else None
 
     def _complete_forward(self, dirs):
-        """Forward closed forms that the kernel refutes, completed by their solved rates: a
-        rate R solved from the resting equations moves with the coordinates it depends on,
-        eta_R = sum_c dR/dc eta_c."""
+        """Kernel-refuted forward closed forms completed by their solved rates, eta_R = sum_c dR/dc eta_c."""
         import sympy as spy
         lines = (self.multi.get("tapes") or [{}])[0].get("constraint_model")
         if not self.joint or not lines:
@@ -860,8 +863,7 @@ class Analysis:
         return out
 
     def _eliminate_states(self, dirs):
-        """Closed forms that hold resting states rewritten in the coordinates where the resting
-        equations allow it: solved rates are substituted until no state remains."""
+        """Closed forms with resting states rewritten in the coordinates by substituting solved rates where possible."""
         lines = (self.multi.get("tapes") or [{}])[0].get("constraint_model")
         states = set(self.multi.get("real_state_names") or []) - set(self.znames)
         if not self.joint or not lines or not states:
@@ -931,9 +933,7 @@ class Analysis:
         return dict(d, vector=vec, support=sorted(vec))
 
     def _independent(self, dirs):
-        """The directions with dependent closed forms and closed forms off the kernel
-        dropped, and support-only directions from the kernel added until they span it on the
-        physical coordinates."""
+        """Independent closed forms on the kernel, filled with support-only kernel directions until they span it."""
         from ..closedform import eval_modq
         from ..finalize import public_symmetry
         P = PRIMES[0]
@@ -1040,8 +1040,7 @@ class Analysis:
         return [self.znames[pr[i]] for i in range(len(pr)) if not np.any(sub[i] != 0)]
 
     def _prove_by_scalings(self, result):
-        """Proven when the rank plus the independent exact scalings (and static fields)
-        equals the dimension."""
+        """Proven when the rank plus the independent exact scalings and static fields equals the dimension."""
         if result.get("coordinates") is None or result["rank"] >= result["dim"]:
             return
         ws = self.exact_scalings(self.scal_fixed)
@@ -1067,8 +1066,7 @@ class Analysis:
         prove_exact(self, result)
 
     def _prove_by_fields(self, result):
-        """Proven when every kernel direction lies in the span of invariant fields; exactly
-        when every direction is a proven symmetry, independent at a point."""
+        """Proven when every kernel direction lies in the span of invariant fields."""
         dirs = result.get("non_identifiable") or []
         if result.get("rank_proven") is None and result["rank"] < result["dim"] and dirs and \
                 len(dirs) == result["dim"] - result["rank"] and all(d.get("exact") for d in dirs):

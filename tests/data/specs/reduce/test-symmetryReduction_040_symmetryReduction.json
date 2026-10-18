@@ -1,0 +1,64 @@
+{
+ "name": "test-symmetryReduction_040_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "m",
+    "P",
+    "pP",
+    "dm",
+    "k_d",
+    "k_p",
+    "ktx",
+    "s"
+   ],
+   "modelExprs": [
+    "ktx - dm*m",
+    "-k_p*s*ktx*P + k_d*pP",
+    "k_p*s*ktx*P - k_d*pP",
+    "s*m",
+    "pP"
+   ]
+  },
+  "symmetries": [
+   {
+    "type": "scaling",
+    "generator": {
+     "ktx": "ktx",
+     "m": "m",
+     "s": "-s"
+    },
+    "weights": {
+     "ktx": "1",
+     "m": "1",
+     "s": "-1"
+    },
+    "support": [
+     "ktx",
+     "m",
+     "s"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "general",
+    "generator": {
+     "P": "P + pP",
+     "k_d": "k_p*ktx*s",
+     "k_p": "-k_p"
+    },
+    "weights": null,
+    "support": [
+     "P",
+     "k_d",
+     "k_p"
+    ],
+    "degree": 3
+   }
+  ]
+ },
+ "args": {}
+}

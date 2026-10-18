@@ -1,0 +1,17 @@
+{
+ "name": "test-symmetryReduction_094_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "k1 + u*k2 - kdeg*A"
+  },
+  "g": {
+   "y": "A"
+  },
+  "fixed": [
+   "u"
+  ],
+  "reconstruct": true
+ },
+ "env": {},
+ "options": {}
+}

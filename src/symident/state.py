@@ -42,8 +42,8 @@ def switches(**kw):
     Parameters
     ----------
     **kw
-        Switch names (see the user guide) with their values; ``True`` or a string
-        sets a switch, ``None`` removes it. A switch set here wins over the
+        Switch names (see the user guide) with their values; a value sets the switch,
+        ``False`` or ``None`` clears it. A switch set here wins over the
         environment variable ``SYMIDENT_<NAME>``.
 
     Examples
@@ -61,7 +61,7 @@ SWITCHES = {
     "DIAG": ("debug", "every diagnostic switch on"),
     "TIMING": ("diag", "stage times"),
     "LIEDIAG": ("diag", "saturation, Lie order caps and sufficiency proofs"),
-    "ROBUSTDIAG": ("diag", "errors inside the narrow and forward routes"),
+    "ROUTEDIAG": ("diag", "errors inside the narrow and forward routes"),
     "FWDDIAG": ("diag", "the forward seed of the resting states"),
     "SOLVEDIAG": ("diag", "each resting-state solve"),
     "HOMDIAG": ("diag", "the homotopy route"),
@@ -73,14 +73,15 @@ SWITCHES = {
     "NOJET": ("route", "no jet route inside the narrow route"),
     "NOGROUP": ("route", "no translation groups in the narrow route"),
     "NOFWDSEED": ("route", "no forward seed of the resting states"),
+    "NODIAG": ("route", "no diagonal start: resting conditions continued from the forward one only"),
     "LIEPLATEAU": ("number", "orders the rank stays flat before the saturation ends (3)"),
     "LIEPLATEAU_BLOCK": ("number", "the plateau per condition block; 0 for one plateau"),
     "VERIFY_MARGIN": ("number", "orders the saturation guard checks past the reported one (6)"),
     "JETWORK": ("number", "characters of jets the jet route may form (1000000)"),
     "DIRECTSECS": ("number", "seconds msolve may take for the direct kernel (120)"),
+    "BLOCKMB": ("number", "megabytes of Taylor values per column block of the kernel (256); environment only"),
     "MSOLVE": ("install", "path of the msolve executable"),
     "CACHE": ("install", "directory of the symident cache"),
-    "LIBS_CACHE": ("install", "build directory of install_msolve()"),
     "MSOLVE_VERSION": ("install", "msolve version install_msolve() builds"),
     "GMP_VERSION": ("install", "GMP version install_msolve() builds"),
     "MPFR_VERSION": ("install", "MPFR version install_msolve() builds"),
@@ -91,8 +92,7 @@ SWITCHES = {
 
 
 def env_value(name, default=None):
-    """The switch `name`: set by `switches()`, else the environment variable
-    SYMIDENT_<name>."""
+    """The switch `name`: set by `switches()`, else the environment variable SYMIDENT_<name>."""
     if name in _SWITCHES:
         v = _SWITCHES[name]
         return v if isinstance(v, str) else str(int(v)) if isinstance(v, bool) else str(v)

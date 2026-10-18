@@ -1,0 +1,23 @@
+{
+ "name": "test-symmetryDetection_141_symmetryDetection",
+ "spec": {
+  "f": {
+   "P": "ktl - (kdg + ksec)*P",
+   "T1": "ksec*P - kt*T1"
+  },
+  "g": {
+   "y": "T1"
+  },
+  "trafo": {
+   "P": "0",
+   "T1": "0"
+  },
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

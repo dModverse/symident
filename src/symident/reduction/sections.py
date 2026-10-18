@@ -7,12 +7,13 @@ import re
 import numpy as np
 import sympy as spy
 
+from .. import session
 from ..errors import SYMPY_FAILS, RouteError, sympy_fail
 from ..rexpr import sym_sort
 from .darboux import apply_x
-from .expr import first_subsets, free_syms, red_locals, red_sympify, tri_solve
+from .expr import free_syms, red_locals, red_sympify, tri_solve
 from .scaling import mono_string
-from .sign import _num_val, num_sign, positive_set, sgn
+from .sign import DOMAIN, is_real, num_sign, positive_set, set_positive, sgn, sgn_real, time_up
 
 
 def mono_parts(m):
@@ -38,8 +39,7 @@ def mono_parts(m):
 
 
 def balance_products(p, q):
-    """The pairs [p0*q0, p1*q1] and [p0*q1, p1*q0] of monomials, common factors cancelled, where they
-    differ; [] unless all four are monomials."""
+    """The pairs [p0*q0, p1*q1] and [p0*q1, p1*q0] of reduced monomials if they differ; [] unless all are monomial."""
     parts = [mono_parts(x) for x in list(p) + list(q)]
     if any(x is None for x in parts):
         return []
@@ -108,6 +108,8 @@ def section_cands(support, extra=()):
     out = [[mons[i][0], mons[j][0]] for i, j in pairs]
     order = sorted(range(len(pairs)), key=lambda k: mons[pairs[k][0]][1] + mons[pairs[k][1]][1])
     out = [out[k] for k in order]
+    # products of two coordinates at one, after the balances between coordinates
+    out += [[f"{a}*{b}", "1"] for a, b in itertools.combinations(support, 2)]
     head_k = {key(pr) for pr in head}
     return head + [pr for pr in out if key(pr) not in head_k]
 
@@ -126,9 +128,11 @@ def inv_summands(Ie):
 
 
 def section_monotone(pr, preps, xi_of, loc, pts):
-    """Values of the numerator of X(log(m1/m2)) at the points, None unless sign-pure."""
-    from ..rexpr import eval_numeric
+    """Exact values of the numerator of X(log(m1/m2)) at the rational points, None unless it has one sign."""
     ms = [red_sympify(m.replace("^", "**"), loc) for m in pr]
+    # X(log(m1/m2)) = (X(m1) m2 - m1 X(m2)) / (m1 m2), so the denominator needs one sign as well
+    if sgn(ms[0] * ms[1]) == 0:
+        return None
     row, moved = [], False
     for g in range(len(preps)):
         Xm = [apply_x(xi_of[g], m, loc) for m in ms]
@@ -138,33 +142,539 @@ def section_monotone(pr, preps, xi_of, loc, pts):
             sympy_fail(exc)
             return None
         if d.is_zero:
-            row += [0.0, 0.0]
+            row += [spy.Integer(0)] * len(pts)
             continue
         if d.is_number:
-            v = _num_val(d)
-            if v is None or num_sign(d) is None:
+            if num_sign(d) is None:
                 return None
             moved = True
-            row += [v, v]
+            row += [d] * len(pts)
             continue
-        try:
-            signs = [num_sign(c) for c in spy.Poly(d).coeffs()]
-            cf = [float(spy.Float(c)) for c in spy.Poly(d).coeffs()]
-        except SYMPY_FAILS as exc:
-            sympy_fail(exc)
-            return None
-        if not signs or not (all(c == 1 for c in signs) or all(c == -1 for c in signs)):
+        sd = sgn(d)
+        if sd == 0:
             return None
         moved = True
-        dstr = str(d).replace("**", "^")
-        vals = []
         for pt in pts:
-            v = eval_numeric(dstr, pt)
-            vals.append(v if v is not None and math.isfinite(v) else math.copysign(1.0, cf[0]))
-        row += vals
+            v = d.xreplace({spy.Symbol(k): x for k, x in pt.items()})
+            row.append(v if v.is_finite else spy.Integer(sd))
     if not moved:
         return None
     return row
+
+
+def _monomial_section(pairs, sym):
+    """The positive points with m1 = m2 for each pair of Laurent monomials as theta0 * u^K, or None."""
+    rows, cs, names = [], [], []
+    for m1, m2 in pairs:
+        c, rest = spy.cancel(m1 / m2).as_coeff_Mul()
+        if not c.is_Rational or c <= 0:
+            return None
+        ex = {}
+        for base, k in rest.as_powers_dict().items():
+            if base == 1:
+                continue
+            if not base.is_Symbol or not k.is_Integer:
+                return None
+            ex[str(base)] = int(k)
+            if str(base) not in names:
+                names.append(str(base))
+        if not ex and c != 1:
+            return None
+        if ex:
+            rows.append(ex)
+            cs.append(c)
+    if not names:
+        return {}
+    if any(not sym(v).is_positive for v in names):
+        return None
+    A = spy.Matrix([[r.get(v, 0) for v in names] for r in rows])
+    if A.rank() < A.rows:
+        return None
+    x0 = [spy.Integer(1)] * len(names)
+    if any(c != 1 for c in cs):
+        P = A.T * (A * A.T).inv()
+        x0 = [spy.Mul(*[cs[i] ** -P[j, i] for i in range(len(cs))]) for j in range(len(names))]
+    K = A.nullspace()
+    us = [spy.Symbol(f"si_sec_u{j}", positive=True) for j in range(len(K))]
+    param = {}
+    for j, v in enumerate(names):
+        e = x0[j]
+        for i, k in enumerate(K):
+            den = spy.ilcm(*[spy.fraction(x)[1] for x in k])
+            e *= us[i] ** int(k[j] * den)
+        param[sym(v)] = e
+    return param
+
+
+def _owned(extra=()):
+    """Symbols by name with the sign of the declared domain, and a map of expressions onto them."""
+    pos = positive_set()
+    cache = {}
+
+    def sym(name):
+        if name not in cache:
+            real = name in set(DOMAIN["real_carriers"]) or (pos is not None and name not in set(pos) and
+                                                              name not in set(extra))
+            cache[name] = spy.Symbol(name, real=True) if real else spy.Symbol(name, positive=True)
+        return cache[name]
+
+    def own(e):
+        e = spy.sympify(e)
+        return e.xreplace({s: sym(str(s)) for s in e.free_symbols})
+    return sym, own
+
+
+def _vanishes(e):
+    return spy.cancel(e) == 0 or spy.simplify(e) == 0
+
+
+def _linear_section(pairs):
+    """The points m1 = m2 per pair, each solved for a linear coordinate with a coefficient of fixed sign, or None."""
+    param = {}
+    for m1, m2 in pairs:
+        eq = spy.fraction(spy.cancel(spy.together((m1 - m2).xreplace(param))))[0]
+        if eq.is_zero:
+            continue
+        hit = None
+        for v in sorted(eq.free_symbols, key=str):
+            P = spy.Poly(eq, v)
+            if P.degree() == 1 and _sign_fixed(P.coeff_monomial(v)) != 0:
+                hit = (v, spy.cancel(-P.coeff_monomial(1) / P.coeff_monomial(v)))
+                break
+        if hit is None:
+            return None
+        param = {k: spy.cancel(e.xreplace({hit[0]: hit[1]})) for k, e in param.items()}
+        param[hit[0]] = hit[1]
+    return param
+
+
+def section_injective(invariants, sol, tmp, pins, pairs=()):
+    """Whether the solution `sol` in the invariant symbols `tmp` gives back every point of the section."""
+    sym, own = _owned()
+    try:
+        sub = {sym(str(k)): own(v) for k, v in pins}
+        inv = [own(e).xreplace(sub) for e in invariants]
+        param = {}
+        if pairs:
+            own_pairs = [(own(a).xreplace(sub), own(b).xreplace(sub)) for a, b in pairs]
+            param = _monomial_section(own_pairs, sym)
+            if param is None:
+                param = _linear_section(own_pairs)
+            if param is None:
+                return False
+        back = {sym(t): e for t, e in zip(tmp, inv)}
+        for v, e in sol.items():
+            if sym(v) in sub:
+                continue
+            if not _vanishes((own(e).xreplace(sub).xreplace(back) - sym(v)).xreplace(param)):
+                return False
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return False
+    return True
+
+
+def _sign_fixed(e):
+    return sgn_real(e, DOMAIN["real_carriers"])
+
+
+def _constraints(e):
+    """The conditions num/den > 0 equivalent to e > 0, one per square root factor and one for the rest."""
+    out, plain = [], []
+    for f in spy.Mul.make_args(spy.cancel(spy.together(e))):
+        base, ex = f.as_base_exp()
+        if ex == spy.Rational(1, 2) or ex == spy.Rational(-1, 2):
+            out.append(spy.fraction(spy.cancel(spy.together(base))))
+        else:
+            plain.append(f)
+    out.append(spy.fraction(spy.cancel(spy.together(spy.Mul(*plain)))))
+    return out
+
+
+def _concave(poly, g):
+    """Whether the quadratic `poly` in the gauge `g` is concave: -Hessian positive definite."""
+    H = spy.hessian(-poly.as_expr(), g)
+    return all(_sign_fixed(spy.cancel(H[:k, :k].det())) == 1 for k in range(1, len(g) + 1))
+
+
+def _signed_factors(polys):
+    """The conditions p > 0 as (sign, factors), with every factor of known sign removed."""
+    reps = []
+    for p in polys:
+        lead, facs = spy.factor_list(p)
+        reps.append([1 if lead > 0 else -1 if lead < 0 else 0, list(facs), False])
+    changed = True
+    while changed:
+        changed = False
+        for i, rep in enumerate(reps):
+            if rep[2]:
+                continue
+            keep = []
+            for f, m in rep[1]:
+                sf = _sign_fixed(f)
+                if sf == 0:
+                    for j, o in enumerate(reps):
+                        if j != i and len(o[1]) == 1 and o[1][0][1] % 2 == 1:
+                            r = spy.cancel(f / o[1][0][0])
+                            if r.is_number and r != 0:
+                                sf = o[0] * (1 if r > 0 else -1)
+                                o[2] = True
+                                break
+                if sf == 0:
+                    keep.append((f, m))
+                else:
+                    rep[0] *= sf ** m
+                    changed = True
+            rep[1] = keep
+    return [(s, fs) for s, fs, _ in reps]
+
+
+def _convex_kind(p, g):
+    """Whether {p > 0} is convex in the gauge `g`: affine, a concave quadratic, or an interval in one coordinate."""
+    poly = spy.Poly(p, *g)
+    if poly.total_degree() <= 1:
+        return True
+    moved = [x for x in g if poly.degree(x) > 0]
+    if len(moved) == 1 and _interval(spy.Poly(p, moved[0]), not is_real(str(moved[0]))):
+        return True
+    return poly.total_degree() == 2 and _concave(poly, moved)
+
+
+def _connected(polys, g):
+    """Whether {p > 0 for all polys} is connected over the gauge `g`, by convexity or by interval fibers."""
+    reps = _signed_factors(polys)
+    if any(sg <= 0 and not fs for sg, fs in reps):
+        return True
+    conds = [sg * spy.Mul(*[f ** m for f, m in fs]) for sg, fs in reps if fs]
+    if not g or all(_convex_kind(c, g) for c in conds):
+        return True
+    facts = [(fs[0][0], sg) for sg, fs in reps if len(fs) == 1 and fs[0][1] % 2 == 1]
+
+    def sign_free_of(a, x):
+        lead, facs = spy.factor_list(a)
+        s = 1 if lead > 0 else -1 if lead < 0 else 0
+        for f, m in facs:
+            sf = _sign_fixed(f)
+            if sf == 0:
+                for k, sk in facts:
+                    r = spy.cancel(f / k)
+                    if spy.Symbol(str(x)) not in k.free_symbols and r.is_number and r != 0:
+                        sf = sk * (1 if r > 0 else -1)
+                        break
+            s *= sf ** m
+        return s
+    best = None
+    for x in g:
+        lower, upper, keep, ok = [], [], [], True
+        for c in conds:
+            P = spy.Poly(c, x)
+            if P.degree() == 0:
+                keep.append(c)
+                continue
+            a, b = P.coeff_monomial(x), P.coeff_monomial(1)
+            sa = sign_free_of(a, x) if P.degree() == 1 else 0
+            if sa == 0:
+                ok = False
+                break
+            (lower if sa > 0 else upper).append(spy.cancel(-b / a))
+        if not ok:
+            continue
+        if not is_real(str(x)):
+            lower.append(spy.Integer(0))
+        if best is None or len(lower) * len(upper) < len(best[1]) * len(best[2]):
+            best = (x, lower, upper, keep)
+    if best is None:
+        return False
+    # one elimination suffices: the fibers are intervals, so the set is connected iff its projection is
+    x, lower, upper, keep = best
+    proj = keep + [spy.Mul(*spy.fraction(spy.cancel(spy.together(u - lo)))) for lo in lower for u in upper]
+    return _connected(proj, [y for y in g if y != x])
+
+
+def _rational_gauges(sol, gauge):
+    """`sol` and the gauge after g = c*u^2 or g = u^2/c, for each choice that leaves no root in the gauge."""
+    real = set(DOMAIN["real_carriers"])
+    sym, own = _owned([str(x) for e in sol.values() for x in spy.sympify(e).free_symbols
+                       if str(x).startswith("si_red_c") and str(x) not in real])
+    outs = [({k: own(e) for k, e in sol.items()}, list(gauge))]
+    for i, v in enumerate(gauge):
+        x = sym(v)
+        nxt = []
+        for cur, names in outs:
+            roots = {w for e in cur.values() for w in e.atoms(spy.Pow)
+                     if w.exp.is_Rational and w.exp.q == 2 and w.has(x)}
+            if not roots:
+                nxt.append((cur, names))
+                continue
+            if is_real(v):
+                nxt.append((cur, names))
+                continue
+            u = spy.Symbol(f"si_root_{v}", positive=True)
+            n0 = len(nxt)
+            for w in roots:
+                c = spy.cancel(w.base / x)
+                if c.has(x):
+                    c = spy.cancel(w.base * x)
+                if c.has(*[sym(y) for y in gauge]) or _sign_fixed(c) != 1:
+                    continue
+                for to in (c * u**2, u**2 / c):
+                    new = {k: spy.simplify(spy.cancel(e.subs(x, to))) for k, e in cur.items()}
+                    if any(w2.has(u) for e in new.values() for w2 in e.atoms(spy.Pow)
+                           if w2.exp.is_Rational and w2.exp.q != 1):
+                        continue
+                    nxt.append((new, names[:i] + [str(u)] + names[i + 1:]))
+            if len(nxt) == n0:
+                nxt.append((cur, names))
+        outs = nxt
+    done = []
+    for cur, names in outs:
+        # t = s^2, s > 0, maps t > 0 one to one and leaves no root of a single symbol
+        sq = {w.base for e in cur.values() for w in e.atoms(spy.Pow)
+              if w.exp.is_Rational and w.exp.q == 2 and w.base.is_Symbol and w.base.is_positive}
+        cur = {k: spy.factor(spy.cancel(spy.together(e.xreplace(
+            {t: spy.Symbol(f"si_sq_{t}", positive=True)**2 for t in sq})))) for k, e in cur.items()}
+        done.append(({k: e.xreplace({y: spy.Symbol(str(y)) for y in e.free_symbols}) for k, e in cur.items()},
+                     names))
+    return done
+
+
+def _convex_set(carriers, sol, gauge):
+    """Whether the gauge values at which every positive carrier is positive form a connected set."""
+    for sol2, gauge2 in _rational_gauges(sol, gauge):
+        new = [v for v in gauge2 if v.startswith("si_root_")] + \
+            [str(y) for e in sol2.values() for y in e.free_symbols if str(y).startswith("si_sq_")]
+        old = positive_set()
+        if new and old is not None:
+            set_positive(list(old) + new)
+        try:
+            cons = [k for c in carriers if not is_real(c) and _sign_fixed(sol2[c]) != 1
+                    for k in _constraints(sol2[c])]
+            if _connected([spy.expand(num * den) for num, den in cons], [spy.Symbol(v) for v in gauge2]):
+                return True
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+        finally:
+            if new and old is not None:
+                set_positive(old)
+    return False
+
+
+def _max_variations(opts):
+    """The most sign changes of a sequence whose entries take a sign from the sets `opts`."""
+    best = {}
+    for o in opts:
+        best = {sg: max([0] if not best else [v + (sg != last) for last, v in best.items()]) for sg in o}
+    return max(best.values(), default=0)
+
+
+def _interval(poly, positive):
+    """Whether {x: poly(x) > 0} is an interval, on x > 0 when `positive`, for every sign of undecided coefficients."""
+    coeffs = poly.all_coeffs()
+    signs = [_sign_fixed(c) for c in coeffs]
+    nz = [i for i, c in enumerate(coeffs) if c != 0]
+    if not nz or len(signs) - 1 - nz[0] <= 1:
+        return True
+    opts = [{signs[i]} if signs[i] else {1, -1} for i in nz]
+    if len(signs) - 1 - nz[0] == 2:
+        # only a positive leading coefficient leaves the concave case
+        if 1 not in opts[0]:
+            return True
+        opts[0] = {1}
+    return positive and _max_variations(opts) <= 1
+
+
+def _gauge_minor(gens, gauge, sub, loc):
+    """The sign of the minor of the generators on `gauge`, with denominators cleared if needed."""
+    X = [[red_sympify(str(g.get(v, "0")).replace("^", "**"), loc).subs(sub) for v in gauge] for g in gens]
+    s = sgn(spy.cancel(spy.Matrix(X).det()))
+    if s != 0:
+        return s
+    # D*X has the invariants and orbits of X off the pole set D = 0 and is defined across it
+    clear = []
+    for row in X:
+        L = spy.Integer(1)
+        for e in row:
+            L = spy.lcm(L, spy.fraction(spy.cancel(spy.together(e)))[1])
+        clear.append([spy.cancel(e * L) for e in row])
+    return sgn(spy.cancel(spy.Matrix(clear).det()))
+
+
+def orbits_reach(invariants, branches, carriers, gauge, tmp, gens, pins):
+    """The carrier branch over which every level set of the invariants is one orbit, or None."""
+    if len(gens) != len(gauge) or not gauge or any(g is None for g in gens):
+        return None
+    loc = red_locals([str(x) for g in gens for x in g.values()] + [str(v) for _, v in pins])
+    try:
+        sub = [(spy.Symbol(str(k)), spy.sympify(str(v), locals=loc)) for k, v in pins]
+        if _gauge_minor(gens, gauge, sub, loc) == 0:
+            return None
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    for br in branches:
+        if any(br.get(c) is None for c in carriers):
+            continue
+        sol = {c: br[c] for c in carriers}
+        if not section_injective(invariants, sol, tmp, pins) or not _graph(invariants, sol, tmp, pins):
+            continue
+        try:
+            sol = {c: spy.sympify(e).subs(sub) for c, e in sol.items()}
+            if _convex_set(carriers, sol, gauge):
+                return sol
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+    return None
+
+
+def face_reach(b, pins, Z, gens, limit_only=False):
+    """The carriers over the face gauge `Z` at Z = 0 when every level set is one orbit, or None."""
+    supp = b["support"]
+    U = [v for v in supp if v not in Z]
+    loc = red_locals(list(b["invariants"]) + supp + [str(v) for v in pins.values()])
+    tmp = [f"si_red_c{l + 1}" for l in range(len(b["invariants"]))]
+    try:
+        sub = [(spy.Symbol(k), red_sympify(str(v).replace("^", "**"), loc)) for k, v in pins.items()]
+        Ies = [red_sympify(iv.replace("^", "**"), loc).subs(sub) for iv in b["invariants"]]
+        branches = [{str(k): v for k, v in d.items()} for d in
+                    spy.solve([e - spy.Symbol(t) for e, t in zip(Ies, tmp)], [spy.Symbol(u) for u in U], dict=True)]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    old = DOMAIN["real_carriers"]
+    DOMAIN["real_carriers"] = [t for t, e in zip(tmp, Ies) if sgn(e) != 1]
+    try:
+        if limit_only:
+            ok = [{c: br[c] for c in U} for br in branches if all(br.get(c) is not None for c in U)
+                  and section_injective(Ies, {c: br[c] for c in U}, tmp, list(pins.items()))
+                  and _graph(Ies, {c: br[c] for c in U}, tmp, list(pins.items()))]
+            sol = ok[0] if len(ok) == 1 else None
+        else:
+            sol = orbits_reach(Ies, branches, U, Z, tmp, gens, list(pins.items()))
+        if sol is None:
+            return None
+        at0 = {c: spy.cancel(e.subs([(spy.Symbol(z), 0) for z in Z])) for c, e in sol.items()}
+        # the face point of the orbit through theta, at q = I(theta), on the whole domain
+        back = [(spy.Symbol(t), e) for t, e in zip(tmp, Ies)]
+        for c, e in at0.items():
+            th = spy.cancel(spy.together(e.subs(back)))
+            if _bad(e) or _bad(th) or (sgn(th) != 1 if not is_real(c) else
+                                       sgn(spy.fraction(th)[1]) == 0):
+                return None
+        return at0
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    finally:
+        DOMAIN["real_carriers"] = old
+
+
+def face_regular(Z, exprs, rhs, equilibrate, coords, support=None, rest=None, inputs=()):
+    """Why the model is not continuous up to the face Z = 0 (None when it is), and the level of that claim."""
+    loc = red_locals([str(x) for x in exprs] + list(rhs or {}) + [str(x) for x in (rhs or {}).values()])
+    sub = [(spy.Symbol(z), spy.Integer(0)) for z in Z]
+    states = set(rhs or {})
+    for d in model_denominators(exprs):
+        try:
+            d0 = spy.cancel(d.subs(sub))
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return "a model denominator does not simplify at the face", None
+        if d0.is_zero:
+            return "a model denominator vanishes at the face", None
+        if support is not None and not set(free_syms(d)) & set(support):
+            continue
+        if rhs is None or not set(free_syms(d)) & states:
+            if set(free_syms(d)) <= set(coords) and sgn(d0) == 0:
+                return f"the denominator {d0} has no fixed sign at the face", None
+    for x in exprs:
+        try:
+            if _bad(red_sympify(str(x).replace("^", "**"), loc).subs(sub)):
+                return "a model expression has a pole at the face", None
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return "a model expression does not simplify at the face", None
+    if not equilibrate or rest:
+        return None, "exact"
+    if rhs is None:
+        return "the resting state at the face is not known to be continuous", None
+    xs = [x for x, f in rhs.items() if spy.sympify(f.replace("^", "**"), locals=loc) != 0]
+    try:
+        F = [red_sympify(rhs[x].replace("^", "**"), loc) for x in xs]
+        J = spy.Matrix(F).jacobian([spy.Symbol(x) for x in xs])
+        if all(not e.has(*[spy.Symbol(x) for x in xs]) for e in J) and sgn(spy.cancel(J.subs(sub).det())) != 0:
+            return None, "exact"
+        if rest_checked(rhs, Z, inputs):
+            return None, "checked"
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+    return "the resting state of the face model is not found regular at random points of the face", None
+
+
+def face_state_limit(b, pins, Z, gens, states, degrees):
+    """Whether the states the lifted fields `gens` move have a positive limit at the face."""
+    from ..sym.invariants import verify_invariants
+    from .blocks import solve_block
+    from .expr import gen_prep
+    preps = [gen_prep({"generator": g}) for g in gens]
+    if any(not p_["ok"] for p_ in preps):
+        return False
+    moved = [x for x in states if any(x in p_["support"] for p_ in preps)]
+    if not moved:
+        return True
+    old = positive_set()
+    if old is not None:
+        set_positive(list(old) + list(states))
+    try:
+        found = solve_block(preps, *degrees).get("invariants") or []
+        supp = list(dict.fromkeys(list(b["support"]) + moved))
+        if len(found) != len(supp) - len(Z):
+            return False
+        if not all(verify_invariants([f.replace("^", "**") for f in found], [dict(p_["comps"]) for p_ in preps])):
+            return False
+        return face_reach({"support": supp, "invariants": found}, pins, Z, gens, limit_only=True) is not None
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return False
+    finally:
+        if old is not None:
+            set_positive(old)
+
+
+def rest_checked(rhs, Z, inputs, points=3):
+    """Whether the face model has a resting state with a regular Jacobian at `points` random points over F_q."""
+    # a check without an error bound, with the inputs at 0; a point without a resting state is redrawn
+    from ..gfp import verify_prime
+    from ..sym.steady import solve_steady_state_modular
+    states = [x for x, f in rhs.items() if str(f).strip() not in ("0", "0.0")]
+    syms = {str(s) for f in rhs.values() for s in spy.sympify(str(f).replace("^", "**")).free_symbols}
+    params = sorted(syms - set(states) | {x for x in rhs if x not in states})
+    q = verify_prime()
+    rng = session.current().rng("face rest", tuple(sorted(Z)), tuple(states))
+    lines = [f"{x} = {str(rhs[x]).replace('^', '**')}" for x in states]
+    found = 0
+    # an algebraic resting state has a point over F_q at a fixed positive fraction of the draws
+    for _ in range(8 * points):
+        vals = {v: (0 if v in set(Z) or v in set(inputs or ()) else rng.randrange(1, q)) for v in params}
+        res = solve_steady_state_modular(lines, states, params, vals, q, forcings=list(inputs or ()))
+        if res.get("ok"):
+            found += 1
+            if found == points:
+                return True
+        elif res.get("why") != "no consistent interior point":
+            return False
+    return False
+
+
+def _graph(invariants, sol, tmp, pins):
+    """Whether the invariants take the values `tmp` at the solved carriers, for every gauge value."""
+    sym, own = _owned([t for t in tmp if t not in set(DOMAIN["real_carriers"])])
+    try:
+        sub = {sym(str(k)): own(v) for k, v in pins}
+        at = {sym(c): own(e).xreplace(sub) for c, e in sol.items()}
+        return all(_vanishes(own(e).xreplace(sub).xreplace(at) - sym(t)) for e, t in zip(invariants, tmp))
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return False
 
 
 def model_denominators(exprs):
@@ -191,17 +701,12 @@ def model_denominators(exprs):
     return out
 
 
-def denominator_syms(exprs):
-    """The symbols in the denominators of `exprs`."""
-    return list(dict.fromkeys(s for d in model_denominators(exprs) for s in free_syms(d)))
-
-
 def _bad(e):
     return e is None or e.has(spy.zoo, spy.nan, spy.oo)
 
 
-def face_section(b, pins, dens=(), max_sets=200):
-    """Face section: pin some coordinates to 0, certified to meet every orbit once."""
+def face_section(b, pins, dens=()):
+    """Face section: pin some coordinates to 0, certified to meet every orbit once, within the search budget."""
     out = {"solved": False}
     if not b.get("invariants") or any(re.search(r"exp\(|log\(", s) for s in b["invariants"]):
         return out
@@ -209,7 +714,7 @@ def face_section(b, pins, dens=(), max_sets=200):
             and callable(b.get("face_back")):
         b2 = {k: v for k, v in b.items() if k not in ("invariants", "face_invariants", "face_back")}
         b2["invariants"] = b["face_invariants"]
-        res = face_section(b2, pins, dens, max_sets)
+        res = face_section(b2, pins, dens)
         if res.get("solved"):
             nm = list(res["meaning"])
             res["meaning"] = dict(zip(nm, b["face_back"](list(res["meaning"].values()))))
@@ -247,11 +752,12 @@ def face_section(b, pins, dens=(), max_sets=200):
     z_cand = [v for v in z_cand if zero_ok([(spy.Symbol(v), spy.Integer(0))])]
     if len(z_cand) < r:
         return out
-    sets = first_subsets(len(z_cand), r, max_sets)
     z_ord = list(reversed(z_cand))
     conditional = []
     pos = positive_set()
-    for s in sets:
+    for s in itertools.combinations(range(len(z_cand)), r):
+        if time_up():
+            break
         Z = [z_ord[i] for i in s]
         sub_z = [(spy.Symbol(v), spy.Integer(0)) for v in Z]
         if not zero_ok(sub_z):
@@ -284,8 +790,9 @@ def face_section(b, pins, dens=(), max_sets=200):
             eqs.append(spy.together(Ief - Ie))
         if not ok_z:
             continue
-        brs = tri_solve(eqs, [f"{v}_si_f" for v in U])
-        good, n_open = None, 0
+        info = {"complete": True}
+        brs = tri_solve(eqs, [f"{v}_si_f" for v in U], info)
+        good, n_open = None, 0 if info["complete"] else 1
         pos_u = [True] * len(U) if pos is None else [v in set(pos) for v in U]
         for br in brs:
             if len(br) < len(U):
@@ -353,7 +860,7 @@ def face_section(b, pins, dens=(), max_sets=200):
             continue
         res = dict(out)
         res.update(solved=True, pins={z: "0" for z in Z}, gauge=Z, section=[f"{z} = 0" for z in Z],
-                   face=True, coverage="total", carrier_domain={}, inv_names=[], shifted=[],
+                   face=True, coverage="total", solved_domain={}, inv_names=[], shifted=[],
                    meaning={v: str(spy.factor(e)).replace("**", "^") for v, e in zip(U, good)})
         return res
     for a in conditional:
@@ -384,7 +891,7 @@ def face_carriers(sol, coords, inv_start):
     sol["pins"] = dict(sol["pins"], **dict(zip(moved, qn)))
     sol["inv_names"] = qn
     sol["meaning"] = dict(zip(qn, [m[u] for u in moved]))
-    sol["carrier_domain"] = {q: "positive" for q in qn}
+    sol["solved_domain"] = {q: "positive" for q in qn}
     return sol
 
 
@@ -511,15 +1018,16 @@ def unmoved_compress(preps):
     B = []
 
     def coef_of(v, B):
-        v = np.asarray(v, dtype=float)
+        # the unique exact solution of B^T c = v when it is a nonnegative integer vector, else None
         if not B:
-            return [] if np.all(v == 0) else None
-        Bt = np.array(B, dtype=float).T
-        sol, *_ = np.linalg.lstsq(Bt, v, rcond=None)
-        rs = np.round(sol)
-        if np.any(np.abs(sol - rs) > 1e-9) or np.any(rs < 0) or np.any(np.abs(Bt @ rs - v) > 1e-9):
+            return [] if not any(int(x) for x in v) else None
+        try:
+            sol, par = spy.Matrix(B).T.gauss_jordan_solve(spy.Matrix([int(x) for x in v]))
+        except ValueError:
             return None
-        return [int(x) for x in rs]
+        if par.shape[0] or any(not (x.is_Integer and x >= 0) for x in sol):
+            return None
+        return [int(x) for x in sol]
     for p_ in prim:
         if coef_of(p_, B) is None:
             B.append(p_)
@@ -583,7 +1091,7 @@ def unmoved_compress(preps):
 
 
 def match_carriers(adm):
-    """One distinct carrier per entry from its admissible list in `adm`, or None."""
+    """One distinct carrier per entry from its candidate list in `adm`, or None."""
     n = len(adm)
     pick = [None] * n
 

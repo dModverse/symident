@@ -1,0 +1,31 @@
+{
+ "name": "test-symmetryExponential_010_symmetryDetection",
+ "spec": {
+  "f": {
+   "A": "kA - kd*A",
+   "B": "kB - kE*exp(A)*B"
+  },
+  "g": {
+   "y": "s*B"
+  },
+  "events": [
+   {
+    "var": "B",
+    "time": "0",
+    "value": "0",
+    "method": "add",
+    "root": null
+   },
+   {
+    "var": "A",
+    "time": "5",
+    "value": "dA",
+    "method": "add",
+    "root": null
+   }
+  ],
+  "reconstruct": true
+ },
+ "env": {},
+ "options": {}
+}

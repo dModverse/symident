@@ -1,0 +1,16 @@
+{
+ "name": "test-symmetryReduction_045_symmetryDetection",
+ "spec": {
+  "f": {
+   "P": "-k_p*P + k_d*pP",
+   "pP": "k_p*P - k_d*pP"
+  },
+  "g": {
+   "y": "s*pP"
+  },
+  "reconstruct": true,
+  "method": "observability"
+ },
+ "env": {},
+ "options": {}
+}

@@ -1,0 +1,48 @@
+{
+ "name": "test-symmetryDetection_096_symmetryDetection",
+ "spec": {
+  "f": {
+   "x": "b - a*x"
+  },
+  "g": {
+   "y": "s*x"
+  },
+  "conditions": {
+   "rows": [
+    "stim"
+   ],
+   "cols": {
+    "dose": [
+     2
+    ],
+    "d1": [
+     1
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "x",
+    "time": "0",
+    "value": "dose",
+    "method": "replace",
+    "root": null
+   },
+   {
+    "var": "x",
+    "time": "1",
+    "value": "d1",
+    "method": "add",
+    "root": null
+   }
+  ],
+  "equilibrate": true,
+  "method": "observability"
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

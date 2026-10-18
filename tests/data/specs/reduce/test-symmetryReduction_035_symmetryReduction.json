@@ -1,0 +1,100 @@
+{
+ "name": "test-symmetryReduction_035_symmetryReduction",
+ "object": {
+  "method": "observability",
+  "identifiable": false,
+  "gauge": null,
+  "info": {
+   "coordinates": [
+    "EGFR",
+    "EGF_EGFR",
+    "MEK",
+    "pMEK",
+    "ERK",
+    "pERK",
+    "k_bind",
+    "k_dephos_ERK",
+    "k_dephos_MEK",
+    "k_phos_ERK",
+    "k_phos_MEK",
+    "k_unbind",
+    "scale_pERK",
+    "scale_pMEK"
+   ],
+   "modelExprs": [
+    "-1*(k_bind * EGF * EGFR) +1*(k_unbind * EGF_EGFR)",
+    "1*(k_bind * EGF * EGFR) -1*(k_unbind * EGF_EGFR)",
+    "-1*(k_phos_MEK * EGF_EGFR * MEK) +1*(k_dephos_MEK * pMEK)",
+    "1*(k_phos_MEK * EGF_EGFR * MEK) -1*(k_dephos_MEK * pMEK)",
+    "-1*(k_phos_ERK * pMEK * ERK) +1*(k_dephos_ERK * pERK)",
+    "1*(k_phos_ERK * pMEK * ERK) -1*(k_dephos_ERK * pERK)",
+    "scale_pMEK * pMEK",
+    "scale_pERK * pERK",
+    "1"
+   ]
+  },
+  "symmetries": [
+   {
+    "type": "scaling",
+    "generator": {
+     "MEK": "MEK",
+     "k_phos_ERK": "-k_phos_ERK",
+     "pMEK": "pMEK",
+     "scale_pMEK": "-scale_pMEK"
+    },
+    "weights": {
+     "MEK": "1",
+     "k_phos_ERK": "-1",
+     "pMEK": "1",
+     "scale_pMEK": "-1"
+    },
+    "support": [
+     "MEK",
+     "k_phos_ERK",
+     "pMEK",
+     "scale_pMEK"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "scaling",
+    "generator": {
+     "ERK": "ERK",
+     "pERK": "pERK",
+     "scale_pERK": "-scale_pERK"
+    },
+    "weights": {
+     "ERK": "1",
+     "pERK": "1",
+     "scale_pERK": "-1"
+    },
+    "support": [
+     "ERK",
+     "pERK",
+     "scale_pERK"
+    ],
+    "degree": 1
+   },
+   {
+    "type": "general",
+    "generator": {
+     "EGFR": "EGFR*EGF_EGFR + 2*EGFR + EGF_EGFR",
+     "EGF_EGFR": "EGF_EGFR^2 + EGF_EGFR",
+     "k_bind": "-EGF_EGFR*k_bind - k_bind",
+     "k_phos_MEK": "-EGF_EGFR*k_phos_MEK - k_phos_MEK",
+     "k_unbind": "-EGFR*k_bind + k_bind"
+    },
+    "weights": null,
+    "support": [
+     "EGFR",
+     "EGF_EGFR",
+     "k_bind",
+     "k_phos_MEK",
+     "k_unbind"
+    ],
+    "degree": 2
+   }
+  ]
+ },
+ "args": {}
+}

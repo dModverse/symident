@@ -1,0 +1,94 @@
+{
+ "name": "test-symmetryDetection_154_symmetryDetection",
+ "spec": {
+  "f": {
+   "R": "1*(kR) -1*(dR*R)",
+   "G": "1*(kG*R*(b + u)) -1*(dG*G)",
+   "u": "1*(0)"
+  },
+  "reactions": {
+   "species": [
+    "R",
+    "G",
+    "u"
+   ],
+   "smatrix": [
+    [
+     1,
+     0,
+     0
+    ],
+    [
+     -1,
+     0,
+     0
+    ],
+    [
+     0,
+     1,
+     0
+    ],
+    [
+     0,
+     -1,
+     0
+    ],
+    [
+     0,
+     0,
+     1
+    ]
+   ],
+   "rates": [
+    "kR",
+    "dR*R",
+    "kG*R*(b + u)",
+    "dG*G",
+    "0"
+   ]
+  },
+  "g": {
+   "yG": "sG*G"
+  },
+  "trafo": [
+   {
+    "R": "kR/dR",
+    "G": "kG*kR/dR*(b + u)/dG",
+    "u": "u"
+   },
+   {
+    "R": "kR/dR",
+    "G": "kG*kR/dR*(b + u)/dG",
+    "u": "u"
+   }
+  ],
+  "conditions": {
+   "rows": [
+    "c0",
+    "stim"
+   ],
+   "cols": {
+    "dose": [
+     0,
+     1
+    ]
+   }
+  },
+  "events": [
+   {
+    "var": "u",
+    "time": "0",
+    "value": "dose",
+    "method": "add",
+    "root": null
+   }
+  ],
+  "reconstruct": true
+ },
+ "env": {
+  "DMOD_MSOLVE": "",
+  "DMOD_SYM_NOCHUNK": "",
+  "DMOD_SYM_SOLVEPOOL": ""
+ },
+ "options": {}
+}

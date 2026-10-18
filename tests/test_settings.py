@@ -51,9 +51,9 @@ def test_route_errors_are_recorded_or_raised(monkeypatch):
         si.detect(model, reconstruct=True, equilibrate=True)
 
 
-def test_guide_lists_every_switch():
-    guide = (Path(__file__).parents[1] / "docs" / "guide.rst").read_text(encoding="utf-8")
-    listed = set(re.findall(r"^``([A-Z0-9_]+)``$", guide, re.M))
+def test_api_reference_lists_every_switch():
+    api = (Path(__file__).parents[1] / "docs" / "api.rst").read_text(encoding="utf-8")
+    listed = set(re.findall(r"^``([A-Z0-9_]+)``$", api, re.M))
     assert set(state.SWITCHES) <= listed
 
 

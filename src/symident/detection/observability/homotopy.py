@@ -1,6 +1,4 @@
-"""Residual directions along lines through the base point: the resting state continued
-as a power series in t along :math:`\\theta_0 + t\\,d`, kernel entries as series, closed
-forms fitted to their Pade values on a star of lines."""
+"""Residual directions along lines through the base point, fitted to Pade values of series kernels on a line star."""
 
 import math
 import re
@@ -84,8 +82,7 @@ class Homotopy:
         return dict.fromkeys(self.pars, 0)
 
     def basis(self, ns, p):
-        """The residual directions along the line as series vectors, one per direction, each
-        one on its gauge column and zero on the other gauge columns; None if singular."""
+        """Residual directions along the line as series vectors, each one on its own gauge column; None if singular."""
         key = ("W", self.mode, tuple(self.fcs))
         if key in ns:
             return ns[key]
@@ -142,8 +139,7 @@ class Homotopy:
     # ---- relevance ----------------------------------------------------------------------
 
     def _derivative(self, grp, seed):
-        """For each entry, whether the first-order series along random combinations of
-        the parameters in `grp` moves it."""
+        """Per entry, whether the first-order series along random combinations of the parameters in `grp` moves it."""
         P1 = PRIMES[0]
         d = self.zero_line()
         for nm, x in zip(grp, random_point(len(grp), seed)):
@@ -183,8 +179,7 @@ class Homotopy:
     # ---- fit --------------------------------------------------------------------------
 
     def _samples(self, a, i, reli, dg, p):
-        """Samples of entry i of direction a at prime p from the Pade forms on a star
-        of lines through the base."""
+        """Samples of entry i of direction a at prime p from the Pade forms on a star of lines through the base."""
         k = len(reli)
         n_mon = mono_table(k, dg).shape[0]
         need, per, T = 2 * n_mon + 4, 2 * dg + 1, 2 * dg + 2
@@ -254,9 +249,7 @@ class Homotopy:
             return None
 
     def fit_entry(self, a, i):
-        """Entry i of direction a as a rational function of its relevant parameters; a lift
-        from fewer primes is kept only when it holds at the verification prime, else more
-        primes are taken."""
+        """Entry i of direction a as a rational function of its relevant parameters, held at the verification prime."""
         reli = self.rel[a][i]
         if not reli:
             return self._constant(a, i)
@@ -295,8 +288,7 @@ class Homotopy:
     # ---- directions -------------------------------------------------------------------
 
     def _anchors(self, fcs):
-        """The gauge: for the k residual directions the first k shared columns on which
-        their base vectors are independent; each direction one on its own gauge column."""
+        """Gauge: the first k shared columns on which the base vectors of the k residual directions are independent."""
         n_sh = self.sys.n_shared
         free = self.ns0["free"]
         self.fcs = [fc for fc in fcs if fc in free]
@@ -329,8 +321,7 @@ class Homotopy:
                      for a in range(len(self.fcs))]
 
     def _verified(self, a, i, e):
-        """The fitted entry against the Pade value at t = 1 on a fresh line at a prime
-        outside the lift."""
+        """The fitted entry against the Pade value at t = 1 on a fresh line at a prime outside the lift."""
         nsv, dv, P2 = self.nsv, self.dv, verify_prime()
         if nsv is None:
             return False
@@ -352,8 +343,7 @@ class Homotopy:
         return True
 
     def direction(self, a):
-        """Direction `a` in closed form from its fitted entries, or None when an entry is not
-        fitted or the direction fails the kernel check at a fresh point."""
+        """Direction `a` in closed form; None when an entry is not fitted or the kernel check at a fresh point fails."""
         names = self.an.znames
         entries = {names[self.anchor[a]]: "1"}
         used = set()
@@ -383,8 +373,7 @@ class Homotopy:
                 "closed_form": True, "route": route}
 
     def _in_kernel(self, entries, mi_plain, tries=None):
-        """Whether the shared part of the kernel at a fresh point modulo the verification prime
-        holds `entries`, a state read as its resting value (unsuffixed in condition `mi_plain`)."""
+        """Whether the shared kernel at a fresh point holds `entries`, states read as resting values of `mi_plain`."""
         an, sys, q = self.an, self.sys, verify_prime()
         tries = tries or sys.hom_tries
         n = len(self.base)
@@ -409,9 +398,7 @@ class Homotopy:
         return False
 
     def run(self, fcs):
-        """(free columns, directions) with None where a direction does not close; None
-        without a series kernel at the base. Each direction is first normalized on one
-        shared column, the rest then jointly on a gauge of shared columns."""
+        """(free columns, directions), None for an unclosed direction; None without a series kernel at the base."""
         self.ns0 = self.line_null(self.zero_line(), 1, PRIMES[0])
         if self.ns0 is None:
             self.diag("no series kernel at the base")

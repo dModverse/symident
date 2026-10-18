@@ -7,9 +7,7 @@ from .parse import _make_local_parse
 
 
 def _canon_int_vector(prim, gens):
-    """Scale a polynomial vector by a rational constant to canonical integer-primitive
-    form (clear denominators, divide by content, first nonzero LC positive), so
-    gauge-equivalent representatives coincide for a fixed `gens` order."""
+    """Scale a polynomial vector by a rational constant to integer-primitive form, canonical for `gens`."""
     coeffs = []
     for e in prim:
         if e == 0:
@@ -39,8 +37,7 @@ def _canon_int_vector(prim, gens):
 
 
 def _factor_map(e):
-    """{irreducible factor: multiplicity} of a nonzero polynomial expression and its
-    rational content, without expanding a product that is already factored."""
+    """{irreducible factor: multiplicity} and rational content of an expression, products not expanded."""
     c, fl = spy.factor_list(e)
     out = {}
     for f, m in fl:
@@ -54,9 +51,7 @@ def _factor_map(e):
 
 
 def _classify_factored(infis, gens):
-    """classify_direction() for wide directions: lcm of the denominators and gcd of the
-    numerators from factor lists (exact over Q), the canonical representative kept
-    as a product. None when a component is not rational."""
+    """classify_direction() for wide directions from factor lists, exact over Q; None if not rational."""
     try:
         nz = [i for i, e in enumerate(infis) if e != 0]
         fr = [spy.fraction(spy.together(infis[i])) for i in nz]
@@ -119,22 +114,7 @@ _CLASSIFY_MAX_CHARS = 20000
 
 
 def classify_generator(vector):
-    """Classify one non-identifiability direction and return its canonical
-    poly-primitive differential generator.
-
-    `vector` is {coordinate: component_str}, the components eta_i of
-    X = sum_i eta_i d/dz_i (a scaling as {z_i: "w_i*z_i"}). X is defined up to a
-    factor h(z); the gauge is fixed by clearing the common denominator, dividing by
-    the polynomial content and normalizing to integer-primitive form.
-
-      scaling : every eta_i = w_i * z_i. The orbit is a ray, so any one coordinate
-                can be fixed at any value.
-      general : anything else. The orbit is curved, so fixing a coordinate is not
-                free; the direction is removed by reparametrizing onto invariants.
-
-    Returns {'type', 'weights', 'components', 'degree'}: integer scaling weights
-    (None unless scaling), the canonical generator {z_i: str(eta_i)} and its total
-    degree (-1 when not polynomial)."""
+    """{'type', 'weights', 'components', 'degree'}: scaling or general, and the canonical generator."""
     items = [(str(k), str(v)) for k, v in vector.items()]
     fallback = {'type': 'general', 'weights': None,
                 'components': {k: v for k, v in items}, 'degree': -1}
@@ -145,7 +125,7 @@ def classify_generator(vector):
     if len(moved) == 1:
         z = moved[0][0]
         return {'type': 'scaling', 'weights': {z: 1}, 'components': {z: z}, 'degree': 1}
-    # the canonical form of very long components costs more than it is worth
+    # very long components skip the canonical form
     if sum(len(v) for _, v in items) > _CLASSIFY_MAX_CHARS:
         return fallback
 
@@ -166,9 +146,8 @@ def classify_generator(vector):
     n = len(gens)
     infis = [comps.get(z, spy.Integer(0)) for z in gens]
 
-    # a wide direction (many symbols) goes through factor lists: the multivariate gcd
-    # of the expanded numerators costs minutes on an entry like
-    # ksec*(Km + R1 + ... + R30)**2, its factor list is read off the product
+    # a wide direction (many symbols) goes through factor lists, which avoid the
+    # multivariate gcd of the expanded numerators
     if n > 12:
         wide = _classify_factored(infis, gens)
         if wide is not None:
