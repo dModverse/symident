@@ -396,3 +396,60 @@ def test_a_direction_that_moves_a_root_surface_is_no_symmetry():
     assert all(s.level == "exact" for s in r.symmetries)
     assert {"a", "z"} not in [set(s.support) for s in r.symmetries]
     assert r.info["rank_status"]["status"] == "lower bound"
+
+
+def test_the_reset_of_a_root_event_enters_the_rows():
+    ev = [{"var": "x", "root": "x-1", "value": "c", "method": "replace"}]
+    r = det({"x": "I-k*x"}, {"y": "x"}, events=ev, trafo={"x": "0"}, fixed=["I"], reconstruct=True)
+    assert r.identifiable and "c" in r.info["coordinates"]
+
+
+def test_a_switch_removed_by_the_default_sign_of_a_state_warns():
+    with pytest.warns(UserWarning, match="default positive=True"):
+        det({"SP": "piecewise(-melt*SP, SP > 0, 0) + snow", "Q": "SFCF*melt*SP - Q"}, {"y": "Q"}, fixed=["snow"])
+
+
+def test_regimes_name_a_surface_in_any_form():
+    sw = Switches(["VG", "Gthr"])
+    h = sw.indicator(spy.sympify("Q1/VG - Gthr"))
+    sgn, parts = sw.factored(spy.sympify("Q1/VG - Gthr"))
+    assert len(parts) == 1 and sw.match(parts[0]) is not None and h.free_symbols == set(sw.ind)
+
+
+def _brief(r):
+    return r.rank, r.dim, r.info["coordinates"], sorted((s.type, s.level) for s in r.symmetries)
+
+
+@pytest.mark.parametrize("clock, plain", [
+    (dict(trafo={"x": "a + time"}), dict(trafo={"x": "a"})),
+    (dict(trafo={"x": "1"}, events=[{"var": "x", "time": 2, "value": "c2*time", "method": "add"}]),
+     dict(trafo={"x": "1"}, events=[{"var": "x", "time": 2, "value": "2*c2", "method": "add"}])),
+    (dict(trafo={"x": "1", "k1": "a*time"}), dict(trafo={"x": "1"}, f={"x": "piecewise(-a*time*x, x > thr, -k2*x)"})),
+    (dict(trafo={"x": "1"}, events=[{"var": "x", "time": "tau", "value": "c2", "method": "add"}],
+          conditions={"rows": ["a", "b"], "cols": {"tau": [0, 1]}}),
+     dict(trafo={"x": "1"}, events=[{"var": "x", "time": "0", "value": "c2", "method": "add", "cond": [0]},
+                                    {"var": "x", "time": "1", "value": "c2", "method": "add", "cond": [1]}],
+          conditions={"rows": ["a", "b"], "cols": {}})),
+])
+def test_a_switch_reads_the_clock_and_the_event_times_of_each_condition(clock, plain):
+    f = {"x": "piecewise(-k1*x, x > thr, -k2*x)"}
+    clock, plain = dict(clock), dict(plain)
+    r = det(clock.pop("f", f), {"y": "c*x"}, reconstruct=True, **clock)
+    assert _brief(r) == _brief(det(plain.pop("f", f), {"y": "c*x"}, reconstruct=True, **plain))
+
+
+def test_every_copy_of_a_switch_starts_its_inputs_by_an_event(monkeypatch):
+    from symident.detection import hybrid
+    rows, build = {}, hybrid._rows_model
+
+    def keep(st, copies, fresh):
+        rows.update(build(st, copies, fresh))
+        return rows
+    monkeypatch.setattr(hybrid, "_rows_model", keep)
+    f = {"x": "piecewise(-k1*x*u, x > thr, -k2*x)", "u": "0"}
+    det(f, {"y": "c*x"}, inputs=["u"], trafo={"x": "1"},
+        events=[{"var": "u", "time": 0, "value": "w", "method": "replace"}])
+    starts = [e for e in rows["events"] if e["var"] == "u"]
+    assert not any("u" in t for t in rows["trafo"]) and len(rows["trafo"]) > 4
+    assert sorted(e["cond"][0] for e in starts) == list(range(len(rows["trafo"])))
+    assert all(e["time"] == "0" and e["value"] == "w" for e in starts)

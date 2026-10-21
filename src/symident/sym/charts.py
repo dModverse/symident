@@ -3,6 +3,7 @@
 import sympy as spy
 
 from ..errors import InapplicableError
+from .domain import declared, is_positive
 from .parse import _make_local_parse, _make_parse, to_r
 
 _HYPERBOLIC = (spy.sinh, spy.cosh, spy.tanh, spy.coth, spy.sech, spy.csch)
@@ -149,7 +150,7 @@ def sign_chart(f, gs, positive):
     local = dict(local)
     local.update({'abs': spy.Abs, 'sign': spy.sign})
     parse = _make_parse(local)
-    pos = None if positive is True else {str(x) for x in (positive or [])}
+    pos, _ = declared(positive)
     names = {str(sym) for sym in local.values() if isinstance(sym, spy.Symbol)}
     to_pos = {spy.Symbol(n): spy.Symbol(n, positive=True)
               for n in names if pos is None or n in pos}
@@ -193,8 +194,23 @@ def _log_numbers(e, consts):
     return e.xreplace(rep)
 
 
-def log_arg_chart(f, gs, positive, taken, ics=None):
-    """Model in L = log(a + b*v) for positive log() and fractional-power arguments; None if none qualify."""
+# degree past which a log argument is split by its common factors only, not factored
+_FACTOR_DEGREE = 8
+
+
+def _split(u):
+    """u over a common denominator, factored, or split by its common factors when its degree is high."""
+    t = spy.together(u)
+    try:
+        deg = max((spy.Poly(x, *x.free_symbols).total_degree() if x.free_symbols else 0)
+                  for x in spy.fraction(t))
+    except (spy.PolynomialError, spy.GeneratorsNeeded):
+        deg = 0
+    return spy.factor_terms(t) if deg > _FACTOR_DEGREE else spy.factor(t)
+
+
+def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
+    """Model in L = log(a + b*v) for positive log() and fractional-power arguments but `skip`; None if none qualify."""
     fl = dict(f)
     gl = [dict(g) for g in gs]
     il = [dict(ic) for ic in (ics or [])]
@@ -202,7 +218,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
              [v for ic in il for v in ic.values()] +
              [str(k) for k in fl] + [str(t) for t in taken])
     local, parse = _make_local_parse(lines)
-    pos = None if positive is True else {str(x) for x in (positive or [])}
+    pos, _ = declared(positive)
 
     def is_pos(sym):
         return pos is None or str(sym) in pos
@@ -232,26 +248,30 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
 
     def positive_on(e):
         # sign certificate on the declared domain: coordinates are real, the declared ones positive
-        sub = {x: spy.Symbol(str(x), positive=True) if is_pos(x) else spy.Symbol(str(x), real=True)
-               for x in e.free_symbols}
-        return bool(e.xreplace(sub).is_positive)
+        return is_positive(e, positive)
 
     chart = {}                               # v -> (a, b)
 
+    skip = {str(x) for x in skip}
+
+    contested = set()
+
     def claim(v, a, b):
+        if str(v) in skip:
+            return
         if v in chart and (spy.simplify(chart[v][0] - a) != 0 or
                            spy.simplify(chart[v][1] - b) != 0):
-            raise InapplicableError('%s enters two different logarithms, which no single '
-                             'change of coordinates makes rational' % v)
+            # two logarithms of one symbol: no chart, the recasts take its powers and logarithms
+            contested.add(v)
+            return
         chart[v] = (a, b)
 
     # pass 0 claims log(v) and v^(p/q) of symbols, pass 1 the affine arguments, so a
     # plain logarithm keeps its symbol whatever the order of the terms
     def scan(e, ps):
-        e = e.xreplace({at: spy.log(spy.factor(spy.together(at.args[0])))
-                        for at in e.atoms(spy.log)})
+        e = e.xreplace({at: spy.log(_split(at.args[0])) for at in e.atoms(spy.log)})
         e = spy.expand_log(e, force=True)
-        args = [at.args[0] for at in e.atoms(spy.log)] + [spy.factor(spy.together(u)) for u in sum_powers(e)]
+        args = [at.args[0] for at in e.atoms(spy.log)] + [_split(u) for u in sum_powers(e)]
         for arg in sorted(set(args), key=spy.default_sort_key):
             if arg.is_number:
                 continue
@@ -312,6 +332,14 @@ def log_arg_chart(f, gs, positive, taken, ics=None):
                 break
     except ValueError as err:
         return {'why': str(err)}
+    # an affine chart turns a free power of its symbol into a power of a sum
+    for e in list(F.values()) + [e for g in G for e in g.values()]:
+        for pw in e.atoms(spy.Pow):
+            v = pw.base
+            if v in chart and not pw.exp.is_number and chart[v] != (zero, one):
+                contested.add(v)
+    for v in contested:
+        chart.pop(v, None)
     if not chart and not normed:
         return None
 
@@ -521,7 +549,7 @@ def log_chart_generators(gens, coords):
 def exp_chart_generators(gens, coords, positive):
     """Generators in L = log(v) for positive v in log(v) or in a symbolic scaling, None unless rational."""
     names = [str(c) for c in coords]
-    pos = None if positive is True else {str(x) for x in (positive or [])}
+    pos, _ = declared(positive)
     exprs_of = []
     for g in gens:
         if g is None:
@@ -678,15 +706,18 @@ def _apply_power_recast(pairs, S, per_cond):
         ic_r = {k: sub(v) for k, v in ic_c.items()}
         ss_r = [sub(e) for e in f_ss]
         rhs_of = {str(X): f_r[i] for i, X in enumerate(S)}
+        # a base state with a given initial value fixes the initial values of E and L
+        b0 = {b: spy.sympify(ic_c[str(b)]) for b in Lof
+              if str(b) in ic_c and spy.sympify(ic_c[str(b)]) not in (b, 0)}
         for (b, n) in pairs:
             E = recast[(b, n)]
             brhs = rhs_of.get(str(b), spy.Integer(0))
-            ic_r[str(E)] = E
+            ic_r[str(E)] = b0[b] ** n if b in b0 else E
             f_r.append(n * E * brhs / b if brhs != 0 else spy.Integer(0))
         for b in sorted(Lof, key=str):
             L = Lof[b]
             brhs = rhs_of.get(str(b), spy.Integer(0))
-            ic_r[str(L)] = L
+            ic_r[str(L)] = spy.log(b0[b]) if b in b0 else L
             f_r.append(brhs / b if brhs != 0 else spy.Integer(0))
         new_per_cond.append((f_r, g_r, ic_r, ss_r))
     meta = [{'E': str(recast[(b, n)]), 'L': str(Lof[b]),

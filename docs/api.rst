@@ -21,7 +21,7 @@ Results
 -------
 
 .. autoclass:: Symmetries
-   :members: summary, unproven, reduce, to_dict
+   :members: summary, unproven, solution_count, reduce, to_dict
 
 .. autoclass:: Symmetry
    :members: sympy

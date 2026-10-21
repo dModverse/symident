@@ -269,3 +269,67 @@ def test_log_and_powers_of_sums_products():
     r = run("k1*(a*y)^n - d1*x")
     assert len(r.symmetries) == 1
     assert set(r.symmetries[0]["support"]) == {"a", "k1"}
+
+
+def test_a_numeric_base_with_a_free_exponent_adds_no_coordinate():
+    m = si.Model({"x": "-k*D^n/(D^n+h)*x"}, {"y": "x"}, conditions={"rows": ["a", "b", "c"], "cols": {"D": [2, 3, 5]}})
+    r = si.detect(m, reconstruct=True, cores=1)
+    assert r.identifiable and set(r.info["coordinates"]) == {"x", "k", "n", "h"}
+
+
+def test_numeric_bases_with_shared_primes():
+    m = si.Model({"x": "-k*D^n/(D^n+h)*x"}, {"y": "x"},
+                 conditions={"rows": list("abcd"), "cols": {"D": [1, 3, 10, 30]}})
+    assert si.detect(m, cores=1).identifiable
+
+
+def test_exponents_dependent_up_to_a_constant():
+    kempt = "(kmin + (kmax-kmin)/2*(tanh(5/(2*(1-b))*(Qs1+Qs2-b)) - tanh(5/(2*c)*(Qs1+Qs2-c)) + 2))"
+    odes = {"Qs1": "-kmax*Qs1", "Qs2": "-%s*Qs2 + kmax*Qs1" % kempt, "Qg": "-kabs*Qg + %s*Qs2" % kempt}
+    m = si.Model(odes, {"Ra": "kabs*Qg"}, trafo={"Qs1": "1", "Qs2": "0", "Qg": "0"})
+    assert si.detect(m, cores=1).identifiable
+
+
+def test_a_free_exponent_of_a_sum_and_of_its_summand():
+    e = "Em*tau^n*A^n/((A+KA)^n + tau^n*A^n)"
+    r = si.detect(si.Model({"A": "1"}, {"E": e}, trafo={"A": "1"}), cores=1)
+    assert r.identifiable and not r.info["errors"]
+
+
+def test_a_free_exponent_of_a_condition_value_and_of_zero():
+    odes = {"S": "kg*S - (kd + Emax*C^gam/(EC50^gam + C^gam))*S - (kg-kd)*(S+R)/Bmax*S",
+            "R": "(kg-kd)*(S+R)/Bmax*S - kd*R"}
+    grid = {"rows": ["c0", "c1", "c4", "c16"], "cols": {"C": [0, 1, 4, 16]}}
+    m = si.Model(odes, {"cfu": "S + R"}, trafo={"S": "S0", "R": "0"}, conditions=grid, fixed=["C"])
+    assert si.detect(m, cores=1).identifiable
+    odes["C"] = "0"
+    m = si.Model(odes, {"cfu": "S + R"}, trafo=[{"S": "S0", "R": "0", "C": str(c)} for c in (1, 4, 16)])
+    r = si.detect(m, cores=1)
+    assert (r.rank, r.dim) == (6, 7)
+
+
+def test_a_declared_positive_expression_charts_its_logarithm():
+    m = si.Model({"x": "s*x^a*(1-x) - (1-s)*x*(1-x)^a"}, {"y": "x"})
+    r = si.detect(m, positive=["s", "a", "x", "1-x"], cores=1)
+    assert r.rank == r.dim
+    m = si.Model({"x": "-k*log(1-x)"}, {"y": "x"})
+    with pytest.raises(ValueError, match="positive"):
+        si.detect(m, positive=["k", "x"], cores=1)
+    assert si.detect(m, positive=["k", "x", "1-x"], cores=1).identifiable
+
+
+def test_powers_of_a_sum_with_symbolic_and_high_exponents():
+    odes = {"Ac": "-ke*Ac", "x1": "l0*x1/(1 + (l0/l1*(x1+x2+x3+x4))^psi)^(1/psi) - k2*Ac*x1",
+            "x2": "k2*Ac*x1 - k1*x2", "x3": "k1*(x2 - x3)", "x4": "k1*(x3 - x4)"}
+    ev = [{"var": "Ac", "time": 1, "value": 1, "method": "add"}]
+    tr = {"Ac": "0", "x2": "0", "x3": "0", "x4": "0"}
+    assert si.detect(si.Model(odes, {"y": "x1+x2+x3+x4"}, events=ev, trafo=tr, fixed=["ke"]), cores=1).identifiable
+    odes12 = dict(odes, x1=odes["x1"].replace("psi", "12"))
+    assert si.detect(si.Model(odes12, {"y": "x1+x2+x3+x4"}, events=ev, trafo=tr, fixed=["ke"]), cores=1).identifiable
+
+
+def test_a_high_power_of_a_state_beside_a_free_scale():
+    base = {"h": "(-p0*(h^8 - p1) + p2*(h - p1) - (T - p3))/C", "T": "kT", "I": "T"}
+    r = si.detect(si.Model(base, {"y": "a + b*h + g*I"}, trafo={"T": "1/3", "kT": "2/7", "I": "0"}, fixed=["kT"]),
+                  reconstruct=True, cores=1)
+    assert (r.rank, r.dim) == (7, 9) and {s.level for s in r.symmetries} == {"exact"}

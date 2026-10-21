@@ -6,7 +6,7 @@ import numpy as np
 
 from ... import _core, session, state
 from ...errors import SYMPY_FAILS, swallow, sympy_fail
-from ...gfp import PRIMES, invmod, mulmod, random_point
+from ...gfp import PRIMES, exp_rows, invmod, mulmod, random_point, tape_fn
 from ...sym.continuation import continue_resting_state
 from ...sym.restforward import solve_forward_modular
 from ..fields import series_const, series_embed, series_stack
@@ -77,6 +77,9 @@ class JointSystem(RestingStates):
             "exp_slot": run.slot(str(rc["exp"])), "LSlot": run.slot(str(rc["L"])),
             "ESlot": run.slot(str(rc["E"])), "base_slot": run.slot(str(rc["base"])),
             "base_param": str(rc["base"]) in self.param_names} for rc in self.recast]
+        # exponential leaves outside the resting model: their relations over the local columns
+        self.exp_rel = run.multi.get("exp_relation") if run.multi.get("exp_atoms") else None
+        self.exp_rel_fn = tape_fn(self.exp_rel, run.n_leaves) if self.exp_rel else None
         self.df_droppable = set(self.forcings) | set(run.equil_zero_states) | \
             {s for z in run.cond_zero_states for s in (z or [])} | (set(run.leaf_names) - set(znames))
         self.solve_cache = {}
@@ -316,6 +319,14 @@ class JointSystem(RestingStates):
                 if rc["base_col"] is not None:
                     r2[rc["base_col"]] = (p - b_scale) % p
                 rel.append(np.vstack([r1, r2]))
+        if self.exp_rel_fn is not None:
+            if cont:
+                return None
+            e_m = exp_rows(self.exp_rel, self.exp_rel_fn, self.znames_local,
+                           np.asarray(sc0["ptc"], dtype=np.int64), p)
+            if e_m is None:
+                return None
+            rel.append(np.asarray(e_m, dtype=np.int64).reshape(-1, nz_l))
         rel_s = []
         if cont and self.recast_rel:
             Ns = 1 if obs.get("N") is None else int(obs["N"])
@@ -430,10 +441,10 @@ class JointSystem(RestingStates):
         if run.has_gaps:
             return _core.sym_obs_null_chain([run.chain_tapes(run.chain_groups[run.chain_idx[ci]])],
                                             run.n_leaves, run.n_states, self.z_slots_local, pt, p,
-                                            int(Nt), int(Mtot), 1, [],
+                                            run.exact_nt(Nt, Mtot), int(Mtot), 1, [],
                                             None if ser is None else np.asarray(ser) % p)
         return _core.sym_obs_null_multi([run.tapes[ci]], run.n_leaves, run.n_states,
-                                        self.z_slots_local, pt, p, int(Nt), 1)
+                                        self.z_slots_local, pt, p, run.exact_nt(Nt), 1)
 
     def cond_obs_sel(self, scs, sel, p, Nt, Mtot):
         """cond_obs for the conditions `sel` (others None), one batch on chains."""
@@ -448,7 +459,7 @@ class JointSystem(RestingStates):
         sers = [np.asarray(scs[mi]["ser"]) % p if scs[mi].get("cont") else None for mi in sel]
         res = _core.sym_obs_null_chain_seed_batch(
             self.chains, list(sel), seeds, [p] * len(sel), run.n_leaves, run.n_states,
-            self.z_slots_local, int(Nt), int(Mtot), int(min(run.cores_call, len(sel))),
+            self.z_slots_local, run.exact_nt(Nt, Mtot), int(Mtot), int(min(run.cores_call, len(sel))),
             [run.nt_cap[mi] for mi in sel] if len(run.nt_cap) == self.kc else [],
             sers if any(s is not None for s in sers) else None)
         for k, mi in enumerate(sel):
@@ -498,7 +509,7 @@ class JointSystem(RestingStates):
                "dim": self.nz_wide}
         if run.has_gaps:
             res = series_stack(res, sblocks, self.nz_wide, Mtot + 1, p, run.cores_call)
-        return res
+        return run.modulo_nuisance(res, p)
 
     def kcall_fwd(self, point, p, Nt, solve_rates):
         """The wide kernel with the forward solve for the turnover rates."""
@@ -543,7 +554,7 @@ class JointSystem(RestingStates):
                     R = np.asarray(sr["R"], dtype=np.int64).reshape(len(piv), nsh)
         Rw = np.zeros((R.shape[0], self.nz_wide), dtype=np.int64)
         Rw[:, :nsh] = R
-        return {"ok": True, "R": Rw, "pivots": piv, "rank": len(piv), "dim": self.nz_wide}
+        return run.modulo_nuisance({"ok": True, "R": Rw, "pivots": piv, "rank": len(piv), "dim": self.nz_wide}, p)
 
     def fwd_select(self, point, p, Nt, solve_rates):
         """The fewest conditions whose forward kernel has the full rank at the point."""
@@ -637,7 +648,7 @@ class JointSystem(RestingStates):
                 ev_prime.append(pp)
         kr = _core.sym_obs_null_chain_seed_batch(
             self.chains, ev_chain, np.vstack(seed_rows), ev_prime, run.n_leaves, run.n_states,
-            self.z_slots_local[loc_sel], int(Nt), int(run.mtot), int(min(run.cores, len(ev_chain))),
+            self.z_slots_local[loc_sel], run.exact_nt(Nt, run.mtot), int(run.mtot), int(min(run.cores, len(ev_chain))),
             [run.nt_cap[e] for e in ev_chain] if len(run.nt_cap) == self.kc else [],
             ser_rows if any(s is not None for s in ser_rows) else None) if seed_rows else []
         out = [None] * n_p

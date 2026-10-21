@@ -412,6 +412,24 @@ def test_section_from_product_of_two_summand_balances():
     assert identifiable(f, g, trafo=r.trafo)
 
 
+def test_section_candidates_put_summand_balances_before_monomial_pairs():
+    from symident.reduction.sections import section_cands
+    cands = section_cands(["x", "y", "z"], [["F*x", "y", "x*z"]])
+    first_pair = cands.index(["x", "y"])
+    assert cands[:3] == [["x", "1"], ["y", "1"], ["z", "1"]]
+    # balances through names outside the support follow the pins and those inside it
+    assert cands.index(["y", "x*z"]) < cands.index(["F*x", "y"]) < first_pair
+    assert cands.index(["F*x", "x*z"]) < first_pair
+
+
+def test_balances_through_fixed_names_push_no_coordinate_section_out():
+    r = red(det({"M": "Ag*(kp*P0 - ddf*(T0 + Tb))"}, {"yM": "M"}, fixed=["P0", "T0", "Ag"], reconstruct=True))
+    cb = blocks_of(r, "curved")[0]
+    assert cb["status"] == "reduced"
+    assert cb["coverage"] == "total"
+    assert not any(x in s for s in cb["section"] for x in ("P0", "T0", "Ag"))
+
+
 def test_invariants_verified_against_other_blocks():
     f = {"P1": "-k1*P1 + k2*pP1", "pP1": "k1*P1 - k2*pP1",
          "P2": "-k3*P2 + k4*pP2", "pP2": "k3*P2 - k4*pP2"}
@@ -786,6 +804,14 @@ def test_partial_chart_is_named_in_the_verdict():
     assert "covers only part of the positive orthant" in str(red).splitlines()[0]
 
 
+def test_the_declared_positive_names_of_the_detection_need_not_be_coordinates():
+    res = si.detect(si.Model({"x": "-k*f*x"}, {"y": "s*x"}, fixed=["f"]), positive=["x", "k", "s", "f"],
+                    reconstruct=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message="no effect")
+        res.reduce()
+
+
 def test_labels_partition_the_directions():
     rx = {"species": ["A", "B", "C"], "stoichiometry": [[1, -1, 0], [0, -1, 1], [0, 1, -1]],
           "rates": ["k1*B", "k2*B", "k3*C"]}
@@ -1121,3 +1147,109 @@ def test_an_undecided_zero_limit_is_unknown_not_no():
     b = {"support": ["a", "b"], "invariants": ["a**3 + a**2*b + b**3 + 2*a"], "status": "reduced",
          "type": "curved", "preps": None, "target": None}
     assert {r["verdict"] for r in zero_compat(b)} == {"unknown"}
+
+
+def test_a_checked_direction_or_a_failed_saturation_is_not_reduced():
+    from symident.reduction.core import check_levels
+    with pytest.raises(ValueError, match="allow_checked"):
+        check_levels({"symmetries": [{"level": "checked"}]})
+    with pytest.raises(ValueError, match="still grows"):
+        check_levels({"symmetries": [{"level": "exact"}], "info": {"verification": {"ok": False, "reason": "r"}}})
+    with pytest.warns(UserWarning, match="without an error bound"):
+        check_levels({"symmetries": [{"level": "checked"}]}, allow_checked=True)
+
+
+def test_the_closed_loop_fails_on_an_idle_trafo_and_is_not_run_on_a_refusal():
+    from symident.api import loop_outcome
+
+    def idle():
+        warnings.warn("`trafo` entry q does not occur in the model and had no effect.", stacklevel=2)
+        return {"symmetries": [], "rank": 1, "dim": 1, "info": {}}
+
+    def refused():
+        raise ValueError("... anything else is not rational.\n  E = sqrt(q)")
+    assert loop_outcome(idle, 0)["ok"] is False
+    out = loop_outcome(refused, 0)
+    assert out["ok"] is None and "not rational" in out["reason"]
+    rd = {"removed": ["X1"], "remaining": [], "blocks": [], "checks": {"loop": {"ok": False}}}
+    assert "does not confirm" in report.red_verdict(rd)
+
+
+def test_the_closed_loop_applies_the_trafo_to_symbolic_grid_cells():
+    c = {"rows": ["a1", "a2"], "cols": {"tau": ["t11", "t12"], "KA": ["K11", "K12"]}}
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        r = si.detect(si.Model({"A": "1"}, {"E": "Em*tau*A/(KA + (1+tau)*A)"}, trafo={"A": "1", "t11": "1"},
+                               conditions=c), cores=1)
+    assert not any("had no effect" in str(w.message) for w in rec) and "t11" not in r.info["coordinates"]
+
+
+def test_a_declared_bound_keeps_the_section_inside():
+    gen = {"a": "a - a^2", "b": "b*(a - 1)", "c": "c"}
+    obj = mkobj([mkdir(gen, "general")], ["a", "b", "c"])
+    tr = red(obj, positive=["a", "b", "c", "1-a"]).trafo
+    for q2 in (-1, -5):
+        a = spy.sympify(tr["a"].replace("^", "**")).xreplace({spy.Symbol("q_1"): 2, spy.Symbol("q_2"): q2})
+        assert 0 < a < 1
+
+
+def _loop_matches(r, ref):
+    loop = r.reduce().checks["loop"]
+    return loop["ok"] is True and (loop["rank"], loop["dim"]) == (ref.rank, ref.dim)
+
+
+def test_the_closed_loop_applies_a_pin_of_a_renamed_column_in_the_grid():
+    rename = {"rows": ["a", "b"], "cols": {"s": ["s", "s2"]}}
+    r = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}, conditions=rename), reconstruct=True)
+    assert r.reduce().trafo["s"] == "1"
+    ref = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}, conditions={"rows": ["a", "b"],
+                                                                     "cols": {"s": ["1", "s2"]}}))
+    assert _loop_matches(r, ref)
+    with pytest.warns(UserWarning, match="condition column"):
+        si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}, conditions=rename, trafo={"s": "1"}))
+
+
+def test_the_closed_loop_keeps_only_the_pins_the_model_trafo_leaves():
+    r = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}, trafo={"k": "exp(lk)", "s": "a*b"}), reconstruct=True)
+    ref = si.detect(si.Model({"x": "-exp(lk)*x"}, {"y": "a*x"}, trafo={"x": "1"}))
+    assert _loop_matches(r, ref)
+
+
+def test_the_closed_loop_of_moieties_and_resting_values():
+    rx = {"species": ["A", "B", "u"], "stoichiometry": [[-1, 1, 0], [1, -1, 0]], "rates": ["k1*A*(1+u)", "k2*B"]}
+    ev = [{"var": "u", "time": 0, "value": "1", "method": "replace"}]
+    m = si.Model(reactions=rx, observables={"y": "s*B"}, inputs=["u"], events=ev)
+    for kw in (dict(reduce_cq=True), dict(equilibrate=True)):
+        r = si.detect(m, reconstruct=True, **kw)
+        assert r.reduce().checks["loop"]["ok"] is True
+    idle = si.Model({"z": "-k*u*z", "w": "-k*u*w", "u": "0"}, {"y": "z*w"}, inputs=["u"], events=ev)
+    r = si.detect(idle, equilibrate=True, reconstruct=True)
+    assert r.reduce().checks["loop"]["ok"] is True
+
+
+def test_a_resting_value_pinned_to_an_expression_is_no_model():
+    from symident.api import reduced_model
+    rm = reduced_model({"z": "-k*u*z", "u": "0"}, {"y": "z"}, None, None, None, {"z": "q_1", "k": "k"}, True)
+    assert rm["why"] is not None and "resting value of z" in rm["why"]
+    rm = reduced_model({"z": "-k*u*z", "u": "0"}, {"y": "z"}, None, None, None, {"z": "1", "k": "k"}, True)
+    assert rm["why"] is None and rm["fixed"] == ["z"] and rm["trafo"] == {}
+
+
+def test_a_result_keeps_the_model_it_detected_and_its_reduction():
+    m = si.Model({"x": "-k*x"}, {"y": "s*x"})
+    r = si.detect(m, reconstruct=True)
+    m.fixed = ["k", "s"]
+    assert r.reduce().checks["loop"]["dim"] == 2
+    red = r.reduce()
+    red.trafo["s"] = "42"
+    assert r.reduce() is not red and r.reduce().trafo["s"] == "1"
+
+
+def test_a_direction_checked_at_rest_names_the_missing_bound():
+    ev = [{"var": "u", "time": 0, "value": "1", "method": "replace"}]
+    r = si.detect(si.Model({"z": "-k*u*z", "w": "-j*u*w", "u": "0"}, {"y": "z*w"}, inputs=["u"], events=ev),
+                  equilibrate=True, reconstruct=True)
+    assert "checked" in [s.level for s in r.symmetries]
+    assert r.info["bound"]["why"] == "the error bound does not cover a start at rest (equilibrate)"
+    with pytest.raises(ValueError, match="random points only, since the error bound does not cover a start"):
+        r.reduce()

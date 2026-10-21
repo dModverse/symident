@@ -40,6 +40,9 @@ class PlainSystem:
         nz = len(run.znames)
         rel, seen_l = [], set()
         for rc in self.recast_rel:
+            if None in (rc["base_slot"], rc["Eslot"], rc["exp_slot"], rc["Lslot"]):
+                # E and L follow from a given initial value of the base, not from a relation of leaves
+                continue
             base0 = int(point[rc["base_slot"]]) % p
             if base0 == 0:
                 return None
@@ -96,12 +99,12 @@ class PlainSystem:
         pt = np.asarray(point, dtype=np.int64)
         if run.has_gaps:
             o = _core.sym_obs_null_chain([run.chain_tapes(idx) for idx in run.chain_groups], run.n_leaves,
-                                         run.n_states, run.z_slots, pt, p, int(Nt), int(Mtot),
+                                         run.n_states, run.z_slots, pt, p, run.exact_nt(Nt, Mtot), int(Mtot),
                                          run.cores_call, [] if self.transient else list(run.nt_cap))
         else:
             o = _core.sym_obs_null_multi(run.tapes, run.n_leaves, run.n_states, run.z_slots, pt, p,
-                                         int(Nt), run.cores_call)
-        return self.with_relations(o, point, p) if self.transient else o
+                                         run.exact_nt(Nt), run.cores_call)
+        return run.modulo_nuisance(self.with_relations(o, point, p) if self.transient else o, p)
 
     # ---- homotopy along parameter lines ---------------------------------------------------
 

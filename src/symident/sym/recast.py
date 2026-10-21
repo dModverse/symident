@@ -58,7 +58,7 @@ def _log_basis(r):
 
 
 def _terms_independent(atoms):
-    """True if 1 and the exponents tau*log(r) of the atoms [(r, tau)] are linearly independent over Q."""
+    """True if 1 and the exponents tau*log(r) of [(r, tau)] are independent over Q; None for non-rational values."""
     if not atoms:
         return True
     comps = [_log_basis(r) for r, _ in atoms]
@@ -81,7 +81,7 @@ def _terms_independent(atoms):
         if npts >= m + 3:
             break
     if npts < m + 1:
-        return False
+        return None
     # full rank over GF(p) implies full rank over Q
     for p in (2147483629, 2147483587):
         if any(spy.Rational(v).q % p == 0 for r in rows for v in r):
@@ -144,11 +144,55 @@ class _ExpCtx:
         return e.xreplace(rep) if rep else e
 
 
-def _exp_leaf_canon(exprs, ctx):
-    """{'exprs', 'atoms'} with every exponential as a product of leaves W = r^(tau/L), or {'why': ...}."""
+def _term_basis(ts):
+    """{t: (c0, {b: q})}: each exponent term as an exact rational combination of 1 and earlier ones, or itself."""
+    ts = sorted(ts, key=lambda t: (spy.count_ops(t), str(t)))
+    syms = sorted(set().union(*[t.free_symbols for t in ts]), key=str) if ts else []
+    rng = session.current().rng("recast.basis")
+    pts = []
+    for _ in range(4 * (len(ts) + 3)):
+        pt = {x: spy.Integer(rng.randint(2, 996)) for x in syms}
+        vals = [t.xreplace(pt) for t in ts]
+        if all(v.is_Rational for v in vals):
+            pts.append(vals)
+        if len(pts) >= len(ts) + 3:
+            break
+    out, basis = {}, []
+    for j, t in enumerate(ts):
+        out[t] = (spy.Integer(0), {t: spy.Integer(1)})
+        if len(pts) < len(basis) + 2:
+            basis.append(j)
+            continue
+        A = spy.Matrix([[1] + [v[k] for k in basis] for v in pts])
+        bv = spy.Matrix([v[j] for v in pts])
+        try:
+            sol, par = A.gauss_jordan_solve(bv)
+        except ValueError:
+            basis.append(j)
+            continue
+        sol = sol.xreplace({x: 0 for x in par})
+        comb = sol[0] + sum((sol[i + 1] * ts[k] for i, k in enumerate(basis)), spy.Integer(0))
+        if spy.cancel(comb - t) != 0:
+            basis.append(j)
+            continue
+        out[t] = (sol[0], {ts[k]: sol[i + 1] for i, k in enumerate(basis) if sol[i + 1] != 0})
+    return out
+
+
+def _by_base(r, terms):
+    """The terms of r^(sum q t) as {(base, t): q} over the primes of r, or E."""
+    if r == spy.E:
+        return {(spy.E, t): q for t, q in terms.items()}
+    return {(spy.Integer(pr), t): q * e for pr, e in _log_basis(r).items() for t, q in terms.items()}
+
+
+def _exp_leaf_canon(exprs, ctx, held=None):
+    """{'exprs', 'atoms', 'logs'} over leaves W = r^(tau/L) and V = log(p), or {'why': ...}."""
     exprs = [ctx.numbers(e) for e in exprs]
-    atoms = []
+    held = held if held is not None else [set()] * len(exprs)
+    atoms, logs, log_of = [], [], {}
     while True:
+        exprs = _exponent_logs(exprs, ctx, held, logs, log_of)
         found = {}
         for e in exprs:
             for at in e.atoms(spy.exp, spy.Pow):
@@ -164,20 +208,40 @@ def _exp_leaf_canon(exprs, ctx):
                 found[at] = dec
         if not found:
             break
+        # one leaf per prime (or e) and exponent term, the terms reduced to a rational basis per base
+        split = {at: _by_base(r, terms) for at, (r, _c0, terms) in found.items()}
+        rel = {}
+        for B in {B for sp in split.values() for B, _ in sp}:
+            rel[B] = _term_basis({t for sp in split.values() for (b, t) in sp if b == B})
+        pieces = {}
+        for at, sp in split.items():
+            pc, cst = {}, {}
+            for (B, t), q in sp.items():
+                c0t, comb = rel[B][t]
+                cst[B] = cst.get(B, 0) + q * c0t
+                for tb, qb in comb.items():
+                    pc[(B, tb)] = pc.get((B, tb), 0) + q * qb
+            if any(ctx.const(B, c) is None for B, c in cst.items()):
+                return {'why': 'exponents that are linearly dependent over the rationals '
+                        'up to a constant that is not an integer power are not supported'}
+            pieces[at] = ({k: v for k, v in pc.items() if v != 0}, cst)
         den = {}
-        for r, _c0, terms in found.values():
-            for t, q in terms.items():
-                den[(r, t)] = spy.ilcm(den.get((r, t), 1), q.q)
+        for pc, _ in pieces.values():
+            for key, q in pc.items():
+                den[key] = spy.ilcm(den.get(key, 1), spy.Rational(q).q)
         key_w = {}
         for (r, t), L in sorted(den.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))):
             W = ctx.fresh('_ew%d_' % (len(atoms) + 1), positive=True)
             key_w[(r, t)] = W
             atoms.append({'W': W, 'r': r, 'tau': t, 'L': L})
         repl = {}
-        for at, (r, c0, terms) in found.items():
+        for at, (r, c0, _terms) in found.items():
             v = ctx.const(r, c0)
-            for t, q in terms.items():
-                v = v * key_w[(r, t)] ** int(q * den[(r, t)])
+            pc, cst = pieces[at]
+            for B, c in cst.items():
+                v = v * ctx.const(B, c)
+            for key, q in pc.items():
+                v = v * key_w[key] ** int(q * den[key])
             repl[at] = v
         exprs = [e.xreplace(repl) for e in exprs]
     # e^c as integer powers of the leaf e^(1/L0)
@@ -191,10 +255,54 @@ def _exp_leaf_canon(exprs, ctx):
     for w in atoms:
         w['tau'] = w['tau'].xreplace(ec_sub)
     ctx.L0 = L0
-    if not _terms_independent([(w['r'], w['tau']) for w in atoms]):
+    ind = _terms_independent([(w['r'], w['tau']) for w in atoms])
+    if ind is None:
+        return {'why': 'an exponent is not a rational function of the coordinates (a logarithm of an initial '
+                'value in an exponent); give that initial value as a parameter'}
+    if not ind:
         return {'why': 'exponents that are linearly dependent over the rationals '
                 'are not supported'}
-    return {'exprs': exprs, 'atoms': atoms}
+    return {'exprs': exprs, 'atoms': atoms, 'logs': logs}
+
+
+def _exponent_logs(vals, ctx, held, leaves, leaf_of):
+    """The values with each exponent logarithm over leaves V = log(p) per irreducible factor p, added to `leaves`."""
+
+    def as_logs(u):
+        num, den = spy.fraction(spy.together(u))
+        out = spy.Integer(0)
+        for part, sgn in ((num, 1), (den, -1)):
+            c, facs = spy.factor_list(part)
+            # a negative content is absorbed by negating a factor of odd multiplicity
+            odd = next((i for i, (_, m) in enumerate(facs) if m % 2), None)
+            if c < 0 and odd is not None:
+                c, facs[odd] = -c, (-facs[odd][0], facs[odd][1])
+            if c <= 0:
+                return None
+            out += sgn * ctx.numbers(spy.log(c))
+            for p, m in facs:
+                if p not in leaf_of:
+                    leaf_of[p] = ctx.fresh('_el%d_' % (len(leaves) + 1), real=True)
+                    leaves.append({'V': leaf_of[p], 'p': p})
+                out += sgn * m * leaf_of[p]
+        return out
+    out = []
+    for e, states in zip(vals, held):
+        rep = {}
+        for at in spy.sympify(e).atoms(spy.exp, spy.Pow):
+            be = _exp_atom(at)
+            if be is None:
+                continue
+            for L in be[1].atoms(spy.log):
+                u = L.args[0]
+                if u.is_number or u.free_symbols & states or L in rep or \
+                        any(_exp_atom(a) is not None for a in u.atoms(spy.exp, spy.Pow)):
+                    continue
+                v = as_logs(u)
+                if v is not None:
+                    rep[L] = v
+        out.append(spy.sympify(e).xreplace(rep) if rep else e)
+    return out
 
 
 def _exp_back(atoms, ctx, used):
@@ -338,9 +446,11 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken):
     for kind, c, i in refs:
         vals.append(ev[c][i]['value'] if kind == 'ev' else tm[c] if kind == 'tm'
                     else store[kind][c][i])
-    lc = _exp_leaf_canon(vals, ctx)
+    # in event values a state is the state at the event; elsewhere state names left here are initial values
+    lc = _exp_leaf_canon(vals, ctx, [set(S) if kind == 'ev' else set() for kind, _, _ in refs])
     if 'why' in lc:
         return lc
+    logleaves = lc['logs']
     for (kind, c, i), v in zip(refs, lc['exprs']):
         if kind == 'ev':
             ev[c][i]['value'] = v
@@ -349,7 +459,8 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken):
         else:
             store[kind][c][i] = v
     w_atoms = lc['atoms']
-
+    for w in w_atoms:
+        ctx.ln_of(w['r'])
     const_syms = set(ctx.ln_sym.values())
     used = set()
     for v in lc['exprs'] + [w['tau'] for w in w_atoms]:
@@ -362,11 +473,16 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken):
         for z in sorted(phi.free_symbols - const_syms, key=str):
             rel.append((str(w['W']), str(z),
                         spy.together(w['W'] * ctx.ln_of(w['r']) * spy.diff(phi, z))))
+    back = _exp_back(w_atoms, ctx, used)
+    for lf in logleaves:
+        for z in sorted(lf['p'].free_symbols - const_syms, key=str):
+            rel.append((str(lf['V']), str(z), spy.together(spy.diff(lf['p'], z) / lf['p'])))
+        back[str(lf['V'])] = str(spy.log(lf['p']))
     per_cond = [(f[c], g[c], ic[c], fss[c]) for c in range(K)]
     return {'S': S, 'per_cond': per_cond, 'ev_per': ev, 'tm_per': tm, 'rel': rel,
             'consts': sorted(str(s) for s in const_syms),
-            'atoms': [str(w['W']) for w in w_atoms], 'back': _exp_back(w_atoms, ctx, used),
-            'n_aux': len(aux), 'codim': len(aux) + len(w_atoms)}
+            'atoms': [str(w['W']) for w in w_atoms] + [str(lf['V']) for lf in logleaves], 'back': back,
+            'n_aux': len(aux), 'codim': len(aux) + len(w_atoms) + len(logleaves)}
 
 
 _TRIG = (spy.sin, spy.cos, spy.tan)

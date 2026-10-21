@@ -41,6 +41,10 @@ def _plateau():
     return max(1, int(state.env_value("LIEPLATEAU", "3")))
 
 
+def _margin():
+    return max(1, int(state.env_value("VERIFY_MARGIN", "6")))
+
+
 def _rational_forms(exprs):
     """Whether every expression is rational in its symbols, model names read as symbols."""
     from ...sym.parse import _is_rational_expr, _make_local_parse
@@ -78,10 +82,18 @@ class Analysis:
             self.znames = sys.znames_wide
             self.z_slots = sys.z_slots_wide
             self.multi = dict(multi, z_state_names=sys.z_state_names_wide)
+            # nuisance coordinates are parameters, shared by every condition
+            run.nuis_cols = [int(sys.wide_cols[0][i]) for i in run.nuis_cols]
+            run.nuis_drop = [int(sys.wide_cols[0][i]) for i in run.nuis_drop]
             pn = set(sys.param_names)
             self.aux_leaves = [i for i, nm in enumerate(self.leaf_names_aug)
                                if nm in set(run.leaf_names) - pn]
             self.ctrl["relevance_cap"] = self.ctrl["relevance_cap"] + sys.n_st
+            # exponential leaves outside the resting model leave the report like a transient recast
+            if multi.get("exp_atoms"):
+                self.transient = True
+                self.atom_names = strs(multi.get("exp_atoms"))
+                self.aux_leaves += [i for i, nm in enumerate(self.leaf_names_aug) if nm in set(self.atom_names)]
         else:
             self.sys = sys = PlainSystem(run)
             self.nz = len(run.znames)
@@ -94,7 +106,8 @@ class Analysis:
                 self.aux_leaves = [i for i, nm in enumerate(self.leaf_names_aug) if nm in set(self.atom_names)]
         self.recast = sys.recast
         self.zsn = set(strs(self.multi.get("z_state_names")))
-        self.can_batch = not run.ss_constraint and not run.has_gaps and not self.transient
+        self.can_batch = not run.ss_constraint and not run.has_gaps and not self.transient and \
+            not run.nuis_cols
         self.scal_memo = {}
         self.rank_cap = self.nz
         self.scal_ws = None
@@ -109,7 +122,7 @@ class Analysis:
 
     def kcall_sat(self, point, p, Nt, Mtot=0):
         """The kernel for the saturation, rank only in joint mode unless WIDESAT is set."""
-        if self.joint:
+        if self.joint and not self.run.nuis_cols:
             return self.sys.kcall(point, p, Nt, Mtot, rank_only=True)
         return self.sys.kcall(point, p, Nt, Mtot)
 
@@ -132,12 +145,12 @@ class Analysis:
             return _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, run.z_slots, leaves(),
                                             list(prime_vec), int(Nt), run.cores)
         if run.has_gaps and not run.ss_constraint and not self.joint and not self.transient and \
-                n > 0:
+                not run.nuis_cols and n > 0:
             return _core.sym_obs_null_chain_point_batch([run.chain_tapes(idx) for idx in run.chain_groups],
                                                         run.n_leaves, run.n_states, run.z_slots, leaves(),
                                                         list(prime_vec), int(Nt), int(run.mtot), run.cores,
                                                         list(run.nt_cap))
-        if self.transient and not run.has_gaps and n > 0:
+        if self.transient and not run.has_gaps and not run.nuis_cols and n > 0:
             os_ = _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, run.z_slots, leaves(),
                                            list(prime_vec), int(Nt), run.cores)
             return [self.sys.with_relations(os_[i], point_list[i], prime_vec[i]) for i in range(n)]
@@ -146,7 +159,7 @@ class Analysis:
             out = []
             for s in range(0, n, per):
                 out.extend(self.sys.chunk(point_list[s:s + per], prime_vec[s:s + per], Nt))
-            return out
+            return [run.modulo_nuisance(o, q) for o, q in zip(out, prime_vec)]
         if self.joint:
             self.sys.warm_solves(point_list, prime_vec)
         cc_saved = run.cores_call
@@ -166,12 +179,12 @@ class Analysis:
     def dir_call(self):
         """Whether a direction annihilates all rows, from jets along it; None without the path."""
         run = self.run
-        if run.has_gaps or run.ss_constraint or self.recast:
+        if run.has_gaps or run.ss_constraint or self.recast or run.nuis_cols:
             return None
 
         def f(pt, q, Nt, v):
             o = _core.sym_obs_directional(run.tapes, run.n_leaves, run.n_states, run.z_slots,
-                                          np.asarray(pt[:run.n_leaves], dtype=np.int64), q, int(Nt),
+                                          np.asarray(pt[:run.n_leaves], dtype=np.int64), q, run.exact_nt(Nt),
                                           np.asarray(v, dtype=np.float64), run.cores)
             if not ok(o):
                 return None
@@ -278,7 +291,7 @@ class Analysis:
         run, sys, multi = self.run, self.sys, self.multi
         block_call = sys.block_calls()
         block_profile = sys.block_profiles()
-        budget = None if run.has_gaps or self.codim_spec is None else \
+        budget = None if run.has_gaps or self.codim_spec is None or run.nuis_cols else \
             int(self.codim_spec) + 2 * len(self.recast) + int(multi.get("exp_codim") or 0)
         block_map = self._block_map(block_call, block_profile)
         if self.joint:
@@ -287,7 +300,8 @@ class Analysis:
             reach = run.chain_groups
         else:
             reach = [[i] for i in range(len(multi["tapes"]))]
-        nt_min_block = [lie_reach_max([multi["tapes"][i] for i in idx]) for idx in reach]
+        floor = int(state.get("nt_floor") or 0)
+        nt_min_block = [max(floor, lie_reach_max([multi["tapes"][i] for i in idx])) for idx in reach]
         if len(nt_min_block) != len(block_call):
             nt_min_block = None
         self._scaling_cap()
@@ -302,7 +316,7 @@ class Analysis:
         sc = saturate_certify(self.kcall_sat, self.n_aug, self.nz, run.max_gap,
                               warm=self._warm_probe if self.joint else (lambda pts, primes: None),
                               probe_block=max(1, min(8, run.cores)), block_call=block_call,
-                              budget=budget, block_map=block_map, nt_min=lie_reach_max(multi["tapes"]),
+                              budget=budget, block_map=block_map, nt_min=max(floor, lie_reach_max(multi["tapes"])),
                               nt_min_block=nt_min_block, prep=sys.sat_prep if self.joint else None,
                               rank_cap=self.rank_cap, block_profile=block_profile, set_caps=self._sat_caps,
                               checks=not (self.stacked_first and (not self.stacked_quick or run.ss_constraint)))
@@ -382,7 +396,7 @@ class Analysis:
                 list(sc.get("block_orders") or []) == list(hint.get("block_orders") or []):
             sc["certified"] = True
             sc["cert_orders"] = True
-        if not sc["certified"] and not self.stacked_first:
+        if not sc["certified"] and not self.stacked_first and not run.nuis_cols:
             self._certificate(sc)
         nb = self.sys.kc if self.joint else (len(run.chain_groups) if run.chain_groups else -1)
         if run.has_gaps and (self.joint or not run.ss_constraint) and \
@@ -497,15 +511,23 @@ class Analysis:
             result["dim"] = len(self.phys_params0)
             if sc["rank_s"] == nz:
                 result["rank"] = len(self.phys_params0)
+                result["coordinates"] = list(self.phys_params0)
         if self.transient:
-            coords = [z for z in self.znames if z not in set(self.atom_names)]
+            coords = [z for z in (self.phys_params0 if self.joint else self.znames) if z not in set(self.atom_names)]
             result["dim"] = len(coords)
             result["coordinates"] = coords
             if sc["rank_s"] == nz:
                 result["rank"] = len(coords)
         self.gap_dirs = self._gap_dirs()
+        if run.nuis_cols:
+            result["nuisance"] = {"names": [self.znames[i] for i in run.nuis_cols],
+                                  "pinned": int(sc["ref"].get("nuisance_pinned") or 0),
+                                  "exact_order": int(run.nuis_order),
+                                  "short": sc["rank_s"] != nz and
+                                  int(sc["nt_used"]) + (0 if run.series_gaps else run.mtot) +
+                                  (_margin() if self.verify else 0) > int(run.nuis_order)}
         if sc["rank_s"] == nz:
-            return result
+            return self._modulo_nuisance(result)
         if self.joint:
             self.scal_fixed = [l for l in run.leaf_names
                                if l not in set(self.phys_params0) | set(self.sys.state_base)]
@@ -527,20 +549,29 @@ class Analysis:
             return []
         sr = _core.sym_series_rank(np.asarray(sc["ref"]["S"], dtype=np.int64), int(self.nz),
                                    int(sc["ref"]["N"]), PRIMES[0], [], support=True, cores=int(self.run.cores))
-        supp = [int(x) for x in np.atleast_1d(sr["support"])]
+        supp = [int(x) for x in np.atleast_1d(sr["support"]) if int(x) not in set(self.run.nuis_cols)]
         return [{"support": sym_sort([self.znames[i] for i in supp]), "type": "general",
                  "closed_form": False, "reason": "depends on the time between events"}
                 for _ in range(sc["rank"] - sc["rank_s"])]
 
+    def _modulo_nuisance(self, result):
+        """The report without the nuisance coordinates, their components moved to "input_vector"."""
+        if not self.run.nuis_cols:
+            return result
+        aux = result["nuisance"]["names"] + (list(self.atom_names) if self.transient else []) + \
+            (list(self.zsn) if self.joint else [])
+        return report_physical(result, self.znames, aux, self.sc, self.nz, PRIMES[0], "input_vector")
+
     def _physical(self, result):
-        """Joint mode reported in parameter space, a transient recast without its atoms."""
+        """Joint mode reported in parameter space, a transient recast without its atoms, no nuisance coordinates."""
         if self.joint:
-            result = report_physical(result, self.znames, list(self.zsn), self.sc, self.nz,
-                                     PRIMES[0], "state_vector", flag_joint=True)
-        if self.transient:
+            # the atoms of exponential leaves leave the joint report with the state columns
+            result = report_physical(result, self.znames, list(self.zsn) + list(self.atom_names), self.sc,
+                                     self.nz, PRIMES[0], "state_vector", flag_joint=True)
+        elif self.transient:
             result = report_physical(result, self.znames, self.atom_names, self.sc, self.nz,
                                      PRIMES[0], "recast_vector")
-        return result
+        return self._modulo_nuisance(result)
 
     def static_fields(self):
         """Fields of the static subsystems of the resting conditions at the solved point."""
@@ -686,7 +717,8 @@ class Analysis:
             sys = self.sys
             res = joint_expand_scal(res, sys.state_base, sys.kc, sys.held_param_of, sys.pinned())
         peel = peel_scalings(res, self.znames, self.nz, np.asarray(self.sc["point0"])[self.z_slots],
-                             PRIMES[0], self.N, exact=exact)
+                             PRIMES[0], self.N, exact=exact,
+                             modulo=(self.free_cols, self.run.nuis_cols) if self.run.nuis_cols else None)
         return peel["scaling"], peel["Bmat"]
 
     def _residual(self, result):
@@ -759,7 +791,6 @@ class Analysis:
                 checks.append(self._gap_guard(sc))
             result["verification"] = _joint_check(checks)
         result["kernel"] = kernel
-        run.stage("done")
         return result
 
     def _kernel_point(self):
@@ -780,13 +811,18 @@ class Analysis:
             return None
         return {nm: int(v) for nm, v in zip(self.leaf_names_aug, sc0["ptc"])}
 
+    def _kept_cols(self):
+        """The columns a closed form is checked on: no resting-state copy, no jet projected off."""
+        drop = set(self.run.nuis_drop)
+        return [i for i, z in enumerate(self.znames) if not _CSUFFIX.search(z) and i not in drop]
+
     def _phys_vector(self, vec, env):
         """The closed form {name: expr} at `env` on the physical coordinates; None where it does not evaluate."""
         from ..closedform import eval_modq
         P = PRIMES[0]
         if env is None or not _rational_forms(list(vec.values())):
             return None
-        phys = [i for i, z in enumerate(self.znames) if not _CSUFFIX.search(z)]
+        phys = self._kept_cols()
         v = np.zeros(len(phys), dtype=np.int64)
         for j, i in enumerate(phys):
             if self.znames[i] in vec:
@@ -802,7 +838,7 @@ class Analysis:
         v = self._phys_vector(vec, env)
         if v is None:
             return None
-        phys = [i for i, z in enumerate(self.znames) if not _CSUFFIX.search(z)]
+        phys = self._kept_cols()
         Nphys = np.asarray(self.N, dtype=np.int64)[phys, :] % P
         return bool(in_span(Nphys, v, len(phys), P)) if np.any(v) else None
 
@@ -937,7 +973,7 @@ class Analysis:
         from ..closedform import eval_modq
         from ..finalize import public_symmetry
         P = PRIMES[0]
-        phys = [i for i, z in enumerate(self.znames) if not _CSUFFIX.search(z)]
+        phys = self._kept_cols()
         n = len(phys)
         env = self._kernel_point()
         # a form without resting states evaluates at the leaves of the base point alone
@@ -1035,7 +1071,7 @@ class Analysis:
 
     def field_fixed(self, N):
         """The parameters no kernel direction moves."""
-        pr = [i for i, z in enumerate(self.znames) if not _CSUFFIX.search(z)]
+        pr = self._kept_cols()
         sub = np.asarray(N, dtype=np.int64)[pr, :] % PRIMES[0]
         return [self.znames[pr[i]] for i in range(len(pr)) if not np.any(sub[i] != 0)]
 
@@ -1073,7 +1109,7 @@ class Analysis:
             result["rank_proven"] = len(dirs)
             result["rank_proof"] = "proven symmetries"
             return
-        if _settled(result) or result["rank"] >= result["dim"] or self.recast \
+        if _settled(result) or result["rank"] >= result["dim"] or self.recast or self.run.nuis_cols \
                 or state.get("inner") or self.stacked_quick or state.env("NOFIELDS"):
             return
         run = self.run
@@ -1111,7 +1147,9 @@ def _joint_check(checks):
     if len(checks) == 1:
         return checks[0]
     oks = [c.get("ok") for c in checks]
+    grow = [c["grow_at"] for c in checks if c.get("grow_at") is not None]
     return {"ok": False if False in oks else (None if None in oks else True),
+            "grow_at": max(grow) if grow else None,
             "method": " and ".join(c["method"] for c in checks),
             "reason": "; ".join(f"{c['method']}: {c.get('reason')}" for c in checks)}
 
@@ -1126,5 +1164,10 @@ def observability_analytic_multi(multi, closed_form=False, cores=1, equil_zero_s
                                  n_gaps=0, implicit_steady_state=False, control=None, verify=False,
                                  codim_spec=None):
     """The observability analysis of compiled tapes; the raw result or None."""
-    return Analysis(multi, closed_form, cores, equil_zero_states, cond_zero_states, t0events, n_conditions,
-                    chain_of, n_gaps, implicit_steady_state, control, verify, codim_spec).execute()
+    an = Analysis(multi, closed_form, cores, equil_zero_states, cond_zero_states, t0events, n_conditions,
+                  chain_of, n_gaps, implicit_steady_state, control, verify, codim_spec)
+    out = an.execute()
+    if isinstance(out, dict):
+        an.run.stage("done")
+        out["timing"] = list(an.run.stages)
+    return out

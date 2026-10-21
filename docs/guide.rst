@@ -53,7 +53,12 @@ observables:
 Arguments of :class:`~symident.Model`:
 
 ``inputs``
-   input states, zero at rest.
+   input states, zero at the start and at rest; an event sets them.
+``unknown_inputs``
+   unknown functions of time (see `Unknown inputs`_).
+``known_inputs``
+   known functions of time of no assumed form, such as a recorded forcing: their values and
+   time derivatives are known symbols.
 ``events``
    a list of dicts with ``var``, ``time``, ``value`` and ``method`` (``replace``, ``add``
    or ``multiply``); ``root`` in place of ``time`` fires where an expression changes sign.
@@ -68,7 +73,8 @@ Arguments of :class:`~symident.Model`:
 ``parameters``
    further symbols treated as parameters.
 ``totals``
-   conserved totals, name to expression; computed from ``reactions`` when omitted.
+   conserved totals, name to expression, each conserved by the right-hand sides; computed
+   from ``reactions`` when omitted. ``reduce_cq`` eliminates one species per total.
 
 Expressions
 ~~~~~~~~~~~
@@ -157,6 +163,15 @@ random points with the error probability in ``info["bound"]``), ``checked`` (the
 test without an error bound, or on part of the entries) or ``open`` (no closed form). ``res.unproven()`` returns the
 verified and checked directions.
 
+A locally identifiable model may still have a discrete symmetry, such as two rate constants
+that enter only through their sum and product. ``res.solution_count()`` counts the values of
+the coordinates that give the output of a random point modulo a prime, over the algebraic
+closure: a value outside the declared domain, such as ``-k`` where only ``k^2`` enters,
+counts too. A count above one is a candidate symmetry, found at that point, not proven.
+It needs msolve (see :doc:`install`) and one condition without events, switches or unknown
+inputs, detected without ``equilibrate`` and ``reduce_cq``; for a model that is not rational
+it returns None.
+
 The rank, and with it the number of directions, is ``proven``, ``verified`` (with a
 probability) or a ``lower bound``, in which case the model may have fewer
 non-identifiable directions. ``info["rank_status"]`` gives the status and the reason, and
@@ -171,7 +186,9 @@ Options of :func:`~symident.detect`:
    start every condition at its steady state, with the inputs at zero.
 ``positive``
    the coordinates known to be positive, all by default; logarithms, roots and switch
-   conditions are decided on this domain.
+   conditions are decided on this domain. An entry may be an expression, such as
+   ``"1-x"`` for a fraction ``x`` below one; :func:`~symident.reduce` then prefers
+   sections inside that bound.
 ``gauge``
    ``False`` reconstructs every direction; ``None`` fixes one coordinate per scaling,
    chosen to keep the general directions narrow; a list ranks the coordinates to fix.
@@ -236,9 +253,11 @@ to it, so the limit gives the output of the orbit.
 ``red.level`` is ``exact`` when every claim is proven, ``verified`` or ``checked`` when a
 direction rests on a closed form of that level, and ``open`` when a claim of a section is
 not proven; the printout names such claims. ``red.checks`` holds the check of the trafo
-over Q and the detection on the reduced model (``check=True``). A direction of level
-``open`` is an error unless ``allow_open=True``, which leaves it in place; a ``verified``
-or ``checked`` one gives a warning.
+over Q and the detection on the reduced model (``check=True``); the summary line says when
+that detection does not confirm the reduction. A direction of level ``open`` is an error
+unless ``allow_open=True``, which leaves it in place. A ``checked`` direction, or a result
+whose saturation guard saw the rank still grow, is an error unless ``allow_checked=True``;
+a ``verified`` one gives a warning.
 
 ``red.trafo`` is the transformation as a dict of strings, ready to be composed with
 the model's parameters:
@@ -248,14 +267,20 @@ the model's parameters:
    red.trafo
    # {'k1': 'q_1', 'k2': 'k2', 'kb': 'q_2', 'kin': 'q_3', 'kl': '0', 's': '1'}
 
+An entry for a symbol that the condition grid sets goes into the cells of the grid. Under
+``equilibrate`` an entry named like a state pins the resting value it holds, not an initial
+value; the model takes a numeric one in ``fixed``. The closed loop of ``check=True`` applies
+the trafo this way.
+
 PEtab problems
 --------------
 
 :func:`symident.read_petab` (or :meth:`symident.Model.from_petab`) reads a
-`PEtab <https://petab.readthedocs.io>`_ problem, format version 1 or 2, into a
-:class:`~symident.Model`. It needs the extra ``symident[petab]`` (python-libsbml and
-PyYAML). Reading the model of Raia et al. (2011) from the
-`benchmark collection <https://github.com/Benchmarking-Initiative/Benchmark-Models-PEtab>`_:
+`PEtab <https://petab.readthedocs.io>`_ problem [Schmiester2021]_, format version 1 or 2, into
+a :class:`~symident.Model`. It needs the extra ``symident[petab]`` (python-libsbml and
+PyYAML). Reading the model of [Raia2011]_ from the
+`benchmark collection <https://github.com/Benchmarking-Initiative/Benchmark-Models-PEtab>`_
+[Hass2019]_:
 
 .. code-block:: python
 
@@ -292,6 +317,114 @@ not enter. An SBML or PEtab feature without a counterpart in the model, such as 
 algebraic rule, a delay or a fast reaction, raises :class:`~symident.PEtabError`.
 ``m.petab`` lists the experiments, the estimated parameters and the fixed values;
 :func:`~symident.read_petab` documents the mapping.
+
+Unknown inputs
+--------------
+
+An input whose course nobody recorded, such as an emission history, a forcing to be
+reconstructed or an intake, is an *unknown input*: a function of time of no assumed form,
+written as a symbol in the right-hand sides and observables without an equation of its own
+and listed in ``unknown_inputs``. The question is whether the parameters are identifiable
+whatever the input does. A direction may then change the input along with the parameters;
+the input itself is not asked about and does not count in ``rank`` and ``dim``.
+
+An input of known form, such as dosing steps, a physical law or the spline a fit will use,
+belongs in the model with its coefficients as ordinary parameters, and the result holds for
+that form only. The two answers differ: a parameter that is non-identifiable with an unknown
+input is non-identifiable under every parametrization flexible enough, while a parameter
+that is identifiable under a parametrization may be so only because the form is taken as
+exact. A recorded input whose form is not modeled goes into ``known_inputs``: its jets are
+known symbols, so the result holds for a generic recorded course.
+
+A glacier length ``L`` that relaxes to the
+temperature anomaly ``T`` on the time scale ``tau``, with only ``L`` measured:
+
+.. code-block:: python
+
+   m = si.Model({"L": "-(c*T + L)/tau"}, {"y": "L"}, unknown_inputs=["T"])
+   res = si.detect(m, reconstruct=True)
+   print(res)
+
+.. code-block:: text
+
+   Result:  rank 1 / 3  |  2 non-identifiable directions
+
+   Generators  X = Σᵢ ξ(i) ∂ᵢ
+
+   Scalings:
+     X₁  (exact)
+         ξ(c) :  + c
+         input change:
+         ξ(T) :  - T
+
+     X₂  (exact)
+         ξ(tau) :  + tau
+         input change:
+         ξ(T) :  + (L + T*c)/c
+
+   exact = proven over Q.
+
+Only the initial length is identifiable. The sensitivity ``c`` trades against the scale of
+``T``, and every ``tau`` fits the record with the temperature
+``T = -(tau*L' + L)/c`` that its input change describes. ``s.input_change`` holds
+:math:`\xi(T)` for each exact direction; the type and the reduction refer to the parameters
+and initial values, so ``res.reduce()`` fixes ``c = 1`` and ``tau = 1``.
+
+Every condition sees the same unknown input; a string in ``conditions`` renames it in a
+condition, which gives that condition an input of its own when the new name is listed in
+``unknown_inputs`` too, and a number fixes it there. An event leaves the input as it is:
+the input is one analytic function across it, so a jump of a state can separate parameters
+that the input absorbs otherwise. Under ``equilibrate`` the input is zero at rest, like
+every input, and arbitrary from the start on. Switches, an event or a ``trafo`` entry for
+the input and ``engine="symbolic"`` are refused.
+
+.. warning::
+
+   A polynomial stand-in for an unknown input, a chain ``w' = w1, ..., wd' = 0`` written as
+   states with free initial values, is a family of :math:`d + 1` numbers, not an unknown
+   input. Once the Lie order passes :math:`d + 1` the output determines them, and
+   parameters that trade against the input look identifiable: with a cubic stand-in for
+   ``T`` the glacier model above reports ``tau`` as identifiable. A spline is a polynomial
+   on each segment, so the local analysis sees the same.
+
+``info["unknown_inputs"]`` lists the jets of each input (see :doc:`method`), the
+Lie order up to which they are exact, and whether the analysis reached past it. The jets
+grow with the model; ``reconst_control(input_jet_order=)`` sets their number, and a chain
+shorter than the Lie order needs makes the rank a lower bound with an entry in
+``info["limits"]``. Unless the rank is full or exact directions fill the kernel, it is a
+lower bound, since the jets grow with the Lie order and no order is proven sufficient. A
+direction without a lift that is a function of the states, the parameters and the input
+stays ``checked``, with no input change.
+
+Stationary profiles
+~~~~~~~~~~~~~~~~~~~
+
+A profile observed at steady state, :math:`0 = F(x, u, u_x, u_{xx}, \theta)` in one space
+dimension, is an ODE in :math:`x`. Written as a first-order system with :math:`x` in the
+role of time, it is an ordinary model. The morphogen gradient :math:`D u'' = k u`, with the
+profile ``u`` measured:
+
+.. code-block:: python
+
+   m = si.Model({"u": "v", "v": "k*u/D"}, {"y": "u"})
+   print(si.detect(m, reconstruct=True))
+
+.. code-block:: text
+
+   Result:  rank 3 / 4  |  1 non-identifiable direction
+
+   Generators  X = Σᵢ ξ(i) ∂ᵢ
+
+   Scalings:
+     X₁  (exact)
+         ξ(D) :  + D
+         ξ(k) :  + k
+
+   exact = proven over Q.
+
+Only the decay length :math:`\sqrt{D/k}` is identifiable. The initial values are the
+profile and its slope at the first point. A source term whose shape is not known,
+``v = (k*u - s)/D`` with ``unknown_inputs=["s"]``, frees ``D`` and ``k`` separately.
 
 Switches
 --------
@@ -448,3 +581,20 @@ They change how a result is reached, not what it reports as proven. The active o
 recorded in ``info["settings"]["switches"]``, an unknown name gives a warning, and
 :doc:`api` lists every switch. :doc:`install` describes
 ``SYMIDENT_MSOLVE`` and ``SYMIDENT_CACHE``, and how the switches are set from R.
+
+References
+----------
+
+.. [Hass2019] H. Hass, C. Loos, E. Raimúndez-Álvarez, J. Timmer, J. Hasenauer and C. Kreutz.
+   Benchmark problems for dynamic modeling of intracellular processes. *Bioinformatics*
+   35(17), 3073-3082, 2019.
+
+.. [Raia2011] V. Raia, M. Schilling, M. Böhm, B. Hahn, A. Kowarsch, A. Raue, C. Sticht,
+   S. Bohl, M. Saile, P. Möller, N. Gretz, J. Timmer, F. Theis, W.-D. Lehmann, P. Lichter and
+   U. Klingmüller. Dynamic mathematical modeling of IL13-induced signaling in Hodgkin and
+   primary mediastinal B-cell lymphoma allows prediction of therapeutic targets. *Cancer
+   Research* 71(3), 693-704, 2011.
+
+.. [Schmiester2021] L. Schmiester, Y. Schälte, F. T. Bergmann et al. PEtab: interoperable
+   specification of parameter estimation problems in systems biology. *PLOS Computational
+   Biology* 17(1), e1008646, 2021.

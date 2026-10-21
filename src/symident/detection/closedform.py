@@ -11,6 +11,7 @@ from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import rat_recon
 from ..sym.charts import recast_backsub_expr
 from ..sym.modp import eval_rational_mod
+from ..sym.parse import _RPrinter, model_sympify
 
 
 def expired(ctrl):
@@ -67,9 +68,9 @@ def reconstruct_entry(sample_u, mons, residues, primes):
 
 
 def simplify(expr):
-    """`expr` cancelled by SymPy as a string; `expr` itself when that fails."""
+    """`expr` cancelled by SymPy as a string, every name a symbol; `expr` itself when that fails."""
     try:
-        out = str(spy.cancel(spy.sympify(expr)))
+        out = _RPrinter().doprint(spy.cancel(model_sympify(str(expr))))
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return expr

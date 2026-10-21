@@ -7,12 +7,14 @@ from .parse import _make_local_parse
 
 
 def _canon_int_vector(prim, gens):
-    """Scale a polynomial vector by a rational constant to integer-primitive form, canonical for `gens`."""
+    """Scale a polynomial vector to integer-primitive form, canonical for `gens`; None for non-rational coefficients."""
     coeffs = []
     for e in prim:
         if e == 0:
             continue
         for c in spy.Poly(e, *gens).coeffs():
+            if not c.is_Rational:
+                return None
             coeffs.append(spy.Rational(c))
     if not coeffs:
         return prim
@@ -173,6 +175,8 @@ def classify_generator(vector):
         g = spy.Integer(1)
     prim = [spy.expand(spy.cancel(e / g)) for e in nums]
     prim = _canon_int_vector(prim, gens)
+    if prim is None:
+        return fallback
 
     # read the class off the canonical representative
     is_scaling, maxdeg = True, 0

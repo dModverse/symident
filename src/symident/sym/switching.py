@@ -1,11 +1,13 @@
 """State-dependent switches: piecewise(), comparisons, logic, Heaviside, sign, abs, max, min."""
 
 import re
+import warnings
 
 import sympy as spy
 
 from ..errors import InapplicableError
 from ..rexpr import tokens
+from .domain import declared, is_positive
 from .parse import model_function, to_r
 
 _SWITCHY = re.compile(r"\b(piecewise|ifelse|Heaviside|max|min|pmax|pmin)\s*\(|[<>!&|=]")
@@ -53,8 +55,12 @@ def to_str(e):
 class Switches:
     """Switching functions g_j with indicator symbols H_j = 1 where g_j > 0."""
 
-    def __init__(self, positive, namer=None):
-        self.positive = positive
+    def __init__(self, positive, namer=None, states=()):
+        names, self.exprs = declared(positive)
+        self.positive_decl = positive
+        self.positive = positive if positive in (True, False, None) else names
+        self.states = {str(x) for x in states}
+        self.by_default = []
         self.namer = namer or (lambda k: f"H{k}")
         self.funcs = []
         self.ind = []
@@ -76,12 +82,18 @@ class Switches:
 
     def sign_of(self, e):
         """+1, -1 or 0 when the declared signs decide the sign of e, else None."""
-        e = self._assume(spy.sympify(e))
-        if e.is_zero:
+        e = spy.sympify(e)
+        a = self._assume(e)
+        if a.is_zero:
             return 0
-        if e.is_positive:
+        if a.is_positive:
             return 1
-        if e.is_negative:
+        if a.is_negative:
+            return -1
+        # a declared expression: through the substitution of a fresh positive symbol
+        if self.exprs and is_positive(e.xreplace({h: 1 for h in self.ind}), self.positive_decl):
+            return 1
+        if self.exprs and is_positive(-e.xreplace({h: 1 for h in self.ind}), self.positive_decl):
             return -1
         return None
 
@@ -109,15 +121,8 @@ class Switches:
         self.ind.append(h)
         return 1 - h if flip else h
 
-    def indicator(self, e):
-        """The indicator of e > 0 in the H_j; the boundary e = 0 has measure zero."""
-        e = spy.sympify(e)
-        if e.free_symbols & set(self.ind):
-            raise InapplicableError(f"a condition on a switched expression ({to_str(e)}) is not "
-                             "supported")
-        s = self.sign_of(e)
-        if s is not None:
-            return spy.Integer(1 if s > 0 else 0)
+    def factored(self, e):
+        """(sign, factors): e has the sign of sign times the product of the odd factors whose sign is undecided."""
         num, den = spy.fraction(spy.together(e))
         sgn, parts = 1, []
         for q in (num, den):
@@ -134,6 +139,20 @@ class Switches:
                     parts.append(fac)
                 elif d < 0:
                     sgn = -sgn
+        return sgn, parts
+
+    def indicator(self, e):
+        """The indicator of e > 0 in the H_j; the boundary e = 0 has measure zero."""
+        e = spy.sympify(e)
+        if e.free_symbols & set(self.ind):
+            raise InapplicableError(f"a condition on a switched expression ({to_str(e)}) is not "
+                             "supported")
+        s = self.sign_of(e)
+        if s is not None:
+            if self.positive is True and {str(x) for x in e.free_symbols} & self.states:
+                self.by_default.append(to_str(e))
+            return spy.Integer(1 if s > 0 else 0)
+        sgn, parts = self.factored(e)
         # positive exactly when an even number of undecided factors is negative
         prod = spy.Integer(1)
         for p in parts:
@@ -352,9 +371,13 @@ def hybrid_model(f, g, positive, events=None, inputs=(), taken=()):
             nm += "_"
         used.add(nm)
         return nm
-    sw = Switches(pos, namer)
+    sw = Switches(pos, namer, states=f)
     F = {k: sw.parse(v) for k, v in f.items()}
     Gs = [{k: sw.parse(v) for k, v in x.items()} for x in gl]
+    if sw.by_default:
+        warnings.warn("the default positive=True decides the sign of " + ", ".join(dict.fromkeys(sw.by_default)) +
+                      ", which holds a state, and removes its switch; pass `positive` without that state to keep "
+                      "the switch", stacklevel=4)
     root_of = []
     for e in roots:
         h = sw.indicator(sw.parse(str(e["root"])))

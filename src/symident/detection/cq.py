@@ -111,6 +111,21 @@ def substitute_cq(totals, f, states, parameters, avoid=()):
     return {"f": f, "parameters": parameters, "cq_info": cq_info, "elim_states": elim}
 
 
+def check_conserved(totals, f):
+    """ValueError for a total whose time derivative under the right-hand sides `f` does not vanish."""
+    try:
+        _, parse = _make_local_parse([f"{k} = {v}" for k, v in f.items()] + [str(v) for v in totals.values()])
+        rhs = {spy.Symbol(k): parse(str(v).replace("^", "**")) for k, v in f.items()}
+        for name, e in totals.items():
+            t = parse(str(e).replace("^", "**"))
+            d = sum((spy.diff(t, x) * r for x, r in rhs.items() if x in t.free_symbols), spy.Integer(0))
+            if spy.cancel(spy.together(d)) != 0:
+                raise ValueError(f"the total {name} = {e} is not conserved: its time derivative under "
+                                 f"the right-hand sides is {str(d).replace('**', '^')}, not zero")
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+
+
 def conserved_totals(smatrix, species):
     """Conserved quantities of a stoichiometry (rows reactions, columns species) as totals."""
     import sympy as spy

@@ -1226,7 +1226,7 @@ bool build_one_condition_blocked(const CondRaw& cd,
 struct SegRaw {
   std::vector<int> op, a, b, stateSlots, fOut, gOut;
   std::vector<u64> cval;
-  bool hasIcSeed, hasIcTape, hasEv;
+  bool hasIcSeed, hasIcTape, hasEv, evStates = false;
   std::vector<std::vector<u64> > icSeed;
   std::vector<int> icOp, icA, icB, icOut;
   std::vector<u64> icCval;
@@ -1267,6 +1267,8 @@ SegRaw extract_seg_raw(List seg, int nStates, int w, u64 p) {
         s.icCval[i] = reduce_rational(icCnum[i], icCden[i], p);
   }
   s.hasEv = seg.containsElementNamed("ev_var_idx");
+  // event tapes flagged ev_state_slots read the states at slots [nLeaves, nLeaves + nStates); others read leaves only
+  s.evStates = seg.containsElementNamed("ev_state_slots") && (int)seg["ev_state_slots"] != 0;
   if (s.hasEv) {
     s.evVarIdx = to_ivec(seg["ev_var_idx"]); s.evMethod = to_ivec(seg["ev_method"]);
     s.evOp = to_ivec(seg["ev_op"]); s.evA = to_ivec(seg["ev_a"]); s.evB = to_ivec(seg["ev_b"]);
@@ -1511,11 +1513,14 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
         for (size_t gi = 0; gi < seg.gOut.size(); ++gi) leftJet[gi] = valL[seg.gOut[gi]];
       }
       const SegRaw& nxt = segs[sj + 1];
-      if (nxt.hasEv && ser) {
-        std::vector<std::vector<u64> > evVal(nLeaves + nxt.evOp.size(),
-                                             std::vector<u64>(blk, 0));
+      if (nxt.hasEv) {
+        // event values over the leaves and the states just before the events
+        int evBase = nLeaves + (nxt.evStates ? nStates : 0);
+        std::vector<std::vector<u64> > evVal(evBase + nxt.evOp.size(), std::vector<u64>(blk, 0));
         for (int L = 0; L < nLeaves; ++L) evVal[L] = leafVal[L];
-        if (!eval_tape_poly(evVal, nxt.evOp, nxt.evA, nxt.evB, nxt.evCval, nLeaves, pb, p))
+        if (nxt.evStates)
+          for (int i = 0; i < nStates; ++i) evVal[nLeaves + i] = carry[i];
+        if (!eval_tape_poly(evVal, nxt.evOp, nxt.evA, nxt.evB, nxt.evCval, evBase, pb, p))
           return false;
         for (int e = 0; e < (int)nxt.evVarIdx.size(); ++e) {
           int s = nxt.evVarIdx[e], meth = nxt.evMethod[e];
@@ -1527,31 +1532,6 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
           } else {
             std::vector<u64> scaled(blk, 0);
             poly_mul_acc(scaled.data(), carry[s].data(), vv.data(), pb, p);
-            carry[s] = scaled;
-          }
-        }
-      } else if (nxt.hasEv) {
-        int nEv = (int)nxt.evOp.size();
-        std::vector<std::vector<u64> > evVal(nLeaves + nEv, std::vector<u64>(w, 0));
-        for (int L = 0; L < nLeaves; ++L)
-          for (int c = 0; c < w; ++c) evVal[L][c] = leafVal[L][c];
-        if (!eval_ic_order0(evVal, nxt.evOp, nxt.evA, nxt.evB, nxt.evCval, nLeaves, w, p))
-          return false;
-        for (int e = 0; e < (int)nxt.evVarIdx.size(); ++e) {
-          int s = nxt.evVarIdx[e], meth = nxt.evMethod[e];
-          const std::vector<u64>& vv = nxt.evOut[e] < nLeaves ? leafVal[nxt.evOut[e]]
-                                                              : evVal[nxt.evOut[e]];
-          u64* cv = carry[s].data();
-          if (meth == 0) {
-            std::fill(carry[s].begin(), carry[s].end(), (u64)0);
-            for (int c = 0; c < w; ++c) cv[c] = vv[c] % p;
-          } else if (meth == 1) {
-            for (int c = 0; c < w; ++c) cv[c] = addmod(cv[c], vv[c], p);
-          } else {
-            std::vector<u64> scaled((size_t)nM * w, 0);
-            for (int mo = 0; mo < nM; ++mo)
-              dual_mul_acc(scaled.data() + (size_t)mo * w,
-                           cv + (size_t)mo * w, vv.data(), w, p);
             carry[s] = scaled;
           }
         }
@@ -2242,9 +2222,12 @@ List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
         return List::create(_["ok"] = false);
       }
     } else if (seg.hasEv) {
-      std::vector<std::vector<u64> > evVal(nLeaves + seg.evOp.size(), std::vector<u64>(1, 0));
+      int evBase = nLeaves + (seg.evStates ? nStates : 0);
+      std::vector<std::vector<u64> > evVal(evBase + seg.evOp.size(), std::vector<u64>(1, 0));
       for (int L = 0; L < nLeaves; ++L) evVal[L][0] = leaf[L];
-      if (!eval_ic_order0(evVal, seg.evOp, seg.evA, seg.evB, seg.evCval, nLeaves, 1, p))
+      if (seg.evStates)
+        for (int i = 0; i < nStates; ++i) evVal[nLeaves + i][0] = q[i];
+      if (!eval_ic_order0(evVal, seg.evOp, seg.evA, seg.evB, seg.evCval, evBase, 1, p))
         return List::create(_["ok"] = false);
       for (int e = 0; e < (int)seg.evVarIdx.size(); ++e) {
         int st = seg.evVarIdx[e], meth = seg.evMethod[e];

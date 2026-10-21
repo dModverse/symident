@@ -30,7 +30,8 @@ outside a set of measure zero.
 
 A continuous family of parameter values with the same prediction is the orbit of a *Lie
 symmetry*, a local one-parameter group of transformations :math:`\Phi_s` of
-:math:`\Theta` with :math:`g\big(t; \Phi_s(\theta)\big) = g(t; \theta)` [Yates2009]_. Its
+:math:`\Theta` with :math:`g\big(t; \Phi_s(\theta)\big) = g(t; \theta)`
+[Yates2009]_ [Merkt2015]_ [Massonis2020]_. Its
 *generator* is the vector field
 
 .. math::
@@ -50,7 +51,8 @@ Lie derivatives
 
 The parameters and the time are added to the states, :math:`z = (x, \eta, t)` with
 :math:`\dot \eta = 0` and :math:`\dot t = 1`, so that the model is the vector field
-:math:`F = f\, \partial_x + \partial_t` with initial value :math:`z_0(\theta)`. Applied to
+:math:`F = f\, \partial_x + \partial_t` with initial value :math:`z_0(\theta)` [Tunali1987]_.
+Applied to
 a function :math:`\varphi(z)`, it gives the rate of change along a solution,
 :math:`F(\varphi) = \frac{\mathrm{d}}{\mathrm{d}t}\, \varphi\big(z(t)\big)`. The *Lie
 derivatives* of the output are
@@ -74,7 +76,7 @@ prediction [Pohjanpalo1978]_. Collected up to order :math:`N`,
    \mathrm{OIM}_N(\theta) = \frac{\partial \Psi_N}{\partial \theta},
 
 where :math:`\mathrm{OIM}_N` is the *observability-identifiability matrix* of order
-:math:`N`. A generator leaves every component of :math:`\Psi_N` unchanged, so its tangent
+:math:`N` [Villaverde2016]_. A generator leaves every component of :math:`\Psi_N` unchanged, so its tangent
 vector lies in :math:`\ker \mathrm{OIM}_N(\theta)`. At a generic :math:`\theta` the kernel
 consists exactly of these tangent vectors, and the model is locally structurally
 identifiable when :math:`\mathrm{OIM}_N` has full rank :math:`d` for some order :math:`N`.
@@ -125,6 +127,57 @@ order :math:`M` is raised until the truncated rank reaches this bound, which pro
 sufficient. Without a bound (under ``equilibrate`` or with recast terms) or at
 ``reconst_control(gap_order_cap=)``, the rank is a lower bound and ``info["limits"]`` says
 where :math:`M` stopped.
+
+Unknown inputs
+--------------
+
+An *unknown input* :math:`w(t)` is an analytic function of time that the model leaves
+open. A direction of :math:`\theta` is then non-identifiable when nearby parameter values
+:math:`\tilde\theta` with some input :math:`\tilde w` give the prediction of
+:math:`(\theta, w)` for a generic :math:`w`.
+
+The Lie derivative :math:`L_F^k h` holds the input only through its jet
+:math:`w(t_0), \dots, w^{(k)}(t_0)`. symident adds the chain
+:math:`\dot w = w_1, \dots, \dot w_{K-1} = 0` to the states, the extension of
+[Martinelli2015]_ [Villaverde2019]_; it gives every row up to order :math:`K - 1` exactly, and
+the chain is lengthened while the order reaches past it. The jets
+are coordinates of an infinite family of which the rows up to order :math:`k` see
+:math:`k + 1`, so the rows never pin down the input to a finite form. The jet
+values :math:`j` at :math:`t_0` are *nuisance coordinates*: generic and unknown, but no
+part of :math:`\theta`. The identifiable dimension is
+
+.. math::
+
+   \operatorname{rank} \big[\mathrm{OIM}_\theta \mid \mathrm{OIM}_j\big]
+   - \operatorname{rank} \mathrm{OIM}_j ,
+
+which is the kernel of the full matrix modulo its directions within :math:`j`, projected
+onto :math:`\theta`; ``rank`` and ``dim`` count :math:`\theta` only. It is the dimension of
+the part of the row space without jet components, the counterpart of the separation of the
+observable codistribution in [Martinelli2019]_; [Villaverde2019]_ ask instead for the
+observability of the extended state, jets included. The argument of
+[HermannKrener1977]_ needs a fixed state space, and the chain grows with the order, so no
+order is proven sufficient: the rank is proven when it is full or when independent exact
+directions fill the kernel, and is a lower bound otherwise.
+
+The chain is a part of the state, so it passes every gap between events like the other
+states, and the input stays analytic across the event. A row after the gap order
+:math:`M` holds the jets up to its Lie order plus :math:`M`, and the Lie order is held to
+:math:`K - 1 - M`. Under ``equilibrate`` the chain rests at zero and a jump at the start
+sets its nuisance values.
+
+A direction is proven as a field
+:math:`Y = \xi_\theta\, \partial_\theta + \xi_x\, \partial_x + \xi_w\, \partial_w`, its
+components rational in the states, the parameters and finitely many jets. The identities
+of `Closed forms`_ hold per state, now with the term :math:`(\partial_w f)\, \xi_w`, and
+per observable with :math:`(\partial_w h)\, \xi_w`; the field :math:`F` includes the jet
+flow. The jets need no identity, since
+:math:`\xi_{w^{(k+1)}} = F\big(\xi_{w^{(k)}}\big)` prolongs :math:`\xi_w`; a component
+that holds the last jet of the chain is not proven. The published *input change* is
+:math:`\xi_w` of a proven field; a kernel vector holds it only at :math:`t_0`.
+
+A *known input* enters as the same chain with jet values that are known symbols, like the
+input derivatives in the extended Lie derivatives of [Karlsson2012]_.
 
 Switches
 --------
@@ -281,7 +334,7 @@ accepted only when the coefficients beyond those that determine it agree with it
 Non-rational terms
 ------------------
 
-Elementary functions are recast into rational form, innermost first. A term
+Elementary functions are recast into rational form, innermost first [Savageau1987]_. A term
 :math:`w = \varphi(v)` whose argument :math:`v` contains states becomes a new state; its
 right-hand side follows from the chain rule, :math:`\varphi'(v)\, \sum_j \partial_{x_j} v
 \, f_j`, which is rational in :math:`w` and :math:`v` for
@@ -362,13 +415,25 @@ every direction is verified with a bound, or when every direction lies in the sp
 invariant vector fields of the model, checked at random points with a bound
 (``info["rank_fields_bound"]``). Otherwise it is a *lower bound* (``info["rank_status"]``).
 
+Discrete symmetries
+-------------------
+
+Local identifiability leaves finitely many parameter values with the prediction of a generic
+one; more than one is a discrete symmetry, which no generator shows.
+:meth:`~symident.Symmetries.solution_count` sets the Taylor coefficients of the observables up
+to an order equal to their values at a random point modulo a prime and counts the solutions
+with msolve [Berthomieu2021]_, over the algebraic closure and away from zeros of the
+coordinates and denominators, as in the global identifiability test of [Hong2020]_. The count
+holds at that point and is not a proof.
+
 Reduction
 ---------
 
-A reduction replaces the parameters by combinations that the output determines, the
-invariants :math:`I_l(\theta)` with :math:`X(I_l) = 0` [Olver1993]_. symident searches
-monomial, polynomial and rational invariants, Darboux polynomials and exponential factors
-[Goriely2001]_ within degree bounds.
+A reduction replaces the parameters by combinations that the output determines
+[Chappell1998]_ [Evans2000]_ [Massonis2023]_, the invariants :math:`I_l(\theta)` with
+:math:`X(I_l) = 0` [Olver1993]_. symident searches monomial, polynomial and rational
+invariants, Darboux polynomials and exponential factors [Prelle1983]_ [Goriely2001]_ within
+degree bounds.
 
 The invariants become new parameters, :math:`I_l(\theta) = q_l`, and the remaining
 coordinates are expressed through them. A scaling is removed by fixing one of its
@@ -456,11 +521,47 @@ References
 .. [Berthomieu2021] J. Berthomieu, C. Eder and M. Safey El Din. msolve: a library for
    solving polynomial systems. *Proceedings of ISSAC 2021*, 51-58, 2021.
 
+.. [Chappell1998] M. J. Chappell and R. N. Gunn. A procedure for generating locally
+   identifiable reparameterisations of unidentifiable non-linear systems by the similarity
+   transformation approach. *Mathematical Biosciences* 148(1), 21-41, 1998.
+
+.. [Evans2000] N. D. Evans and M. J. Chappell. Extensions to a procedure for generating
+   locally identifiable reparameterisations of unidentifiable systems. *Mathematical
+   Biosciences* 168(2), 137-159, 2000.
+
 .. [Goriely2001] A. Goriely. *Integrability and Nonintegrability of Dynamical Systems*.
    Advanced Series in Nonlinear Dynamics 19, World Scientific, 2001.
 
 .. [HermannKrener1977] R. Hermann and A. J. Krener. Nonlinear controllability and
    observability. *IEEE Transactions on Automatic Control* 22, 728-740, 1977.
+
+.. [Hong2020] H. Hong, A. Ovchinnikov, G. Pogudin and C. Yap. Global identifiability of
+   differential models. *Communications on Pure and Applied Mathematics* 73(9), 1831-1879,
+   2020.
+
+.. [Karlsson2012] J. Karlsson, M. Anguelova and M. Jirstrand. An efficient method for
+   structural identifiability analysis of large dynamic systems. *IFAC Proceedings Volumes*
+   45(16), 941-946, 2012.
+
+.. [Martinelli2015] A. Martinelli. Extension of the observability rank condition to
+   nonlinear systems driven by unknown inputs. *23rd Mediterranean Conference on Control and
+   Automation*, 589-595, 2015.
+
+.. [Martinelli2019] A. Martinelli. Nonlinear unknown input observability: extension of the
+   observability rank condition. *IEEE Transactions on Automatic Control* 64(1), 222-237,
+   2019.
+
+.. [Massonis2020] G. Massonis and A. F. Villaverde. Finding and breaking Lie symmetries:
+   implications for structural identifiability and observability in biological modelling.
+   *Symmetry* 12(3), 469, 2020.
+
+.. [Massonis2023] G. Massonis, J. R. Banga and A. F. Villaverde. AutoRepar: a method to
+   obtain identifiable and observable reparameterizations of dynamic models with mechanistic
+   insights. *International Journal of Robust and Nonlinear Control* 33(9), 5039-5057, 2023.
+
+.. [Merkt2015] B. Merkt, J. Timmer and D. Kaschek. Higher-order Lie symmetries in
+   identifiability and predictability analysis of dynamic models. *Physical Review E* 92(1),
+   012920, 2015.
 
 .. [Olver1993] P. J. Olver. *Applications of Lie Groups to Differential Equations*.
    Graduate Texts in Mathematics 107, Springer, 2nd edition, 1993.
@@ -468,12 +569,29 @@ References
 .. [Pohjanpalo1978] H. Pohjanpalo. System identifiability based on the power series
    expansion of the solution. *Mathematical Biosciences* 41, 21-33, 1978.
 
+.. [Prelle1983] M. J. Prelle and M. F. Singer. Elementary first integrals of differential
+   equations. *Transactions of the American Mathematical Society* 279(1), 215-229, 1983.
+
+.. [Savageau1987] M. A. Savageau and E. O. Voit. Recasting nonlinear differential equations
+   as S-systems: a canonical nonlinear form. *Mathematical Biosciences* 87(1), 83-115, 1987.
+
 .. [Schwartz1980] J. T. Schwartz. Fast probabilistic algorithms for verification of
    polynomial identities. *Journal of the ACM* 27(4), 701-717, 1980.
 
 .. [Sedoglavic2002] A. Sedoglavic. A probabilistic algorithm to test local algebraic
    observability in polynomial time. *Journal of Symbolic Computation* 33(5), 735-755,
    2002.
+
+.. [Tunali1987] E. T. Tunali and T. J. Tarn. New results for identifiability of nonlinear
+   systems. *IEEE Transactions on Automatic Control* 32(2), 146-154, 1987.
+
+.. [Villaverde2016] A. F. Villaverde, A. Barreiro and A. Papachristodoulou. Structural
+   identifiability of dynamic systems biology models. *PLOS Computational Biology* 12(10),
+   e1005153, 2016.
+
+.. [Villaverde2019] A. F. Villaverde, N. Tsiantis and J. R. Banga. Full observability and
+   estimation of unknown inputs, states and parameters of nonlinear biological models.
+   *Journal of the Royal Society Interface* 16(156), 20190043, 2019.
 
 .. [Wang1982] P. S. Wang, M. J. T. Guy and J. H. Davenport. P-adic reconstruction of
    rational numbers. *ACM SIGSAM Bulletin* 16(2), 2-3, 1982.

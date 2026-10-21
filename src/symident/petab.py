@@ -24,6 +24,21 @@ def _need(module):
                           "pip install 'symident[petab]'") from exc
 
 
+def _near_zero(text, rel=1e-12):
+    """Whether `text` is a sum of numbers that cancels to below `rel` of its largest term."""
+    from tokenize import TokenError
+
+    import sympy as spy
+    try:
+        e = spy.parse_expr(str(text).replace("^", "**"), evaluate=False)
+    except (spy.SympifyError, TypeError, SyntaxError, TokenError):
+        return False
+    if e.free_symbols:
+        return False
+    terms = [abs(float(t)) for t in spy.Add.make_args(e)]
+    return max(terms) > 0 and abs(float(e)) <= rel * max(terms)
+
+
 def _number(text):
     """A finite decimal as an exact rational in the expression language, None for other text."""
     try:
@@ -605,10 +620,33 @@ def read_petab(path):
             totals = conserved_totals(net["stoichiometry"], net["species"]) or None
             for tr, x0 in zip(trafos, starts):
                 tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
+    # a species without dynamics, events or inputs that starts at one value everywhere is that value
+    moved = {e["var"] for e in events} | set(inputs) | set(steps)
+    still = {x: starts[0][x] for x in states if odes.get(x) == "0" and x not in moved and x in starts[0]
+             and all(st.get(x) == starts[0][x] for st in starts)}
+    if still:
+        odes = {x: _sub(f, still) for x, f in odes.items() if x not in still}
+        observables = [{k: _sub(f, still) for k, f in o.items()} for o in observables]
+        events = [dict(e, value=_sub(str(e["value"]), still)) for e in events]
+        if net is not None:
+            cols = [j for j, x in enumerate(net["species"]) if x not in still]
+            net = dict(net, species=[net["species"][j] for j in cols],
+                       stoichiometry=[[r[j] for j in cols] for r in net["stoichiometry"]],
+                       rates=[_sub(r, still) for r in net["rates"]])
+            if all(pre):
+                from .detection.cq import conserved_totals
+                totals = conserved_totals(net["stoichiometry"], net["species"]) or None
+                for tr, x0 in zip(trafos, starts):
+                    tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
     if all(pre):
         # a state without dynamics keeps its initial value through the preequilibration
         for tr, x0 in zip(trafos, starts):
             tr.update({x: x0[x] for x in states if odes.get(x) == "0" and x in x0})
+    # a total that rounding of the SBML values leaves next to zero is zero
+    for tr in trafos:
+        for k in totals or {}:
+            if k in tr and _near_zero(tr[k]):
+                tr[k] = "0"
     used = set(get_symbols(list(odes.values()))) | set(odes) | set(totals or {})
     trafos = [{k: v for k, v in tr.items() if k in used} for tr in trafos]
     outer = set(get_symbols([v for tr in trafos for v in tr.values()] +

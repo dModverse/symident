@@ -245,6 +245,16 @@ def unproven_of(b):
         out.append("the number of invariants, an upper bound")
     return out
 
+def detection_positive(obj):
+    """The coordinates the detection `obj` declared positive; states and fixed names of the declaration drop out."""
+    info = obj.get("info") or {}
+    positive = (info.get("settings") or {}).get("positive", True)
+    if not isinstance(positive, (list, tuple)):
+        return positive
+    coords = set(info.get("coordinates") or ())
+    return [p for p in positive if p in coords or not re.fullmatch(r"[A-Za-z_.][A-Za-z0-9_.]*", p)]
+
+
 def finish_reduction(obj, red):
     """The assumptions of the reduction `red` of `obj`, and a warning for a section claim left unproven."""
     if not isinstance(red, dict):
@@ -259,12 +269,28 @@ def finish_reduction(obj, red):
                       stacklevel=3)
 
 
-def check_levels(obj, allow_open=False):
-    """An error for a direction without closed form unless `allow_open`, a warning for a verified or checked one."""
+def check_levels(obj, allow_open=False, allow_checked=False):
+    """Raises for open or checked directions and a failed saturation check unless allowed; warns for verified ones."""
     levels = [d.get("level") for d in obj.get("symmetries") or []]
     if "open" in levels and not allow_open:
         raise ValueError("a direction has no closed form (level 'open'); detect with reconstruct=True, "
                          "or pass allow_open=True to reduce the others")
+    ver = (obj.get("info") or {}).get("verification") or {}
+    if ver.get("ok") is False and not allow_checked:
+        raise ValueError("the rank still grows past the Lie order used, so the directions may be over-reported "
+                         f"({ver.get('reason')}); pass allow_checked=True to reduce them anyway")
+    if "checked" in levels and not allow_checked:
+        info = obj.get("info") or {}
+        b = info.get("bound")
+        # a direction verified on every entry is checked where the error bound does not apply
+        verified = [p.get("support") for p in info.get("proof") or []]
+        if isinstance(b, dict) and b.get("probability") is None and all(
+                d.get("support") in verified for d in obj.get("symmetries") or [] if d.get("level") == "checked"):
+            why = f"only, since {b.get('why') or 'no error bound applies'}"
+        else:
+            why = "on part of its entries only"
+        raise ValueError(f"a direction is checked at random points {why} (level 'checked'); "
+                         "pass allow_checked=True to reduce on its closed form anyway")
     if "checked" in levels:
         warnings.warn("a direction is checked at random points without an error bound; the reduction "
                       "rests on its closed form (Reduction.level)", stacklevel=3)

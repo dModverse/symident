@@ -8,7 +8,7 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
                     laurent_cand_cap=200000, term_cap=60, general_deg_num=4, general_deg_den=3,
                     gap_order_cap=8, minsupport_cand_cap=20000, perprime_cap=120, perprime_min_primes=3,
                     homotopy=True, homotopy_degree=4, timeout=math.inf, seed=0, exact_proof=True,
-                    degree_cap_max=8, exact_work_cap=500000):
+                    degree_cap_max=8, exact_work_cap=500000, input_jet_order=0):
     """Saturation and closed-form reconstruction settings.
 
     Parameters
@@ -61,6 +61,9 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
     exact_work_cap : float
         Work budget of those detections, regimes times coordinates times tape length; past it
         the proof is skipped and listed in `info["limits"]`.
+    input_jet_order : int
+        Jets per unknown input, the input and its time derivatives; 0 chooses them from the
+        model and lengthens them while the Lie order reaches past them.
 
     Returns
     -------
@@ -71,7 +74,8 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
             and laurent_deg_num >= 1 and laurent_deg_den >= 0 and laurent_cand_cap >= 1
             and general_deg_num >= 1 and general_deg_den >= 1 and gap_order_cap >= 0
             and minsupport_cand_cap >= 1 and perprime_cap >= 1 and perprime_min_primes >= 2
-            and homotopy_degree >= 1 and timeout > 0 and degree_cap_max >= 0 and exact_work_cap > 0):
+            and homotopy_degree >= 1 and timeout > 0 and degree_cap_max >= 0 and exact_work_cap > 0
+            and input_jet_order >= 0):
         raise ValueError("reconst_control: invalid setting")
     return {"relevance_cap": int(relevance_cap), "relevance_cap_dir": int(relevance_cap_dir),
             "relevance_cap_sparse": int(relevance_cap_sparse), "degree_cap": int(degree_cap),
@@ -84,5 +88,5 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
             "homotopy": bool(homotopy), "homotopy_degree": int(homotopy_degree),
             "timeout": float(timeout), "seed": int(seed),
             "exact_proof": bool(exact_proof), "degree_cap_max": int(max(degree_cap, degree_cap_max)),
-            "exact_work_cap": float(exact_work_cap)}
+            "exact_work_cap": float(exact_work_cap), "input_jet_order": int(input_jet_order)}
 

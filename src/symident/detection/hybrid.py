@@ -9,7 +9,7 @@ import sympy as spy
 
 from .. import session, state
 from ..gfp import PRIMES
-from ..rexpr import is_number, sym_sort
+from ..rexpr import sym_sort
 from ..sym.scaling import scaling_symmetries_multi
 from ..sym.switching import BACK, CONSTS, TIME, comparison, surface_ratios, to_str
 from ..sym.taylor import NoSeriesError, output_series
@@ -28,6 +28,11 @@ def _parse(text):
     """A model string (R syntax) as a sympy expression."""
     from ..sym.switching import _plain
     return _plain(str(text)).xreplace(CONSTS)
+
+
+def _rational(t):
+    """A numeric time as a rational number."""
+    return spy.Rational(num_str(float(t)))
 
 
 def _rational_point(syms, *key):
@@ -120,13 +125,11 @@ class _Setup:
             raise HybridError("a state named `time` clashes with the clock")
         self.root_events = [r["event"] for r in hy.roots]
         self.time_events = as_events([e for e in (kw.get("events") or []) if e.get("root") is None])
-        self.clock = any(TIME in e.free_symbols for e in self.f.values()) or \
-            any(TIME in e.free_symbols for x in hy.g for e in x.values())
-        nums = [float(e["time"]) for e in self.time_events if is_number(e["time"])]
-        self.t0 = min(nums + [0.0])
-        self.t0e = spy.Rational(num_str(self.t0))
         self.dyn = [x for x in self.f if x not in self.inputs]
         self._conditions()
+        # the clock where a condition's model reads time
+        self.clock = any(TIME in cd.apply(e).free_symbols for cd in self.conds for e in self.f.values()) or \
+            any(TIME in e.free_symbols for cd in self.conds for e in cd.obs.values())
         exprs = list(self.f.values()) + [e for x in hy.g for e in x.values()] + list(self.sw.funcs)
         for cd in self.conds:
             exprs += [e for e in cd.ic.values() if e is not None] + list(cd.obs.values())
@@ -190,11 +193,19 @@ class _Setup:
                 if grid is not None and vv in grid.colnames():
                     vv = grid.cell(c, vv)
                 T = app(_parse(tv))
-                cd.events.append({"var": e["var"], "time": T, "value": app(_parse(vv)),
-                                  "method": e["method"], "index": i,
-                                  "t0": is_number(e["time"]) and float(e["time"]) <= self.t0})
+                # an event value reads the clock at its event time
+                cd.events.append({"var": e["var"], "time": T, "value": app(_parse(vv)).xreplace({TIME: T}),
+                                  "method": e["method"], "index": i})
             cd.equil = self.equilibrate
             conds.append(cd)
+        # the start: 0, or the earliest event time that is a number in a condition
+        self.t0e = min([_rational(e["time"]) for cd in conds for e in cd.events if e["time"].is_number] +
+                       [spy.Integer(0)])
+        self.t0 = float(self.t0e)
+        for cd in conds:
+            for e in cd.events:
+                e["t0"] = bool(e["time"].is_number and _rational(e["time"]) <= self.t0e)
+            cd.ic = {x: None if v is None else v.xreplace({TIME: self.t0e}) for x, v in cd.ic.items()}
         self.conds = conds
 
     def model(self, cd, sides):
@@ -256,6 +267,11 @@ class _Setup:
         for txt in ([entry] if isinstance(entry, str) else list(entry)):
             d, side = comparison(txt)
             hit = self.sw.match(d)
+            if hit is None:
+                # the surface as the model registered it: the one factor of undecided sign
+                sgn, parts = self.sw.factored(d)
+                hit = self.sw.match(parts[0]) if len(parts) == 1 else None
+                hit = None if hit is None else (hit[0], hit[1] * sgn)
             if hit is None:
                 raise HybridError(f"`regimes`: {txt!r} names no switching surface of the model")
             j, sgn = hit
@@ -464,7 +480,12 @@ def _copies(st):
                 points.append(sol)
         if any(v != _VISIBLE for v in cd.vis.values()):
             points.append(None)
-        for sol in points:
+        resets = []
+        for r in st.hy.roots:
+            j = r["surface"]
+            sol = st.on_surface(cd, j) if j in cd.surfaces and st.hy.kind[j] == "state" else None
+            resets.append((sol if sol is not None and str(sol[0]) in st.dyn else None, r["event"]))
+        for sol, ev in [(s, None) for s in points] + resets:
             pt = {}
             for x in st.dyn:
                 if sol is None or _sym(x) != sol[0]:
@@ -478,6 +499,12 @@ def _copies(st):
             pt.update({_sym(u): v for u, v in _start_inputs(st, cd).items()})
             if sol is not None:
                 pt[sol[0]] = sol[1].xreplace(pt)
+            if ev is not None:
+                # the state just after a root event fired at this point of its surface
+                v = _sym(ev["var"])
+                if str(v) not in st.dyn:
+                    continue
+                pt[v] = _compose(pt[v], ev.get("method", "replace"), cd.apply(_parse(ev["value"])).xreplace(pt))
             ic = {x: pt[_sym(x)] for x in st.dyn}
             for sides in cd.regimes:
                 copies += _switched({"cd": cd, "sides": sides, "ic": ic, "events": False, "obs": {},
@@ -488,7 +515,7 @@ def _copies(st):
 
 def _switched(cp, st):
     """The copy and its versions switched at a fixed time into every other regime of its condition."""
-    taken = {spy.Rational(num_str(float(e["time"]))) for e in st.time_events if is_number(e["time"])}
+    taken = {_rational(e["time"]) for cd in st.conds for e in cd.events if e["time"].is_number}
     ts = st.t0e + 1
     while ts in taken:
         ts += 1
@@ -539,7 +566,9 @@ def _rows_model(st, copies, fresh):
             if v is not None:
                 tr[x] = to_str(v)
         for u, v in (cp.get("inputs") or {}).items():
-            tr[u] = to_str(v)
+            # an input starts at zero; an event at the start sets it
+            events.append({"var": u, "time": to_str(st.t0e), "value": to_str(v), "method": "replace",
+                           "cond": [i]})
         if st.clock:
             tr["time"] = to_str(cp["time"])
         trafos.append(tr)
@@ -578,7 +607,8 @@ def _compose(cur, method, value):
 def _steady_states(st, cd, sides):
     """The resting states of a regime with the inputs at zero, each in closed form."""
     f, _ = st.model(cd, sides)
-    rhs = [f[x].xreplace({_sym(u): 0 for u in st.inputs}) for x in st.dyn]
+    # at rest the model reads the clock at the start
+    rhs = [f[x].xreplace({_sym(u): 0 for u in st.inputs}).xreplace({TIME: st.t0e}) for x in st.dyn]
     try:
         sol = spy.solve(rhs, [_sym(x) for x in st.dyn], dict=True)
     except NotImplementedError:

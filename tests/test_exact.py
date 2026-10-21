@@ -321,7 +321,7 @@ def test_a_rank_through_invariant_fields_is_verified():
 
 def test_a_field_wrong_over_q_but_right_modulo_the_engine_prime_does_not_verify_the_rank(monkeypatch):
     from symident.detection import fields
-    from symident.detection.observability import analysis
+    from symident.detection.observability import analysis, proof, reconstruct
     setup = fields.field_setup
 
     def shifted(*a, **k):
@@ -329,8 +329,9 @@ def test_a_field_wrong_over_q_but_right_modulo_the_engine_prime_does_not_verify_
         out["gens"] = [[dict(x, alpha=f"({x.get('alpha', '0')}) + {PRIMES[0]}*alpha") for x in gl]
                        for gl in out["gens"]]
         return out
-    monkeypatch.setattr(fields, "field_setup", shifted)
-    monkeypatch.setattr(analysis, "field_setup", shifted)
+    # every module that binds field_setup, so none loaded during the run keeps the patch
+    for mod in (fields, analysis, proof, reconstruct):
+        monkeypatch.setattr(mod, "field_setup", shifted)
     r = si.detect(_fields_model(), reconstruct=True)
     assert r.info["rank_fields"] is None and r.info["rank_fields_bound"] is None
     assert "invariant fields" not in r.info["rank_status"]["why"]

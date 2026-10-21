@@ -1,5 +1,7 @@
 """An upper bound of the rank over the gap series; a truncated rank that reaches it proves the gap order."""
 
+import random
+
 import numpy as np
 import sympy as spy
 
@@ -24,11 +26,18 @@ def _lie(e, F):
 
 
 def _values(rows, env, p):
+    # an exponential left after the substitution takes an independent random value; a bound stays an upper bound
+    rng = random.Random(p)
+    gen = {}
     out = []
     for r in rows:
         row = []
         for e in r:
             v = spy.sympify(e).xreplace(env)
+            if not v.is_Rational and v.has(spy.exp):
+                for a in sorted(v.atoms(spy.exp), key=str):
+                    gen.setdefault(a, spy.Integer(rng.randrange(2, p)))
+                v = v.xreplace(gen)
             if not v.is_Rational:
                 return None
             row.append(int(v.p) * pow(int(v.q), p - 2, p) % p)
@@ -124,6 +133,13 @@ class _Chain:
 
 def gap_bound(tapes, chains, znames, n_lie, p, rng, cap=None):
     """{"bound": U} with U at least the rank over the gap series, or {"bound": None, "why"}."""
+    try:
+        return _gap_bound(tapes, chains, znames, n_lie, p, rng, cap)
+    except OverflowError as exc:
+        return {"bound": None, "why": f"no symbolic family ({exc})"}
+
+
+def _gap_bound(tapes, chains, znames, n_lie, p, rng, cap):
     try:
         cs = [_Chain(tapes, c, n_lie, p, rng) for c in chains]
     except (OverflowError, LookupError, *SYMPY_FAILS) as exc:

@@ -32,12 +32,18 @@ def public_symmetry(d):
         gen = {k: scaling_component(v, k) for k, v in d["vector"].items()}
     if gen is not None:
         gen = {k: str(v).replace("**", "^") for k, v in gen.items()}
+    inp = d.get("input_vector") or None
+    if inp is not None and gen is not None:
+        from .fields import rescaled_lift
+        inp = rescaled_lift(gen, d.get("input_form") or gen, inp)
+    if inp is not None:
+        inp = {k: str(v).replace("**", "^") for k, v in inp.items()}
     return {"type": re.sub(r"^Type: ", "", str(d.get("type"))), "generator": gen,
             "weights": weights, "degree": d.get("degree"),
             "support": d.get("support") if d.get("support") is not None else list(gen or []),
             "explicit": gen is not None, "reason": d.get("reason"), "route": d.get("route"),
             "level": level_of(d, gen),
-            "state_components": _lift(d, gen)}
+            "state_components": _lift(d, gen), "input_change": inp}
 
 
 def _lift(d, gen):
@@ -180,7 +186,8 @@ def finalize(raw, method, settings, call=None, elapsed=None, coordinates=None):
             "conditions": raw.get("conditions"),
             "segments": raw.get("segments"),
             "coordinates": list(raw["coordinates"]) if raw.get("coordinates") is not None else coordinates,
-            "settings": settings, "elapsed": elapsed, "verification": raw.get("verification"),
+            "settings": settings, "elapsed": elapsed, "timing": raw.get("timing"),
+            "verification": raw.get("verification"),
             "bound": raw.get("bound"),
             "attempts": [{"support": d.get("support"), "attempts": [list(a) for a in d["attempts"]]}
                          for d in raw_syms if d.get("attempts")],
@@ -216,7 +223,7 @@ def log_arg_back(raw, la):
         names = list((d.get("vector") or {}).keys()) + list((d.get("infinitesimals") or {}).keys()) + \
             list(d.get("support") or [])
         vals = [str(v) for v in list((d.get("vector") or {}).values()) +
-                list((d.get("infinitesimals") or {}).values())]
+                list((d.get("infinitesimals") or {}).values()) + list((d.get("input_vector") or {}).values())]
         hit = any(n in Lset | ab_syms for n in names) or (pat is not None and any(pat.search(v) for v in vals))
         if not hit:
             return d
@@ -252,10 +259,18 @@ def log_arg_back(raw, la):
             d["support"] = sym_sort(sup)
         if d.get("infinitesimals") is not None:
             d["infinitesimals"] = back(d["infinitesimals"])
+        if d.get("input_vector"):
+            at = {spy.Symbol(m["L"]): spy.log(spy.Symbol(m["v"])) for m in la["map"]}
+            d["input_vector"] = {k: str(model_sympify(str(v)).xreplace(at)) for k, v in d["input_vector"].items()}
+            d["input_form"] = back(d.get("input_form"))
         return d
     raw = dict(raw)
     if raw.get("coordinates") is not None:
         raw["coordinates"] = ren(raw["coordinates"])
+    if isinstance(raw.get("kernel"), dict) and raw["kernel"].get("coords") is not None:
+        # the chart is diagonal, so the kernel in the charted coordinates has the same span pattern
+        back_of = dict(zip(la["L"], la["v"]))
+        raw["kernel"] = dict(raw["kernel"], coords=[back_of.get(z, z) for z in raw["kernel"]["coords"]])
     if raw.get("non_identifiable") is not None:
         raw["non_identifiable"] = [fix_dir(d) for d in raw["non_identifiable"]]
     return raw

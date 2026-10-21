@@ -1,6 +1,8 @@
 """Scaling symmetries from the integer kernel of the monomial exponents."""
 
+import functools
 import math
+from fractions import Fraction
 
 import sympy as spy
 
@@ -12,27 +14,97 @@ from .parse import _as_list, _clean, _make_local_parse, _read_equations
 from .recast import _TRIG, _TRIG_RECIPROCAL
 
 
+def _ring_elem(x, R, gen):
+    """x as an element of the polynomial ring R, None when it is not a polynomial in its symbols."""
+    if x.is_Symbol:
+        return gen[x]
+    if x.is_Rational:
+        return R(x)
+    if x.is_Add or x.is_Mul:
+        out = R(0) if x.is_Add else R(1)
+        for a in x.args:
+            e = _ring_elem(a, R, gen)
+            if e is None:
+                return None
+            out = out + e if x.is_Add else out * e
+        return out
+    if x.is_Pow and x.exp.is_Integer and x.exp >= 0:
+        b = _ring_elem(x.base, R, gen)
+        return None if b is None else b ** int(x.exp)
+    return None
+
+
+def _terms(x):
+    """The terms of the expanded polynomial x, each as its powers, by sparse arithmetic where x is a polynomial."""
+    syms = sorted(x.free_symbols, key=spy.default_sort_key)
+    if not syms:
+        return ((),) if x != 0 else ()
+    R, *gens = spy.ring(syms, spy.QQ)
+    P = _ring_elem(x, R, dict(zip(syms, gens)))
+    if P is not None:
+        return tuple(tuple((g, spy.Integer(e)) for g, e in zip(syms, m) if e) for m in P.monoms())
+    return tuple(tuple(t.as_powers_dict().items()) for t in spy.Add.make_args(spy.expand(x)) if t != 0)
+
+
+@functools.lru_cache(maxsize=4096)
+def _expanded(expr):
+    """The terms of the expanded numerator and denominator of expr, each as its powers."""
+    return tuple(_terms(x) for x in spy.fraction(spy.together(spy.sympify(expr))))
+
+
+def _exponent(v):
+    r = spy.Rational(v)
+    return int(r.p) if r.q == 1 else Fraction(int(r.p), int(r.q))
+
+
 def _poly_monomials(expr, zvars):
-    """Numerator and denominator monomial-exponent lists of expr over zvars; raises for other forms."""
+    """Numerator and denominator monomials of expr over zvars as sparse {column: exponent}; raises for other forms."""
     idx = {z: i for i, z in enumerate(zvars)}
     zset = set(zvars)
-    zero = spy.Integer(0)
 
-    def mons(poly):
+    def mons(terms):
         out = {}
-        for t in spy.Add.make_args(spy.expand(poly)):
-            if t == 0:
-                continue
-            a = [zero] * len(zvars)
-            for k, v in t.as_powers_dict().items():
+        for powers in terms:
+            a = {}
+            for k, v in powers:
                 if k in idx:
-                    a[idx[k]] = spy.Rational(v)
+                    e = _exponent(v)
+                    if e:
+                        a[idx[k]] = e
                 elif k.free_symbols & zset:
-                    raise InapplicableError('not a monomial in the coordinates: %s' % t)
-            out[tuple(a)] = None
-        return list(out)
-    p, q = spy.fraction(spy.together(spy.sympify(expr)))
+                    raise InapplicableError('not a monomial in the coordinates: %s' % spy.Mul(
+                        *[b ** e for b, e in powers]))
+            out.setdefault(tuple(sorted(a.items())), a)
+        return list(out.values())
+    p, q = _expanded(expr)
     return mons(p), mons(q)
+
+
+def _diff_row(a, b, t=None):
+    """(a - b - t) . c = 0 over the weight columns, times the lcm of the denominators; None when zero."""
+    d = dict(a)
+    for j, x in b.items():
+        d[j] = d.get(j, 0) - x
+    if t is not None:
+        d[t] = d.get(t, 0) - 1
+    nzj = sorted((j, x) for j, x in d.items() if x != 0)
+    if not nzj:
+        return None
+    D = 1
+    for _, x in nzj:
+        q = getattr(x, "denominator", 1)
+        D = D * q // math.gcd(D, q)
+    return {j: int(x * D) for j, x in nzj}
+
+
+@functools.lru_cache(maxsize=4096)
+def _expr_rows(expr, target, zvars):
+    """The scaling rows equating the monomial weights of expr per side, the sides apart by the weight of `target`."""
+    pmon, qmon = _poly_monomials(expr, zvars)
+    cand = [_diff_row(a, pmon[0]) for a in pmon[1:]] + [_diff_row(b, qmon[0]) for b in qmon[1:]]
+    if pmon and qmon:
+        cand.append(_diff_row(pmon[0], qmon[0], target if target >= 0 else None))
+    return tuple(tuple(r.items()) for r in cand if r is not None)
 
 
 def _exp_split(expr, logs=False):
@@ -59,8 +131,6 @@ def _exp_split(expr, logs=False):
 def _scaling_rows(diff_equations, obs_functions, m, zvars, inter_offset, logs=False,
                   seen=None):
     """(rows, ninter, skipped): sparse monomial-exponent rows of one (f, g) system for the scaling kernel."""
-    nz = len(zvars)
-    exprs = []          # (numer monomials, denom monomials, target weight vector)
     skipped = 0
     seen = set() if seen is None else seen
 
@@ -79,56 +149,24 @@ def _scaling_rows(diff_equations, obs_functions, m, zvars, inter_offset, logs=Fa
                     [u for s in split for u in s[1]])
     eq_split = {i: s[0] for i, s in zip(eq_new, split[len(obs_new):])}
 
-    for g in obs_functions:
-        try:
-            pmon, qmon = _poly_monomials(g, zvars)
-        except SYMPY_FAILS as exc:
-            sympy_fail(exc)
-            skipped += 1
-            continue
-        exprs.append((pmon, qmon, [0] * nz))
-    for i in eq_new:
-        try:
-            pmon, qmon = _poly_monomials(eq_split[i], zvars)
-        except SYMPY_FAILS as exc:
-            sympy_fail(exc)
-            skipped += 1
-            continue
-        tvec = [0] * nz
-        tvec[i] = 1     # state i is column i of zvars; x_i has weight c_i
-        exprs.append((pmon, qmon, tvec))
-
-    def diff_row(a, b, t=None):
-        # (a - b - t) . c = 0 over the weight columns, times the lcm of the denominators
-        d = [x - y for x, y in zip(a, b)]
-        if t is not None:
-            d = [x - int(y) for x, y in zip(d, t)]
-        nzj = [(j, x) for j, x in enumerate(d) if x != 0]
-        if not nzj:
-            return None
-        D = 1
-        for _, x in nzj:
-            q = int(getattr(x, 'q', 1))
-            if q != 1:
-                D = D * q // math.gcd(D, q)
-        return {j: int(x * D) for j, x in nzj}
-
-    # every numerator monomial has the weight of the first, every denominator monomial
-    # that of the first denominator one, and the two differ by the target weight: the
-    # rows of the intermediate-column form with the intermediates eliminated
+    zkey = tuple(zvars)
     rows, keys = [], set()
-    for pmon, qmon, tvec in exprs:
-        cand = [diff_row(a, pmon[0]) for a in pmon[1:]] + \
-               [diff_row(b, qmon[0]) for b in qmon[1:]]
-        if pmon and qmon:
-            cand.append(diff_row(pmon[0], qmon[0], tvec))
-        for row in cand:
-            if row is None:
-                continue
-            k = tuple(sorted(row.items()))
+    # state i is column i of zvars; x_i has weight c_i
+    for e, target in [(g, -1) for g in obs_functions] + [(eq_split[i], i) for i in eq_new]:
+        try:
+            cand = _expr_rows(e, target, zkey)
+        except InapplicableError:
+            # not a monomial form: counted as skipped, not as an error
+            skipped += 1
+            continue
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            skipped += 1
+            continue
+        for k in cand:
             if k not in keys:
                 keys.add(k)
-                rows.append(row)
+                rows.append(dict(k))
     return rows, 0, skipped
 
 

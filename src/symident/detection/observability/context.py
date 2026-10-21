@@ -44,7 +44,8 @@ def tape_fields(t):
         out.update({"ev_op": ints(t["ev_op"]), "ev_a": ints(t["ev_a"]), "ev_b": ints(t["ev_b"]),
                     "ev_cnum": strs(t["ev_cnum"]), "ev_cden": strs(t["ev_cden"]),
                     "ev_out": ints(t["ev_out"]), "ev_var_idx": ints(t["ev_var_idx"]),
-                    "ev_method": ints(t["ev_method"])})
+                    "ev_method": ints(t["ev_method"]), "ev_state_slots": int(t.get("ev_state_slots", 0)),
+                    "ev_leaf_only": [bool(x) for x in t.get("ev_leaf_only", [True] * len(t["ev_var_idx"]))]})
     if t.get("tm_op") is not None:
         out.update({"tm_op": ints(t["tm_op"]), "tm_a": ints(t["tm_a"]), "tm_b": ints(t["tm_b"]),
                     "tm_cnum": strs(t["tm_cnum"]), "tm_cden": strs(t["tm_cden"]),
@@ -61,6 +62,7 @@ class Run:
         self.ctrl = ctrl
         self.timing = state.env("TIMING")
         self.t0 = time.monotonic()
+        self.stages = []
         self.cores = int(max(1, cores))
         self.n_leaves = int(multi["n_leaves"])
         self.n_states = int(multi["n_states"])
@@ -95,6 +97,26 @@ class Run:
         self.mtot = 0
         self.ss_why = None
         self.series_gaps = False
+        nuis = set(strs(multi.get("nuisance")))
+        kept = set(strs(multi.get("nuisance_kept")))
+        self.nuis_cols = [i for i, z in enumerate(self.znames) if z in nuis]
+        self.nuis_drop = [i for i in self.nuis_cols if self.znames[i] not in kept]
+        self.nuis_order = multi.get("nuisance_order")
+
+    def exact_nt(self, Nt, Mtot=0):
+        """The Lie order `Nt` held to the orders at which the jet chains are exact after gap order `Mtot`."""
+        return int(Nt) if self.nuis_order is None else max(0, min(int(Nt), int(self.nuis_order) - int(Mtot)))
+
+    def modulo_nuisance(self, o, p, cols=None):
+        """The kernel result `o` modulo the nuisance directions, off the dropped jets; `cols` maps a column subset."""
+        if not self.nuis_cols:
+            return o
+        from .nuisance import quotient
+        if cols is None:
+            return quotient(o, self.nuis_cols, p, self.nuis_drop)
+        pos = {c: j for j, c in enumerate(cols)}
+        return quotient(o, [pos[c] for c in self.nuis_cols if c in pos], p,
+                        [pos[c] for c in self.nuis_drop if c in pos])
 
     _CHAIN_FIELDS = ("has_gaps", "chain_of", "chain_groups", "chain_idx", "first_of_chain", "max_gap",
                      "cores_call", "mtot", "nt_cap", "series_gaps")
@@ -118,9 +140,11 @@ class Run:
             setattr(self, k, v)
 
     def stage(self, what):
-        """Print the elapsed time and `what` when timing is on."""
+        """Record the elapsed time at `what`, printed when timing is on."""
+        t = time.monotonic() - self.t0
+        self.stages.append({"stage": what, "seconds": round(t, 3)})
         if self.timing:
-            print(f"[stage {time.monotonic() - self.t0:7.1f}s] {what}", flush=True)
+            print(f"[stage {t:7.1f}s] {what}", flush=True)
 
     def slot(self, name):
         """The leaf slot of `name`, or None."""
@@ -154,22 +178,24 @@ class Run:
         if self.has_gaps:
             def mk(idx):
                 def f(point, p, Nt, Mtot=0):
-                    return _core.sym_obs_null_chain([self.chain_tapes(idx)], nl, ns, zs,
-                                                    np.asarray(point, dtype=np.int64), p, int(Nt),
-                                                    int(Mtot), 1)
+                    return self.modulo_nuisance(_core.sym_obs_null_chain(
+                        [self.chain_tapes(idx)], nl, ns, zs, np.asarray(point, dtype=np.int64), p,
+                        self.exact_nt(Nt, Mtot), int(Mtot), 1), p)
                 return f
             return [mk(idx) for idx in self.chain_groups]
 
         def mk1(i):
             def f(point, p, Nt, Mtot=0):
-                return _core.sym_obs_null_multi([self.tapes[i]], nl, ns, zs,
-                                                np.asarray(point, dtype=np.int64), p, int(Nt),
-                                                self.block_threads())
+                return self.modulo_nuisance(_core.sym_obs_null_multi(
+                    [self.tapes[i]], nl, ns, zs, np.asarray(point, dtype=np.int64), p,
+                    self.exact_nt(Nt), self.block_threads()), p)
             return f
         return [mk1(i) for i in range(len(self.tapes))]
 
     def obs_block_profiles(self):
-        """The rank per Lie order of a block from one jet."""
+        """The rank per Lie order of a block from one jet; None with nuisance columns."""
+        if self.nuis_cols:
+            return None
         zs, nl, ns = self.z_slots, self.n_leaves, self.n_states
         if self.has_gaps:
             def mk(bi):

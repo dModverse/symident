@@ -1,3 +1,124 @@
+# symident 0.12.0
+
+## Unknown inputs
+
+* `Model(unknown_inputs=)` declares unknown functions of time: symbols in the right-hand
+  sides and observables without an equation. A direction may change them along with the
+  parameters, while `rank` and `dim` count the parameters and initial values only. An exact
+  direction lists the change of each input in `input_change`, printed under
+  "input change:".
+* The inputs enter as chains of jets whose initial values are nuisance coordinates of the
+  kernel. `info["unknown_inputs"]` lists the jets, the Lie order up to which they are exact
+  and the rank of the jet columns; `reconst_control(input_jet_order=)` sets their number.
+  A rank that is neither full nor matched by exact directions is a lower bound.
+* A string in `conditions` renames an unknown input per condition. Across an event the
+  input stays analytic, so a jump of a state can separate parameters that the input would
+  otherwise absorb. Under `equilibrate` an unknown or known input is zero at rest and takes
+  its jets from the start on. Switches, an event or a `trafo` entry for an unknown input and
+  `engine="symbolic"` are refused.
+
+## Known inputs and discrete symmetries
+
+* `Model(known_inputs=)` declares known functions of time of no assumed form: jet chains
+  whose initial values are known symbols.
+* `Symmetries.solution_count()` counts the values of the coordinates with the output of a
+  random point modulo a prime (msolve), over the algebraic closure; more than one is a
+  candidate discrete symmetry. It reads the clock and known inputs, substitutes the `trafo`
+  into the initial values as the detection does, takes a one-row grid and one-element
+  lists, returns None for a model that is not rational and refuses switches and a result
+  under `equilibrate` or `reduce_cq`.
+
+## Detection
+
+* A closed form reads every name of the model as a symbol, also `E`, `I`, `S`, `N`, `rf`
+  or `beta`. A kernel check that evaluates only part of the entries stays `"checked"`.
+* An event value after the start reads the states just before the event; one at the start
+  reads the initial values before the events. A state without dynamics that an event sets
+  to another state is analyzed as a state.
+* When the saturation guard sees the rank grow past the Lie order used, the saturation is
+  repeated from past that order.
+* A free exponent of a number enters through the primes of the number; exponent terms that
+  are rational combinations of each other up to a constant share their leaves, and a
+  logarithm inside an exponent is a leaf of its own.
+* A symbol in two different logarithms, or with a free power beside an affine logarithm,
+  gets no logarithmic coordinate; auxiliary states take its powers and logarithms.
+* `positive` accepts expressions such as `"1-x"`.
+* Condition columns and constant states keep their logarithms and free powers, which become
+  numbers per condition; `0^n` is 0 for a positive exponent `n`.
+* A free power of a state with a given initial value starts at the power of that value.
+* The reset of a root event enters the stacked rows of a model with switches. When the
+  rule of the switches leaves directions open without candidates, the report says so.
+* A switch that the default `positive=True` decides through the sign of a state warns.
+* `regimes` names a switching surface in any algebraic form.
+* `info["timing"]` holds the seconds at each stage of the analysis.
+* `time` in an initial value reads the clock at the start, in an event value at the time of
+  the event. The model has the clock wherever a right-hand side, observable, `trafo` value
+  or condition cell reads `time`; under `equilibrate` the clock is an input that rests at
+  zero and counts from the start, and `exp()` of it is refused by name.
+* A `trafo` value or condition cell enters the equations as one operand, in parentheses.
+* An event time that a condition cell or a per-condition `trafo` sets is resolved per
+  condition, also to the start.
+* `scalings_only` holds the initial values, event values and times, per-condition `trafo`
+  entries, one-row grids and known inputs as the full detection does and reports its
+  coordinates; event times in parameters are supported.
+* `gauge` keeps the unknown inputs.
+* `reduce_cq` reads the `totals` of an ODE model; a total that the right-hand sides do not
+  conserve is an error. A moiety species with an initial value in `trafo` stays a state
+  where another species of the moiety can be eliminated.
+* A right-hand side that the `trafo` sets to zero rests like a constant state.
+* A name in `known_inputs`, `inputs`, `fixed`, `parameters`, a condition column or an event
+  `var` that the model does not hold is an error; inputs and event variables are states. A
+  name in `positive` outside the model warns.
+* An input starts at zero: an initial value of an input in `trafo` or a condition column is
+  an error that names the event to set it with. `Model(inputs=)` documents it.
+* A `trafo` entry that replaces a symbol a condition column sets warns.
+* `detect()` keeps a copy of the model, so later changes of the model leave the result as
+  it is.
+* Under `equilibrate`, `info["bound"]` says that the error bound does not cover a start at
+  rest.
+* A Lie derivative past the size cap leaves the gap order a lower bound; an exponential
+  at the start takes a generic value in the gap bound.
+* The scaling rows expand each rational right-hand side once, in sparse polynomial
+  arithmetic.
+
+## Equilibrate
+
+* A state with a signed net rate such as `-k*(x - u)` rests at zero, on the reaction and
+  the ODE path and per condition; a state whose right-hand side vanishes at rest keeps
+  its resting value as a coordinate.
+* Exponentials of parameters outside the resting model are supported.
+* A joint solve that fails names the condition.
+* A full-rank result lists the parameter coordinates only.
+
+## Reduction
+
+* `reduce()` refuses a direction of level `"checked"` and a result whose saturation check
+  failed, unless `allow_checked=True`.
+* The closed loop applies the trafo to symbolic condition cells. It fails when a trafo
+  entry has no effect, and is reported as not run when the detection refuses the reduced
+  model; the summary line says when it does not confirm the reduction. An entry for a
+  symbol of the grid goes into its cells, an entry that the model trafo consumes stays
+  out of the composed trafo, and under `equilibrate` a numeric pin of a resting value goes
+  into `fixed` (`Reduction.trafo` documents it).
+* Section candidates start with pins of one coordinate; balances through fixed symbols
+  follow those between coordinates and displace none of them. The reason a block is not
+  reduced is printed.
+* A declared positive expression such as `"1-a"` bounds the domain of the reduction: a
+  section that leaves the bound counts as partial, and pins in the middle of a bound are
+  tried first.
+* `Symmetries.reduce()` returns a copy of the reduction computed first for the same
+  arguments.
+* `reduce()` and `reduce_json()` take the declared positive coordinates from the detection
+  without a warning for the states and fixed names among them.
+* A refused `"checked"` direction names why it is checked: without an error bound, or on
+  part of its entries.
+
+## PEtab
+
+* The reader drops species without dynamics, events or inputs that start at one value,
+  and sets a total that cancels below rounding to zero. The initial values of inputs
+  under preequilibration raise no warning.
+
 # symident 0.11.0
 
 ## PEtab

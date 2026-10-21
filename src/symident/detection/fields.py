@@ -143,6 +143,8 @@ def exact_scaling_set(multi, fixed):
     """Weight vectors of the scalings of the whole model, exactly checked."""
     ver_keys = ["model_lines", "obs_lines", "ver_ic", "ver_ev", "ver_t0", "ver_time"]
     ver_tapes = _uniq([{k: t[k] for k in ver_keys if k in t} for t in multi["tapes"]])
+    jets = set(multi.get("nuisance_jet_states") or [])
+    inputs = [u for u in multi.get("forcings") or [] if u not in jets]
 
     def ev_lines(t, add):
         out = []
@@ -154,7 +156,7 @@ def exact_scaling_set(multi, fixed):
         full = scaling_symmetries_multi(
             per_cond_model=[_lines(t.get("model_lines")) for t in ver_tapes],
             per_cond_obs=[_lines(t.get("obs_lines")) for t in ver_tapes],
-            inputs=list(multi["forcings"]) if multi.get("forcings") else None,
+            inputs=inputs or None,
             fixed=list(fixed) if fixed else None,
             extra_model=[_lines(t.get("ver_ic")) + ev_lines(t, True) for t in ver_tapes],
             extra_obs=[ev_lines(t, False) + ([f"_ = {t['ver_time']}"]
@@ -313,7 +315,7 @@ def field_check(setup, V, znames, leaf_names, point, chains, joint):
         joins.append(e)
     out = verify_distribution(setup["regimes"], setup["gens"], joins, lifts, P, q=verify_prime())
     if out.get("ok") and joint is not None:
-        out["bound"] = {"applies": False, "why": "the resting state has no closed form"}
+        out["bound"] = {"applies": False, "why": "the error bound does not cover a start at rest (equilibrate)"}
     return out
 
 
@@ -520,16 +522,27 @@ def exact_direction(setup, field, chains, joint, init=()):
     used = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
     extra = {k: v for k, v in dict(field).items() if k.endswith(INIT)}
     theta = {k: v for k, v in dict(field).items() if k not in set(states)}
+    # a jet of an unknown input has no identity, its component prolongs the input's; the last
+    # jet has no derivative in the chain
+    jets, tops = setup.get("jets") or (), set(setup.get("jet_tops") or ())
+    def names(v):
+        return set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", str(v)))
+    if tops and any(tops & names(v) for v in dict(field).values()):
+        return {"ok": None, "why": "a component holds the last jet of an unknown input"}
+    # a parameter component is constant in time, which no identity checks once it holds an input
+    if jets and any(set(jets) & names(v) for k, v in theta.items() if k in set(setup.get("params") or ())):
+        return {"ok": None, "why": "a parameter component holds an unknown input"}
     of = {}
     for r in used:
-        res = certify(regime_identities(regimes[r], field))
+        res = certify(regime_identities(regimes[r], field, jets))
         if res["ok"] is True:
             of[r] = field
             continue
         # in another regime the direction may need other state components
         own = [ch for ch in chains if setup["regime_of"][ch[0]] - 1 == r]
-        alt = combined_field(extended_fields(setup, own) if own else setup["gens"][r], theta, states)
-        res = certify(regime_identities(regimes[r], alt)) if alt is not None else res
+        alt = None if jets else \
+            combined_field(extended_fields(setup, own) if own else setup["gens"][r], theta, states)
+        res = certify(regime_identities(regimes[r], alt, jets)) if alt is not None else res
         if res["ok"] is not True:
             return res
         of[r] = dict(alt, **extra)
@@ -577,6 +590,38 @@ def _in_span_at_a_point(A, b):
         return True
 
 
+# operation count of a system beyond which no symbolic solve is tried
+_SOLVE_OPS = 20000
+
+
+def _square_solve(A, b):
+    """A solution of A c = b, free entries zero, over the pivots at a random point; None without one or past the cap."""
+    import random
+
+    from sympy.polys.matrices import DomainMatrix
+    if sum(spy.count_ops(x) for x in list(A) + list(b)) > _SOLVE_OPS:
+        session.note("limits", "combined lift: the system is past the size of a symbolic solve")
+        return None
+    rng = random.Random(len(A))
+    syms = sorted(A.free_symbols | b.free_symbols, key=str)
+    pt = {x: spy.Rational(rng.randint(2, 997), rng.randint(2, 997)) for x in syms}
+    An = A.xreplace(pt)
+    if not all(x.is_Rational for x in An):
+        return None
+    cols = list(An.rref()[1])
+    rows = list(An[:, cols].T.rref()[1])
+    if not cols:
+        return [spy.Integer(0)] * A.shape[1]
+    As, bs = A.extract(rows, cols), b.extract(rows, [0])
+    dA = DomainMatrix.from_Matrix(As.row_join(bs)).to_field()
+    dB = dA.extract(list(range(len(rows))), [len(cols)])
+    sol = dA.extract(list(range(len(rows))), list(range(len(cols)))).lu_solve(dB).to_Matrix()
+    c = [spy.Integer(0)] * A.shape[1]
+    for j, col in enumerate(cols):
+        c[col] = spy.cancel(sol[j])
+    return c
+
+
 def combined_field(gens, vec, states):
     """Combination of the regime fields `gens` whose parameter part is `vec`, with state components, or None."""
     sts = set(states)
@@ -592,8 +637,9 @@ def combined_field(gens, vec, states):
         b = spy.Matrix([model_sympify(vp[k]) if k in vp else spy.Integer(0) for k in keys])
         if not _in_span_at_a_point(A, b):
             return None
-        sol, params = A.gauss_jordan_solve(b)
-        c = [spy.cancel(x) for x in sol.subs({t: 0 for t in params})]
+        c = _square_solve(A, b)
+        if c is None:
+            return None
         if any(x.free_symbols & {spy.Symbol(s) for s in sts} for x in c):
             return None
         if any(spy.cancel(e) != 0 for e in (A * spy.Matrix(c) - b)):
@@ -697,8 +743,10 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             if j > 0 and sg.get("ev_var_idx") is not None and len(np.atleast_1d(sg["ev_var_idx"])):
                 evi = np.atleast_1d(sg["ev_var_idx"]).astype(np.int64)
                 evm = np.atleast_1d(sg["ev_method"]).astype(np.int64)
+                # a replace by a value over the leaves resets the variation of its state
+                fixed = np.atleast_1d(sg.get("ev_leaf_only", np.ones(len(evi), dtype=bool))).astype(bool)
                 if V.shape[0]:
-                    V[:, evi[evm == 0]] = 0
+                    V[:, evi[(evm == 0) & fixed]] = 0
                 mult = evi[evm == 2]
                 if len(mult):
                     V = np.vstack([V, np.eye(n_states, dtype=np.int64)[mult]])

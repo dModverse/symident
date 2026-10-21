@@ -105,6 +105,9 @@ def generators_lines(res, verbose=False, width=None):
             continue
         out.append((lead + (f"({d['level']})" if d.get("level") else "")).rstrip())
         out += format_generator(d.get("display") or d["generator"], ind, width)
+        if d.get("input_change"):
+            out.append(f"{ind}input change:")
+            out += format_generator(d["input_change"], ind, width)
         out.append("")
     levels = {d.get("level") for d in syms}
     if "exact" in levels:
@@ -158,12 +161,13 @@ def result_lines(res, verbose=False, width=None, fixing=False):
     n = len(res["symmetries"])
     if is_obs and res.get("identifiable"):
         return [f"Result:  structurally locally identifiable (rank {res['rank']} / {res['dim']})"]
-    cands = (((res.get("info") or {}).get("switching") or {}).get("candidates") or []) if is_obs else []
+    sw = ((res.get("info") or {}).get("switching") or {}) if is_obs else {}
+    cands, unc = sw.get("candidates") or [], sw.get("uncertified")
     if is_obs:
         more = res["dim"] - res["rank"] - n
         out = [f"Result:  rank {res['rank']} / {res['dim']}  |  "
                f"{plural(n, 'non-identifiable direction', 'non-identifiable directions')}" +
-               (f", up to {more} more" if more > 0 and cands else "")]
+               (f", up to {more} more" if more > 0 and (cands or unc) else "")]
         rs = (res.get("info") or {}).get("rank_status")
         if isinstance(rs, dict) and rs.get("status") == "verified" and res["info"].get("rank_fields") is not None:
             out.append(_wrap(f"The rank is verified, not proven: the {rs['why']}" +
@@ -181,6 +185,8 @@ def result_lines(res, verbose=False, width=None, fixing=False):
         out = [f"Result:  {plural(n, 'scaling symmetry', 'scaling symmetries')} (exact integer kernel)", ""]
     out += generators_lines(res, verbose, width)
     out += candidate_lines(cands, width)
+    if unc and not cands:
+        out.append(_wrap(f"Open: {unc}.", "", width))
     if fixing:
         out += reduction_hint_lines(res, width)
     return out
@@ -302,7 +308,9 @@ def red_verdict(x, domain="positive orthant"):
     return (f"Reduced {len(x['removed'])} of {n_dir} direction{'' if n_dir == 1 else 's'}" +
             (f"  ({', '.join(x['remaining'])} remaining)" if x["remaining"] else "") +
             (f"; {', '.join(dep)} {'depends' if len(dep) == 1 else 'depend'} on the others" if dep else "") +
-            (f"; the section of {', '.join(part)} covers only part of the {domain}" if part else "") + ".")
+            (f"; the section of {', '.join(part)} covers only part of the {domain}" if part else "") +
+            ("; the closed loop does not confirm it" if ((x.get("checks") or {}).get("loop") or {}).get("ok") is False
+             else "") + ".")
 
 
 def red_chart_lines(x, width, domain="positive orthant"):
@@ -483,10 +491,12 @@ def _level_lines(x, width):
     if ck.get("failed"):
         out.append(_wrap("Check failed over Q: " + "; ".join(ck["failed"]) + ".", "", width))
     lp = ck.get("loop")
-    if isinstance(lp, dict) and not lp.get("ok"):
+    if isinstance(lp, dict) and lp.get("directions") is None and lp.get("reason"):
+        out.append(_wrap(f"Closed loop: {lp.get('reason')}.", "", width))
+    elif isinstance(lp, dict) and not lp.get("ok"):
         out.append(_wrap(f"Closed loop: the reduced model has {plural(lp['directions'], 'direction', 'directions')}, "
-                         f"{lp['expected']} expected (rank {lp['rank']} / {lp['dim']}, {lp['rank_status']}).",
-                         "", width))
+                         f"{lp['expected']} expected (rank {lp['rank']} / {lp['dim']}, {lp['rank_status']})" +
+                         (f"; {lp['reason']}" if lp.get("reason") else "") + ".", "", width))
     return out
 
 
@@ -503,6 +513,8 @@ def reduction_lines(x, width=None, detail_call=DETAIL_CALL):
         out.append("")
         out.append("Not reduced: " + ", ".join(b["labels"]) +
                    (" | invariants: " + ", ".join(b["invariants"]) if b.get("invariants") else ""))
+        if b.get("reason"):
+            out.append(_wrap(f"{b['reason']}.", "  ", width))
         if b.get("split"):
             sp = b["split"]
             out.append(f"  split orbits: {', '.join(sp['positive'])} where {sp['invariant']} > 0, "

@@ -47,16 +47,19 @@ class Narrow:
             out = []
             for s in range(0, len(point_list), per):
                 out.extend(an.sys.chunk(point_list[s:s + per], prime_vec[s:s + per], Nt, self.cols, self.conds))
-            return out
+            return [run.modulo_nuisance(o, q, self.cols) for o, q in zip(out, prime_vec)] if run.nuis_cols else out
         M = np.vstack([np.asarray(pp[:run.n_leaves], dtype=np.int64) for pp in point_list])
+        nc = self.cols if run.nuis_cols else None
         if run.has_gaps:
-            return _core.sym_obs_null_chain_point_batch([run.chain_tapes(idx) for idx in run.chain_groups],
-                                                        run.n_leaves, run.n_states, self.zs, M, list(prime_vec),
-                                                        int(Nt), int(run.mtot), run.cores, list(run.nt_cap))
+            os_ = _core.sym_obs_null_chain_point_batch([run.chain_tapes(idx) for idx in run.chain_groups],
+                                                       run.n_leaves, run.n_states, self.zs, M, list(prime_vec),
+                                                       run.exact_nt(Nt, run.mtot), int(run.mtot), run.cores,
+                                                       list(run.nt_cap))
+            return [run.modulo_nuisance(o, q, nc) for o, q in zip(os_, prime_vec)] if nc else os_
         os_ = _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, self.zs, M, list(prime_vec),
-                                       int(Nt), run.cores)
+                                       run.exact_nt(Nt), run.cores)
         if not an.transient:
-            return os_
+            return [run.modulo_nuisance(o, q, nc) for o, q in zip(os_, prime_vec)] if nc else os_
         out = []
         for i, o in enumerate(os_):
             p = prime_vec[i]
@@ -72,7 +75,7 @@ class Narrow:
             out.append({"ok": True, "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), self.m),
                         "pivots": np.atleast_1d(rr["piv"]).astype(np.int64),
                         "rank": int(rr["rank"]), "dim": self.m})
-        return out
+        return [run.modulo_nuisance(o, q, nc) for o, q in zip(out, prime_vec)] if nc else out
 
     def kc(self, point, p, Nt):
         """The kernel on the column subset at `point` mod `p`, Lie order `Nt`."""

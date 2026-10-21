@@ -7,6 +7,7 @@ from .charts import (
     _apply_power_recast,
     _detect_log_params,
     _detect_power_atoms,
+    _exp_atom,
     _has_exp,
     _hyp_to_exp,
     _log_param_denominators,
@@ -122,12 +123,13 @@ def _emit_tape_shared(fexpr, gexpr, slot_of, base, allow_sqrt=False):
 
 
 def _compose_t0_events(ic_map, t0evs, pval, subs_map):
-    """Apply a segment's t0 events to the initial-state map in place: x0 = E(x_ss), f = 0 stays on x_ss."""
+    """Apply a segment's t0 events in place: x0 = E(x_ss), f = 0 stays on x_ss, values see the pre-event states."""
+    pre = dict(ic_map)
     for e in t0evs or []:
         Xv = spy.Symbol(str(e['var']))
         if Xv not in ic_map:
             continue
-        val = spy.sympify(pval(e['value'])).subs(subs_map)
+        val = spy.sympify(pval(e['value'])).subs(subs_map).xreplace(pre)
         meth = str(e['method'])
         if meth == 'replace':
             ic_map[Xv] = val
@@ -203,6 +205,25 @@ def _str_memo():
     return f
 
 
+def _zero_powers(e, positive):
+    """0^n replaced by 0 where the exponent n is positive on the declared domain."""
+    def pos(x):
+        sub = {v: spy.Symbol(str(v), positive=True) for v in x.free_symbols
+               if positive is True or str(v) in set(positive or ())}
+        return bool(x.xreplace(sub).is_positive)
+    e = spy.sympify(e)
+    if not any(p.base == 0 for p in e.atoms(spy.Pow)):
+        return e
+    return e.replace(lambda x: x.is_Pow and x.base == 0 and not x.exp.is_number and pos(x.exp),
+                     lambda x: spy.Integer(0))
+
+
+def _clock_exp(e):
+    """Whether `e` holds exp() or b^x of an exponent that reads the clock `time`."""
+    return any((be := _exp_atom(a)) is not None and 'time' in {str(x) for x in be[1].free_symbols}
+               for a in spy.sympify(e).atoms(spy.exp, spy.Pow))
+
+
 def compile_observability_tape_multi(model, observation, condition_subs, condition_ic0,
                                   fixed=None, parameters=None, backend='sympy',
                                   equilibrate=False, forcings=None,
@@ -210,8 +231,9 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                                   condition_t0_events=None, joint_steady_state=False,
                                   joint_fixed_states=None, held_state_params=None,
                                   condition_obs=None, condition_times=None,
-                                  keep_coords=None, condition_rest_subs=None):
-    """Per-condition observability tapes over a shared coordinate space, or {'ok': False, 'nonrational': ...}."""
+                                  keep_coords=None, condition_rest_subs=None, const_states=None,
+                                  positive=True):
+    """Per-condition observability tapes over shared coordinates, without `const_states`, or {'ok': False, ...}."""
     _s = _str_memo()
     model = _as_list(model)
     observation = _as_list(observation)
@@ -259,7 +281,8 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     held_map = {_s(k): spy.Symbol(_s(v)) for k, v in held_state_params.items()}
     held_param_syms = [spy.Symbol(_s(v)) for v in held_state_params.values()]
 
-    is_const = [spy.sympify(e) == 0 for e in diff_equations]
+    is_const = [spy.sympify(e) == 0 and (const_states is None or _s(variables[i]) in set(const_states))
+                for i, e in enumerate(diff_equations)]
     S = [variables[i] for i in range(len(variables)) if not is_const[i]]
     Srhs = [spy.sympify(diff_equations[i]) for i in range(len(variables))
             if not is_const[i]]
@@ -307,8 +330,8 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         for k, v in dict(condition_subs[c]).items():
             subs_map[local.get(_s(k), spy.Symbol(_s(k)))] = pval(v)
         ic0 = dict(condition_ic0[c]) if c < len(condition_ic0) else {}
-        f_c = [subs_memo(e, subs_map) for e in Srhs]
-        g_c = [subs_memo(e, subs_map) for e in obs_read[c][1]]
+        f_c = [_zero_powers(subs_memo(e, subs_map), positive) for e in Srhs]
+        g_c = [_zero_powers(subs_memo(e, subs_map), positive) for e in obs_read[c][1]]
         # resting-state model for the equilibrate solve: forcings at 0, no events,
         # non-forcing per-condition substitutions baked in
         forc_zero = {local.get(nm, spy.Symbol(nm)): spy.Integer(0) for nm in forcings}
@@ -322,7 +345,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                 subs_map_ic[ks] = pval(v)
                 if _s(k) not in forcings:
                     subs_map_nf[ks] = pval(v)
-        f_ss = [subs_memo(subs_memo(e, subs_map_nf), forc_zero) for e in Srhs]
+        f_ss = [_zero_powers(subs_memo(subs_memo(e, subs_map_nf), forc_zero), positive) for e in Srhs]
         ic_c = {}
         for X in S:
             e = pval(ic0[_s(X)]) if _s(X) in ic0 else X
@@ -431,7 +454,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                 any(t is not None and pred(t) for t in tm_per))
 
     def taken_names():
-        taken = {_s(x) for x in S} | set(fixed_names) | {_s(X) for X, _ in lp.values()}
+        taken = {_s(x) for x in S} | set(fixed_names) | {_s(X) for X, *_ in lp.values()}
         for (f_c, g_c, ic_c, f_ss) in per_cond:
             for e in list(f_c) + list(g_c) + list(ic_c.values()) + list(f_ss):
                 taken |= {_s(x) for x in spy.sympify(e).free_symbols}
@@ -460,14 +483,22 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     # exponentials: auxiliary states and generic exponential leaves (_apply_exp_recast)
     exp_recast = None
     if any_in(_has_exp):
-        if equilibrate:
-            return {'ok': False, 'why': 'equilibrate does not support exp() '
-                    'or b^x of a state, or of a parameter that also enters elsewhere; '
-                    'give the steady state through `trafo` or start from free '
-                    'initial values'}
+        refuse = {'ok': False, 'why': 'equilibrate does not support exp() '
+                  'or b^x of a state, or of a parameter that also enters elsewhere, in the '
+                  'resting model; give the steady state through `trafo` or start from free '
+                  'initial values'}
+        if equilibrate and 'time' in forcings and any_in(_clock_exp):
+            refuse['why'] = ('equilibrate does not support exp() or b^x of the clock time, an input '
+                             'that rests at zero; give the steady state through `trafo` or start from '
+                             'free initial values')
+        # under equilibrate, exponentials of parameters outside the resting model, as leaves
+        if equilibrate and any(_has_exp(e) for (_, _, _, f_ss) in per_cond for e in f_ss):
+            return refuse
         exp_recast = _apply_exp_recast(S, per_cond, ev_per, tm_per, taken_names())
         if 'why' in exp_recast:
             return {'ok': False, 'why': exp_recast['why']}
+        if equilibrate and exp_recast['n_aux']:
+            return refuse
         S, per_cond = exp_recast['S'], exp_recast['per_cond']
         ev_per, tm_per = exp_recast['ev_per'], exp_recast['tm_per']
         n_s = len(S)
@@ -749,15 +780,20 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             keep = [e for e in evs if _s(e['var']) in idx_of_state]
             if keep:
                 vals = [e['value'] for e in keep]
+                # values over the leaves and the states just before the event
+                ev_slot = dict(leaf_slot, **{nm: n_leaves + i for nm, i in idx_of_state.items()})
                 try:
                     ev_op, ev_a, ev_b, ev_cnum, ev_cden, ev_o = _emit_tape_shared(
-                        [], vals, leaf_slot, n_leaves)
+                        [], vals, ev_slot, n_leaves + n_s)
                 except _NotRationalError:
                     return {'ok': False}
                 tape.update({
                     'ev_op': ev_op, 'ev_a': ev_a, 'ev_b': ev_b, 'ev_cnum': ev_cnum,
                     'ev_cden': ev_cden, 'ev_out': ev_o,
                     'ev_var_idx': [idx_of_state[_s(e['var'])] for e in keep],
+                    'ev_state_slots': 1,
+                    'ev_leaf_only': [not ({str(x) for x in spy.sympify(v).free_symbols} & set(idx_of_state))
+                                     for v in vals],
                     'ev_method': [method_code[_s(e['method'])] for e in keep]})
         # the segment's left boundary time as an order-0 tape: its value sets the gap
         # lengths, its duals hold a time that depends on the coordinates

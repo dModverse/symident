@@ -59,3 +59,19 @@ def test_the_json_reduction_closes_the_loop():
     assert red["checks"]["pins"] is True
     off = json.loads(rjson.reduce_json(det, json.dumps({"check": False})))
     assert "loop" not in off["checks"]
+
+
+def test_the_json_loop_composes_a_model_trafo():
+    spec = {"f": {"x": "-k*x"}, "g": {"y": "s*x"}, "trafo": {"k": "exp(lk)", "s": "a*b"}, "reconstruct": True}
+    red = json.loads(rjson.reduce_json(rjson.detect_json(json.dumps(spec)), "{}"))
+    assert red["checks"]["loop"]["ok"] is True and red["checks"]["loop"]["directions"] == 0
+
+
+def test_the_json_reduction_takes_the_declared_domain_of_the_detection():
+    import symident as si
+    f, g, pos = {"x": "-k*x", "z": "a*x - e*z"}, {"y": "s*z"}, ["k", "e", "s", "a"]
+    r = si.detect(si.Model(f, g, positive=pos), reconstruct=True)
+    out = rjson.detect_json(json.dumps({"f": f, "g": g, "positive": pos, "reconstruct": True}))
+    red = json.loads(rjson.reduce_json(out, "{}"))
+    assert red["assumptions"]["domain"] == si.reduce(r).assumptions["domain"] == pos
+    assert json.loads(rjson.reduce_json(out, json.dumps({"positive": True})))["assumptions"]["domain"] is True

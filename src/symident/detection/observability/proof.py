@@ -29,6 +29,7 @@ from ..fields import (
     field_setup,
     initial_names,
     regime_keys,
+    rescaled_lift,
     restricted_setup,
 )
 
@@ -39,6 +40,33 @@ EXACT_REGIMES = 8
 def _fail(dirs, why):
     for d in dirs:
         d["proof"] = f"{d['proof']}; {why}" if d.get("proof") else why
+
+
+def _weights(vec):
+    try:
+        return {k: spy.Rational(str(v)) for k, v in vec.items()}
+    except (TypeError, ValueError, SyntaxError):
+        return None
+
+
+def _exact_scalings(an, dirs):
+    """Marks exact the directions proportional to an exact scaling of the model, its state weights as the lift."""
+    ws = [_weights(w) for w in an.exact_scalings(an.scal_fixed)]
+    coords = set(an.znames) - {an.znames[i] for i in an.run.nuis_cols}
+    for d in dirs:
+        v = _weights({k: spy.cancel(model_sympify(str(x)) / spy.Symbol(k)) for k, x in d["vector"].items()})
+        if not v:
+            continue
+        k0 = next(k for k, x in v.items() if x != 0)
+        for w in ws:
+            if not w or not w.get(k0):
+                continue
+            c = v[k0] / w[k0]
+            if all(v.get(k, 0) == c * w.get(k, 0) for k in set(v) | (set(w) & coords)):
+                d["exact"], d["proof"] = True, None
+                d["state_components"] = {k: scaling_component(c * x, k) for k, x in w.items()
+                                         if x != 0 and k not in set(an.znames)}
+                break
 
 
 def recast_extended(vec, recast):
@@ -87,8 +115,17 @@ def lift_of(d, rep, states):
 
 
 def _forms(an, d):
-    """The representatives of `d`, in recast coordinates where the analysis is."""
-    reps = representatives(d)
+    """The representatives of `d` with its input components, in recast coordinates where the analysis is."""
+    if d.get("input_vector"):
+        # each form of the coordinates with the input components scaled alike
+        form = d.get("input_form") or representatives(d)[0]
+        reps = []
+        for rep in representatives(dict(d, vector=form, type="general")):
+            inp = rescaled_lift(rep, form, d["input_vector"])
+            if inp is not None:
+                reps.append({**rep, **inp})
+    else:
+        reps = representatives(d)
     if not an.recast:
         return reps
     try:
@@ -331,7 +368,9 @@ def chain_bound(an, result):
     if not dirs:
         return None
     if an.field_joint is not None:
-        return {"applies": False, "why": "the resting state has no closed form"}
+        return {"applies": False, "why": "the error bound does not cover a start at rest (equilibrate)"}
+    if an.run.nuis_cols:
+        return {"applies": False, "why": "the jet chains of the unknown inputs are truncated"}
     run, tapes = an.run, an.multi["tapes"]
     chains = run.chain_groups if run.has_gaps else [[i] for i in range(len(tapes))]
     order = int(an.sc["nt_used"])
@@ -380,9 +419,19 @@ def prove_exact(an, result):
     except Exception as exc:
         swallow(exc, "exact proof")
         return _fail(dirs, f"field setup failed: {type(exc).__name__}")
-    light_proofs(light, an.field_chains, dirs, joint, not joint and not an.run.has_gaps,
+    nuis = [an.znames[i] for i in an.run.nuis_cols]
+    if nuis and not an.multi.get("nuisance_prolonged"):
+        _exact_scalings(an, dirs)
+        return _fail([d for d in dirs if not d.get("exact")], "no exact proof with these nuisance coordinates")
+    if nuis:
+        light["jets"] = nuis
+        light["jet_tops"] = list(an.multi.get("nuisance_tops") or [])
+        light["params"] = [z for z in an.znames if z not in set(light["states"]) | set(an.atom_names)]
+    light_proofs(light, an.field_chains, dirs, joint, not joint and not an.run.has_gaps and not nuis,
                  lambda d: _forms(an, d))
     dirs = [d for d in dirs if not d.get("exact")]
+    if nuis:
+        return _fail(dirs, "no combined lift with unknown inputs")
     if joint:
         for d in dirs:
             try:

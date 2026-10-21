@@ -3,7 +3,7 @@
 import math
 import re
 
-from ..rexpr import as_number, get_symbols, is_number, replace_symbols, sym_sort
+from ..rexpr import as_number, eval_numeric, get_symbols, is_number, replace_symbols, sym_sort
 from ..sym.charts import log_param_backsub
 
 
@@ -101,9 +101,49 @@ def compose_event(cur, method, value):
     raise ValueError(f"unsupported event method '{method}'")
 
 
+def _resolver(conditions, cond_subs):
+    """resolve(val, ci): a value with its grid cell and the per-condition trafo of condition `ci` applied."""
+    cols = set(conditions.colnames()) if conditions is not None else set()
+
+    def resolve(val, ci):
+        val = str(val).strip()
+        v = conditions.cell(ci, val) if val in cols else val
+        if cond_subs and ci < len(cond_subs) and cond_subs[ci]:
+            sub = cond_subs[ci]
+            v = replace_symbols(list(sub), list(sub.values()), v)
+        return v
+    return resolve
+
+
+def time_value(t):
+    """The number of a resolved event time, None while it holds a symbol."""
+    n = as_number(t)
+    if n is None and not get_symbols([t]):
+        n = eval_numeric(t)
+    return n
+
+
+def start_time(events, conditions=None, cond_subs=None, n=1):
+    """The start of the experiment: 0, or the earliest event time that resolves to a number in a condition."""
+    resolve = _resolver(conditions, cond_subs)
+    K = max(1, n, len(cond_subs or []), 0 if conditions is None else conditions.nrow)
+    nums = []
+    for k in range(K):
+        for e in events or []:
+            if e.get("root") is None and (e.get("cond") is None or k in e["cond"]):
+                nums.append(time_value(resolve(e["time"], k)))
+    return min([t for t in nums if t is not None] + [0])
+
+
+def at_time(value, t):
+    """`value` with the clock `time` read at the time `t`."""
+    return replace_symbols(["time"], [str(t)], value) if "time" in get_symbols([str(value)]) else value
+
+
 def resolve_conditions(conditions, events, initial, symbols, states, const_states=(), forcings=(),
-                       t0=None, equilibrate=False, cond_subs=None, cond_initial=None, n_cond_obs=0):
-    """Per-segment substitutions, initial values and events; one chain per condition."""
+                       t0=None, equilibrate=False, cond_subs=None, cond_initial=None, n_cond_obs=0,
+                       renamed=()):
+    """Per-segment substitutions, initial values and events per condition; `renamed` columns substitute the state."""
     n_grid = 0 if conditions is None else conditions.nrow
     Kcond = max(1, len(cond_subs or []), len(cond_initial or []), n_grid, n_cond_obs)
     if n_grid and cond_subs and len(cond_subs) != n_grid:
@@ -117,19 +157,16 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
     sub_cols = [c for c in cols if c in symset]
     const_states = list(const_states)
     dyn_states = [s for s in states if s not in set(const_states)]
-    ic_cols = [c for c in sub_cols if c in set(dyn_states)]
+    ic_cols = [c for c in sub_cols if c in set(dyn_states) and c not in set(renamed)]
     sub_cols = [c for c in sub_cols if c not in set(ic_cols)]
     ev_all = events or []
+    resolve = _resolver(conditions, cond_subs)
     if t0 is None:
-        nums = [as_number(e["time"].strip()) for e in ev_all]
-        nums = [t for t in nums if t is not None]
-        # the experiment starts at 0 unless an event comes earlier
-        t0 = min(nums + [0])
+        t0 = start_time(ev_all, conditions, cond_subs, len(conds))
     t0 = float(t0)
 
-    def layout(ev):
-        tstr = [e["time"].strip() for e in ev]
-        tnum = [as_number(t) for t in tstr]
+    def layout(ev, tstr):
+        tnum = [time_value(t) for t in tstr]
         is_t0 = [t is not None and t <= t0 for t in tnum]
         key = [tstr[i] if tnum[i] is None else num_str(tnum[i]) for i in range(len(ev))]
         if all(t is not None for t in tnum):
@@ -148,21 +185,20 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
     def cell(ci, col):
         return conditions.cell(ci, col)
 
-    def resolve(val, ci):
-        val = str(val)
-        v = cell(ci, val) if val in cols else val
-        if cond_subs and ci < len(cond_subs) and cond_subs[ci]:
-            sub = cond_subs[ci]
-            v = replace_symbols(list(sub), list(sub.values()), v)
-        return v
     dummy_ic0 = {s: "0" for s in dyn_states}
     subs_list, ic0_list, ev0_list, seg_ev_list, time_list, rest_list = [], [], [], [], [], []
     equil_list, chain_of, pos_in_chain = [], [], []
     initial = dict(initial) if initial else None
     n_gaps = 0
+    start = num_str(t0)
     for k in range(len(conds)):
         ev = [e for e in ev_all if e.get("cond") is None or k in e["cond"]]
-        is_t0, seg_of, seg_times = layout(ev)
+        ev_time = [resolve(e["time"], k) for e in ev]
+        is_t0, seg_of, seg_times = layout(ev, ev_time)
+
+        def value(i, k=k, ev=ev, ev_time=ev_time):
+            # an event value reads the clock at its event time
+            return at_time(resolve(ev[i]["value"], k), ev_time[i])
         n_seg = len(seg_times)
         n_gaps = max(n_gaps, n_seg - 1)
         ev_var = [e["var"] for e in ev]
@@ -182,7 +218,7 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
                 if cs in forcings:
                     base = "0"
                 elif init_k is not None and cs in init_k:
-                    base = str(init_k[cs])
+                    base = at_time(init_k[cs], start)
                 else:
                     base = subs_base.get(cs, cs)
                 if not si:
@@ -193,44 +229,50 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
                 si.sort(key=lambda i: (seg_of[i], i))
                 if j == 1 and cs not in forcings:
                     ri = [i for i in si if ev_method[i] == "replace"]
-                    rest[cs] = resolve(ev[ri[-1]]["value"], k) if ri else cur
+                    rest[cs] = value(ri[-1]) if ri else cur
                 for i in si:
-                    cur = compose_event(cur, ev_method[i], resolve(ev[i]["value"], k))
+                    cur = compose_event(cur, ev_method[i], value(i))
                 subs[cs] = cur
             if j == 1:
                 le_idx = [i for i in range(len(ev)) if not is_switch[i] and is_t0[i]]
-                ev0 = [{"var": ev_var[i], "method": ev_method[i], "value": resolve(ev[i]["value"], k)}
-                       for i in le_idx]
-                ic0 = {}
+                ev0 = [{"var": ev_var[i], "method": ev_method[i], "value": value(i)} for i in le_idx]
+                ic0, pre = {}, {}
                 for X in dyn_states:
-                    is_forcing = X in forcings
-                    has_init = init_k is not None and X in init_k
-                    has_cell = X in ic_cols
-                    ops = [i for i in le_idx if ev_var[i] == X]
-                    if not is_forcing and not has_init and not has_cell and not ops:
-                        continue
-                    if is_forcing:
-                        cur = "0"
-                    elif has_init:
-                        cur = str(init_k[X])
-                    elif has_cell:
-                        cur = resolve(cell(k, X), k)
+                    if X in forcings:
+                        pre[X] = "0"
+                    elif init_k is not None and X in init_k:
+                        pre[X] = str(init_k[X])
+                    elif X in ic_cols:
+                        pre[X] = resolve(cell(k, X), k)
                     else:
-                        cur = X
+                        pre[X] = X
+                    if X != "time":
+                        # an initial value reads the clock at the start
+                        pre[X] = at_time(pre[X], start)
+                # event values at t0 see the states before the events
+                at_pre = [x for x in pre if pre[x] != x]
+
+                def before(v):
+                    return replace_symbols(at_pre, [f"({pre[x]})" for x in at_pre], v) if at_pre else v
+                for X in dyn_states:
+                    ops = [i for i in le_idx if ev_var[i] == X]
+                    if pre[X] == X and not ops and X not in forcings:
+                        continue
+                    cur = pre[X]
                     for i in ops:
-                        cur = compose_event(cur, ev_method[i], resolve(ev[i]["value"], k))
+                        cur = compose_event(cur, ev_method[i], before(value(i)))
                     ic0[X] = cur
             else:
                 ev0 = []
                 ic0 = dummy_ic0
-                seg_ev = [{"var": ev_var[i], "method": ev_method[i], "value": resolve(ev[i]["value"], k)}
+                seg_ev = [{"var": ev_var[i], "method": ev_method[i], "value": value(i)}
                           for i in range(len(ev)) if not is_switch[i] and seg_of[i] == j]
             subs_list.append(subs)
             rest_list.append(rest)
             ic0_list.append(ic0)
             ev0_list.append(ev0)
             seg_ev_list.append([] if j == 1 else seg_ev)
-            time_list.append(resolve(seg_times[j - 1], k))
+            time_list.append(seg_times[j - 1])
             equil_list.append(bool(equilibrate))
             chain_of.append(k + 1)
             pos_in_chain.append(j)
@@ -326,7 +368,8 @@ def initial_value_split(trafos, states, taken=()):
     for tr in trafos:
         sub_e = [k for k in tr if k not in stset]
         conflict |= set(get_symbols([tr[k] for k in sub_e])) & stset
-    conflict = [s for s in states if s in conflict]
+    # the clock is no initial value
+    conflict = [s for s in states if s in conflict and s != "time"]
     if not conflict:
         return none
     taken = list(dict.fromkeys(list(taken) + list(states) + [k for tr in trafos for k in tr] +
@@ -372,28 +415,9 @@ def rename_result(raw, frm, to):
     raw = dict(raw)
     if raw.get("coordinates") is not None:
         raw["coordinates"] = ren(raw["coordinates"])
+    if isinstance(raw.get("kernel"), dict) and raw["kernel"].get("coords") is not None:
+        raw["kernel"] = dict(raw["kernel"], coords=[frm[to.index(z)] if z in to else z
+                                                    for z in raw["kernel"]["coords"]])
     if raw.get("non_identifiable") is not None:
         raw["non_identifiable"] = [fix_dir(d) for d in raw["non_identifiable"]]
     return raw
-
-
-def percond_lines(fdyn, gset, g_per_cond, conditions, cond_subs, symbols):
-    """Per-condition (f, g) lines for the scaling engine."""
-    from ..rexpr import eqn_lines
-    n_grid = 0 if conditions is None else conditions.nrow
-    K = max(len(cond_subs or []), n_grid, len(gset) if g_per_cond else 0, 1)
-    symset = set(symbols)
-    sub_cols = [] if conditions is None else \
-        [c for c in conditions.colnames() if c in symset and c not in fdyn]
-    out = []
-    for k in range(K):
-        subs = {col: conditions.cell(k, col) for col in sub_cols}
-        if cond_subs and k < len(cond_subs) and cond_subs[k] is not None:
-            subs.update(cond_subs[k])
-
-        def sub(e):
-            if not subs or not e:
-                return e
-            return {n: replace_symbols(list(subs), list(subs.values()), v) for n, v in e.items()}
-        out.append({"f": eqn_lines(sub(fdyn)), "g": eqn_lines(sub(gset[k if g_per_cond else 0]))})
-    return out

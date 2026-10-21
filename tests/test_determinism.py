@@ -15,6 +15,7 @@ import symident as si
 def result(m, **kw):
     d = si.detect(m, reconstruct=True, cores=int(sys.argv[1]), **kw).to_dict()
     d["info"].pop("elapsed", None)
+    d["info"].pop("timing", None)
     return d
 
 ev = [{"var": "R", "time": 0, "value": "d0", "method": "add"},
@@ -83,6 +84,7 @@ def _detect(**kw):
     import symident as si
     d = si.detect(si.Model(**INH), reconstruct=True, equilibrate=True, **kw).to_dict()
     d["info"].pop("elapsed", None)
+    d["info"].pop("timing", None)
     return d
 
 

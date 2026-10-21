@@ -24,7 +24,8 @@ msolve
 ------
 
 Steady-state analyses (``equilibrate=True``) whose resting states need a coupled nonlinear
-polynomial solve use `msolve <https://msolve.lip6.fr>`_. Without it they stop with
+polynomial solve, and :meth:`~symident.Symmetries.solution_count`, use
+`msolve <https://msolve.lip6.fr>`_. Without it they stop with
 :class:`~symident.sym.msolve.MsolveMissingError`; all other analyses run without it.
 
 On Linux and macOS

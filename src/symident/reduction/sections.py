@@ -72,8 +72,30 @@ def balance_products(p, q):
     return out
 
 
+def _bound_pins(support):
+    """Pins v = r/2 for a positive v of `support` below the root r of a declared bound linear in v alone."""
+    out = []
+    for h in DOMAIN.get("bounds") or []:
+        try:
+            e = red_sympify(str(h).replace("^", "**"), red_locals([str(h)]))
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            continue
+        syms = [str(x) for x in e.free_symbols]
+        if len(syms) != 1 or syms[0] not in support or is_real(syms[0]):
+            continue
+        v = spy.Symbol(syms[0])
+        c = spy.diff(e, v)
+        if c.free_symbols or not c.is_negative or spy.diff(e, v, 2) != 0:
+            continue
+        r = spy.Rational(-e.xreplace({v: 0}), c)
+        if r > 0:
+            out.append([syms[0], str(r / 2)])
+    return out
+
+
 def section_cands(support, extra=()):
-    """Monomial balance candidates m1 = m2 for a curved block's gauge section."""
+    """Gauge-section candidates of a curved block: pins, summand balances (those in `support` first), monomial pairs."""
     def key(pr):
         return " = ".join(sym_sort(list(pr)))
     head, groups = [], []
@@ -98,7 +120,13 @@ def section_cands(support, extra=()):
         if k not in seen_k:
             seen_k.add(k)
             h2.append(pr)
-    head = h2
+    sup = set(support)
+    ident = re.compile(r"[A-Za-z_.][A-Za-z0-9_.]*")
+    own = [pr for pr in h2 if all(x in sup for t in pr for x in ident.findall(t))]
+    foreign = [pr for pr in h2 if pr not in own]
+    pins = _bound_pins(support) + [[v, "0" if is_real(v) else "1"] for v in support]
+    # every summand balance precedes the monomial pairs, so the cap on kept candidates cannot drop it
+    head = pins + own + foreign
     mons = [(m, 1) for m in support]
     if len(support) > 1:
         mons += [(f"{a}*{b}", 2) for a, b in itertools.combinations(support, 2)]

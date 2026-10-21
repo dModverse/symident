@@ -292,6 +292,8 @@ class RestingStates:
 
     def cont_eligible(self, ci):
         """Whether condition `ci` may be continued from the forward condition."""
+        if getattr(self, "exp_rel_fn", None) is not None:
+            return False
         if self.diag is not None:
             return self.fwd_on and ci in self.equil_conds
         return (self.fwd_on and self.run.has_gaps and ci != self.fwd_cond
@@ -405,7 +407,8 @@ class RestingStates:
                 failed = [ci for ci in self.equil_conds[1:] if self.solve_cond(point, P1, ci) is None]
                 if not failed:
                     return point
-            run.ss_why = "joint solve failed"
+            run.ss_why = ("joint solve failed for condition " +
+                          ", ".join(str(c + 1) for c in dict.fromkeys(failed)))
             redraw = list(dict.fromkeys(n for ci in failed for n in self.private_of[ci]))
             if any(len(self.private_of[ci]) == 0 for ci in failed):
                 return None

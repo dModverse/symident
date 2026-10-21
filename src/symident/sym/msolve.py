@@ -45,7 +45,7 @@ def _msolve_binary():
     path, _ = find_msolve()
     if path is None:
         raise MsolveMissingError(
-            "equilibrate: this steady state needs msolve; run symident.install_msolve(), or "
+            "this analysis needs msolve, which was not found; run symident.install_msolve(), or "
             "set SYMIDENT_MSOLVE to an msolve executable.")
     return path
 

@@ -32,8 +32,61 @@ def entry_class(e):
     return "root" if root else "yes"
 
 
+def outside_bounds(entries, real=()):
+    """Whether the coordinate values `entries` break a declared bound at a random point; a preference, not a proof."""
+    import random
+    if not DOMAIN.get("bounds"):
+        return False
+    from ..sym.parse import model_sympify
+    vals = {k: model_sympify(str(v)) for k, v in entries.items()}
+    syms = sorted({x for v in vals.values() for x in v.free_symbols}, key=str)
+    rng = random.Random(len(syms))
+    for _ in range(5):
+        pt = {x: spy.Rational(rng.randint(1, 50), rng.randint(1, 50)) * (rng.choice((1, -1)) if str(x) in real else 1)
+              for x in syms}
+        at = {spy.Symbol(k): v.xreplace(pt) for k, v in vals.items()}
+        for h in DOMAIN["bounds"]:
+            try:
+                hv = model_sympify(str(h)).xreplace(at)
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
+                continue
+            if hv.is_number and hv.is_real and hv <= 0:
+                return True
+    return False
+
+
+def inside_bounds(entries, invariants, names, support, tries=40):
+    """Whether `entries` give positive coordinates inside the declared bounds at sampled points; a preference only."""
+    import random
+
+    from ..sym.parse import model_sympify
+    bounds = [model_sympify(str(h)) for h in DOMAIN.get("bounds") or []]
+    vals = {k: model_sympify(str(v)) for k, v in entries.items()}
+    rng = random.Random(len(support))
+    pos = positive_set()
+    seen = 0
+    for _ in range(tries):
+        pt = {spy.Symbol(v): spy.Rational(rng.randint(1, 99), 100) * (rng.choice((1, 10))) for v in support}
+        if not all((h.xreplace(pt).is_positive is True) for h in bounds if h.free_symbols <= set(pt)):
+            continue
+        at = {spy.Symbol(n): spy.sympify(I).xreplace(pt) for n, I in zip(names, invariants)}
+        sol = {k: v.xreplace(at) for k, v in vals.items()}
+        if any(not x.is_number for x in sol.values()):
+            return False
+        for k, x in sol.items():
+            if (pos is None or k in set(pos)) and not (x.is_real and x > 0):
+                return False
+        full = {spy.Symbol(k): x for k, x in sol.items()}
+        if any(h.xreplace(full).is_positive is False for h in bounds):
+            return False
+        seen += 1
+    return seen > 0
+
+
 def positive_set_of(positive, coords):
     """The positive coordinates among `coords` from `positive`, None for all; unknown names warn."""
+    DOMAIN["bounds"] = []
     if positive is True:
         return None
     if positive is False:
@@ -41,6 +94,9 @@ def positive_set_of(positive, coords):
     if isinstance(positive, str):
         positive = [positive]
     positive = list(dict.fromkeys(positive))
+    # declared expressions such as 1-x bound the domain; the sections prefer to stay inside
+    DOMAIN["bounds"] = [p for p in positive if not re.fullmatch(r"[A-Za-z_.][A-Za-z0-9_.]*", str(p))]
+    positive = [p for p in positive if p not in DOMAIN["bounds"]]
     unknown = [p for p in positive if p not in set(coords)]
     if unknown:
         warnings.warn(f"no effect: {', '.join(unknown)}: not a coordinate of the analysis.",
@@ -48,7 +104,8 @@ def positive_set_of(positive, coords):
     return [p for p in positive if p in set(coords)]
 
 
-DOMAIN = {"positive": None, "real_carriers": [], "no_roots": False, "sgn_cache": None, "deadline": None}
+DOMAIN = {"positive": None, "real_carriers": [], "no_roots": False, "sgn_cache": None, "deadline": None,
+          "bounds": []}
 
 
 @contextlib.contextmanager

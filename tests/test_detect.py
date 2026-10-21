@@ -11,7 +11,8 @@ import sympy as spy
 import symident as si
 from symident import state
 from symident.detection.cq import equil_zero_states
-from symident.sym.msolve import _msolve_binary
+from symident.sym.msolve import MsolveMissingError, _msolve_binary
+from symident.sym.parse import model_sympify
 
 
 def _has_msolve():
@@ -24,7 +25,7 @@ def _has_msolve():
 
 needs_msolve = pytest.mark.skipif(not _has_msolve(), reason="needs msolve")
 
-_MODEL_KEYS = ("reactions", "trafo", "conditions", "events", "inputs", "fixed", "parameters")
+_MODEL_KEYS = ("reactions", "trafo", "conditions", "events", "inputs", "fixed", "parameters", "known_inputs")
 
 
 def detect(odes=None, observables=None, **kw):
@@ -381,7 +382,7 @@ def test_two_moieties_scaling_and_general():
 
 def test_equilibrate_free_hill_exponent():
     ev = [event("u", -1, "1", "replace")]
-    cond = grid(["stim"], var=[1])
+    cond = grid(["stim"], kin=["kin"])
     r = detect({"p": "kpr/(1+kinh*p^nhill) - dp*p + kin*u", "u": "0"}, {"y": "s*p"},
                equilibrate=True, inputs=["u"], events=ev, conditions=cond, reconstruct=False)
     assert "nhill" not in supports(r)
@@ -1459,3 +1460,359 @@ def test_an_event_after_the_start_leaves_the_start_at_zero():
     ev = [{"var": "s", "time": 5, "value": "1", "method": "replace"}]
     r = si.detect(si.Model(f, {"y": "c*x"}, trafo={"x": "0", "s": "0", "u": "1"}, events=ev))
     assert (r.rank, r.dim) == (2, 2) and r.info["rank_status"]["status"] == "proven"
+
+
+def test_names_sympy_reserves_stay_coordinates_in_closed_forms():
+    from symident.detection.closedform import simplify
+    assert spy.simplify(model_sympify(simplify("I**2*k")) - model_sympify("I^2*k")) == 0
+    assert "log(E)" in simplify("log(E)*k")
+    r = detect({"C": "Ef+Eb+Ep-k*C", "C13": "Ef*rf+Eb*rb+Ep*rp-a*k*C13"}, {"CH4": "C", "ratio": "C13/C"},
+               fixed=["rf", "rb", "rp", "a"], reconstruct=True)
+    assert not r.info["errors"]
+
+
+def test_a_state_named_e_keeps_its_closed_form():
+    r = detect({"E": "b*(al*P+I+al*A)-E/De", "P": "E/De-P/Dp", "I": "r*P/Dp-I/Di", "A": "(1-r)*P/Dp-A/Di"},
+               {"y": "r*P/Dp"}, fixed=["De", "Dp", "Di"], reconstruct=True)
+    assert not r.info["errors"] and all("exp" not in str(s.generator) for s in r.symmetries)
+    curved = [s.generator for s in r.symmetries if "E" in s.generator]
+    assert curved and all(spy.simplify(model_sympify(g["E"]) / model_sympify(g["P"]) - spy.Symbol("E") /
+                                       spy.Symbol("P")) == 0 for g in curved)
+
+
+def test_a_premature_lie_order_is_extended():
+    from symident.detection.core import _past_premature_order
+    calls = []
+
+    def oam():
+        calls.append(state.get("nt_floor"))
+        return {"verification": {"ok": True}}
+    out = _past_premature_order(oam, {"verification": {"ok": False, "grow_at": 14}})
+    assert out["verification"]["ok"] and calls == [14 + int(state.env_value("LIEPLATEAU", "3"))]
+
+
+def test_an_event_value_reads_the_state_at_the_event():
+    ev = [{"var": "z", "time": 1, "value": "x", "method": "replace"}]
+    r = detect({"x": "-k*x", "z": "0"}, {"y": "z"}, events=ev, trafo={"z": "0"}, reconstruct=True)
+    assert (r.rank, r.dim) == (1, 2)
+    g = r.symmetries[0].generator
+    assert spy.simplify(model_sympify(g["x"]) / model_sympify(g["k"]) - spy.Symbol("x")) == 0
+    ev = [{"var": "x", "time": 1, "value": "x+c", "method": "replace"}]
+    assert detect({"x": "-k*x"}, {"y": "x"}, events=ev, trafo={"x": "1"}).identifiable
+
+
+def test_free_exponents_of_states_with_given_initial_values():
+    assert detect({"x": "-k*x^n"}, {"y": "x"}, trafo={"x": "1"}, positive=["k", "n"]).identifiable
+    assert detect({"x": "a*x^(3/4)-x/K^(1/4)"}, {"y": "x"}).identifiable
+
+
+def test_a_kernel_in_log_coordinates_is_renamed_back():
+    ev = [{"var": "P", "time": i, "value": str(v), "method": "replace"} for i, v in enumerate([3, 0, 8])] + \
+        [{"var": "PET", "time": i, "value": str(v), "method": "replace"} for i, v in enumerate([1, 2, 1])]
+    odes = {"SM": "P - P*SM^BETA/FC^BETA - PET*min(SM/(LP*FC),1)", "SUZ": "P*SM^BETA/FC^BETA - K1*SUZ",
+            "P": "0", "PET": "0"}
+    assert detect(odes, {"Q": "K1*SUZ"}, inputs=["P", "PET"], events=ev).identifiable
+
+
+def test_a_size_cap_in_the_gap_bound_leaves_no_bound(monkeypatch):
+    from symident.detection import gapcert
+
+    def boom(*a):
+        raise OverflowError("a Lie derivative grows past the size cap")
+    monkeypatch.setattr(gapcert, "_gap_bound", boom)
+    assert gapcert.gap_bound([], [], [], 1, 7, None)["bound"] is None
+
+
+def test_the_combined_lift_solves_the_square_subsystem():
+    from symident.detection.fields import _square_solve
+    a, b = spy.symbols("a b")
+    A = spy.Matrix([[a, 1], [2 * a, 2], [1, b]])
+    c = _square_solve(A, A * spy.Matrix([b, a]))
+    assert [spy.cancel(x) for x in c] == [b, a]
+    from symident.sym.direction import _canon_int_vector
+    assert _canon_int_vector([spy.E * a], [a]) is None
+
+
+def test_a_signed_net_uptake_rests_at_zero():
+    rx = network(("", "X", "ki*(lev*u - X)"), ("X", "Y", "kf*X"), ("", "Y", "kb"), ("Y", "", "kd*Y"))
+    rx = dict(rx, species=rx["species"] + ["u"], stoichiometry=[r + [0] for r in rx["stoichiometry"]])
+    res = detect(reactions=rx, observables={"y": "s*Y"}, inputs=["u"], events=[event("u", 0, "1")],
+                 equilibrate=True)
+    ex = detect({"X": "ki*(lev*u - X)", "Y": "kf*X + kb - kd*Y", "u": "0"}, {"y": "s*Y"}, inputs=["u"],
+                events=[event("u", 0, "1")], trafo={"X": "0", "Y": "kb/kd"})
+    assert res.rank == ex.rank
+
+
+def test_a_known_input_is_a_generic_known_function():
+    r = detect({"x": "-k*x + b*T"}, {"y": "x"}, known_inputs=["T"], trafo={"x": "0"})
+    assert r.identifiable and set(r.info["coordinates"]) == {"k", "b"}
+    assert r.info["timing"][-1]["stage"] == "done"
+
+
+def test_a_repeated_reduction_is_a_copy_of_the_first(monkeypatch):
+    r = detect({"x": "-k*x"}, {"y": "s*x"}, reconstruct=True)
+    calls, run = [], si.api.reduce
+    monkeypatch.setattr(si.api, "reduce", lambda *a, **k: calls.append(1) or run(*a, **k))
+    a, b = r.reduce(), r.reduce()
+    assert a is not b and a.to_dict() == b.to_dict() and len(calls) == 1
+
+
+def test_exponentials_of_parameters_outside_the_resting_model_under_equilibrate():
+    ev = [event("u", 1, "exp(5*(1-c)/c)")]
+    eq = detect({"x": "b - k*x + u", "u": "0"}, {"y": "s*x"}, inputs=["u"], events=ev, equilibrate=True,
+                reconstruct=True)
+    ex = detect({"x": "b - k*x + u", "u": "0"}, {"y": "s*x"}, inputs=["u"], events=ev, trafo={"x": "b/k"},
+                reconstruct=True)
+    assert (eq.rank, eq.dim) == (ex.rank, ex.dim) and "_ew" not in str(eq.info["coordinates"])
+
+
+def test_a_state_idle_at_rest_keeps_a_resting_value():
+    r = detect({"x": "b - k*x + u", "z": "kz*u", "u": "0"}, {"y": "s*x + z"}, inputs=["u"],
+               events=[event("u", 0, "1")], equilibrate=True)
+    assert "z" in r.info["coordinates"]
+
+
+@needs_msolve
+def test_a_discrete_symmetry_is_counted():
+    r = detect({"x1": "x2", "x2": "-(p+q)*x2 - p*q*x1"}, {"y": "x1"}, trafo={"x1": "1", "x2": "0"})
+    assert r.identifiable and r.solution_count()["count"] == 2
+
+
+@needs_msolve
+def test_the_count_reads_the_clock_and_known_inputs():
+    r = detect({"x": "p*time + q"}, {"y": "x"}, trafo={"x": "0"})
+    assert r.identifiable and r.solution_count()["count"] == 1
+    r = detect({"x": "b*u - c*u^2"}, {"y": "x"}, trafo={"x": "0"}, known_inputs=["u"])
+    assert r.identifiable and r.solution_count()["count"] == 1
+
+
+def test_the_count_refuses_a_resting_start():
+    r = detect({"x": "b - x"}, {"y": "x"}, equilibrate=True)
+    with pytest.raises(ValueError, match="equilibrate"):
+        r.solution_count()
+
+
+def test_a_missing_msolve_names_its_installation(monkeypatch):
+    monkeypatch.setattr("symident.sym.msolve.find_msolve", lambda: (None, None))
+    r = detect({"x1": "x2", "x2": "-(p+q)*x2 - p*q*x1"}, {"y": "x1"}, trafo={"x1": "1", "x2": "0"})
+    with pytest.raises(MsolveMissingError, match="install_msolve"):
+        r.solution_count()
+
+
+def test_a_spike_train_with_state_dependent_events():
+    ev = []
+    for t in [f"{k}/10" for k in range(5, 20)]:
+        ev += [event("u", t, "u+U*(1-u)"), event("Is", f"{t}+1/1000", "Is+A*u*x"),
+               event("x", f"{t}+2/1000", "x-u*x")]
+    r = detect({"x": "(1-x)/tD", "u": "(U-u)/tF", "Is": "-Is/ts"}, {"y": "Is"}, events=ev,
+               trafo={"x": "1", "u": "0", "Is": "0"})
+    assert r.identifiable
+
+
+def brief(r):
+    return r.rank, r.dim, r.info["coordinates"], sorted((s.type, s.level) for s in r.symmetries)
+
+
+def test_a_compound_replacement_binds_as_one_operand():
+    from symident.rexpr import replace_symbols
+    assert replace_symbols(["k"], ["a+b"], "-k*x") == "-(a+b)*x"
+    assert replace_symbols(["k"], ["-1"], "k") == "-1"
+    assert replace_symbols(["k"], ["exp(l)"], "-k*x") == "-exp(l)*x"
+
+
+@pytest.mark.parametrize("kw", [
+    dict(odes={"x": "-k*x"}),
+    dict(odes={"x": "-c*x"}, trafo={"x": "1"}, conditions=grid(["p", "q"], c=["1", "c*k"])),
+    dict(odes={"x": "-c*x"}, trafo={"x": "1"}, events=[event("x", "1", "c*k", "add")]),
+    dict(odes={"x": "-c*x"}, trafo=[{"x": "1"}, {"x": "2"}], events=[event("x", "1", "c*k", "add")]),
+    dict(odes={"x": "u - k*x", "u": "0"}, trafo=[{}, {}], inputs=["u"], events=[event("u", "0", "1")],
+         equilibrate=True),
+])
+def test_a_compound_trafo_value_equals_its_parenthesized_form(kw):
+    def run(v):
+        tr = kw.get("trafo")
+        tr = [dict(t, k=v) for t in tr] if isinstance(tr, list) else dict(tr or {}, k=v)
+        return detect(observables={"y": "x"}, **dict(kw, trafo=tr))
+    assert brief(run("a+b")) == brief(run("(a+b)"))
+
+
+@pytest.mark.parametrize("clock, plain", [
+    (dict(trafo={"x": "a + time"}), dict(trafo={"x": "a"})),
+    (dict(trafo={"x": "a + time"}, events=[event("x", "-1", "c", "add")]),
+     dict(trafo={"x": "a - 1"}, events=[event("x", "-1", "c", "add")])),
+    (dict(trafo={"x": "1"}, events=[event("x", "2", "c*time", "add")]),
+     dict(trafo={"x": "1"}, events=[event("x", "2", "2*c", "add")])),
+    (dict(trafo={"k": "a*time"}), dict(odes={"x": "-a*time*x"})),
+    (dict(trafo=[{"x": "1", "k": "a*time"}, {"x": "2", "k": "a*time"}]),
+     dict(odes={"x": "-a*time*x"}, trafo=[{"x": "1"}, {"x": "2"}])),
+])
+def test_time_outside_the_right_hand_sides_is_the_clock(clock, plain):
+    def run(kw):
+        return detect(**{"odes": {"x": "-k*x"}, "observables": {"y": "x"}, **kw}, reconstruct=True)
+    r = run(clock)
+    assert brief(r) == brief(run(plain)) and "time" not in r.info["coordinates"]
+
+
+def test_the_clock_under_equilibrate_is_an_input_from_the_start():
+    f = {"x": "kb + kin*u - k*x", "u": "0"}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rest = detect(f, {"y": "x + c*time"}, inputs=["u"], events=[event("u", "0", "1")], equilibrate=True)
+    told = detect(f, {"y": "x + c*time"}, trafo={"x": "kb/k", "u": "1"})
+    assert brief(rest) == brief(told)
+    # a start before zero: the resting state of the model at that time
+    f = {"x": "kb + c*time + kin*u - k*x", "u": "0"}
+    rest = detect(f, {"y": "x"}, inputs=["u"], events=[event("u", "-1", "1")], equilibrate=True)
+    told = detect(f, {"y": "x"}, trafo={"x": "(kb - c)/k"}, events=[event("u", "-1", "1")])
+    assert brief(rest) == brief(told)
+    with pytest.raises(ValueError, match="clock"):
+        detect({"x": "kb + kin*u*exp(-a*time) - k*x", "u": "0"}, {"y": "x"}, inputs=["u"],
+               events=[event("u", "0", "1")], equilibrate=True)
+
+
+def _scaling_rows(r):
+    """The weights of the scalings of `r` over its coordinates, a zero row without one."""
+    c = r.info["coordinates"]
+    return spy.Matrix([[int(s.weights.get(z, 0)) for z in c] for s in r.symmetries if s.type == "scaling"] or
+                      [[0] * len(c)])
+
+
+@pytest.mark.parametrize("odes, obs, kw", [
+    ({"x": "-d*x"}, {"y": "s*x"}, dict(trafo={"x": "1"})),
+    ({"x": "-d*x"}, {"y": "s*x"}, dict(events=[event("x", "0", "1")])),
+    ({"x": "-d*x"}, {"y": "s*x"}, dict(conditions=grid(["c1"], s=[2]))),
+    ({"x": "-d*x"}, {"y": "s*x"}, dict(conditions=grid(["c1", "c2"], s=[2, 3]))),
+    ({"x": "-k*x + b*u"}, {"y": "x"}, dict(known_inputs=["u"])),
+    ({"x": "-d*x"}, {"y": "s*x"}, dict(trafo=[{"x": "1"}, {"x": "2"}])),
+    ({"x": "-d*x"}, {"y": "s*x"}, dict(events=[event("x", "1", "c", "add")])),
+    ({"x": "-d*x"}, {"y": "s*x"}, dict(events=[event("x", "tau", "c", "add")])),
+    ({"x": "kb + kin*u - k*x", "u": "0"}, {"y": "s*x"}, dict(inputs=["u"], events=[event("u", "0", "dose")],
+                                                           equilibrate=True)),
+])
+def test_scalings_only_holds_the_values_the_detection_holds(odes, obs, kw):
+    full = detect(odes, obs, reconstruct=True, **kw)
+    sc = detect(odes, obs, scalings_only=True, **kw)
+    assert sc.info["coordinates"] == full.info["coordinates"]
+    a, b = _scaling_rows(sc), _scaling_rows(full)
+    assert a.rank() == b.rank() == spy.Matrix.vstack(a, b).rank()
+
+
+@pytest.mark.parametrize("kw", [
+    dict(conditions=grid(["a", "b"], tau=[0, 1])),
+    dict(trafo=[{"x": "1", "tau": "0"}, {"x": "1", "tau": "1"}]),
+])
+def test_an_event_time_resolved_per_condition(kw):
+    ev = [event("x", "tau", "c", "add")]
+    kw = dict({"trafo": {"x": "1"}}, **kw)
+    r = detect({"x": "-k*x"}, {"y": "x"}, events=ev, **kw)
+    ref = detect({"x": "-k*x"}, {"y": "x"}, trafo=[{"x": "1"}, {"x": "1"}],
+                 events=[dict(ev[0], time="0", cond=[0]), dict(ev[0], time="1", cond=[1])])
+    assert brief(r) == brief(ref)
+    one = detect({"x": "-k*x"}, {"y": "x"}, events=ev, trafo={"x": "1"}, conditions=grid(["a"], tau=[0]))
+    assert brief(one) == brief(detect({"x": "-k*x"}, {"y": "x"}, events=ev, trafo={"x": "1", "tau": "0"}))
+
+
+def test_the_segments_of_a_condition_follow_its_resolved_event_times():
+    from symident.detection.conditions import Grid, as_events, resolve_conditions
+    res = resolve_conditions(Grid(["a", "b"], {"tau": [0, 1]}), as_events([event("x", "tau", "c", "add")]),
+                             {"x": "1"}, ["x", "k", "c", "tau"], ["x"])
+    assert res["chain_of"] == [1, 2, 2] and res["times"] == ["0", "0", "1"]
+    assert res["ic0"][0] == {"x": "(1) + (c)"} and res["seg_events"][2] == [
+        {"var": "x", "method": "add", "value": "c"}]
+
+
+def test_reduce_cq_reads_the_totals_of_an_ode_model():
+    ev = [event("u", "0", "1")]
+    ode = si.Model({"A": "-k1*A*(1+u) + k2*B", "B": "k1*A*(1+u) - k2*B", "u": "0"}, {"y": "s*B"}, inputs=["u"],
+                   events=ev, totals={"T": "A + B"})
+    rx = si.Model(reactions={"species": ["A", "B", "u"], "stoichiometry": [[-1, 1, 0], [1, -1, 0]],
+                             "rates": ["k1*A*(1+u)", "k2*B"]}, observables={"y": "s*B"}, inputs=["u"], events=ev,
+                  totals={"T": "A + B"})
+    for eq in (False, True):
+        a, b = si.detect(ode, equilibrate=eq, reduce_cq=True), si.detect(rx, equilibrate=eq, reduce_cq=True)
+        assert brief(a) == brief(b) and "T" in a.info["coordinates"]
+    leak = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B - d*B"}, {"y": "s*B"}, totals={"T": "A + B"})
+    with pytest.raises(ValueError, match="T = A \\+ B is not conserved"):
+        si.detect(leak, reduce_cq=True)
+
+
+@pytest.mark.parametrize("kw, name", [
+    (dict(known_inputs=["U"]), "U"),
+    (dict(known_inputs=["x"]), "x"),
+    (dict(inputs=["U"]), "U"),
+    (dict(events=[event("X", "1", "c", "add")]), "X"),
+    (dict(conditions=grid(["lo", "hi"], Dose=[1, 10])), "Dose"),
+    (dict(fixed=["S"]), "S"),
+    (dict(parameters=["p"]), "p"),
+])
+def test_a_declared_name_outside_the_model_is_refused(kw, name):
+    with pytest.raises(ValueError, match=f"\\b{name}\\b"):
+        detect({"x": "-k*x + b*u"}, {"y": "s*x"}, **kw)
+
+
+def test_names_in_the_trafo_events_cells_and_totals_are_declared():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        detect({"x": "-k*x"}, {"y": "x"}, trafo={"k": "exp(lk)", "x": "x0"}, fixed=["x0"], positive=["lk"])
+        detect({"x": "-k*x"}, {"y": "x"}, events=[event("x", "1", "c", "add")], fixed=["c"])
+        detect({"x": "-k*x"}, {"y": "s*x"}, conditions=grid(["a", "b"], s=["s1", "s2"]), fixed=["s1"])
+        detect(reactions=canonical(), observables={"y": "A"}, reduce_cq=True, fixed=["total1"])
+    with pytest.warns(UserWarning, match="`positive` names K"):
+        detect({"x": "-k*x"}, {"y": "x"}, positive=["k", "K", "1 - x"])
+
+
+@pytest.mark.parametrize("kw", [
+    dict(trafo={"x": "0", "u": "w"}),
+    dict(trafo=[{"x": "0", "u": "1"}, {"x": "0", "u": "2"}]),
+    dict(trafo={"x": "0"}, conditions=grid(["a", "b"], u=[1, 2])),
+])
+def test_an_input_takes_no_initial_value(kw):
+    with pytest.raises(ValueError, match="input u starts at zero"):
+        detect({"x": "-k*x + b*u", "u": "-d*u"}, {"y": "x"}, inputs=["u"], **kw)
+
+
+@pytest.mark.parametrize("start", [{}, {"u": "0"}, {"u": "u"}])
+def test_an_event_at_the_start_sets_an_input(start):
+    f = {"x": "-k*x + b*u", "u": "-d*u"}
+    r = detect(f, {"y": "x"}, inputs=["u"], trafo={"x": "0", **start}, events=[event("u", "0", "w")])
+    assert brief(r) == brief(detect(f, {"y": "x"}, trafo={"x": "0", "u": "w"}))
+
+
+def test_a_rate_set_to_zero_by_the_trafo_rests_like_a_constant_state():
+    ev = [event("u", "0", "1")]
+    zero = detect({"z": "-k*u*z", "w": "-j*u*w", "u": "0"}, {"y": "z*w"}, inputs=["u"], events=ev,
+                  trafo={"k": "0"}, equilibrate=True)
+    idle = detect({"z": "0", "w": "-j*u*w", "u": "0"}, {"y": "z*w"}, inputs=["u"], events=ev, equilibrate=True)
+    assert brief(zero) == brief(idle)
+    r = detect({"z": "-k*u*z", "w": "-j*u*w", "u": "0"}, {"y": "z*w"}, inputs=["u"], events=ev, equilibrate=True,
+               reconstruct=True)
+    assert si.reduce(r, allow_checked=True).checks["loop"]["ok"] is not None
+
+
+@needs_msolve
+def test_the_count_substitutes_the_trafo_into_the_initial_values():
+    chained = detect({"x": "-k^2*x"}, {"y": "x"}, trafo={"x": "k", "k": "a"})
+    written = detect({"x": "-a^2*x"}, {"y": "x"}, trafo={"x": "a"})
+    assert chained.solution_count()["count"] == written.solution_count()["count"] == 1
+    assert detect({"x": "-b*x"}, {"y": "x"}, trafo={"x": "k", "k": "a^2"}).solution_count()["count"] == 2
+    one = detect({"x": "-k^2*x"}, [{"y": "s*x"}], trafo=[{"x": "k", "k": "a"}], conditions=grid(["c"], s=[1]))
+    assert one.solution_count()["count"] == 1
+
+
+def test_the_count_of_a_model_that_is_not_rational_is_none():
+    for f, tr in [({"x1": "x2", "x2": "-(p+q)*x2 - p*q*abs(x1)"}, {"x1": "1", "x2": "0"}),
+                  ({"x": "-k*x^n"}, {"x": "2"})]:
+        r = detect(f, {"y": "x1" if "x1" in f else "x"}, trafo=tr)
+        assert r.identifiable and r.solution_count() is None
+    r = detect({"x1": "x2", "x2": "-(p+q)*x2 - p*q*x1 + piecewise(p, time > 1, 0)"}, {"y": "x1"},
+               trafo={"x1": "1", "x2": "0"})
+    with pytest.raises(ValueError, match="switches"):
+        r.solution_count()
+
+
+@needs_msolve
+def test_the_count_reads_the_model_as_detected():
+    m = si.Model({"x1": "x2", "x2": "-(p+q)*x2 - p*q*x1"}, {"y": "x1"}, trafo={"x1": "1", "x2": "0"})
+    r = si.detect(m)
+    m.observables = {"y": "x1", "y2": "p*x2"}
+    assert r.solution_count()["count"] == 2

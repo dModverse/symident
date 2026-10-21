@@ -8,6 +8,7 @@ from ..gfp import in_span, rref_modp
 from ..rexpr import get_symbols, sym_sort
 from ..sym.direction import classify_generator
 from .closedform import eval_modq
+from .conditions import scaling_component
 from .rank import nullspace_basis
 
 
@@ -83,6 +84,12 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
         if d.get("vector") is not None:
             d[aux_field] = {k: v for k, v in d["vector"].items() if k in aux}
             phys = {k: v for k, v in d["vector"].items() if k not in aux}
+            if aux_field == "input_vector":
+                # components, with the form they belong to for the rescaling to the generator
+                comp = (lambda k, v: scaling_component(v, k)) if d.get("type") == "scaling" else \
+                    (lambda k, v: str(v))
+                d[aux_field] = {k: comp(k, v) for k, v in d[aux_field].items()}
+                d["input_form"] = {k: comp(k, v) for k, v in phys.items()}
             if flag_joint and any(set(get_symbols(str(e))) & aux for e in phys.values()):
                 d["joint_form"] = True
             d["vector"] = phys
@@ -91,8 +98,8 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
     return result
 
 
-def peel_scalings(scal_res, znames, nz, zval, P, N, exact=False):
-    """Independent scalings common to all conditions whose tangent lies in the nullspace, proven if `exact`."""
+def peel_scalings(scal_res, znames, nz, zval, P, N, exact=False, modulo=None):
+    """Independent scalings of all conditions with tangent in the nullspace (modulo `modulo`), proven if `exact`."""
     scaling = []
     Bmat = np.zeros((nz, 0), dtype=np.int64)
     env = {z: int(v) for z, v in zip(znames, zval)}
@@ -120,6 +127,13 @@ def peel_scalings(scal_res, znames, nz, zval, P, N, exact=False):
         if not np.any(v):
             continue
         tangent = (v * (np.asarray(zval, dtype=np.int64) % P)) % P
+        if modulo is not None and N.shape[1]:
+            free, nuis = modulo
+            proj = (N.astype(object) @ tangent[free].astype(object)) % P
+            phys = [i for i in range(nz) if i not in set(nuis)]
+            if np.any((proj[phys] - tangent[phys]) % P):
+                continue
+            tangent = proj.astype(np.int64)
         if not np.any(tangent) or not in_span(N, tangent, nz, P) or in_span(Bmat, tangent, nz, P):
             continue
         Bmat = np.concatenate([Bmat, tangent.reshape(nz, 1)], axis=1)

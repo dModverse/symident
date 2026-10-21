@@ -11,7 +11,7 @@ from . import report, state
 from .detection import symmetry_detection
 from .options import reconst_control
 from .reduction import symmetry_reduction
-from .reduction.core import check_levels, finish_reduction
+from .reduction.core import check_levels, detection_positive, finish_reduction
 
 
 def _rhs_from_reactions(species, smatrix, rates):
@@ -42,10 +42,12 @@ class Model:
         Observables, name to expression; a list gives one dict per condition.
     reactions : dict, optional
         Reaction network with keys ``species``, ``stoichiometry`` (reactions by
-        species) and ``rates``. Needed for ``reduce_cq`` and the zero-state analysis
-        under ``equilibrate``.
+        species) and ``rates``; it gives the ``totals`` and the zero-state analysis under
+        ``equilibrate``.
     totals : dict, optional
-        Conserved totals, name to expression; computed from ``reactions`` when omitted.
+        Conserved totals, name to expression, each conserved by the right-hand sides;
+        computed from ``reactions`` when omitted. ``reduce_cq`` eliminates one species per
+        total.
     trafo : dict or list of dict, optional
         Parameter transformation; an entry named like a state is its initial value.
     conditions : pandas.DataFrame or dict, optional
@@ -59,7 +61,13 @@ class Model:
         earliest event when that comes before; an event at the start applies to the initial
         values.
     inputs : sequence of str
-        Input states, zero at rest.
+        Input states, zero at the start and at rest; an event sets them.
+    unknown_inputs : sequence of str
+        Unknown functions of time of no assumed form, symbols in the right-hand sides and
+        observables without an equation. A direction may change them along with the parameters (see the user guide).
+    known_inputs : sequence of str
+        Known functions of time of no assumed form, symbols in the right-hand sides and
+        observables without an equation; their values and time derivatives are known.
     fixed : sequence of str
         Known symbols.
     parameters : sequence of str
@@ -78,8 +86,8 @@ class Model:
     """
 
     def __init__(self, odes=None, observables=None, *, reactions=None, totals=None, trafo=None,
-                 conditions=None, events=None, inputs=(), fixed=(), parameters=(), regimes=None,
-                 equilibrate=None, positive=None, reduce_cq=None):
+                 conditions=None, events=None, inputs=(), unknown_inputs=(), known_inputs=(), fixed=(),
+                 parameters=(), regimes=None, equilibrate=None, positive=None, reduce_cq=None):
         if reactions is not None:
             sp = list(reactions["species"])
             Sm = reactions.get("stoichiometry", reactions.get("smatrix"))
@@ -101,6 +109,8 @@ class Model:
         self.conditions = conditions
         self.events = events
         self.inputs = list(inputs)
+        self.unknown_inputs = list(unknown_inputs)
+        self.known_inputs = list(known_inputs)
         self.fixed = list(fixed)
         self.parameters = list(parameters)
         self.regimes = regimes
@@ -118,7 +128,9 @@ class Model:
         return dict(f=self.odes, g=self.observables, trafo=self.trafo, conditions=self.conditions,
                     events=self.events, forcings=self.inputs or None, fixed=self.fixed or None,
                     parameters=self.parameters or None, reactions=self.reactions,
-                    totals=self.totals, regimes=self.regimes)
+                    totals=self.totals, regimes=self.regimes,
+                    unknown_inputs=self.unknown_inputs or None,
+                    known_inputs=getattr(self, "known_inputs", None) or None)
 
 
 @contextlib.contextmanager
@@ -161,6 +173,9 @@ class Symmetry(dict):
         For an exact direction, the components :math:`\\xi_x` on the states of the field that
         proves it, :math:`X = \\sum \\xi_\\theta \\partial_\\theta + \\sum \\xi_x \\partial_x`, in the
         first condition; ``None`` where none is needed or known.
+    input_change : dict or None
+        For an exact direction of a model with ``unknown_inputs``, the component
+        :math:`\\xi_w` of the proving field on each unknown input; ``None`` otherwise.
     route : str or None
         How a closed form was obtained, e.g. ``"static subsystem"``.
     reason : str or None
@@ -228,11 +243,13 @@ class Symmetries:
         * ``switching``: the surfaces and regimes of a model with switches; where the rule of
           the switches is not proven, ``uncertified`` says why and ``candidates`` lists the
           directions it leaves open, which are not reported as symmetries.
+        * ``timing``: the seconds elapsed at each stage of the analysis, such as the
+          saturation and the reconstruction.
         * ``attempts``, ``errors``, ``settings``.
     gauge : list of str or None
         The coordinates fixed by a gauged detection.
     model : Model or None
-        The model detected.
+        A copy of the model detected.
     method : str
         ``"observability"``, or ``"scaling"`` with ``scalings_only``.
     """
@@ -276,14 +293,103 @@ class Symmetries:
         """
         return _Text("\n".join(report.summary_lines(self._raw, verbose)))
 
+    def solution_count(self, order=None, timeout=600):
+        """The number of values of the coordinates that give the output of a generic one.
+
+        Local identifiability leaves finitely many such values; more than one is a discrete
+        symmetry, which the Lie method does not see. The count solves the Taylor coefficients
+        of the observables up to `order` at a random point modulo a prime with msolve, so it is
+        a check at that point, not a proof. Values are counted over the algebraic closure, so
+        values outside the declared domain, such as the negative root of a square, count too.
+        The model has one condition (a one-row grid or one-element lists), no events, switches
+        or unknown inputs.
+
+        Parameters
+        ----------
+        order : int, optional
+            The highest Taylor coefficient; twice the number of coordinates by default.
+        timeout : float
+            Seconds msolve may take.
+
+        Returns
+        -------
+        dict or None
+            ``{"count", "order", "prime"}``, or None where the model is not rational or msolve
+            fails.
+        """
+        from .detection.conditions import Grid, at_time, initial_value_split, num_str
+        from .detection.core import _input_jets
+        from .detection.fiber import solution_count
+        from .errors import SYMPY_FAILS
+        from .rexpr import get_symbols, replace_symbols
+        from .sym.parse import _is_rational_expr, model_sympify
+        from .sym.switching import _SWITCHY
+        m = self.model
+        if m is None or not self.identifiable:
+            raise ValueError("solution_count() needs a locally identifiable result of detect() on a Model")
+
+        def one(x):
+            if isinstance(x, (list, tuple)) and len(x) != 1:
+                raise ValueError("solution_count() handles one condition without events or unknown inputs")
+            return x[0] if isinstance(x, (list, tuple)) else x
+        grid = Grid.from_any(m.conditions)
+        if m.events or m.unknown_inputs or (grid is not None and grid.nrow != 1):
+            raise ValueError("solution_count() handles one condition without events or unknown inputs")
+        st = self.info.get("settings") or {}
+        if st.get("equilibrate") or st.get("reduce_cq"):
+            raise ValueError("solution_count() needs a result of detect() without equilibrate and reduce_cq")
+        f = dict(m.odes)
+        g = {str(k): str(v) for k, v in dict(one(m.observables)).items()}
+        if self.info.get("switching") or any(_SWITCHY.search(v) for v in list(f.values()) + list(g.values())):
+            raise ValueError("solution_count() handles models without switches")
+        # one simultaneous substitution as in the detection: the trafo, then the cells of the grid
+        tr = {str(k): num_str(v) for k, v in dict(one(m.trafo) or {}).items()}
+        tr = initial_value_split([tr], list(f), taken=list(g))["trafos"][0]
+        sub = {k: v for k, v in tr.items() if k not in f}
+        cells = {} if grid is None else {c: replace_symbols(list(sub), list(sub.values()), grid.cell(0, c))
+                                         for c in grid.colnames()}
+        steps = [s for s in (sub, {c: v for c, v in cells.items() if c not in f}) if s]
+
+        def apply(e):
+            for s in steps:
+                e = replace_symbols(list(s), list(s.values()), e)
+            return e
+        inputs = set(m.inputs or [])
+        # inputs start at zero, the clock at zero
+        ic = {x: "0" if x in inputs else at_time(apply(tr.get(x, cells.get(x, x))), "0") for x in f}
+        f = {k: apply(v) for k, v in f.items()}
+        g = {k: apply(v) for k, v in g.items()}
+        try:
+            if not all(_is_rational_expr(model_sympify(e)) for e in [*f.values(), *g.values(), *ic.values()]):
+                return None
+        except SYMPY_FAILS:
+            return None
+        n = len(self.info["coordinates"])
+        order = int(order or 2 * n)
+        known = [str(u) for u in getattr(m, "known_inputs", None) or []]
+        if known:
+            # a known input is a chain of jets whose values are known symbols
+            taken = set(get_symbols(list(f.values()) + list(g.values()))) | set(f)
+            f, jets = _input_jets(f, known, order + 2, taken)
+            ic.update({x: x for names in jets.values() for x in names})
+        # the clock advances at rate one from zero
+        f["time"], ic["time"] = "1", "0"
+        return solution_count(f, g, ic, list(self.info["coordinates"]), order, timeout=timeout)
+
     def reduce(self, **kwargs):
         """Shortcut for :func:`reduce` with this result; `kwargs` are passed on.
+
+        A repeated call with the same arguments returns a copy of the reduction computed first.
 
         Returns
         -------
         Reduction
         """
-        return reduce(self, **kwargs)
+        memo = self.__dict__.setdefault("_reductions", {})
+        key = repr(sorted(kwargs.items()))
+        if key not in memo:
+            memo[key] = reduce(self, **kwargs).to_dict()
+        return Reduction(copy.deepcopy(memo[key]))
 
     def to_dict(self):
         """The raw result.
@@ -302,7 +408,10 @@ class Reduction:
     Attributes
     ----------
     trafo : dict or None
-        Parameter transformation over all coordinates; ``None`` if nothing was reduced.
+        Parameter transformation over all coordinates; ``None`` if nothing was reduced. An
+        entry named in a condition grid goes into its cells; under ``equilibrate`` an entry
+        named like a state pins the resting value it holds, which a model takes in ``fixed``
+        when it is a number.
     blocks : list of dict
         One entry per set of coupled directions, with ``status``, ``level``,
         ``generator_level``, ``unproven`` (the claims of its section not proven) and
@@ -444,6 +553,8 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
     -------
     Symmetries
     """
+    # the result holds the model as detected, whatever the caller changes later
+    model = copy.deepcopy(model)
     if equilibrate is None:
         equilibrate = bool(getattr(model, "equilibrate", None))
     if positive is None:
@@ -460,8 +571,8 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
 
 
 def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2, separable=True,
-           zero_limits=False, timeout=math.inf, alternatives=False, allow_open=False, check=True,
-           work_cap=4000):
+           zero_limits=False, timeout=math.inf, alternatives=False, allow_open=False, allow_checked=False,
+           check=True, work_cap=4000):
     """Reparametrization that removes the directions of a detection result.
 
     A scaling fixes one coordinate; a general direction is replaced by its invariants,
@@ -494,6 +605,9 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
     allow_open : bool
         Reduce the directions with a closed form and leave those of level ``"open"`` in
         place; without it such a direction is an error.
+    allow_checked : bool
+        Reduce also on a direction of level ``"checked"`` and on a result whose saturation
+        check failed; without it either is an error.
     check : bool
         Run the detection again on the model with the trafo applied (closed loop) and
         record in ``Reduction.checks`` whether exactly the remaining directions are
@@ -511,8 +625,8 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
     """
     raw = result.to_dict() if isinstance(result, Symmetries) else result
     if positive is None:
-        positive = ((raw.get("info") or {}).get("settings") or {}).get("positive", True)
-    check_levels(raw, allow_open)
+        positive = detection_positive(raw)
+    check_levels(raw, allow_open, allow_checked)
     red = symmetry_reduction(raw, fixed=fixed, positive=positive, d_poly=d_poly, d_darboux=d_darboux,
                              d_exp=d_exp, separable_=separable, zero_compatibility=zero_limits,
                              timeout=timeout, alternatives=alternatives, work_cap=work_cap)
@@ -522,31 +636,87 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
     return Reduction(red)
 
 
-def _composed_trafo(inner, outer):
-    """The trafo `outer` substituted into the model trafo `inner`, per condition for a list."""
-    from .rexpr import replace_symbols
-    names, vals = list(outer), [f"({v})" for v in outer.values()]
-    if inner is None:
-        return dict(outer)
-    if isinstance(inner, (list, tuple)):
-        return [_composed_trafo(t, outer) for t in inner]
-    out = {k: replace_symbols(names, vals, str(v)) for k, v in inner.items()}
-    return {**{k: v for k, v in outer.items() if k not in out}, **out}
+def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
+    """{"trafo", "conditions", "fixed", "why"}: the model with the reduction trafo `outer` applied, `why` the
+    reason it cannot take it. A key in the grid goes into its cells, a pinned resting value into `fixed`."""
+    from .detection.conditions import Grid, as_events
+    from .rexpr import get_symbols, is_number, replace_symbols
+    outer = {str(k): str(v) for k, v in outer.items() if str(v).strip() != str(k)}
+    fixed, why = [], None
+    if equilibrate:
+        # under equilibrate an entry for a state is its resting value, known when it is a number
+        for k in [k for k in outer if k in f]:
+            if not is_number(outer[k]):
+                why = f"the reduction pins the resting value of {k} to {outer.pop(k)}, which `equilibrate` " \
+                      "does not take"
+                continue
+            fixed.append(k)
+            outer.pop(k)
+    grid = Grid.from_any(conditions)
+    if grid is not None and outer:
+        cells = [v for vals in grid.cols.values() for v in vals if isinstance(v, str)]
+        hit = [k for k in outer if k in set(get_symbols(cells)) | set(grid.colnames())]
+        sub = {k: outer[k] for k in hit}
+        grid = Grid(grid.rows, {c: [replace_symbols(list(sub), list(sub.values()), v) if isinstance(v, str) else v
+                                    for v in vals] for c, vals in grid.cols.items()})
+        conditions = {"rows": grid.rows, "cols": grid.cols}
+        outer = {k: v for k, v in outer.items() if k not in set(grid.colnames()) and k not in sub}
+    evs = as_events(events)
+    used = set(f) | set(get_symbols(list(f.values()) + [str(v) for x in (g if isinstance(g, (list, tuple)) else [g])
+                                                        for v in dict(x or {}).values()] +
+                                    [e["value"] for e in evs] + [e["time"] for e in evs]))
+    names, vals = list(outer), list(outer.values())
+
+    def compose(inner):
+        if inner is None:
+            return dict(outer)
+        inner = {str(k): str(v) for k, v in dict(inner).items()}
+        out = {k: replace_symbols(names, vals, v) for k, v in inner.items()}
+        # an entry whose name the model trafo replaced holds in its values only
+        consumed = set(get_symbols(list(inner.values())))
+        return {**{k: v for k, v in outer.items() if k not in out and (k in used or k not in consumed)}, **out}
+    trafo = [compose(t) for t in trafo] if isinstance(trafo, (list, tuple)) else compose(trafo)
+    return {"trafo": trafo, "conditions": conditions, "fixed": fixed, "why": why}
 
 
 def _closed_loop(result, red):
     """The detection on the model with the trafo applied: its directions against the remaining ones."""
     if result.model is None or result.method != "observability":
         return None
-    m = copy.copy(result.model)
-    m.trafo = _composed_trafo(result.model.trafo, red["trafo"])
-    m.fixed = list(dict.fromkeys(list(m.fixed or []) + list(result.gauge or []) + list(red.get("fixed") or [])))
     st = result.info.get("settings") or {}
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    want = len(red.get("remaining") or [])
+    m = copy.copy(result.model)
+    rm = reduced_model(m.odes, m.observables, m.trafo, m.conditions, m.events, red["trafo"],
+                       bool(st.get("equilibrate")))
+    if rm["why"] is not None:
+        return {"ok": None, "directions": None, "expected": want, "reason": "not run, " + rm["why"]}
+    m.trafo, m.conditions = rm["trafo"], rm["conditions"]
+    m.fixed = list(dict.fromkeys(list(m.fixed or []) + list(result.gauge or []) + list(red.get("fixed") or []) +
+                                 rm["fixed"]))
+
+    def run():
         r = detect(m, equilibrate=bool(st.get("equilibrate")), reduce_cq=bool(st.get("reduce_cq")),
                    positive=st.get("positive", True), verify=bool(st.get("verify", True)),
                    engine=st.get("sym_engine", "modular"), control=st.get("control"))
-    n, want = len(r.symmetries), len(red.get("remaining") or [])
-    return {"directions": n, "expected": want, "rank": r.rank, "dim": r.dim,
-            "rank_status": (r.info.get("rank_status") or {}).get("status"), "ok": n == want}
+        return r.to_dict()
+    return loop_outcome(run, want)
+
+
+def loop_outcome(run, want):
+    """The closed-loop check of the detection `run()`: failed for a trafo entry without effect, ok None if refused."""
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        try:
+            r = run()
+        except ValueError as exc:
+            return {"ok": None, "directions": None, "expected": want,
+                    "reason": "not run, " + ("the reduced model is not rational for the observability engine"
+                                             if "not rational" in str(exc) else str(exc).split("\n")[0])}
+    idle = [str(w.message) for w in rec if "had no effect" in str(w.message)]
+    n = len(r.get("symmetries") or [])
+    out = {"directions": n, "expected": want, "rank": r.get("rank"), "dim": r.get("dim"),
+           "rank_status": ((r.get("info") or {}).get("rank_status") or {}).get("status"),
+           "ok": n == want and not idle}
+    if idle:
+        out["reason"] = idle[0]
+    return out

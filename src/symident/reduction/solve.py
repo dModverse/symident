@@ -1,6 +1,8 @@
 """Solving the invariant map for the carriers q_k."""
 
+import copy
 import itertools
+import pickle
 import re
 
 import numpy as np
@@ -25,7 +27,9 @@ from .sign import (
     carriers_real,
     domain_name,
     entry_class,
+    inside_bounds,
     is_real,
+    outside_bounds,
     pos_form,
     pos_form_real,
     positive_set,
@@ -62,6 +66,29 @@ def _str_keys(d):
 
 def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_pair=None, gens=None):
     """Invariants set equal to fresh outer parameters q_k and solved, certified positive."""
+    args = (b, pins, coords, inv_start, prefer_real, split_pair, gens)
+    ses = state.get("session")
+    if ses is None or DOMAIN["deadline"] is not None:
+        return _solve_invariants(*args)
+    # the alternative charts of one reduction search equal blocks again; the work spent is replayed
+    try:
+        key = pickle.dumps((b, pins, list(coords), inv_start, prefer_real, split_pair, gens, DOMAIN["positive"],
+                            DOMAIN["bounds"], DOMAIN["no_roots"], DOMAIN["real_carriers"], DOMAIN.get("work"),
+                            DOMAIN.get("work_cap")))
+    except (pickle.PicklingError, TypeError, AttributeError):
+        return _solve_invariants(*args)
+    memo = ses.__dict__.setdefault("solve_memo", {})
+    if key not in memo:
+        w0 = DOMAIN.get("work", 0)
+        res = _solve_invariants(*args)
+        memo[key] = (copy.deepcopy(res), DOMAIN.get("work", 0) - w0)
+        return res
+    res, work = memo[key]
+    DOMAIN["work"] = DOMAIN.get("work", 0) + work
+    return copy.deepcopy(res)
+
+
+def _solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_pair=None, gens=None):
     out = {"pins": None, "meaning": None, "solved": False}
     if not b.get("invariants"):
         return out
@@ -220,6 +247,10 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                        for v in b["support"])
         cands = [c for c in cands if touches(c)]
         rows = None
+        sec_set = set(sec_vars)
+
+        def own_of(pr):
+            return all(x in sec_set for t in pr for x in ident_re.findall(t))
 
         def pt_rank(M):
             # the lower of the certified ranks at the two points
@@ -238,7 +269,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     if v not in set(pos):
                         pts[1][v] = -pts[1][v]
             need = 40 if len(gauge0) == 1 else 10
-            keep, rws = [], []
+            keep, rws, n_own = [], [], 0
             if len(cands) > 200:
                 cut.append(f"{len(cands) - 200} of {len(cands)} candidate balances are not tried")
             for pr in cands[:200]:
@@ -247,10 +278,12 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     continue
                 keep.append(pr)
                 rws.append(row)
+                # balances through names outside the coordinates count toward no cap, so they displace none
+                n_own += own_of(pr)
                 if len(keep) >= 3 * need:
                     cut.append(f"the balances past the first {3 * need} monotone ones are not tried")
                     break
-                if len(keep) >= need and pt_rank(rws) >= len(gauge0):
+                if n_own >= need and pt_rank(rws) >= len(gauge0):
                     break
             cands = keep
             rows = rws or None
@@ -270,6 +303,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                 cut.append(f"pairs of the balances past the first {n_c} are not tried")
             sets = [[cands[i], cands[j]] for i, j in itertools.combinations(range(n_c), 2)
                     if rows is None or pt_rank([rows[i], rows[j]]) >= len(gauge0)]
+            sets.sort(key=lambda st: not all(own_of(pr) for pr in st))
         else:
             sets = []
         carr_br = []
@@ -327,9 +361,10 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
         def sec_positive(st):
             sy = {m for pr in st for x in pr for m in ident_re.findall(x)}
             return bool(sy) and (pos is None or sy <= set(pos))
-        if len(sets) > 40:
-            cut.append(f"{len(sets) - 40} of {len(sets)} sets of balances are not tried")
-        for st in sets[:40]:
+        n_try = 40 + sum(not own_of(st[0]) for st in sets) if len(gauge0) == 1 else 40
+        if len(sets) > n_try:
+            cut.append(f"{len(sets) - n_try} of {len(sets)} sets of balances are not tried")
+        for st in sets[:n_try]:
             for order in ("carriers", "sections"):
                 if best_root is not None or time_up():
                     continue
@@ -367,6 +402,9 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                         if e is None:
                             with carriers_real([]):
                                 e = pos_form(sh["es"][v])
+                            if e is None and DOMAIN.get("bounds"):
+                                # under declared bounds an unproven entry may still hold inside them
+                                e = sh["es"][v]
                             if e is None:
                                 if red_diag:
                                     print(f"[reddiag]   {v} = {sh['es'][v]} not proven")
@@ -381,6 +419,10 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             has_root = True
                         ent[v] = str(e).replace("**", "^")
                     if not ok_br or not verified(br, sec_eqs):
+                        continue
+                    if outside_bounds(ent, real_br):
+                        partial = True
+                    if DOMAIN.get("bounds") and not inside_bounds(ent, Ies, tmp_n, b["support"]):
                         continue
                     for l in range(len(carriers)):
                         ent = {k: re.sub(r"\b" + tmp_n[l] + r"\b", inv_n[l], x) for k, x in ent.items()}

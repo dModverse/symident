@@ -79,27 +79,50 @@ def get_symbols(exprs, exclude=None):
     return out
 
 
-def _replace_one(expr, table):
+def _atomic(text):
+    """Whether `text` binds as one operand: a symbol, an unsigned number, a call or a parenthesized group."""
+    toks = tokens(text)
+    if len(toks) == 1:
+        return toks[0][0] in ("sym", "num")
+    start = 1 if toks and toks[0][0] == "fun" else 0
+    if len(toks) < start + 2 or toks[start] != ("op", "(") or toks[-1] != ("op", ")"):
+        return False
+    depth = 0
+    for i, (k, t) in enumerate(toks[start:], start):
+        if k == "op" and t == "(":
+            depth += 1
+        elif k == "op" and t == ")":
+            depth -= 1
+            if depth == 0 and i < len(toks) - 1:
+                return False
+    return True
+
+
+def _replace_one(expr, table, bare):
     if str(expr) == "0":
         return expr
-    return "".join(table.get(t, t) if k in ("sym", "fun", "num") else t
-                   for k, t in tokens(expr))
+    toks = tokens(expr)
+    # a replacement that is the whole expression needs no parentheses
+    sym = bare if len(toks) == 1 else table
+    return "".join((bare if k == "fun" else sym).get(t, t) if k in ("sym", "fun", "num") else t
+                   for k, t in toks)
 
 
 def replace_symbols(what, by, x):
-    """Replace tokens named in `what` by `by` without parentheses, as cOde::replaceSymbols(); shape is kept."""
+    """Replace tokens named in `what` by `by`, a compound replacement in parentheses; shape is kept."""
     what = [str(w) for w in _as_list(what)]
     by = [str(b) for b in _as_list(by)]
     if not what:
         return x
     if len(by) != len(what):
         by = [by[i % len(by)] for i in range(len(what))]
-    table = dict(zip(what, by))
+    bare = dict(zip(what, by))
+    table = {w: b if _atomic(b) else f"({b})" for w, b in bare.items()}
     if isinstance(x, str):
-        return _replace_one(x, table)
+        return _replace_one(x, table, bare)
     if isinstance(x, dict):
-        return {k: _replace_one(v, table) for k, v in x.items()}
-    return [_replace_one(v, table) for v in x]
+        return {k: _replace_one(v, table, bare) for k, v in x.items()}
+    return [_replace_one(v, table, bare) for v in x]
 
 
 def subst(keys, vals):

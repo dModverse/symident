@@ -3,6 +3,7 @@
 import sympy as spy
 
 from .. import session
+from ..rexpr import replace_symbols
 from .parse import _as_list, _make_local_parse
 
 
@@ -133,9 +134,12 @@ def _jet_expand_chains(conds):
             if not sg.get('time_fixed', True):
                 break
             icd = dict(l.split(' = ', 1) for l in ic)
+            pre = dict(icd)
             for ev in _as_list(sg.get('ev', [])):
                 ev = dict(ev)
                 X, v, how = str(ev['var']), str(ev['value']), str(ev['method'])
+                # at gap order 0 a state in the value is its start value before the events
+                v = replace_symbols(list(pre), ['(%s)' % e for e in pre.values()], v)
                 old = icd.get(X, X)
                 icd[X] = ('(%s)' % v if how == 'replace' else
                           '(%s) + (%s)' % (old, v) if how == 'add' else

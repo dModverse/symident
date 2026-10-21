@@ -12,6 +12,11 @@ reduces the model to identifiable parameters. The rank of the OIM is computed ov
 a C++ kernel; closed forms are reconstructed by sparse interpolation and proven over Q, or
 checked at random points modulo a large prime, with an error bound where one applies.
 
+symident continues the Lie-symmetry analysis of dMod (Merkt, Timmer and Kaschek,
+[Phys. Rev. E 92, 012920, 2015](https://doi.org/10.1103/PhysRevE.92.012920)); the
+[method page](https://dmodverse.github.io/symident/method.html) states the method and the
+work it builds on.
+
 ## Installation
 
 ```sh
@@ -24,8 +29,8 @@ pip builds from source, which needs a C++17 compiler and CMake; with OpenMP the 
 on several threads. The development version installs with
 `pip install git+https://github.com/dModverse/symident`.
 
-Steady-state analyses whose resting states need a coupled nonlinear solve use
-[msolve](https://msolve.lip6.fr); on Linux and macOS `symident.install_msolve()` builds it
+Steady-state analyses whose resting states need a coupled nonlinear solve, and
+`solution_count()`, use [msolve](https://msolve.lip6.fr); on Linux and macOS `symident.install_msolve()` builds it
 into a per-user cache. The [installation page](https://dmodverse.github.io/symident/install.html)
 covers Windows and other setups.
 
