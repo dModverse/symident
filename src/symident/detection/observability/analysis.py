@@ -10,7 +10,7 @@ from ...errors import SYMPY_FAILS, InapplicableError, RouteError, swallow, sympy
 from ...gfp import PRIMES, in_span, null_residues, random_point, uniform_point, verify_prime
 from ...par import thread_map
 from ...rexpr import sym_sort
-from ...sym.msolve import msolve_timeout
+from ...sym.msolve import MsolveMissingError, msolve_timeout
 from ...sym.parse import model_sympify
 from ..classify import joint_expand_scal, peel_scalings, report_physical
 from ..closedform import recast_backsub
@@ -1170,6 +1170,10 @@ class Analysis:
         for ci in sys.equil_conds:
             try:
                 sc0 = sys.solve_cond(sc["point0"], P, ci)
+            except MsolveMissingError:
+                # a check of the proof, not of the result: without msolve the rank stays unproven
+                session.note("limits", "resting Jacobian at the base point: not checked, msolve is missing")
+                return False
             except Exception as exc:
                 swallow(exc, "resting Jacobian at the base point")
                 return False

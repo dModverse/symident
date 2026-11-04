@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "symident"
-version = "0.13.0"
+version = "0.13.1"
 description = "Structural identifiability of ODE models by Lie symmetries over finite fields"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,7 +39,7 @@ Issues = "https://github.com/dModverse/symident/issues"
 
 [project.optional-dependencies]
 petab = ["python-libsbml>=5.20", "pyyaml>=6"]
-test = ["pytest>=7", "pytest-xdist", "pytest-timeout", "python-libsbml>=5.20", "pyyaml>=6"]
+test = ["pytest>=8", "pytest-xdist", "pytest-timeout", "python-libsbml>=5.20", "pyyaml>=6"]
 docs = ["sphinx>=8", "numpydoc", "pydata-sphinx-theme", "myst-parser"]
 
 [tool.scikit-build]

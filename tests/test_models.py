@@ -10,7 +10,6 @@ from spec_util import env_of, kw_of, kwargs_of, load, obj_of, options_of
 
 from symident import state
 from symident.detection import symmetry_detection
-from symident.install import find_msolve
 from symident.reduction import symmetry_reduction
 from symident.reduction.core import LEVELS
 from symident.sym.parse import model_sympify
@@ -18,8 +17,6 @@ from symident.sym.parse import model_sympify
 HERE = os.path.dirname(__file__)
 DET = sorted(glob.glob(os.path.join(HERE, "data", "specs", "detect", "*.json")))
 RED = sorted(glob.glob(os.path.join(HERE, "data", "specs", "reduce", "*.json")))
-MSOLVE = find_msolve()[0] is not None
-NEEDS_MSOLVE = {"test-symmetryDetection_151_symmetryDetection.json"}
 # an error the user can act on; anything else is a fault of symident
 USER_ERRORS = (ValueError, NotImplementedError)
 
@@ -86,8 +83,6 @@ def lifted_identities(spec, d):
 @pytest.mark.parametrize("path", cases(DET))
 def test_detection(path):
     g = load(path)
-    if os.path.basename(path) in NEEDS_MSOLVE and not MSOLVE:
-        pytest.skip("needs msolve")
     try:
         res = detect_spec(g)
     except USER_ERRORS:

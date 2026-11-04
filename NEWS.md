@@ -1,3 +1,10 @@
+# symident 0.13.1
+
+* A rank under `equilibrate` is proven where the resting Jacobian is invertible at the base
+  point. Where the resting state there needs msolve and msolve is missing, the rank is
+  verified, and `info["limits"]` names the reason; the analysis itself does not need msolve
+  for that check.
+
 # symident 0.13.0
 
 ## Certificates and levels
