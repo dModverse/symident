@@ -92,12 +92,9 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
             kr = kbatch([point0] * len(PRIMES), list(PRIMES), nt_used)
             box["const_base"] = [nv(kr[k], PRIMES[k]) if _pivots_eq(kr[k], pivots) else None
                                  for k in range(len(PRIMES))]
-        res = []
-        for nvp in box["const_base"]:
-            if nvp is None:
-                return None
-            res.append(int(nvp[col]))
-        return _lift_const(res, PRIMES)
+        # a prime without the kernel at the base point (a resting state without a root modulo it) is left out
+        got = [(int(nvp[col]), p) for nvp, p in zip(box["const_base"], PRIMES) if nvp is not None]
+        return _lift_const([v for v, _ in got], [p for _, p in got]) if got else None
     if not relevant:
         entries = {}
         for c in support_cols:

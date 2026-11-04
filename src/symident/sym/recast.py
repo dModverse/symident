@@ -718,7 +718,7 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken):
             store[kind][c][i] = v
 
     used = set()
-    for v in vals + [a['phi'] for a in atoms]:
+    for v in vals + [a['phi'] for a in atoms] + [e for fc in fss for e in fc]:
         used |= v.free_symbols
     consts = {pis, tc} & used
     rel = []

@@ -198,8 +198,8 @@ def _component_points(polys, nv, p):
     return merged()
 
 
-def _solve_states_msolve(dps, solve_states, p):
-    """Interior point of f = 0 over GF(p), checked against f."""
+def _solve_states_msolve(dps, solve_states, p, on_branch=None, accept=None):
+    """Interior point of f = 0 over GF(p), checked against f; `on_branch` hears of several roots, `accept` picks one."""
     nv = len(solve_states)
     plan, rest = _const_reduce(dps, nv, p)
     # outputs: a state in a single remaining balance, linearly, is solved after msolve
@@ -223,7 +223,7 @@ def _solve_states_msolve(dps, solve_states, p):
     cands = _component_points(rest, nv, p) if rest else iter([{}])
     if isinstance(cands, dict):
         return None, cands
-    first = None
+    first, taken, several = None, None, False
     for cand in itertools.islice(cands, 4096):
         vals = [0] * nv
         for i, v in cand.items():
@@ -240,10 +240,15 @@ def _solve_states_msolve(dps, solve_states, p):
         for i, b, inv in reversed(plan):
             vals[i] = (-_dp_value(b, vals, p)) * inv % p
         if all(vals) and all(_dp_value(d, vals, p) == 0 for d in dps):
-            if first is not None and vals != first:
-                note_branch(solve_states)
+            first, several = (list(vals), several) if first is None else (first, several or vals != first)
+            if taken is None and (accept is None or accept(vals)):
+                taken = list(vals)
+            if taken is not None and several:
                 break
-            first = list(vals)
-    if first is None:
+    # a pinned branch without a root here leaves the point out, as a point without any root
+    if first is None or (accept is not None and taken is None):
         return None, {'ok': False, 'why': 'no consistent interior point'}
-    return {solve_states[i]: spy.Integer(first[i]) for i in range(nv)}, None
+    if several:
+        (on_branch or note_branch)(solve_states)
+    taken = first if taken is None else taken
+    return {solve_states[i]: spy.Integer(taken[i]) for i in range(nv)}, None

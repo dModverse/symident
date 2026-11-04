@@ -396,7 +396,7 @@ def _core_candidates(resid, core, p):
     return out
 
 
-def _solve_states_reduced(dps, solve_states, p):
+def _solve_states_reduced(dps, solve_states, p, on_branch=None, accept=None):
     """(sol, None) or (None, fail) for an interior point of f = 0 over GF(p), None if the core is too large."""
     nv = len(solve_states)
     red = _reduce_system(dps, nv, p)
@@ -414,7 +414,7 @@ def _solve_states_reduced(dps, solve_states, p):
     if cands is None:
         return None
     steps = list(reversed(plan)) + list(reversed(sinks))
-    first = None
+    first, taken, several = None, None, False
     for cp in cands:
         vals = [0] * nv
         for i, x in zip(core, cp):
@@ -430,13 +430,18 @@ def _solve_states_reduced(dps, solve_states, p):
                 ok = False
                 break
         if ok and all(_dp_value(d, vals, p) == 0 for d in dps):
-            if first is not None and vals != first:
-                note_branch(solve_states)
+            first, several = (list(vals), several) if first is None else (first, several or vals != first)
+            if taken is None and (accept is None or accept(vals)):
+                taken = list(vals)
+            if taken is not None and several:
                 break
-            first = list(vals)
-    if first is None:
+    # a pinned branch without a root here leaves the point out, as a point without any root
+    if first is None or (accept is not None and taken is None):
         return None, {'ok': False, 'why': 'no consistent interior point'}
-    return {solve_states[i]: spy.Integer(first[i]) for i in range(nv)}, None
+    if several:
+        (on_branch or note_branch)(solve_states)
+    taken = first if taken is None else taken
+    return {solve_states[i]: spy.Integer(taken[i]) for i in range(nv)}, None
 
 
 def note_branch(states):

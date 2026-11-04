@@ -24,6 +24,7 @@ from .sections import (
 )
 from .sign import (
     DOMAIN,
+    budget_spent,
     carriers_real,
     domain_name,
     entry_class,
@@ -33,6 +34,7 @@ from .sign import (
     pos_form,
     pos_form_real,
     positive_set,
+    positive_somewhere,
     real_form,
     sgn,
     shift_fix,
@@ -65,16 +67,24 @@ def _str_keys(d):
 
 
 def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_pair=None, gens=None):
-    """Invariants set equal to fresh outer parameters q_k and solved, certified positive."""
-    args = (b, pins, coords, inv_start, prefer_real, split_pair, gens)
+    """Invariants set equal to fresh outer parameters q_k and solved, certified positive, else under sign conditions."""
+    sol = _memo_solve(b, pins, coords, inv_start, prefer_real, split_pair, gens, False)
+    if sol.get("solved") or DOMAIN.get("bounds") or budget_spent():
+        return sol
+    weak = _memo_solve(b, pins, coords, inv_start, prefer_real, split_pair, gens, True)
+    return weak if weak.get("solved") else sol
+
+
+def _memo_solve(b, pins, coords, inv_start, prefer_real, split_pair, gens, signed_ok):
+    args = (b, pins, coords, inv_start, prefer_real, split_pair, gens, signed_ok)
     ses = state.get("session")
     if ses is None or DOMAIN["deadline"] is not None:
         return _solve_invariants(*args)
     # the alternative charts of one reduction search equal blocks again; the work spent is replayed
     try:
-        key = pickle.dumps((b, pins, list(coords), inv_start, prefer_real, split_pair, gens, DOMAIN["positive"],
-                            DOMAIN["bounds"], DOMAIN["no_roots"], DOMAIN["real_carriers"], DOMAIN.get("work"),
-                            DOMAIN.get("work_cap")))
+        key = pickle.dumps((b, pins, list(coords), inv_start, prefer_real, split_pair, gens, signed_ok,
+                            DOMAIN["positive"], DOMAIN["bounds"], DOMAIN["no_roots"], DOMAIN["real_carriers"],
+                            DOMAIN.get("work"), DOMAIN.get("work_cap")))
     except (pickle.PicklingError, TypeError, AttributeError):
         return _solve_invariants(*args)
     memo = ses.__dict__.setdefault("solve_memo", {})
@@ -88,7 +98,8 @@ def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_p
     return copy.deepcopy(res)
 
 
-def _solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_pair=None, gens=None):
+def _solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_pair=None, gens=None,
+                      signed_ok=False):
     out = {"pins": None, "meaning": None, "solved": False}
     if not b.get("invariants"):
         return out
@@ -154,14 +165,14 @@ def _solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_
     DOMAIN["real_carriers"] = real_tmp
     try:
         return _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_tmp, loc,
-                                       split_pair, out, gens)
+                                       split_pair, out, gens, signed_ok)
     finally:
         DOMAIN["real_carriers"] = old_rc
 
 
 def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_tmp, loc, split_pair, out,
-                            gens=None):
-    best = best_root = None
+                            gens=None, signed_ok=False):
+    best = best_root = signed = None
     eqs = [Ies[l] - spy.Symbol(tmp_n[l]) for l in range(len(Ies))]
     try:
         sol_carr = [_str_keys(d) for d in spy.solve(eqs, [spy.Symbol(v) for v in carriers], dict=True)]
@@ -212,7 +223,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
 
     def subs_of(vals):
         return [(spy.Symbol(v), e) for v, e in vals.items()]
-    for gauge0 in keep_sets:
+    # the pass with sign conditions tries the constant pin only
+    for gauge0 in [] if signed_ok else keep_sets:
         if best_root is not None or time_up():
             break
         pinned1 = [v for v in gauge_all if v not in gauge0]
@@ -391,7 +403,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                         continue
                     sh = shift_fix(es, tmp_n, Ies)
                     real_br = [t for t in real_tmp if t not in sh["shift"]]
-                    ent, has_root, partial = {}, False, False
+                    ent, has_root, partial, unproven = {}, False, False, []
                     for v in all_unk:
                         e = None
                         with carriers_real(real_br):
@@ -403,8 +415,9 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             with carriers_real([]):
                                 e = pos_form(sh["es"][v])
                             if e is None and DOMAIN.get("bounds"):
-                                # under declared bounds an unproven entry may still hold inside them
+                                # under declared bounds an entry without certificate is kept and listed
                                 e = sh["es"][v]
+                                unproven.append(v)
                             if e is None:
                                 if red_diag:
                                     print(f"[reddiag]   {v} = {sh['es'][v]} not proven")
@@ -448,6 +461,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     cand["inv_names"] = inv_n
                     cand["solved"] = True
                     cand["coverage"] = "partial" if partial else "total"
+                    cand["unproven_entries"] = [f"{v} = {ent[v]}" for v in unproven]
                     cand["solved_domain"] = {inv_n[l]: ("real" if tmp_n[l] in real_br else "positive")
                                               for l in range(len(tmp_n))}
                     cand["injective"] = not partial and section_injective(
@@ -500,7 +514,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     if ok_pin:
                         sh = shift_fix(pinned, tmp_n, Ies)
                         pinned = sh["es"]
-                entries, root, partial = {}, False, False
+                entries, root, partial, unsigned = {}, False, False, []
                 real_pin = real_tmp if sh is None else [t for t in real_tmp if t not in sh["shift"]]
                 if ok_pin:
                     for c in carriers:
@@ -511,6 +525,10 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                         if e is None:
                             with carriers_real([]):
                                 e = pos_form(pinned[c])
+                            if e is None and signed_ok and not is_real(c) \
+                                    and not pinned[c].has(spy.zoo, spy.nan, spy.oo, spy.S.NegativeInfinity):
+                                e = pinned[c]
+                                unsigned.append(c)
                             if e is None:
                                 ok_pin = False
                                 break
@@ -522,6 +540,9 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                         if cls == "root":
                             root = True
                         entries[c] = str(e).replace("**", "^")
+                seen = positive_somewhere(entries, Ies, tmp_n, b["support"]) if ok_pin and unsigned else None
+                if unsigned and seen is None:
+                    ok_pin = False
                 if ok_pin:
                     def to_inv(v):
                         out2 = {}
@@ -540,6 +561,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     cand["root_note"] = ("a solved entry contains a square root; the branch is the "
                                          "certified positive one") if root else None
                     cand["coverage"] = "partial" if partial else "total"
+                    cand["sign_conditions"] = [f"{to_inv(entries)[c]} > 0" for c in unsigned]
+                    cand["sign_witness"] = seen
                     cand["solved_domain"] = {inv_n[l]: ("real" if tmp_n[l] in real_pin else "positive")
                                               for l in range(len(tmp_n))}
                     const = all(re.fullmatch(r"[0-9.]+", v) for v in gp.values())
@@ -551,7 +574,9 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                         return cand
                     if not partial and best_root is None:
                         best_root = cand
-                    if partial and best is None:
+                    if partial and unsigned and signed is None:
+                        signed = cand
+                    if partial and not unsigned and best is None:
                         best = cand
     if best_root is not None:
         return best_root
@@ -560,6 +585,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
         session.note("limits", f"section search over {', '.join(b['support'])}: " + "; ".join(dict.fromkeys(cut)))
     if best is not None:
         return best
+    if signed is not None:
+        return signed
     if time_up():
         out["reason"] = "the section search stopped at reduce(work_cap=) or reduce(timeout=)"
         return out

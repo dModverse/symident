@@ -154,13 +154,40 @@ def reduction_hint_lines(res, width=None):
     return out
 
 
+def _status_lines(res, width):
+    """The line on a rank that is verified or a lower bound, naming what it rests on."""
+    info = res.get("info") or {}
+    rs = info.get("rank_status")
+    if not isinstance(rs, dict) or rs.get("status") not in ("verified", "lower bound"):
+        return []
+    if rs["status"] == "lower bound":
+        tail = "there may be fewer non-identifiable directions" if res["rank"] < res["dim"] else \
+            "the full rank may hold at this point only"
+        return [_wrap(f"The rank is a lower bound ({rs['why']}): {tail}.", "         ", width)]
+    prob = rs.get("probability")
+    if info.get("rank_fields") is not None:
+        return [_wrap(f"The rank is verified, not proven: the {rs['why']}" +
+                      (f" (probability of a wrong pass at most {prob:.1e})." if prob is not None else "."),
+                      "         ", width)]
+    pj = info.get("projection") or {}
+    risks = ["a verified closed form is wrong"] if (rs.get("why") or "").startswith("every direction is closed") \
+        else []
+    if pj.get("status") == "verified":
+        risks.append(f"the columns of {pj.get('of', 'the unknown inputs')} drop rank at the random point that "
+                     "checked them")
+    return [_wrap("The rank is verified, not proven: it holds unless " +
+                  " or ".join(risks or ["a verified closed form is wrong"]) +
+                  (f" (probability at most {prob:.1e})." if prob is not None else "."), "         ", width)]
+
+
 def result_lines(res, verbose=False, width=None, fixing=False):
     """Report lines of the detection result: identifiability, or the rank and the generators."""
     width = _width(width)
     is_obs = res["method"] == "observability"
     n = len(res["symmetries"])
     if is_obs and res.get("identifiable"):
-        return [f"Result:  structurally locally identifiable (rank {res['rank']} / {res['dim']})"]
+        return [f"Result:  structurally locally identifiable (rank {res['rank']} / {res['dim']})"] + \
+            _status_lines(res, width)
     sw = ((res.get("info") or {}).get("switching") or {}) if is_obs else {}
     cands, unc = sw.get("candidates") or [], sw.get("uncertified")
     if is_obs:
@@ -168,18 +195,7 @@ def result_lines(res, verbose=False, width=None, fixing=False):
         out = [f"Result:  rank {res['rank']} / {res['dim']}  |  "
                f"{plural(n, 'non-identifiable direction', 'non-identifiable directions')}" +
                (f", up to {more} more" if more > 0 and (cands or unc) else "")]
-        rs = (res.get("info") or {}).get("rank_status")
-        if isinstance(rs, dict) and rs.get("status") == "verified" and res["info"].get("rank_fields") is not None:
-            out.append(_wrap(f"The rank is verified, not proven: the {rs['why']}" +
-                             (f" (probability of a wrong pass at most {rs['probability']:.1e})."
-                              if rs.get("probability") is not None else "."), "         ", width))
-        elif isinstance(rs, dict) and rs.get("status") == "verified":
-            out.append(_wrap("The rank is verified, not proven: it holds unless a verified closed form is "
-                             "wrong" + (f" (probability at most {rs['probability']:.1e})."
-                                        if rs.get("probability") is not None else "."), "         ", width))
-        elif isinstance(rs, dict) and rs.get("status") == "lower bound":
-            out.append(_wrap(f"The rank is a lower bound ({rs['why']}): there may be fewer "
-                             "non-identifiable directions.", "         ", width))
+        out += _status_lines(res, width)
         out.append("")
     else:
         out = [f"Result:  {plural(n, 'scaling symmetry', 'scaling symmetries')} (exact integer kernel)", ""]
@@ -231,7 +247,11 @@ def summary_lines(res, verbose=False, width=None):
                     "without an error bound)")
     elif is_obs and info.get("lie_plateau") is not None:
         if info.get("lie_certified"):
-            comp.append("saturation: certified (every segment at the rank bound of its invariant space)")
+            ob = info.get("order_bound")
+            comp.append("saturation: certified (every segment at the rank bound of its invariant space" +
+                        ("" if ob == 0 else f"; sufficient except with probability at most {ob:.1e}" if ob is not None
+                         else "; the random points of the certificate have no error bound" +
+                         (f": {info['order_bound_why']}" if info.get("order_bound_why") else "")) + ")")
         elif info.get("lie_uncertified"):
             comp.append("saturation: certified except condition " +
                         ", ".join(str(c + 1) for c in info["lie_uncertified"]) + " (rank bound not reached)")
@@ -253,7 +273,11 @@ def summary_lines(res, verbose=False, width=None):
             [plural(len(sw["surfaces"]), "surface", "surfaces"),
              plural(len(sw["regimes"]), "regime", "regimes")] +
             ([plural(len(sw["excluded"]), "excluded sign pattern", "excluded sign patterns")]
-             if sw.get("excluded") else [])) + " (info['switching'])")
+             if sw.get("excluded") else [])) + " (info['switching']); a direction is free only where it is "
+                    "free in every allowed regime, from any point of a switching surface")
+    if info.get("zero_states"):
+        comp.append(f"states at zero: {', '.join(info['zero_states'])} start at zero and every regime keeps them "
+                    "there, so the analysis runs without them (info['zero_states'])")
     for lim in info.get("limits") or []:
         comp.append(f"stopped: {lim}")
     if info.get("errors"):
@@ -275,12 +299,25 @@ def summary_lines(res, verbose=False, width=None):
             comp.append(f"saturation guard: inconclusive ({v.get('reason') or 'unavailable'})")
     el = info.get("elapsed")
     if el is not None and el >= 0.05:
-        comp.append(f"elapsed: {el:.1f}s")
+        ph = _phases(info.get("timing"))
+        comp.append(f"elapsed: {el:.1f}s" + (f" ({', '.join(ph)})" if ph else ""))
     if comp:
         out.append("Computation:")
         out += ["  " + l for l in comp]
     out.append("")
     out += result_lines(res, verbose, width, fixing=True)
+    return out
+
+
+def _phases(stages):
+    """The seconds of the rank, the reconstruction and the proofs from the cumulative stage times, where recorded."""
+    at = {s.get("stage"): s.get("seconds") for s in stages or []}
+    rank, rec, proof = at.get("scalings peeled"), at.get("reconstruction"), at.get("field proof")
+    out = [] if rank is None else [f"rank {rank:.1f}s"]
+    if rank is not None and rec is not None:
+        out.append(f"reconstruction {rec - rank:.1f}s")
+    if rec is not None and proof is not None:
+        out.append(f"proofs {proof - rec:.1f}s")
     return out
 
 

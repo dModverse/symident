@@ -39,7 +39,7 @@ from .conditions import (
     scaling_component,
     start_time,
 )
-from .cq import check_conserved, equil_zero_states, pivot_decomposition, substitute_cq
+from .cq import check_conserved, equil_zero_branches, pivot_decomposition, substitute_cq
 from .finalize import finalize, log_arg_back
 from .gauge import gauge_suggest, gauged_detection
 from .observability import observability_analytic_multi
@@ -112,19 +112,23 @@ def _rest_idle_states(fdyn, forcings, zero=()):
     return out
 
 
-def _ode_zero_states(fdyn, forcings):
-    """States whose right-hand side, with inputs and earlier zero states at zero, has zero as its only root."""
+def _ode_zeros(fdyn, forcings, known=()):
+    """(forced, open): states a linear right-hand side holds at zero, those whose coefficient vanishes with others."""
     import sympy as spy
 
     from ..sym.parse import _make_local_parse
     _, parse = _make_local_parse([f"{k} = {v}" for k, v in fdyn.items()])
     rhs = {k: parse(str(v).replace("^", "**")) for k, v in fdyn.items()}
-    zero = {spy.Symbol(u): 0 for u in forcings}
+    zero = {spy.Symbol(u): 0 for u in list(forcings) + list(known)}
     found = []
+
+    def vanishes(e):
+        v = spy.cancel(spy.together(e))
+        return v == 0 or v.has(spy.nan, spy.zoo)
     while True:
-        new = []
+        cand = {}
         for k, e in rhs.items():
-            if k in found or k in forcings:
+            if k in found or k in forcings or k in known:
                 continue
             x = spy.Symbol(k)
             e0 = spy.expand(e.xreplace(zero))
@@ -135,12 +139,38 @@ def _ode_zero_states(fdyn, forcings):
                 linear = spy.Poly(num, x).degree() == 1
             except spy.PolynomialError:
                 linear = False
-            if linear and spy.diff(e0, x).xreplace({x: 0}) != 0:
-                new.append(k)
+            a = spy.diff(e0, x).xreplace({x: 0}) if linear else spy.Integer(0)
+            if a != 0:
+                cand[k] = a
+        new = [k for k, a in cand.items() if not vanishes(a.xreplace({spy.Symbol(o): 0 for o in cand if o != k}))]
         if not new:
-            return found
+            return found, list(cand)
         found += new
         zero.update({spy.Symbol(k): 0 for k in new})
+
+
+def _ode_zero_states(fdyn, forcings):
+    """States forced to zero at rest by their right-hand sides, with the inputs at zero."""
+    return _ode_zeros(fdyn, forcings)[0]
+
+
+def _rest_zeros(fdyn, reactions, forcings):
+    """The states at zero at rest: those the network and the right-hand sides force, then one per branch, noted."""
+    zero = []
+    if reactions is not None:
+        zero, notes = equil_zero_branches(reactions["smatrix"], reactions["species"], reactions["rates"],
+                                          forcings)
+        for n in notes:
+            session.note("branches", n)
+    while True:
+        forced, open_ = _ode_zeros(fdyn, forcings, zero)
+        zero = list(dict.fromkeys(zero + forced))
+        if not open_:
+            return zero
+        session.note("branches", f"the resting states {', '.join(open_)}: the right-hand side of {open_[0]} "
+                                 f"vanishes at {open_[0]} = 0 and where another of them is zero; the result holds "
+                                 f"for {open_[0]} = 0")
+        zero.append(open_[0])
 
 
 def _drop_sinks(fdyn, g_exprs, trafo, events, reactions, totals, keep, zero=()):
@@ -176,26 +206,39 @@ def _drop_sinks(fdyn, g_exprs, trafo, events, reactions, totals, keep, zero=()):
     return fdyn, trafo, events, reactions, totals, held
 
 
-def _off_domain(exprs, positive, states):
-    """A log or fractional power of a state term not positive under the declared signs, as a string, or None."""
+def _off_domain(exprs, positive, generic=()):
+    """A log, fractional or symbolic power whose argument the signs do not make positive, as a message, or None."""
     import sympy as spy
 
     from ..sym.domain import is_positive
-    for e in exprs:
+    # the `generic` symbols take values of their own and count as positive
+    every = positive is True
+    pos = set(generic) | (set() if positive in (True, False, None) else set(positive))
+    # conditions repeat the same initial values
+    for e in dict.fromkeys(map(str, exprs)):
         try:
             x = model_sympify(e)
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             continue
         for a in x.atoms(spy.log, spy.Pow):
-            u = a.args[0] if isinstance(a, spy.log) else a.base
-            if isinstance(a, spy.Pow) and (not a.exp.is_Rational or a.exp.is_Integer or u.is_number):
+            if isinstance(a, spy.log):
+                u, what = a.args[0], "argument"
+            elif not a.exp.is_number:
+                u, what = a.base, "base"
+            elif a.exp.is_Rational and not a.exp.is_Integer:
+                u, what = a.base, "argument"
+            else:
                 continue
-            if not {str(x) for x in u.free_symbols} & states:
+            if u.is_number:
                 continue
             # coordinates are real; the declared ones and expressions positive
-            if not is_positive(u, positive):
-                return str(a).replace("**", "^")
+            names = sorted(v for v in pos if re.fullmatch(r"[A-Za-z_.][A-Za-z0-9_.]*", v))
+            if is_positive(u, True if every else names) or (not every and is_positive(u, sorted(pos))):
+                continue
+            bad = [] if every else sym_sort([str(s) for s in u.free_symbols if str(s) not in pos])
+            return (f"{str(a).replace('**', '^')} needs a positive {what} (`positive`): "
+                    f"{', '.join(bad) or str(u)} not declared positive")
     return None
 
 
@@ -300,7 +343,7 @@ def _model_texts(kw):
         [str(v) for g in (gs if isinstance(gs, (list, tuple)) else [gs]) for v in dict(g or {}).values()]
 
 
-def _check_unknown_inputs(kw, hybrid):
+def _check_unknown_inputs(kw):
     """ValueError for unknown inputs on a model or setting they do not support yet."""
     unknown = [str(w) for w in kw.get("unknown_inputs") or []]
     if not unknown:
@@ -324,9 +367,7 @@ def _check_unknown_inputs(kw, hybrid):
             raise ValueError(f"an event changes the unknown input {ev['var']}; an unknown input has no "
                              "events, since it is any function of time")
     why = None
-    if hybrid:
-        why = "switches, since a direction would need one input change on both sides of every surface"
-    elif kw.get("sym_engine") == "symbolic":
+    if kw.get("sym_engine") == "symbolic":
         why = 'engine="symbolic"'
     elif kw.get("trafo") is not None and any(w in dict(t or {}) for t in (
             kw["trafo"] if isinstance(kw["trafo"], (list, tuple)) else [kw["trafo"]]) for w in unknown):
@@ -390,10 +431,11 @@ def _gauged(kw):
     return res
 
 
-def _with_known_inputs(kw, known):
-    """The arguments with each known input a jet chain whose initial values are fixed symbols."""
+def _with_known_inputs(kw, known, order):
+    """The arguments with each known input a chain of `order` jets whose initial values are fixed symbols."""
     taken = set(get_symbols(_model_texts(kw))) | set(dict(kw.get("f") or {}))
-    f, jets = _input_jets(dict(kw["f"]), known, _jet_order(kw), taken)
+    f, jets = _input_jets(dict(kw["f"]), known, int(order), taken)
+    kw = dict(kw, known_order={"names": list(known), "jet_order": int(order)})
     start = {x: f"{x}_0" for names in jets.values() for x in names}
     clash = [v for v in start.values() if v in taken]
     if clash:
@@ -412,6 +454,79 @@ def _with_known_inputs(kw, known):
     return dict(kw, f=f, trafo=trafo, fixed=fixed)
 
 
+def _symbols_of(x):
+    return set(get_symbols([str(v) for v in x if v is not None]))
+
+
+def _model_symbols(kw):
+    """The symbols of the right-hand sides and observables of `kw`."""
+    gl = kw.get("g") if isinstance(kw.get("g"), (list, tuple)) else [kw.get("g")]
+    return _symbols_of(list(dict(kw["f"]).values()) + [v for x in gl if x for v in dict(x).values()])
+
+
+def _held(kw):
+    """States, inputs, fixed symbols and the symbols the trafo, the grid and the events read."""
+    held = set(dict(kw["f"])) | {"time"}
+    for key in ("forcings", "fixed", "unknown_inputs"):
+        held |= {str(u) for u in kw.get(key) or []}
+    tr = kw.get("trafo")
+    for t in (tr if isinstance(tr, (list, tuple)) else [tr]):
+        held |= set(dict(t or {})) | _symbols_of(dict(t or {}).values())
+    grid = Grid.from_any(kw.get("conditions"))
+    if grid is not None:
+        held |= set(grid.colnames()) | _symbols_of(grid.cell(i, c) for i in range(grid.nrow) for c in grid.colnames())
+    held |= _symbols_of([e.get(k) for e in as_events(kw.get("events")) for k in ("value", "time", "root")])
+    return held
+
+
+def _excluded_coords(kw, hy):
+    """Symbols that only a regime the declared signs exclude holds; no allowed regime depends on them."""
+    if isinstance(hy, dict):
+        hg = hy["g"] if isinstance(hy["g"], (list, tuple)) else [hy["g"]]
+        after = _symbols_of(list(hy["f"].values()) + [v for x in hg if x for v in dict(x).values()])
+    else:
+        after = {str(a) for e in list(hy.f.values()) + [v for x in hy.g for v in x.values()] + list(hy.sw.funcs)
+                 for a in e.free_symbols}
+    return sym_sort(_model_symbols(kw) - after - _held(kw))
+
+
+def _lost_coords(kw, kw2):
+    """Symbols of `kw` that the model `kw2` on the zero set of its states no longer reads."""
+    return sym_sort(_model_symbols(kw) - _model_symbols(kw2) - _held(kw) - _held(kw2))
+
+
+def _with_excluded(res, names, positive, route="a coordinate of excluded regimes only",
+                   proof="full rank on the coordinates of the allowed regimes"):
+    """The result with each coordinate of `names` as a direction of its own, exact: no observable depends on it."""
+    from .finalize import complete, display_form
+    info = res.get("info") if isinstance(res, dict) else None
+    if not names or not isinstance(info, dict) or info.get("coordinates") is None:
+        return res
+    names = [z for z in names if z not in set(info["coordinates"])]
+    if not names:
+        return res
+    info["coordinates"] = list(info["coordinates"]) + names
+    dirs = [{"type": "general", "generator": {z: "1"}, "weights": None, "degree": 0, "support": [z],
+             "explicit": True, "reason": None, "route": route, "level": "exact",
+             "state_components": None, "input_change": None} for z in names]
+    res["symmetries"] = list(res.get("symmetries") or []) + complete(display_form(dirs), positive, info["coordinates"])
+    if res.get("dim") is None:
+        return res
+    full = res["rank"] == res["dim"]
+    res["dim"] = int(res["dim"]) + len(names)
+    res["identifiable"] = False
+    if full:
+        info["rank_proven"] = len(names)
+        info["rank_proof"] = proof
+    elif info.get("rank_proven") is not None:
+        info["rank_proven"] = int(info["rank_proven"]) + len(names)
+    return res
+
+
+# doublings of the known-input chains past which their order is left as a limit
+_KNOWN_DOUBLINGS = 3
+
+
 def symmetry_detection(*args, **kw):
     """The detection on plain inputs (see _symmetry_detection); a model with switches that
     the declared signs leave open goes to the hybrid analysis."""
@@ -420,8 +535,22 @@ def symmetry_detection(*args, **kw):
     kw = dict(inspect.signature(_symmetry_detection).bind(*args, **kw).arguments)
     if state.get("session") is None:
         _check_declared(kw, known)
-    if known:
-        kw = _with_known_inputs(kw, known)
+    if not known:
+        return _detection(kw)
+    fixed_order = int(dict(kw.get("control") or {}).get("input_jet_order") or 0)
+    order = fixed_order or _jet_order(kw)
+    # the chains of known inputs are lengthened until exact at every Lie order taken
+    for _ in range(_KNOWN_DOUBLINGS + 1):
+        res = _detection(_with_known_inputs(kw, known, order))
+        ki = (res.get("info") or {}).get("known_inputs") if isinstance(res, dict) else None
+        if fixed_order or not ki or not ki.get("short"):
+            break
+        order *= 2
+    return res
+
+
+def _detection(kw):
+    """symmetry_detection() on the bound arguments, the known inputs already chains."""
     _check_steps(kw)
     _check_names(kw)
     _check_input_starts(kw)
@@ -431,7 +560,8 @@ def symmetry_detection(*args, **kw):
         hy = hybrid_model({str(k): str(v) for k, v in dict(kw["f"]).items()}, kw.get("g"),
                           kw.get("positive", True), events=kw.get("events"),
                           inputs=kw.get("forcings") or (), taken=kw.get("parameters") or ())
-    _check_unknown_inputs(kw, hy is not None and not isinstance(hy, dict))
+    _check_unknown_inputs(kw)
+    excluded = _excluded_coords(kw, hy) if hy is not None else []
     if isinstance(hy, dict):
         kw.update(f=hy["f"], g=hy["g"])
         hy = None
@@ -441,25 +571,43 @@ def symmetry_detection(*args, **kw):
     outer = state.get("session") is None
     if outer:
         state.check_names()
+    # the model whose result this is, and whether it has switches
+    kw_res, switched, zero = kw, hy is not None, None
     with session.opened(kw) as ses:
         ses.depth += 1
         try:
             if hy is not None:
-                from .hybrid import hybrid_detection
-                res = hybrid_detection(hy, kw, regimes)
+                from .hybrid import hybrid_detection, zero_restriction
+                kw2, zero, notes, setup = zero_restriction(hy, kw, regimes)
+                for n in notes:
+                    session.note("limits", n)
+                if kw2 is not None:
+                    res = _detection(kw2)
+                    kw_res = kw2
+                    switched = isinstance(res, dict) and bool((res.get("info") or {}).get("switching"))
+                    res = _with_excluded(res, _lost_coords(kw, kw2), kw.get("positive", True),
+                                         "a coordinate that only states at zero read",
+                                         "full rank on the coordinates the states away from zero read")
+                else:
+                    res = hybrid_detection(hy, kw, regimes, setup)
             elif kw.get("gauge_preference", False) is not False and not kw.get("scalings_only"):
                 res = _gauged(kw)
             else:
                 res = _with_input_jets(kw)
+            res = _with_excluded(res, excluded, kw.get("positive", True))
         finally:
             ses.depth -= 1
-        if outer and hy is None and isinstance(res, dict) and isinstance(res.get("info"), dict) \
+        if outer and not switched and isinstance(res, dict) and isinstance(res.get("info"), dict) \
                 and res["info"].get("bound") is None:
-            res["info"]["bound"] = _kernel_bound(kw, res)
+            res["info"]["bound"] = _kernel_bound(kw_res, res)
         if outer and isinstance(res, dict) and isinstance(res.get("info"), dict):
+            res["info"]["zero_states"] = zero or None
             _gap_settled(res["info"])
             _bound_needs_orders(res["info"])
             _checked_without_bound(res)
+            pj = res["info"].get("projection") or {}
+            if pj.get("status") == "verified" and pj.get("probability") is None:
+                pj["probability"] = _projection_bound(kw_res, res)
         if outer and isinstance(res, dict) and isinstance(res.get("info"), dict) and \
                 res.get("method") == "observability":
             res["info"]["rank_status"] = _rank_status(res)
@@ -518,6 +666,22 @@ def _past_premature_order(oam, out, tries=3):
 
 def _rank_status(res):
     """{"status", "why", "probability"} of the rank: "proven", "verified" or "lower bound"; None without a rank."""
+    st = _rank_status_plain(res)
+    pj = (res.get("info") or {}).get("projection")
+    if st is None or not pj or pj.get("status") == "proven" or st["status"] == "lower bound":
+        return st
+    of = pj.get("of", "the unknown inputs")
+    if pj.get("status") == "verified" and pj.get("probability") is not None:
+        return {"status": "verified", "probability": float(min(1.0, pj["probability"] + (st["probability"] or 0))),
+                "why": f"{st['why']}; the rank modulo {of} holds at a random point modulo a prime"}
+    why = {"differs": f"the rank modulo {of} differs between the base point and a random point",
+           "unchecked": f"the rank modulo {of} rests on the base point, where their columns may drop rank"}.get(
+        pj.get("status"), f"the rank modulo {of} holds at a random point, without an error bound")
+    return {"status": "lower bound", "why": why, "probability": None}
+
+
+def _rank_status_plain(res):
+    """_rank_status() without the check of a rank modulo unknown inputs."""
     info = res["info"]
     if res.get("rank") is None or res.get("dim") is None:
         return None
@@ -577,7 +741,7 @@ def _gap_settled(info):
 
 
 def _bound_needs_orders(info):
-    """Drops the probability of info["bound"] where an unproven Lie or gap order leaves the kernel open."""
+    """info["bound"] plus the chance of a wrong certified order, dropped where an unproven order leaves it open."""
     b = info.get("bound")
     if not isinstance(b, dict) or b.get("probability") is None or info.get("engine") == "symbolic" or \
             info.get("rank_proven") is not None or info.get("rank_fields") is not None:
@@ -588,20 +752,46 @@ def _bound_needs_orders(info):
         why = "the rank grows past the orders used"
     elif info.get("gap_certified") is False:
         why = "the gap order is not proven sufficient"
+    elif info.get("order_bound") is None:
+        why = "the certified orders have no error bound" + \
+            (f" ({info['order_bound_why']})" if info.get("order_bound_why") else "")
     else:
+        info["bound"] = dict(b, probability=float(min(1.0, b["probability"] + info["order_bound"])),
+                             orders=float(info["order_bound"]))
         return
     info["bound"] = dict(b, probability=None, applies=False,
                          why=f"{why}, and the check runs at the order reached")
 
 
+def _projection_bound(kw, res):
+    """Schwartz-Zippel bound on the unknown-input columns dropping rank at the point of info["projection"], or None."""
+    info = res["info"]
+    pj, ui = info.get("projection"), info.get("unknown_inputs")
+    if not pj or pj.get("status") != "verified" or not ui:
+        return None
+    f = dict(kw["f"])
+    taken = set(get_symbols(_model_texts(kw))) | set(f)
+    fj, jets = _input_jets(f, list(ui["names"]), int(ui["jet_order"]), taken)
+    b = _model_bound(dict(kw, f=fj), res, [{"_": "1"}], 1, int(pj["order"]))
+    if not isinstance(b, dict) or b.get("probability") is None:
+        return None
+    return float(min(1.0, int(pj["columns"]) * b["degree"] / b["prime"]))
+
+
 def _kernel_bound(kw, res):
     """The kernel-check error bound of the verified directions, or why it does not apply; None without them."""
-    from ..gfp import verify_prime
-    from .bound import kernel_bound
     vecs = [s["generator"] for s in res.get("symmetries") or []
             if s.get("level") == "verified" and s.get("generator")]
     if not vecs:
         return None
+    from .bound import drawn
+    return _model_bound(kw, res, vecs, 2, int(res["info"].get("lie_order_used") or 0), drawn(2))
+
+
+def _model_bound(kw, res, vecs, points, order, draws=None):
+    """kernel_bound() of `vecs` over the model of `kw` up to Lie order `order`, worst over trafos and observables."""
+    from ..gfp import verify_prime
+    from .bound import kernel_bound, no_degree
     if (res.get("info") or {}).get("engine") == "symbolic":
         return {"applies": False, "why": "the symbolic engine takes the kernel exactly, up to the Lie order used"}
     if kw.get("equilibrate"):
@@ -641,10 +831,12 @@ def _kernel_bound(kw, res):
         for g in gs:
             gg = {str(k): _subs(str(v), sub) for k, v in dict(g or {}).items()}
             grp = [[dict(e, value=_subs(str(e["value"]), sub)) for e in g_] for g_ in later]
-            b = kernel_bound(fs, gg, x0, int(res["info"].get("lie_order_used") or 0), vecs, verify_prime(), 2,
-                             events=grp, gap_order=gap_order)
+            b = kernel_bound(fs, gg, x0, order, vecs, verify_prime(), points, events=grp, gap_order=gap_order,
+                             draws=draws)
             if b is None:
-                return {"applies": False, "why": "a term is not rational"}
+                why = no_degree(list(fs.values()) + list(gg.values()) + list(x0.values()) +
+                                [c for v in vecs for c in v.values()])
+                return {"applies": False, "why": why or "a term has no degree bound"}
             out = b if out is None or b["probability"] > out["probability"] else out
     return out
 
@@ -672,10 +864,10 @@ def _scalings_without_jets(dirs, jets):
     return out
 
 
-def _resolved_scalings(fdyn, gset, g_per_cond, res, inputs, fixed, jets, multi, held):
+def _resolved_scalings(fdyn, gset, g_per_cond, res, inputs, fixed, jets, multi, held, rest_zero=None):
     """The scalings of every segment's equations with its initial values, event values and times held, on the
     coordinates of the compiled tapes `multi` (None: the free or `held` states and the parameters), with the jet
-    weights."""
+    weights; with `rest_zero`, the inputs at rest, a start at rest also holds its resting model."""
     import sympy as spy
     model, obs, xm, xo = [], [], [], []
     for i, subs in enumerate(res["subs"]):
@@ -687,6 +879,12 @@ def _resolved_scalings(fdyn, gset, g_per_cond, res, inputs, fixed, jets, multi, 
         obs.append(eqn_lines(sub(dict(g or {}))) or [])
         xm.append([f"{k} = {sub(v)}" for k, v in (res["ic0"][i] if first else {}).items()] +
                   [f"{e['var']} = {sub(e['value'])}" for e in evs if e["method"] != "multiply"])
+        if first and rest_zero is not None and res["seg_equil"][i]:
+            at_rest = {k: v for k, v in subs.items() if k not in set(rest_zero)}
+            at_rest.update(res["rest_subs"][i])
+            at_rest.update({u: "0" for u in rest_zero})
+            rest = subst(list(at_rest), list(at_rest.values()))
+            xm[-1] += [f"{k} = {rest(v)}" for k, v in fdyn.items()]
         xo.append([f"_ = {sub(e['value'])}" for e in evs if e["method"] == "multiply"] +
                   ([f"_ = {res['times'][i]}"] if get_symbols([res["times"][i]]) else []))
     r = scaling_symmetries_multi(per_cond_model=model, per_cond_obs=obs, inputs=inputs or None,
@@ -718,7 +916,7 @@ def _resolved_scalings(fdyn, gset, g_per_cond, res, inputs, fixed, jets, multi, 
 
 
 def _mark_nuisance(multi, spec):
-    """The nuisance coordinates of `spec` marked in the compiled tapes: states, kept, tops, exact order, prolonged."""
+    """The nuisance coordinates of `spec` marked in the tapes: states, kept, tops, exact order, prolonged, starts."""
     every = set(spec["states"])
     multi["nuisance"] = [z for z in multi["znames"] if z in every]
     multi["nuisance_tops"] = list(spec.get("tops") or [])
@@ -726,6 +924,7 @@ def _mark_nuisance(multi, spec):
     multi["nuisance_order"] = int(spec["exact_order"])
     multi["nuisance_prolonged"] = bool(spec.get("prolonged"))
     multi["nuisance_jet_states"] = list(spec.get("jet_states") or [])
+    multi["nuisance_starts"] = dict(spec.get("starts") or {})
     cols = [i for i, z in enumerate(multi["znames"]) if z in every]
     for t in multi["tapes"]:
         r = list(t.get("lie_reach") or [])
@@ -772,7 +971,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                        equilibrate=False, reduce_cq=False, free_initial=None, reconstruct=False,
                        positive=True, verify=True, cores=1, control=None, scalings_only=False,
                        sym_engine="modular", verbose=False, reactions=None, totals=None,
-                       regimes=None, unknown_inputs=None, jet_order=None, nuisance=None):
+                       regimes=None, unknown_inputs=None, jet_order=None, nuisance=None, known_order=None):
     """The result dictionary of the detection on plain inputs."""
     control = {**reconst_control(), **dict(control or {})}
     equilibrate = bool(equilibrate)
@@ -823,6 +1022,15 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             nu = raw["nuisance"]
             res["info"]["nuisance"] = {"exact_order": nu["exact_order"], "short": bool(nu["short"]),
                                        "rank": len(nu["names"]) - int(nu["pinned"])}
+        if known_order:
+            res["info"]["known_inputs"] = {"names": list(known_order["names"]),
+                                           "jet_order": int(known_order["jet_order"]),
+                                           "exact_order": int(known_order["jet_order"]) - 1,
+                                           "short": bool(raw.get("known_short"))}
+            if raw.get("known_short"):
+                session.note("limits", f"known inputs: the {known_order['jet_order']} jets of each input are "
+                                       f"exact up to Lie order {int(known_order['jet_order']) - 1}, below the orders "
+                                       "the analysis took")
         if raw.get("kernel") is not None and not state.get("inner") and not state.get("keep_kernel"):
             try:
                 res["info"]["gauge_suggestion"] = gauge_suggest(res["symmetries"], raw["kernel"],
@@ -868,9 +1076,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         return eqn_lines(gset[k])
     trafo_list = isinstance(trafo, (list, tuple))
     if equilibrate:
-        zero = [] if reactions is None else equil_zero_states(reactions["smatrix"], reactions["species"],
-                                                              reactions["rates"], forcings)
-        zero = list(dict.fromkeys(zero + _ode_zero_states(fdyn, forcings)))
+        zero = _rest_zeros(fdyn, reactions, forcings)
         fdyn, trafo, events, reactions, totals, held = _drop_sinks(
             fdyn, g_char(), trafo, events, reactions, totals, forcings + list(free_initial or []), zero)
         fixed = list(dict.fromkeys(fixed + held))
@@ -915,8 +1121,9 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         trafos = [_clean(t) for t in trafo]
         ic_split = initial_value_split(trafos, states, taken=parameters + g_names())
         trafos, ic_from, ic_to = ic_split["trafos"], ic_split["from"], ic_split["to"]
-        cond_subs = [{k: v for k, v in tr.items() if k not in set(states)} for tr in trafos]
-        cond_initial_box["v"] = [({k: v for k, v in tr.items() if k in set(states)} or None)
+        is_state = set(states)
+        cond_subs = [{k: v for k, v in tr.items() if k not in is_state} for tr in trafos]
+        cond_initial_box["v"] = [({k: v for k, v in tr.items() if k in is_state} or None)
                                  for tr in trafos]
         trafo_syms = list(dict.fromkeys(s for tr in trafos for s in get_symbols(list(tr.values()))))
     elif trafo is not None:
@@ -1027,6 +1234,12 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                           "initial values are used as given.", stacklevel=2)
             reduce_cq = False
             settings["reduce_cq"] = False
+    # a logarithm positive in the full model stays positive where the conserved quantities hold
+    def off_domain():
+        ic_texts = [str(v) for d in [initial_box["v"]] + list(cond_initial_box["v"] or []) if d for v in d.values()]
+        return _off_domain(list(fdyn.values()) + g_char() + ic_texts + [str(e["value"]) for e in events],
+                           positive, generic=list(fixed) + list(forcings))
+    off_full = off_domain() if reduce_cq and totals else None
     if reduce_cq and totals:
         fdyn = {k: v for k, v in cq["f"].items() if k not in set(cq["elim_states"])}
         parameters = cq["parameters"]
@@ -1058,7 +1271,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             raise ValueError(f"{sc['why']}.")
         fdyn = {k: to_r(v) for k, v in sc["f"].items()}
         gset = [({k: to_r(v) for k, v in x.items()} or None) for x in sc["g"]]
-    off = _off_domain(list(fdyn.values()) + g_char(), positive, set(states))
+    off = None if cq_totals and off_full is None else off_domain()
     if positive is not False and method != "scaling" and sym_engine != "symbolic":
         ev_ic = [{e["var"]: e["value"]} for e in events if e["method"] in ("replace", "multiply")]
         # condition columns and constant states without events become numbers per condition
@@ -1147,13 +1360,9 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         const_states = [k for k in const_states if k not in dep]
     has_net = reactions is not None
     equil_zero = []
-    if equilibrate and not has_net:
-        equil_zero = _ode_zero_states(fdyn, forcings)
-    if equilibrate and has_net:
+    if equilibrate:
         # a signed net rate such as -k*(x - u) rests at zero without a dead producer
-        equil_zero = [s for s in dict.fromkeys(
-            equil_zero_states(reactions["smatrix"], reactions["species"], reactions["rates"], forcings) +
-            _ode_zero_states(fdyn, forcings)) if s in states]
+        equil_zero = [s for s in _rest_zeros(fdyn, reactions if has_net else None, forcings) if s in states]
     held_state_params = {}
     if equilibrate and not reduce_cq and totals:
         avoid_fv = list(dict.fromkeys(equil_zero + forcings +
@@ -1184,13 +1393,13 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         def zero_one(i):
             sub = subs_z[i]
             rhs = {k: replace_symbols(list(sub), list(sub.values()), v) if sub else v for k, v in fdyn.items()}
-            z = _ode_zero_states(rhs, forcings)
+            net = None
             if has_net:
                 rates = reactions["rates"]
                 if sub:
                     rates = replace_symbols(list(sub), list(sub.values()), list(rates))
-                z = list(dict.fromkeys(equil_zero_states(reactions["smatrix"], reactions["species"], rates,
-                                                         forcings) + z))
+                net = dict(reactions, rates=list(rates))
+            z = _rest_zeros(rhs, net, forcings)
             return [s for s in z if s in states and s not in equil_zero]
         nzc = min(max(1, int(cores)), len(uk))
         zs = process_map(zero_one, uk, nzc)
@@ -1231,7 +1440,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         sr["non_identifiable"] = relabel_directions(sr["non_identifiable"])
         return deliver(sr, method)
     if off is not None:
-        multi = {"ok": False, "nonrational": [f"{off} needs a positive argument (`positive`)"]}
+        multi = {"ok": False, "nonrational": [off]}
     else:
         multi = compile_observability_tape_multi(
             model=eqn_lines(fdyn), observation=g_lines(), condition_subs=res["subs"],
@@ -1254,9 +1463,14 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                                "jet_states": list(jet_start)})
     elif multi.get("ok") and nuisance:
         _mark_nuisance(multi, nuisance)
+    if multi.get("ok") and known_order:
+        # a known input is a polynomial past its chain: the rows past that order are a specialization
+        top = int(known_order["jet_order"]) - 1
+        multi["nuisance_order"] = top if multi.get("nuisance_order") is None else min(int(multi["nuisance_order"]), top)
     if method == "scaling":
         r = _resolved_scalings(fdyn, gset, g_per_cond, res, [u for u in forcings if u not in jet_start], fixed, jets,
-                               multi if multi.get("ok") else None, held_state_params if equilibrate else None)
+                               multi if multi.get("ok") else None, held_state_params if equilibrate else None,
+                               forcings if equilibrate else None)
         if jets:
             r = dict(r, non_identifiable=_scalings_without_jets(r.get("non_identifiable") or [], jets))
         return deliver(r, "scaling")

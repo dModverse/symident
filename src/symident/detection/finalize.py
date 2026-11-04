@@ -92,7 +92,7 @@ def display_form(syms):
 
 
 def denominator(xi):
-    """Common denominator of the components, "1" when polynomial or undecided."""
+    """Common denominator of the components, "1" when polynomial, None when undecided."""
     try:
         comp = [str(x).replace("^", "**") for x in xi.values()]
         loc = red_locals(comp)
@@ -102,7 +102,7 @@ def denominator(xi):
         return str(acc).replace("**", "^")
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
-        return "1"
+        return None
 
 
 def tidy(x):
@@ -147,7 +147,11 @@ def complete(syms, positive=True, coordinates=None):
             pos = set()
         else:
             pos = set(xi) & set(positive)
-        D2 = f"({denominator(xi)})^2"
+        den = denominator(xi)
+        if den is None:
+            out.append(dict(d, complete_generator=None, factor=None))
+            continue
+        D2 = f"({den})^2"
         Q = [f"{D2}*({x})/{k}" if k in pos else f"{D2}*({x})" for k, x in xi.items()]
         f = tidy(f"{D2}/(1 + " + " + ".join(f"({q})^2" for q in Q) + ")")
         d["complete_generator"] = {k: f"({f})*({x})" for k, x in xi.items()}
@@ -181,7 +185,9 @@ def finalize(raw, method, settings, call=None, elapsed=None, coordinates=None):
             "rank_proven": raw.get("rank_proven"), "rank_proof": raw.get("rank_proof"),
             "rank_fields": raw.get("rank_fields"), "rank_fields_bound": raw.get("rank_fields_bound"),
             "gap_order_used": raw.get("gap_order_used"), "gap_certified": raw.get("gap_certified"),
-            "gap_certificate": raw.get("gap_certificate"),
+            "gap_certificate": raw.get("gap_certificate"), "gap_bound": raw.get("gap_bound"),
+            "order_bound": raw.get("order_bound"), "order_bound_why": raw.get("order_bound_why"),
+            "projection": raw.get("projection"),
             "series_certified": raw.get("series_certified"), "series_certificate": raw.get("series_certificate"),
             "conditions": raw.get("conditions"),
             "segments": raw.get("segments"),

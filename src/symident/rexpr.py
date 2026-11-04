@@ -1,5 +1,6 @@
 """Expressions as strings in R syntax: tokens, symbols, substitution, numeric evaluation."""
 
+import functools
 import math
 import re
 
@@ -20,9 +21,13 @@ _KEYWORDS = {"function", "if", "else", "for", "while", "repeat", "in", "next", "
 
 def tokens(expr):
     """Tokens of one expression as (kind, text); kind is num, sym, fun, str or op."""
+    s = str(expr)
+    return list(_cached(s) if len(s) <= _CACHED_LEN else _scan(s))
+
+
+def _scan(s):
     out = []
     pos = 0
-    s = str(expr)
     n = len(s)
     while pos < n:
         m = _TOKEN.match(s, pos)
@@ -50,7 +55,12 @@ def tokens(expr):
         if kind == "op" and text == "**":
             text = "^"
         out.append((kind, text))
-    return out
+    return tuple(out)
+
+
+# short expressions recur across conditions and substitutions
+_CACHED_LEN = 4096
+_cached = functools.lru_cache(maxsize=1 << 16)(_scan)
 
 
 def _as_list(x):

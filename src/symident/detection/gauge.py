@@ -177,6 +177,8 @@ def gauged_detection(args, pref, fixed, reconstruct, verbose):
             hint = {"block_orders": [int(x) for x in s1info["lie_block_orders"]],
                     "nt_used": int(s1info["lie_order_used"]), "sat_score": s1info.get("sat_score"),
                     "Mtot": int(s1info.get("gap_order_used") or 0), "certified": s1ok,
+                    "order_bound": s1info.get("order_bound"),
+                    "order_bound_why": s1info.get("order_bound_why"),
                     "gap_stop": "full" if s1info.get("gap_certified") else "plateau"}
         with state.options(order_hint=hint):
             s2 = symmetry_detection(**a2)

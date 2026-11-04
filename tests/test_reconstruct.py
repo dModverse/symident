@@ -90,3 +90,18 @@ def test_every_direction_is_reported_once(reconstruct):
         assert len(r.symmetries) == r.dim - r.rank
         sup = [tuple(s.support) for s in r.symmetries if not s.explicit]
         assert len(sup) == len(set(sup))
+
+
+def test_a_constant_entry_lifts_from_the_primes_where_the_base_point_has_a_kernel():
+    from symident.detection.interp import interpolate_direction
+    from symident.gfp import PRIMES
+    point0 = [3, 5]
+    # a resting state without a root modulo a prime leaves no kernel at that prime
+    def kcall(pt, p, nt):
+        if p == PRIMES[2] and list(pt) == point0:
+            return {"ok": False}
+        return {"ok": True, "R": [1, 1], "pivots": [0], "rank": 1, "dim": 2}
+    ref = kcall(point0, PRIMES[0], 1)
+    d = interpolate_direction(1, ref, [0], ["a", "b"], [0, 1], ["a", "b"], 2, point0, None, 0, 1, kcall,
+                              rel_probe=[{"rp": ref, "zvals": None}] * 2, ctrl={})
+    assert d["entry"].get("closed_form") and d["entry"]["vector"] == {"a": "-1", "b": "1"}

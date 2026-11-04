@@ -1,7 +1,11 @@
 """Resting states over GF(p): compiled models, the backward solve and its derivatives."""
 
+import functools
+
 import sympy as spy
 
+from .. import session, state
+from ..errors import SYMPY_FAILS, sympy_fail
 from .gfpoly import _compile_linear_plan, _dp_subst, _eval_bipoly_dict, _reduce_system, _solve_states_reduced
 from .modp import _bipoly, _eval_terms, _eval_terms_guarded, _poly_terms, _solve_mod
 from .msolve import _solve_states_msolve
@@ -24,8 +28,8 @@ _SS_FORCE_POINT = False
 _FORCE_CONSTRAINT_SEED = False
 
 
-def _solve_states_fast(dps, solve_states, p):
-    """Interior point of f = 0 over GF(p) by linear elimination mod p: (sol, None) or (None, fail-dict)."""
+def _solve_states_fast(dps, solve_states, p, on_branch=None, accept=None):
+    """Interior point of f = 0 over GF(p) by elimination: (sol, None) or (None, fail); `accept` picks among roots."""
     nv = len(solve_states)
     names = [str(x) for x in solve_states]
     dps0 = dps
@@ -77,10 +81,10 @@ def _solve_states_fast(dps, solve_states, p):
     sol = {}
     coupled_idx = [i for i in range(nv) if i in rem_idx]
     if coupled_idx:
-        red = _solve_states_reduced(dps0, solve_states, p)
+        red = _solve_states_reduced(dps0, solve_states, p, on_branch, accept)
         if red is not None:
             return red
-        return _solve_states_msolve(dps0, solve_states, p)
+        return _solve_states_msolve(dps0, solve_states, p, on_branch, accept)
 
     val_by_id = {i: int(sol[solve_states[i]]) % p for i in coupled_idx}
     for i, expr in reversed(elim):     # resolve eliminated vars numerically, latest first
@@ -94,6 +98,134 @@ def _solve_states_fast(dps, solve_states, p):
         val_by_id[i] = acc
         sol[solve_states[i]] = spy.Integer(acc)
     return sol, None
+
+
+def branch_note(polys, states, at, p):
+    """Note on a root taken among several mod p: the split factors it solves, else whether the roots are conjugate."""
+    head = f"resting states {', '.join(sorted(map(str, states)))}: several interior roots modulo p"
+    taken = _solved_factors(polys, states, at, p)
+    if taken:
+        ses = state.get("session")
+        if ses is not None:
+            ses.pins.setdefault(_branch_key(polys, states), taken)
+        return head + ", the one taken on " + " and ".join(f"{_shown(F)} = 0" for F in taken)
+    key = (polys, states)
+    if key not in _CONJUGATE:
+        _CONJUGATE[key] = _conjugate(polys, states, {k: v for k, v in at.items() if k not in set(states)})
+    conj = _CONJUGATE[key]
+    if conj is True:
+        return head + ", all conjugate over Q(theta) (the eliminant is irreducible), so the one taken has the " \
+                      "rank of each"
+    if conj is False:
+        return head + ", the first is taken; the eliminant factors over Q at a point, its factor is not named"
+    return head + ", the first is taken; its factor over Q is not determined"
+
+
+def _branch_key(polys, states):
+    return frozenset(map(str, polys)), tuple(sorted(map(str, states)))
+
+
+def _solved_factors(polys, states, at, p):
+    """The factors of the split balances that the point `at` solves modulo p."""
+    return tuple(dict.fromkeys(F for fs in _split_balances(polys, states) for F in fs if _vanishes_mod(F, at, p)))
+
+
+def _pinned(polys, states, pars, p):
+    """A test that a root of `states` solves the factors the session pinned for these balances; None without."""
+    ses = state.get("session")
+    pin = None if ses is None else ses.pins.get(_branch_key(polys, states))
+    if not pin:
+        return None
+    return lambda vals: all(_vanishes_mod(F, {**pars, **dict(zip(states, vals))}, p) for F in pin)
+
+
+def pin_branch(model, state_names, param_names, forcings, held, at, p):
+    """Pin the branch of the resting balances to the factors that the point `at` (names to residues) solves."""
+    ses = state.get("session")
+    if ses is None:
+        return
+    try:
+        c = _ss_compile(_as_list(model), _as_list(state_names), _as_list(param_names), set(_as_list(forcings)),
+                        tuple(sorted(held or ())))
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return
+    polys, states = c[2], c[1]
+    if held:
+        keep = [(s, pl) for s, pl in zip(states, polys) if str(s) not in set(held)]
+        states, polys = [s for s, _ in keep], [pl for _, pl in keep]
+    vals = {spy.Symbol(str(k)): int(v) % p for k, v in at.items()}
+    taken = _solved_factors(tuple(polys), tuple(states), vals, p)
+    if taken:
+        ses.pins.setdefault(_branch_key(polys, states), taken)
+
+
+def _shown(F):
+    return str(-F if str(F).startswith("-") else F).replace("**", "^")
+
+
+def _vanishes_mod(F, at, p):
+    try:
+        return int(F.xreplace({k: spy.Integer(v) for k, v in at.items()})) % p == 0
+    except (TypeError, ValueError):
+        return False
+
+
+# operations of a balance past which it is not factored
+_SPLIT_OPS = 4000
+
+
+@functools.lru_cache(maxsize=64)
+def _split_balances(polys, states):
+    """Per balance that splits over Q(theta) into several factors with states, those factors."""
+    out = []
+    for P in polys:
+        if spy.count_ops(P) > _SPLIT_OPS:
+            continue
+        try:
+            fs = [F for F, _ in spy.factor_list(P)[1] if F.free_symbols & set(states)]
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            continue
+        if len(fs) > 1:
+            out.append(tuple(fs))
+    return tuple(out)
+
+
+# per model, whether its interior resting roots are conjugate
+_CONJUGATE = {}
+
+
+def _conjugate(polys, states, pars):
+    """Whether the interior roots are conjugate over Q(theta): an irreducible eliminant at `pars`; None if undecided."""
+    F = [spy.expand(P.xreplace({k: spy.Integer(v) for k, v in pars.items()})) for P in polys]
+    F = [e for e in F if e != 0]
+    if not F or len(states) > 3 or not all(e.is_polynomial(*states) for e in F):
+        return None
+    if sum(spy.Poly(e, *states).total_degree() for e in F) > 3 + len(states):
+        return None
+    t = spy.Dummy("t")
+    gens = [t] + list(states)
+    try:
+        G = list(spy.groebner(F + [t * spy.Mul(*states) - 1], *gens, order="lex").exprs)
+        last = gens[-1]
+        uni = [g for g in G if g.free_symbols == {last}]
+        if len(G) != len(gens) or len(uni) != 1:
+            return None
+        for g in G:
+            vs = [x for x in gens[:-1] if x in g.free_symbols]
+            if g in uni:
+                continue
+            # x_i times a constant plus a polynomial in the last state
+            if len(vs) != 1 or spy.diff(g, vs[0]).free_symbols or not g.xreplace({vs[0]: 0}).free_symbols <= {last}:
+                return None
+        facs = spy.factor_list(uni[0])[1]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    if any(m > 1 for _, m in facs):
+        return None
+    return len(facs) == 1
 
 
 def _compile_t0events(events, param_names):
@@ -279,9 +411,16 @@ def solve_steady_state_modular(model, state_names, param_names, param_vals, prim
                 sub[spy.Symbol(nm)] = spy.Integer(val)
         if sub is None:
             dps = [_eval_bipoly_dict(bip, ppvals, p) for bip in point_poly_bi]
-            sub, fail = _solve_states_fast(dps, list(point_states), p)
+            hit = []
+            keep = tuple(pl for s, pl in zip(solve_states, polys) if snm[s] not in held_states)
+            pars = dict(zip(point_params, ppvals))
+            sub, fail = _solve_states_fast(dps, list(point_states), p, hit.append,
+                                           _pinned(keep, tuple(point_states), pars, p))
             if fail is not None:
                 return fail
+            if hit:
+                session.note("branches", branch_note(keep, tuple(point_states),
+                                                     {**pars, **{s: int(sub[s]) for s in point_states}}, p))
         sol = {}
         for s in solve_states:
             sol[s] = (spy.Integer(held_states[snm[s]]) if snm[s] in held_states
@@ -301,9 +440,15 @@ def solve_steady_state_modular(model, state_names, param_names, param_vals, prim
                 sol[spy.Symbol(nm)] = spy.Integer(val)
         if sol is None:
             dps = [_eval_bipoly_dict(bip, paramvals, p) for bip in poly_bi]
-            sol, fail = _solve_states_fast(dps, list(solve_states), p)
+            hit = []
+            pars = dict(zip(param_syms, paramvals))
+            sol, fail = _solve_states_fast(dps, list(solve_states), p, hit.append,
+                                           _pinned(tuple(polys), tuple(solve_states), pars, p))
             if fail is not None:
                 return fail
+            if hit:
+                session.note("branches", branch_note(tuple(polys), tuple(solve_states),
+                                                     {**pars, **{s: int(sol[s]) for s in solve_states}}, p))
 
     n_s = len(solve_states)
     val_by = {snm[s]: int(sol[s]) % p for s in solve_states}

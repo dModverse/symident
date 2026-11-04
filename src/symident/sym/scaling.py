@@ -235,11 +235,11 @@ def _weighted_degree(e, w):
 
 
 def verify_scalings(scalings, tapes):
-    """One bool per scaling: whether it leaves every tape's model, observables, values and events invariant."""
+    """One bool per scaling: whether it leaves every tape's equations, observables, values and events invariant."""
     lines = []
     for t in tapes:
         lines += _as_list(t.get('model_lines', [])) + _as_list(t.get('obs_lines', []))
-        lines += _as_list(t.get('ver_ic', []))
+        lines += _as_list(t.get('ver_ic', [])) + _as_list(t.get('ver_rest', []))
         lines += ['_ = %s' % e['value'] for e in _as_list(t.get('ver_ev', [])) +
                   _as_list(t.get('ver_t0', []))]
         if t.get('ver_time'):
@@ -252,7 +252,8 @@ def verify_scalings(scalings, tapes):
 
     checks = []                       # (expression, target: state name, None for 0)
     for t in tapes:
-        for l in _as_list(t.get('model_lines', [])) + _as_list(t.get('ver_ic', [])):
+        for l in _as_list(t.get('model_lines', [])) + _as_list(t.get('ver_ic', [])) + \
+                _as_list(t.get('ver_rest', [])):
             if '=' in l:
                 x, e = split(l)
                 checks.append((e, x))

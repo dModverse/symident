@@ -99,7 +99,7 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
 
 
 def peel_scalings(scal_res, znames, nz, zval, P, N, exact=False, modulo=None):
-    """Independent scalings of all conditions with tangent in the nullspace (modulo `modulo`), proven if `exact`."""
+    """Independent scalings of all conditions with tangent in the nullspace (modulo `modulo`), exact per entry."""
     scaling = []
     Bmat = np.zeros((nz, 0), dtype=np.int64)
     env = {z: int(v) for z, v in zip(znames, zval)}
@@ -140,7 +140,10 @@ def peel_scalings(scal_res, znames, nz, zval, P, N, exact=False, modulo=None):
         order = sorted(range(len(names)), key=lambda i: names[i].encode())
         supp = [names[i] for i in order]
         scaling.append({"support": supp, "vector": {names[i]: wsym[i] for i in order},
-                        "type": "scaling", "closed_form": True, "exact": exact})
+                        "type": "scaling", "closed_form": True, "exact": bool(d.get("exact", exact)),
+                        **({"state_components": d["state_components"],
+                            "lift_form": {names[i]: scaling_component(wsym[i], names[i]) for i in order}}
+                           if d.get("state_components") else {})})
     return {"scaling": scaling, "Bmat": Bmat}
 
 

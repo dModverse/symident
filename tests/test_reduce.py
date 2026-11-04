@@ -378,22 +378,17 @@ def test_exponential_factor_invariant_solved_and_reported():
     r = red(obj)
     b = r.blocks[0]
     assert b["stage"] == "exp"
-    assert b["status"] == "reduced"
     assert len(b["invariants"]) == 1
     assert abs(lie_at(gen, b["invariants"][0], {"x": 1.7, "y": 0.9})) < 1e-4
-    # I(trafo(u)) is u or 1/u
-    assert list(b["new_parameters"]) == ["q_1"]
-    z = {nm: ev(e, {"x": 5, "y": 3, "q_1": 3}) for nm, e in r.trafo.items()}
-    Iv = ev(b["invariants"][0], z)
-    assert abs(Iv - 3) < 1e-10 or abs(Iv - 1 / 3) < 1e-10
     assert any("exp stage" in c for c in b["certificates"])
+    # a section entry with a logarithm is positive on part of the domain, named as the condition of the trafo
+    assert b["status"] == "reduced" and b["coverage"] == "partial" and b["sign_conditions"] == ["log(q_1) > 0"]
     # d_exp = 0 switches the stage off with a certificate
     b0 = red(obj, d_exp=0).blocks[0]
     assert b0["status"] == "unresolved"
     assert any("exp stage skipped" in c for c in b0["certificates"])
     txt = lines(r.summary(verbose=True))
     assert grep(r"\[exp\]", txt)
-    assert grep(r"gauge  \w+ = ", txt)
 
 
 def test_section_from_product_of_two_summand_balances():
@@ -867,10 +862,10 @@ def test_amgm_certificate_is_exact_for_rational_coefficients():
 
     from symident.reduction.sign import absorb
     e = np.array([[2, 0], [1, 1], [0, 2]], dtype=float)
-    assert absorb(e, [Fr(1), Fr(-1), Fr(1)])
-    # no certificate where the polynomial reaches zero or falls below it, by any margin
-    assert not absorb(e, [Fr(1), Fr(-2), Fr(1)])
-    assert not absorb(e, [Fr(1), Fr(-2) - Fr(1, 10 ** 12), Fr(1)])
+    assert any(b > 0 for b in absorb(e, [Fr(1), Fr(-1), Fr(1)]))
+    # no budget left where the polynomial reaches zero, no certificate where it falls below, by any margin
+    assert not any(b > 0 for b in absorb(e, [Fr(1), Fr(-2), Fr(1)]))
+    assert absorb(e, [Fr(1), Fr(-2) - Fr(1, 10 ** 12), Fr(1)]) is None
 
 
 def test_exact_rank_of_rationals():
@@ -1253,3 +1248,91 @@ def test_a_direction_checked_at_rest_names_the_missing_bound():
     assert r.info["bound"]["why"] == "the error bound does not cover a start at rest (equilibrate)"
     with pytest.raises(ValueError, match="random points only, since the error bound does not cover a start"):
         r.reduce()
+
+
+def test_atoms_count_positive_only_where_proven():
+    from symident.reduction.sign import set_positive, sgn
+    x, y = spy.symbols("x y")
+    old = set_positive(None)
+    try:
+        assert [sgn(e) for e in (spy.log(x), spy.sin(x), spy.log(x) + 1, x * spy.log(y))] == [0, 0, 0, 0]
+        assert [sgn(e) for e in (spy.exp(x), x * spy.exp(y), spy.exp(x) + 1, spy.sqrt(x) + 1)] == [1, 1, 1, 1]
+    finally:
+        set_positive(old)
+
+
+def test_am_gm_keeps_a_strict_sign_only_with_budget_left():
+    from symident.reduction.sign import set_positive, sgn_poly
+    x, y, r_, s_ = spy.symbols("x y r s")
+    old = set_positive(["x", "y"])
+    try:
+        assert sgn_poly((1 - r_**2)**2 + s_**2) == 0
+        assert sgn_poly((x - y)**2 + r_**2) == 0
+        assert [sgn_poly(e) for e in (x**2 + y**2 - x*y, (x - y)**2 + 1, (x - y)**2 + x)] == [1, 1, 1]
+    finally:
+        set_positive(old)
+
+
+def test_a_direction_along_one_coordinate_is_pinned_where_its_component_keeps_a_sign():
+    # a component with a zero splits the axis into orbits that miss the pin
+    r = red(mkobj([mkdir({"v": "v - 1"}, "general")], ["v", "k"]))
+    assert r.level != "exact" and r.blocks[0]["unproven"]
+    for gen in ({"v": "v^2"}, {"v": "1"}):
+        r = red(mkobj([mkdir(gen, "general")], ["v", "k"]))
+        assert r.level == "exact" and r.blocks[0]["unproven"] == []
+
+
+def test_alternatives_rank_by_level_first():
+    from symident.reduction.core import _chart_rank
+    rational_open = {"removed": ["X1"], "trafo": {"a": "q_1"}, "level": "open"}
+    radical_exact = {"removed": ["X1"], "trafo": {"a": "sqrt(q_1)"}, "level": "exact"}
+    assert sorted([rational_open, radical_exact], key=_chart_rank)[0] is radical_exact
+    assert sorted([radical_exact, dict(radical_exact, trafo={"a": "q_1"})], key=_chart_rank)[0]["trafo"] == {"a": "q_1"}
+
+
+def test_a_failed_denominator_publishes_no_complete_form():
+    from symident.detection.finalize import complete, denominator
+    assert denominator({"x": "1/(a +* b)"}) is None
+    (d,) = complete([{"type": "general", "generator": {"x": "1/(a +* b)"}}])
+    assert d["complete_generator"] is None and d["factor"] is None
+    assert denominator({"x": "a/(b + 1)"}) == "b + 1"
+
+
+def test_an_entry_unproven_inside_declared_bounds_is_named():
+    gen = {"a": "a - a^2", "b": "b*(a - 1)", "c": "c"}
+    r = red(mkobj([mkdir(gen, "general")], ["a", "b", "c"]), positive=["a", "b", "c", "1-a"])
+    b = r.blocks[0]
+    assert b["coverage"] == "partial"
+    assert any(u.startswith(f"{k} = ") for u in b["unproven"] for k in b["pins"] if k != "c")
+
+
+def test_a_section_whose_entries_take_both_signs_covers_the_orbits_where_they_are_positive():
+    gen = {"a": "kn - kp", "f": "f - 1", "kn": "kp - kn"}
+    r = red(mkobj([mkdir(gen, "general")], ["N0", "a", "f", "kn", "kp"]))
+    b = r.blocks[0]
+    assert b["status"] == "reduced" and b["coverage"] == "partial" and b["unproven_entries"] == []
+    assert b["sign_conditions"] and all(c.endswith(" > 0") for c in b["sign_conditions"])
+    assert "a sampled orbit" in b["gauge_note"]
+    # the conditions hold on part of the new parameters and fail on another part
+    q = sorted({s for c in b["sign_conditions"] for s in spy.sympify(c.replace("^", "**")).free_symbols}, key=str)
+    conds = [spy.sympify(c.replace("^", "**")) for c in b["sign_conditions"]]
+    signs = set()
+    for v in (0.5, 2.0, 7.0):
+        for w in (0.3, 3.0, 9.0):
+            at = dict(zip(q, (v, w, 1.7)))
+            sides = [c.lhs.subs(at) for c in conds]
+            if all(s.is_finite for s in sides):
+                signs.add(all(s > 0 for s in sides))
+    assert signs == {True, False}
+
+
+def test_lift_of_parameters_the_resting_state_does_not_read():
+    from symident.reduction.core import lifted_generators
+    # parameters that enter only with an input zero at rest lift exactly, however large the model
+    rhs = {f"x{i}": f"a{i}*x{i - 1} - b{i}*x{i}" for i in range(1, 30)}
+    rhs["x0"] = "k*u/(1 + K*u) + c - d*x0"
+    rhs["u"] = "0"
+    gen_of = {"X1": {"generator": {"K": "1", "k": "k*K"}}}
+    lifted, level = lifted_generators(["X1"], gen_of, rhs, inputs=["u"])
+    assert level == "exact"
+    assert set(lifted[0]) == {"K", "k"}

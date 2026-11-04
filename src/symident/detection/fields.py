@@ -8,7 +8,7 @@ import sympy as spy
 
 from .. import _core, session, state
 from ..errors import SYMPY_FAILS, RouteError, swallow, sympy_fail
-from ..gfp import PRIMES, invmod, mulmod, random_point, verify_prime
+from ..gfp import PRIMES, invmod, mulmod, random_point, uniform_point, verify_prime
 from ..par import process_map
 from ..rexpr import get_symbols, sym_sort
 from ..sym.exact import certify, event_identities, initial_identities, regime_identities
@@ -21,6 +21,7 @@ from ..sym.fields import (
 from ..sym.modp import eval_rational_mod_batch
 from ..sym.parse import model_sympify
 from ..sym.scaling import scaling_symmetries_multi, verify_scalings
+from .bound import lie_row_degree
 
 
 def series_embed(S, N, col_map, nz_out, p, scale=None):
@@ -141,7 +142,7 @@ def _evs(x):
 
 def exact_scaling_set(multi, fixed):
     """Weight vectors of the scalings of the whole model, exactly checked."""
-    ver_keys = ["model_lines", "obs_lines", "ver_ic", "ver_ev", "ver_t0", "ver_time"]
+    ver_keys = ["model_lines", "obs_lines", "ver_ic", "ver_ev", "ver_t0", "ver_time", "ver_rest"]
     ver_tapes = _uniq([{k: t[k] for k in ver_keys if k in t} for t in multi["tapes"]])
     jets = set(multi.get("nuisance_jet_states") or [])
     inputs = [u for u in multi.get("forcings") or [] if u not in jets]
@@ -158,7 +159,8 @@ def exact_scaling_set(multi, fixed):
             per_cond_obs=[_lines(t.get("obs_lines")) for t in ver_tapes],
             inputs=inputs or None,
             fixed=list(fixed) if fixed else None,
-            extra_model=[_lines(t.get("ver_ic")) + ev_lines(t, True) for t in ver_tapes],
+            extra_model=[_lines(t.get("ver_ic")) + ev_lines(t, True) + _lines(t.get("ver_rest"))
+                         for t in ver_tapes],
             extra_obs=[ev_lines(t, False) + ([f"_ = {t['ver_time']}"]
                                            if t.get("ver_time") else []) for t in ver_tapes])
     except Exception as exc:
@@ -712,10 +714,40 @@ def _reach_at(r, rho):
     return None if not len(i) else int(i[0])
 
 
+def event_space(V, evi, evm, fixed, n_states, p):
+    """A basis of the directions of the affine space V after the events, in their order."""
+    V = np.asarray(V, dtype=np.int64).reshape(-1, n_states).copy()
+    fixed = np.atleast_1d(np.asarray(fixed, dtype=bool))
+    # a replace by a value over the leaves resets its state, a value that reads a state or a multiply frees it
+    for s, m, fx in zip(np.atleast_1d(evi), np.atleast_1d(evm), fixed):
+        if m == 0 and fx:
+            V[:, int(s)] = 0
+        elif m == 2 or not fx:
+            V = np.vstack([V, np.eye(n_states, dtype=np.int64)[[int(s)]]])
+    if not V.shape[0]:
+        return V
+    rr = _core.sym_rref_mod(V.astype(np.float64), p)
+    return np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), n_states)
+
+
+def _sz_term(md_segs, n_cols, K):
+    """Schwartz-Zippel numerator of a block: closure stops, a maximal minor per order up to K; None without degrees."""
+    if md_segs is None or any(md is None for md in md_segs):
+        return None
+    out = 0
+    for md in md_segs:
+        n_obs = max(1, len(md[2]))
+        out += md[0] + sum(min((k + 1) * n_obs, n_cols) * lie_row_degree(md, k + 1) for k in range(K + 1))
+    return out
+
+
 def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=None, threads=1,
-                    start=None):
-    """Certified Lie order per block, None where the generic rank is not reached."""
+                    start=None, degs=None, terms=None):
+    """Certified Lie order per block, None where the generic rank is not reached; `terms` receives the error bounds."""
     none = np.zeros((0, 0), dtype=np.int64)
+    n_cols = len(z_slots) + n_states + 1
+    # the generic ranks rise strictly up to their plateau, so a wrong plateau shows by order n_cols + 1
+    K = int(min(n_cols + 1, cap))
 
     def one(b):
         seed = np.asarray(seeds[b], dtype=np.int64)
@@ -732,7 +764,8 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             if V.shape[0] == 0:
                 return y
             draw["n"] += 1
-            r = random_point(V.shape[0], 7919 * (b + 1) + draw["n"])
+            sd = 7919 * (b + 1) + draw["n"]
+            r = random_point(V.shape[0], sd) if degs is None else uniform_point(V.shape[0], p, sd)
             for i in range(V.shape[0]):
                 y = (y + mulmod(V[i], r[i], p)) % p
             return y
@@ -742,14 +775,8 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             sg = sb[j]
             if j > 0 and sg.get("ev_var_idx") is not None and len(np.atleast_1d(sg["ev_var_idx"])):
                 evi = np.atleast_1d(sg["ev_var_idx"]).astype(np.int64)
-                evm = np.atleast_1d(sg["ev_method"]).astype(np.int64)
-                # a replace by a value over the leaves resets the variation of its state
-                fixed = np.atleast_1d(sg.get("ev_leaf_only", np.ones(len(evi), dtype=bool))).astype(bool)
-                if V.shape[0]:
-                    V[:, evi[(evm == 0) & fixed]] = 0
-                mult = evi[evm == 2]
-                if len(mult):
-                    V = np.vstack([V, np.eye(n_states, dtype=np.int64)[mult]])
+                V = event_space(V, evi, np.atleast_1d(sg["ev_method"]).astype(np.int64),
+                                sg.get("ev_leaf_only", np.ones(len(evi), dtype=bool)), n_states, p)
             while True:
                 y = rand_in(Q[j], V)
                 Y = Q[:j + 1].copy()
@@ -764,6 +791,7 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
                 V = np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), n_states)
             st_g[j] = y
         Nt = 16 if start is None or start[b] is None else int(min(16, max(2, start[b])))
+        Nt = int(min(Nt, cap))
         while True:
             g = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, seed, p, Nt, st_g, threads)
             q = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, seed, p, Nt, none, threads)
@@ -783,7 +811,12 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             Nt = 16 if Nt < 16 else int(min(cap, 2 * Nt))
 
     idx = list(range(len(segs)))
-    return map_fn(one, idx) if map_fn is not None else [one(b) for b in idx]
+    out = map_fn(one, idx) if map_fn is not None else [one(b) for b in idx]
+    if terms is not None:
+        for b in idx:
+            t = None if degs is None else _sz_term(degs[b], n_cols, K)
+            terms.append(None if t is None else float(t) / p)
+    return out
 
 
 def rescaled_lift(target, form, states):

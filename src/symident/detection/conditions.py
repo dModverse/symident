@@ -228,8 +228,9 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
                 cur = base
                 si.sort(key=lambda i: (seg_of[i], i))
                 if j == 1 and cs not in forcings:
+                    # an equilibrated condition rests at the value before the events at the start, which apply on top
                     ri = [i for i in si if ev_method[i] == "replace"]
-                    rest[cs] = value(ri[-1]) if ri else cur
+                    rest[cs] = value(ri[-1]) if ri and not equilibrate else cur
                 for i in si:
                     cur = compose_event(cur, ev_method[i], value(i))
                 subs[cs] = cur

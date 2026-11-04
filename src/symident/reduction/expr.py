@@ -75,6 +75,7 @@ def gen_prep(d, pins=None):
             return out
     comps = {k: str(e) for k, e in exprs.items()}
     nz = [k for k in comps if comps[k] != "0"]
+    out["den"] = str(L)
     out["ok"] = True
     out["comps"] = {k: comps[k] for k in nz}
     out["support"] = nz

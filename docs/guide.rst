@@ -58,20 +58,22 @@ Arguments of :class:`~symident.Model`:
    unknown functions of time (see `Unknown inputs`_).
 ``known_inputs``
    known functions of time of no assumed form, such as a recorded forcing: their values and
-   time derivatives are known symbols.
+   time derivatives are known symbols, as many as the Lie order needs
+   (``info["known_inputs"]``).
 ``events``
    a list of dicts with ``var``, ``time``, ``value`` and ``method`` (``replace``, ``add``
    or ``multiply``); ``root`` in place of ``time`` fires where an expression changes sign.
 ``conditions``
    one row per experimental condition; a numeric cell fixes a symbol in that condition,
-   a string renames it. A dict ``{"rows": [...], "cols": {name: [values]}}`` or a pandas
-   data frame.
+   a string replaces it by that expression, a renaming in the simplest case. A dict
+   ``{"rows": [...], "cols": {name: [values]}}`` or a pandas data frame. A free initial
+   value is shared by the conditions unless the grid or ``trafo`` sets it.
 ``trafo``
    a parameter transformation; an entry named like a state is its initial value.
 ``fixed``
-   known symbols.
+   known symbols; they take generic values.
 ``parameters``
-   further symbols treated as parameters.
+   further symbols treated as parameters; the coordinates of the analysis do not change.
 ``totals``
    conserved totals, name to expression, each conserved by the right-hand sides; computed
    from ``reactions`` when omitted. ``reduce_cq`` eliminates one species per total.
@@ -103,8 +105,9 @@ Switches                        ``piecewise``, ``ifelse``, ``Heaviside``, ``sign
 These are the expressions of cppDE (``?cppDE::expressions``): ``acot(x)`` is
 ``atan(1/x)``, and likewise for the other inverse reciprocal functions. ``pi`` is the
 number π and cannot name a symbol; ``E`` is a name and ``exp(1)`` is Euler's number;
-``time`` is the clock. A logarithm, a root or a fractional power needs an argument that is
-positive on the coordinates declared ``positive``, and a power is rational only as a
+``time`` is the clock. A logarithm, a root, a fractional power and the base of a free
+exponent need an argument that is positive on the coordinates declared ``positive``, in
+initial values and event values too, and a power is rational only as a
 fraction: ``x^(1/2)``, not ``x^0.5``. ``floor``, ``ceiling`` and ``round`` are refused;
 write their steps with ``piecewise()``. Any other function, ``erf`` and ``erfc`` among
 them, needs ``engine="symbolic"``, which accepts every SymPy function but is meant for
@@ -315,8 +318,9 @@ experiment with measurements becomes one condition, a preequilibration sets
 bound become ``Model.positive``, the default of ``detect(positive=)``. The noise model does
 not enter. An SBML or PEtab feature without a counterpart in the model, such as an
 algebraic rule, a delay or a fast reaction, raises :class:`~symident.PEtabError`.
-``m.petab`` lists the experiments, the estimated parameters and the fixed values;
-:func:`~symident.read_petab` documents the mapping.
+An id that the expression language cannot read, such as one with a leading underscore, is
+renamed. ``m.petab`` lists the experiments, the estimated parameters, the fixed values and
+the renamed ids; :func:`~symident.read_petab` documents the mapping.
 
 Unknown inputs
 --------------
@@ -375,8 +379,14 @@ condition, which gives that condition an input of its own when the new name is l
 ``unknown_inputs`` too, and a number fixes it there. An event leaves the input as it is:
 the input is one analytic function across it, so a jump of a state can separate parameters
 that the input absorbs otherwise. Under ``equilibrate`` the input is zero at rest, like
-every input, and arbitrary from the start on. Switches, an event or a ``trafo`` entry for
-the input and ``engine="symbolic"`` are refused.
+every input, and arbitrary from the start on. An event or a ``trafo`` entry for the input
+and ``engine="symbolic"`` are refused.
+
+With switches (see :doc:`method`) the input is continuous where a trajectory crosses a
+surface and analytic between two crossings, while its derivatives may jump at a crossing.
+Each condition then needs an input of its own, renamed in ``conditions``. A switch on the
+input, an event after the start and an initial value or event value that reads the input
+are refused.
 
 .. warning::
 
@@ -438,6 +448,12 @@ holds and no ``otherwise`` is given), ``ifelse(c, a, b)``, the comparisons ``<``
 positive ``x``. ``x == c`` counts as false and ``x != c`` as true unless both sides agree
 identically.
 
+Which regimes a data set visits is not known in advance, so a coordinate is
+non-identifiable only if it is so in every regime the declared signs allow. A parameter that
+acts only in a regime that the declared signs exclude, such as ``k2`` in
+``piecewise(-k1*x, x > 0, -k2*x)`` with a positive ``x``, stays a coordinate and is
+reported non-identifiable.
+
 In the guide's model, let the degradation of ``x1`` act only above a threshold ``thr``:
 
 .. code-block:: python
@@ -475,8 +491,12 @@ A direction is reported when the observables of every regime stay unchanged alon
 it keeps the visible switching surfaces, the events and the given initial values. Every
 sign pattern of the switching functions counts as a regime, whether or not a trajectory
 reaches it, so a parameter that acts only in a regime the trajectory never enters is
-reported identifiable; ``regimes`` below restricts the regimes. :doc:`method` states the
-rule.
+reported identifiable; ``regimes`` below restricts the analysis to regimes known to be
+visited. The state at a switch is
+likewise any point of the surface, not the one the trajectory reaches. A state that starts
+at zero in every condition and that every regime and event keeps at zero is the exception:
+the analysis runs without it and lists it in ``info["zero_states"]``, and a parameter that
+only such a state reads is reported non-identifiable. :doc:`method` states the rule.
 
 A switch is *visible* when the observables tell its two sides apart on the surface, as
 here; ``info["switching"]["conditions"]`` gives the visibility per condition. A switch

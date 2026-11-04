@@ -87,17 +87,32 @@ Rank over finite fields
 symident evaluates :math:`\mathrm{OIM}_N` in exact arithmetic over the finite field
 :math:`\mathbb{F}_p`, :math:`p < 2^{31}`. The Lie derivatives are computed as truncated
 power series in time and the derivatives with respect to :math:`\theta` as dual numbers,
-so one pass yields all rows of :math:`\mathrm{OIM}_N` at a random point, following the
-probabilistic approach of [Sedoglavic2002]_. A random point can only underestimate the
-generic rank, and it falls short with small probability [Schwartz1980]_ [Zippel1979]_;
-the rank is confirmed at further primes and points.
+so one pass yields all rows of :math:`\mathrm{OIM}_N` at a point, following the
+probabilistic approach of [Sedoglavic2002]_. A point can only underestimate the generic
+rank, and a random one falls short with small probability [Schwartz1980]_ [Zippel1979]_.
+The base point is not random: its coordinates are the primes 2, 3, 5, ..., and the rank
+taken is the largest over four primes at that point. Randomness enters through one check
+point of the saturation and through the verification points, uniform modulo a prime
+:math:`q` that each detection draws from its seed.
 
 The rank grows with the order :math:`N` until it stops. With the parameters fixed, the
 states at the start of a segment lie on a smallest invariant affine space, on which the
 rows have a generic rank that no order exceeds [HermannKrener1977]_. Where the rows at the
-start reach this rank, the order is proven *sufficient*: the reported rank is the generic
-one and not a false plateau. Otherwise the order stops after a plateau of constant rank,
-and the result says that the Lie order is not proven sufficient.
+start reach this rank, the order is *sufficient*: the reported rank is the generic one and
+not a false plateau. An event that sets a state to a value of the states frees that state
+in the affine space. The affine space and its generic rank are found at points uniform
+modulo :math:`q`. A step of the affine space stops early only where a polynomial of the
+degree of the field vanishes, and the generic rank of an order falls short only where a
+maximal minor of its rows vanishes; the ranks rise strictly up to their plateau, so the
+orders up to the number of columns plus one cover a wrong plateau. By [Schwartz1980]_ the
+order is sufficient except with probability at most ``info["order_bound"]``, the sum of
+these terms, which the probability of a verified closed form includes. The degrees are
+those of the rational system the kernel runs, in which an exponential, a free power or a
+trigonometric function is a state of its own. Under ``equilibrate`` the resting states are
+solved modulo the engine primes only, and the certified order has no such bound;
+``info["order_bound_why"]`` names the reason wherever the bound is missing. Where the rows
+do not reach this rank, the order stops after a plateau of constant rank, and the result
+says that the Lie order is not proven sufficient.
 
 ``engine="symbolic"`` computes the Lie derivatives over the rational functions. Its order
 is found at a point and confirmed by an exact rank; where the rows at the initial values
@@ -119,12 +134,18 @@ previous segment propagated over the gap :math:`\Delta t` between the events. Ev
 put on the line through the actual gaps, :math:`\Delta t_i = \varepsilon\, \delta_i`, and
 the rank is taken over :math:`\mathbb{F}_p((\varepsilon))`, the field of formal Laurent
 series in :math:`\varepsilon`, which separates directions that hold only for particular
-event timings from generic ones.
+event timings from generic ones. The kernel at the actual gaps, :math:`\varepsilon = 1`, is
+read from Padé forms of its entries that the further coefficients confirm; this acceptance
+is a heuristic and gives a basis of the kernel only.
 
 The rows after a gap are power series in :math:`\varepsilon` of a fixed family of
-functions, so the argument above bounds their rank by the rank of all coefficients. The gap
+functions, so the argument above bounds their rank by the rank of all coefficients, taken
+at points uniform modulo :math:`q` with its error terms in ``info["order_bound"]``. The gap
 order :math:`M` is raised until the truncated rank reaches this bound, which proves it
-sufficient. Without a bound (under ``equilibrate`` or with recast terms) or at
+sufficient; a truncated rank above the bound refutes it, and nothing is certified. An event
+time that holds a symbol gives no bound: it moves the boundary, which shifts the series and
+the state at the event outside the family. Without a bound (under
+``equilibrate``, with recast terms or with such an event time) or at
 ``reconst_control(gap_order_cap=)``, the rank is a lower bound and ``info["limits"]`` says
 where :math:`M` stopped.
 
@@ -158,10 +179,18 @@ observable codistribution in [Martinelli2019]_; [Villaverde2019]_ ask instead fo
 observability of the extended state, jets included. The argument of
 [HermannKrener1977]_ needs a fixed state space, and the chain grows with the order, so no
 order is proven sufficient: the rank is proven when it is full or when independent exact
-directions fill the kernel, and is a lower bound otherwise.
+directions fill the kernel, and is a lower bound otherwise, in both cases as far as the
+value of the difference holds. At a point where :math:`\mathrm{OIM}_j` drops rank that
+value can exceed the generic one. The value is proven where the jet columns that the rows
+up to the orders taken can hold have full column rank, at the base point or at a point
+uniform modulo :math:`q` with the same value; with the same value but no full column rank
+it is verified, with the chance by [Schwartz1980]_ that a maximal minor of
+:math:`\mathrm{OIM}_j` vanishes at that point; where the values differ, the rank is a lower
+bound.
 
 The chain is a part of the state, so it passes every gap between events like the other
-states, and the input stays analytic across the event. A row after the gap order
+states, and the input stays analytic across the event; at a switch it is only continuous
+(see `Switches`_). A row after the gap order
 :math:`M` holds the jets up to its Lie order plus :math:`M`, and the Lie order is held to
 :math:`K - 1 - M`. Under ``equilibrate`` the chain rests at zero and a jump at the start
 sets its nuisance values.
@@ -177,7 +206,10 @@ that holds the last jet of the chain is not proven. The published *input change*
 :math:`\xi_w` of a proven field; a kernel vector holds it only at :math:`t_0`.
 
 A *known input* enters as the same chain with jet values that are known symbols, like the
-input derivatives in the extended Lie derivatives of [Karlsson2012]_.
+input derivatives in the extended Lie derivatives of [Karlsson2012]_. Past the order
+:math:`K - 1` the chain is a polynomial of degree :math:`K - 1`, a specialization of the
+input, so the Lie order and its certificate are held to :math:`K - 1 - M`, and the chain is
+doubled, up to three times, while the order reaches past it (``info["known_inputs"]``).
 
 Switches
 --------
@@ -191,11 +223,27 @@ condition is a *switching function* :math:`\gamma_j`, and
 :math:`(F_\sigma, h_\sigma)`. An event with a ``root`` adds its root as a switching
 function and resets its state on :math:`\Gamma_j`.
 
-**Regimes.** Without ``regimes``, every sign vector counts as a regime unless the
-declared signs prove it empty: when :math:`\gamma_a - \gamma_b` or
-:math:`\gamma_a + \gamma_b` has a sign that the declared positivity decides, the sign
-vectors that contradict it are dropped. No regime is dropped because of parameter values or
-because a trajectory does not reach it, so the result holds for every initial state.
+**Regimes.** Which regimes a data set visits is not known in advance, so a coordinate is
+non-identifiable only if it is so in every allowed regime: its direction is a symmetry of
+every regime that the declared signs allow.
+Without ``regimes``, every sign vector counts as a regime unless the declared signs prove it
+empty: when :math:`\gamma_a - \gamma_b` or :math:`\gamma_a + \gamma_b` has a sign that the
+declared positivity decides, the sign vectors that contradict it are dropped. No regime is
+dropped because of parameter values or because a trajectory does not reach it, so the result
+holds for every initial state. A parameter that acts only in a regime that a decided
+condition excludes stays a coordinate, with the exact direction :math:`\partial_\theta`.
+Every allowed regime of a condition enters a copy from its start and, with other regimes
+allowed, a copy switched into it; ``info["switching"]["conditions"]`` lists the regimes.
+
+**Entry points.** The state at a switch is an unknown point of its surface: a direction is
+non-identifiable only if it is so from every such point. A state that starts at zero in
+every condition, that every allowed regime keeps at zero with derivatives in such states
+finite there, and that no later event moves, is zero along every trajectory. The analysis
+runs on the model without these states, ``info["zero_states"]`` lists them, and a
+coordinate that only they read is a direction :math:`\partial_\theta` of its own. A
+condition with further states of this kind is named under ``info["limits"]``. Other
+invariant sets of the start, such as the level set of a conserved total, are not used, so
+the rank can exceed the rank along the trajectories from the declared start.
 
 **Visibility.** Two regimes :math:`\sigma, \sigma'` of a condition are neighbors at
 :math:`\Gamma_j` when they differ only in the sign of :math:`\gamma_j`. The switch on
@@ -261,8 +309,15 @@ the model that share the parameters:
 
 The kernel of the stacked rows, projected onto the coordinates, contains every direction
 of the rule; its dimension :math:`k` gives the lower bound :math:`d - k`. A minor that is
-nonzero at the sample point is nonzero as a rational function, so the bound needs no
-probabilistic argument.
+nonzero at the sample point is nonzero as a rational function. The projection off the fresh
+coordinates of the surface points is a difference of two ranks, which a special point can
+raise. It is proven where every kernel direction within the fresh coordinates alone is the
+unit direction of a fresh coordinate that enters no row, the entry value of a state that
+reaches no observable of its copy: first at the sample point, then with the kernel at a
+point uniform modulo the verification prime, whose projection then counts. With the same
+dimension at that point and no such proof, the projection is ``verified`` with the chance by
+[Schwartz1980]_ that a maximal minor of the stacked rows or of their fresh columns vanishes
+there, and otherwise a lower bound (``info["projection"]``, ``info["rank_status"]``).
 
 **Upper bound.** The candidates are the scalings of the integer kernel, the closed forms of
 the stacked kernel and the unit field of every coordinate. A candidate that fails a
@@ -279,7 +334,41 @@ stacked rows, so they are listed under ``info["switching"]["candidates"]``, not 
 symmetries. For an undecided switch the rule accepts either the tangency or the hidden jump
 and leaves out the rows of its surface, so both bounds stay valid.
 
-**Listed regimes.** With ``regimes``, the rule, the rows and the candidates use the listed
+**Unknown inputs.** An unknown input is continuous where a trajectory crosses a surface and
+analytic between two crossings; its derivatives may jump at a crossing. Its direction
+:math:`G_\sigma = \partial_w F_\sigma`, over the inputs that no observable of
+:math:`\sigma` reads, joins the bracket condition of the rule,
+
+.. math::
+
+   [Y_i, F_\sigma] = \sum_k c_{ik}\, Y_k + a_{i\sigma}\, G_\sigma ,
+
+and a direction :math:`v = \sum_i \lambda_i Y_i` changes the input in :math:`\sigma` by
+:math:`-\sum_i \lambda_i a_{i\sigma}`; an input that an observable reads keeps its value.
+Where :math:`G_\sigma` lies in :math:`\Delta`, the change in :math:`\sigma` is free.
+Otherwise the change must not jump where a trajectory crosses :math:`\Gamma_j` from
+:math:`\sigma` into a neighbor :math:`\sigma'`: on :math:`\Gamma_j`,
+
+.. math::
+
+   a_{i\sigma'} - a_{i\sigma}
+   - \frac{Y_i(\gamma_j)}{F_\sigma(\gamma_j)} \sum_k d_k\, a_{k\sigma'} = 0 ,
+   \qquad F_\sigma - F_{\sigma'} = \sum_k d_k Y_k ,
+
+where the last term counts only at a hidden surface that :math:`Y_i` moves, whose crossing
+then shifts. A switch is visible only through the orders :math:`k \le r_y`, where
+:math:`r_y` is the lowest order at which an input can enter :math:`L^k h_y` by the symbols
+each order holds; a higher order holds a derivative of the input. In the rows the jets of
+each copy are nuisance coordinates, as in `Unknown inputs`_: a start of their own per copy,
+and at a surface point the value of the input shared by the two neighbors at that surface.
+A copy from a generic point of each regime takes the place of the copy switched at a fixed
+time, which would restart the input off the surfaces, where the changes of two regimes
+differ. The rank status is the weaker of the two projections, off the jets and off the
+fresh coordinates. The rule holds per condition, so each condition needs an input of its
+own, renamed in ``conditions``.
+
+**Listed regimes.** ``regimes`` restricts the analysis to regimes known to be visited: the
+rule, the rows and the candidates use the listed
 regimes of each condition, and a surface counts only when listed regimes lie on both of its
 sides. Parameters of the other regimes stay coordinates, so a parameter that acts only
 outside the listed regimes is reported non-identifiable. A sign of :math:`\gamma_j(x_0)`
@@ -291,7 +380,9 @@ error; an undecided sign is declared by ``regimes`` and listed under ``declared`
 side ``regimes`` does not give; a condition on a switched expression; more than 4096 sign
 vectors; ``gauge``, ``reduce_cq``, ``free_initial`` and ``engine="symbolic"``; a state
 named ``time``; under ``equilibrate``, a resting state without a closed form; a listed
-regime that is not feasible; and a start that contradicts the initial values.
+regime that is not feasible; a start that contradicts the initial values; and with unknown
+inputs, an input that several conditions read, a switch on an input, an event after the
+start and an initial value or event value that reads an input.
 
 Steady states
 -------------
@@ -300,12 +391,31 @@ With ``equilibrate=True`` every condition starts at its resting state
 :math:`f(x^\ast, \eta) = 0`, which binds :math:`x_0 = x^\ast` to :math:`\theta`. No closed
 form is needed: the resting state is solved over :math:`\mathbb{F}_p` at each sample
 point, by linear elimination, by resultants for small coupled cores, or by msolve
-[Berthomieu2021]_. The kernel is taken in the joint coordinates of parameters and resting
-states, with the tangency condition
-:math:`\partial_x f\, \xi_x + \partial_\theta f\, \xi_\theta = 0` as additional rows. By
-default the first condition draws its resting states and solves for the turnover rates
-instead (the forward seed). Where several resting branches exist, the first nonzero branch
-over :math:`\mathbb{F}_p` is taken, and ``info["branches"]`` names it.
+[Berthomieu2021]_. Zeros of the states are excluded by a Rabinowitsch variable in msolve
+only, and a resting state solved modulo one prime is not resampled at another. The kernel
+is taken in the joint coordinates of parameters and resting states, with the tangency
+condition :math:`\partial_x f\, \xi_x + \partial_\theta f\, \xi_\theta = 0` as additional
+rows, not through the implicit function theorem; the rank of the parameters holds where the
+resting Jacobian of every directly solved condition is invertible at the base point, and is
+a lower bound otherwise. By default the first condition draws its resting states and solves
+for the turnover rates instead (the forward seed). Where several resting branches exist,
+the first nonzero branch over :math:`\mathbb{F}_p` is taken, and ``info["branches"]`` names
+it: by the factor over :math:`\mathbb{Q}(\theta)` that it solves where a balance splits,
+else as conjugate where the lex basis of the balances off the zero states is in shape
+position at a point with an irreducible eliminant. The other points take their root on that
+branch, and a point where it has none is left out. Conjugate roots have the same rank, and
+an eliminant irreducible at a point is irreducible over :math:`\mathbb{Q}(\theta)`. The
+forward seed names the component that its drawn resting values parametrize.
+
+**Zero at rest.** A state rests at zero when its right-hand side, with the inputs at zero,
+is linear in it with a coefficient that stays nonzero with the other such states at zero. In
+a network, a species that is consumed but not produced rests at zero when it is the
+single reactant of a consuming reaction, and so does the single reactant of positive weight
+of a reaction that lowers a weight no reaction raises (a sink). A reaction with several such
+reactants, such as :math:`A + B \to 0`, rests where one of them is zero: the first is taken
+and ``info["branches"]`` names the choice. A state whose right-hand side vanishes at rest
+keeps a resting value of its own, as does the pivot of a held moiety. Rates are read at
+generic values, so a catalyst at its resting value is nonzero.
 
 **Diagonal start.** Conditions that share :math:`\theta` have coupled resting states. Rank
 and kernel are generic properties of the joint variety
@@ -334,7 +444,9 @@ accepted only when the coefficients beyond those that determine it agree with it
 Non-rational terms
 ------------------
 
-Elementary functions are recast into rational form, innermost first [Savageau1987]_. A term
+Elementary functions are recast into rational form [Savageau1987]_, one type of function
+after the other in a fixed order and innermost first within a type, so a nesting across that
+order such as :math:`\sin(\exp x)` or :math:`\exp(\arctan x)` is refused. A term
 :math:`w = \varphi(v)` whose argument :math:`v` contains states becomes a new state; its
 right-hand side follows from the chain rule, :math:`\varphi'(v)\, \sum_j \partial_{x_j} v
 \, f_j`, which is rational in :math:`w` and :math:`v` for
@@ -353,14 +465,19 @@ after which the field is rational and :math:`n` enters through
 :math:`\partial E / \partial n = E L`.
 
 The initial value of a new state is :math:`\varphi(v)` at the initial state. Where it
-depends on the coordinates, a transcendental :math:`\varphi` becomes a generic leaf tied to
-its argument by :math:`\mathrm{d}w = \varphi'(v)\, \mathrm{d}v`: a transcendental graph
-lies in no proper algebraic set, so a random point on it is generic. An algebraic
+depends on the coordinates, a transcendental :math:`\varphi` becomes a generic leaf, drawn
+off the graph and tied to its argument by relation rows
+:math:`\mathrm{d}w = \varphi'(v)\, \mathrm{d}v`: a transcendental graph lies in no proper
+algebraic set, so a random point on it is generic. With several transcendental constants,
+such as :math:`e` and :math:`\pi`, this needs their algebraic independence, which follows
+from Schanuel's conjecture and is not proven. An algebraic
 :math:`\varphi`, a root or rational power, has no such point and is handled exactly:
 through :math:`L = \log v` when :math:`v` is affine in one coordinate, otherwise by taking
 the root modulo the prime at each sample point, over primes in which every root of the
-model exists. A logarithm or fractional power needs an argument positive on
-:math:`\Theta`. An observable :math:`\kappa \sum_i a_i \log h_i + c` is a strictly
+model exists. A logarithm, a fractional power and the base of a power with a symbolic
+exponent need an argument positive on :math:`\Theta`, also in initial values and event
+values; otherwise the analysis raises an error that names the symbols not declared
+positive. An observable :math:`\kappa \sum_i a_i \log h_i + c` is a strictly
 monotone function of :math:`\prod_i h_i^{a_i} e^{c/\kappa}` and is analyzed as that
 product.
 
@@ -381,7 +498,10 @@ entry depends on are found by perturbation, the entry is sampled at many points 
 primes, fitted by dense interpolation, by sparse interpolation in the style of
 [BenOr1988]_, or by univariate rational interpolation along lines, and lifted to
 rational coefficients by the Chinese remainder theorem and rational reconstruction
-[Wang1982]_. Every closed form is checked at fresh seeded points before it is reported.
+[Wang1982]_. Every closed form is checked at seeded points, uniform modulo the verification
+prime, before it is reported; so is a direction along one coordinate that fills the kernel.
+Under ``equilibrate`` the check runs on the coordinates a closed form states; the copies of
+the resting states per condition follow from them.
 
 A direction that no sampling route closes is fitted along lines
 :math:`\theta^0 + \lambda\,\delta` through the base point. Its kernel entries become power
@@ -390,8 +510,8 @@ line; their Padé approximants give the entries on a star of lines, from which e
 fitted as a rational function. An entry that is not rational in the parameters alone is
 fitted in the parameters and the resting states modulo their equations, with a state of
 condition :math:`k` named ``x_c<k>``. Each entry is checked at a prime outside its lift, and
-the direction against the kernel at a fresh point. ``reconst_control(homotopy=False)``
-turns the route off.
+the direction against the kernel at two points uniform modulo the verification prime.
+``reconst_control(homotopy=False)`` turns the route off.
 
 Every closed form has a *level*:
 
@@ -400,10 +520,15 @@ Every closed form has a *level*:
   event cancel symbolically.
 - ``verified``: in the kernel at two seeded points modulo a verification prime :math:`q`.
   With a degree bound :math:`D` of the cleared kernel identity, a wrong closed form passes
-  with probability at most :math:`(D/q)^2` [Schwartz1980]_; ``info["bound"]`` holds the sum
-  over the verified directions. The bound needs a rational model without resting states or
-  root events, with numeric event times, and Lie and gap orders proven sufficient, since
-  the check runs at the orders used.
+  with probability at most :math:`(D/q)^2` [Schwartz1980]_. A point where the kernel does not
+  exist is skipped. With :math:`k` the most points a check drew for its two passing ones
+  (``info["bound"]["draws"]``), the passing pair is one of :math:`\binom{k}{2}` pairs, and
+  ``info["bound"]`` holds :math:`n \binom{k}{2} (D/q)^2` for :math:`n` verified directions
+  and the largest :math:`D`, plus ``info["order_bound"]``. The bound needs a rational model
+  without resting states or root events, with event times rational in the parameters, and
+  Lie and gap orders proven sufficient, since the check runs at the orders used. An integer
+  identity whose content :math:`q` divides vanishes modulo :math:`q`; :math:`q` is drawn per
+  detection, and the bound does not include that chance.
 - ``checked``: the same test where no bound applies, or a test on the entries that can be
   evaluated at the points; ``info["bound"]`` says why a bound does not apply.
 - ``open``: no closed form.
@@ -411,9 +536,10 @@ Every closed form has a *level*:
 The rank is *proven* when it is full, when it plus the number of independent exact
 directions equals :math:`d`, or when every direction is proven over Q. It is *verified*,
 always with a probability, when the Lie, gap and series orders are proven sufficient and
-every direction is verified with a bound, or when every direction lies in the span of
-invariant vector fields of the model, checked at random points with a bound
-(``info["rank_fields_bound"]``). Otherwise it is a *lower bound* (``info["rank_status"]``).
+every direction is verified with a bound, when every direction lies in the span of
+invariant vector fields of the model, which hold the kernel at every order, checked at
+random points with a bound (``info["rank_fields_bound"]``), or when a rank modulo unknown
+inputs holds at a random point. Otherwise it is a *lower bound* (``info["rank_status"]``).
 
 Discrete symmetries
 -------------------
@@ -432,15 +558,19 @@ Reduction
 A reduction replaces the parameters by combinations that the output determines
 [Chappell1998]_ [Evans2000]_ [Massonis2023]_, the invariants :math:`I_l(\theta)` with
 :math:`X(I_l) = 0` [Olver1993]_. symident searches monomial, polynomial and rational
-invariants, Darboux polynomials and exponential factors [Prelle1983]_ [Goriely2001]_ within
-degree bounds.
+invariants, the rational ones with a denominator in one coordinate, Darboux polynomials and
+exponential factors [Prelle1983]_ [Goriely2001]_ within degree bounds, and invariants by
+separable quadrature and by an integrating factor.
 
 The invariants become new parameters, :math:`I_l(\theta) = q_l`, and the remaining
 coordinates are expressed through them. A scaling is removed by fixing one of its
 coordinates at one, for example an initial value or a scale. Every orbit of a scaling is a
 ray and meets that value once, so the result is a *global section*: it maps the new
 parameters one-to-one onto a *global cross-section*, a set that meets every orbit exactly
-once, and the invariants are global coordinates on the orbit space :math:`\Theta / G`.
+once, and the invariants are global coordinates on the orbit space :math:`\Theta / G`. A
+direction along one coordinate is pinned like a scaling. Every orbit meets the pin where the
+sign certificate proves its component of one sign on the domain; otherwise the orbits can
+be the intervals between its zeros, and the pin is listed under ``unproven``.
 
 For a block of :math:`r` general generators, the invariants are solved for coordinates
 :math:`c = C(q, g)`, with :math:`r` gauge coordinates :math:`g` left. Every level set
@@ -462,12 +592,21 @@ then intervals, and the set is connected when its projection is, which is decide
 way. Square roots in :math:`g`, or of a single positive invariant, are first removed by a
 square substitution, which is one to one on the positive half-line. The section point
 :math:`T(q)` then lies in :math:`L_q` and, by the positivity certificate, in
-:math:`\Theta`, so every orbit meets the section (``reach``). Under partial coverage the
-level sets are still single orbits, and an orbit meets the section exactly when its
-invariants lie where the solved entries are positive.
+:math:`\Theta`. ``reach`` says that every level set of the invariants is one orbit; with
+total coverage every orbit then meets the section. Under partial coverage an orbit meets the
+section exactly when its invariants lie where the solved entries are positive. Under declared
+bounds an entry without a positivity certificate is kept, with partial coverage, and listed
+under ``unproven``. Without bounds such an entry is kept only after the search found no
+section certified on the whole domain, and only where a sampled orbit has every entry
+positive: the trafo covers the orbits on which its ``sign_conditions`` hold, the sampled one
+among them, and no others. A positivity certificate treats an atom such as :math:`\log x` as
+positive only where its own sign is proven, and an AM-GM certificate is strict only by the
+positive budget its pairs leave, on a term free of real coordinates where there are any.
 
 A section on a face, :math:`Z = 0` for coordinates :math:`Z` of the block, lies outside
-:math:`\Theta` and is reached only in a limit. With :math:`Z` as the gauge, the conditions
+:math:`\Theta` and is reached only in a limit. It is tried first, and where one is found no
+other section is searched; its new parameters are the coordinates of the face point, not
+invariants. With :math:`Z` as the gauge, the conditions
 above make every level set one orbit, and :math:`C(q, Z) \to C(q, 0) > 0` puts the face
 point :math:`F(q) = (0, C(q, 0))` in the closure of every orbit of :math:`L_q`. The output
 is constant along the orbit, so :math:`F(q)` gives it when the model is continuous there:
@@ -506,10 +645,12 @@ Besides proofs, a result rests on two assumptions, which ``info["assumptions"]``
 ``Reduction.assumptions`` list: the declared domain :math:`\Theta` (``positive``) and, for a
 model with switches, the sides that ``regimes`` declares at the start where the initial
 values do not decide them. Both are part of the model as declared. A verified closed form
-or rank is wrong with probability at most ``error_bound`` [Schwartz1980]_. The other steps
-are proven, or the result names them: a ``checked`` direction, a rank that is a ``lower
-bound``, a section claim under ``unproven``, a limit under ``info["limits"]`` and a resting
-branch under ``info["branches"]``.
+or rank is wrong with probability at most ``error_bound`` [Schwartz1980]_, which includes
+the chance of a wrong certified order. Floating point appears in the choice of a gauge and
+of the pivots of ``reduce_cq``; it never decides a rank, a sign or a closed form. The other
+steps are proven, or the result names them: a ``checked`` direction, a rank that is a
+``lower bound``, a section claim under ``unproven``, a limit under ``info["limits"]`` and a
+resting branch under ``info["branches"]``.
 
 References
 ----------

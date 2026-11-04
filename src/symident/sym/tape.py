@@ -630,6 +630,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     emit_cache = {}   # (f_c, g_c, obs names) recur across segments/conditions
     ss_sol_cache = {}  # linear resting-state solutions, keyed on the f_ss tuple
     ic_cache = {}     # emitted IC tapes, keyed on the seed-expression tuple
+    e_num = {spy.E: spy.exp(1, evaluate=False)}
     for c, (f_c, g_c, ic_c, f_ss) in enumerate(per_cond):
         subs_map = subs_per[c]
         ekey = (tuple(f_c), tuple(g_c), tuple(_s(v) for v in obs_vars_per[c]))
@@ -642,7 +643,6 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             # this segment's substituted model as lines for the scaling peel,
             # exponentials kept
             f0, g0 = scal_per_cond[c][0], scal_per_cond[c][1]
-            e_num = {spy.E: spy.exp(1, evaluate=False)}
             m_lines = ['%s = %s' % (_s(scal_s[i]), spy.sympify(f0[i]).xreplace(e_num))
                        for i in range(len(scal_s))]
             o_lines = ['%s = %s' % (_s(obs_vars_per[c][j]), spy.sympify(g0[j]).xreplace(e_num))
@@ -679,6 +679,9 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                       (condition_t0_events[c] if condition_t0_events and
                        c < len(condition_t0_events) else [])],
             'ver_time': '' if tm_per[c] is None else _s(tm_per[c]),
+            # the resting model of a start at rest, which a scaling must leave invariant as well
+            'ver_rest': ['%s = %s' % (_s(scal_s[i]), spy.sympify(e).xreplace(e_num))
+                         for i, e in enumerate(scal_per_cond[c][3])] if seg_eq[c] else [],
         }
         if seg_eq[c] and joint_steady_state:
             # joint mode: each non-forcing state is an identity leaf seeded to x*;

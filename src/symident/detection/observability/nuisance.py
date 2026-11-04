@@ -12,12 +12,21 @@ def _rref(M, p):
     return R, (np.atleast_1d(rr["piv"]).astype(np.int64) if rank else np.zeros(0, dtype=np.int64))
 
 
+def projected_rank(R, aux, p):
+    """{"rank", "aux_full"}: rank R - rank R[:, aux], and whether R[:, aux] has full column rank."""
+    R = np.asarray(R, dtype=np.int64) % p
+    ra = int(_core.sym_rref_mod(R[:, list(aux)].astype(np.float64), p)["rank"]) if len(aux) and R.size else 0
+    r = int(_core.sym_rref_mod(R.astype(np.float64), p)["rank"]) if R.size else 0
+    return {"rank": r - ra, "aux_full": ra == len(aux)}
+
+
 def quotient(o, cols, p, drop=()):
     """The kernel result `o` modulo the directions within the columns `cols`, its vectors zero on `drop`."""
     if not cols or o is None or not o.get("ok"):
         return o
     nz, r = int(o["dim"]), int(o["rank"])
     R = np.asarray(o["R"], dtype=np.int64).reshape(r, nz)
+    block = R[:, list(cols)] % p
     piv = set()
     if r:
         _, pv = _rref(R[:, cols], p)
@@ -36,7 +45,7 @@ def quotient(o, cols, p, drop=()):
         R[:keep.shape[0], rest] = keep
         R[np.arange(keep.shape[0], R.shape[0]), drop] = 1
     R, pv = _rref(R, p)
-    out = dict(o, R=R, pivots=pv, rank=int(R.shape[0]), nuisance_pinned=len(free))
+    out = dict(o, R=R, pivots=pv, rank=int(R.shape[0]), nuisance_pinned=len(free), nuisance_block=block)
     if o.get("rank_s") is not None and o.get("S") is not None:
         out.update(_series_quotient(o, cols, free, p))
     return out

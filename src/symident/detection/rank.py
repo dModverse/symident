@@ -43,13 +43,14 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, warm=None, probe_block=1, blo
     timing = state.env("TIMING")
     per_block = len(block_call) > 1 and (block_override is None or block_override > 0)
     use_budget = per_block or len(block_call) == 1
+    # the codimension budget shortens the plateau the scan waits for and certifies nothing: lower rows can
+    # vanish at the point
     if block_override is not None and block_override > 0:
         need_used = block_override
     elif not use_budget or budget is None:
         need_used = plateau_need
     else:
         need_used = min(plateau_need, budget + 1)
-    certified = use_budget and budget is not None and need_used >= budget + 1
 
     def scan_nt(call1, point, Mtot, frm, need, label, lo0=0, prof1=None):
         lo0 = int(lo0)
@@ -352,7 +353,7 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, warm=None, probe_block=1, blo
             "point0": point0, "pool": pool, "pool_next": pool_next,
             "block_orders": sat.get("block_orders"), "block_driver": sat.get("block_driver"),
             "block_ranks": sat.get("block_ranks"), "budget": budget, "plateau": need_used,
-            "certified": certified, "rank": sat["res"]["rank"], "rank_s": rank_of(sat["res"]),
+            "rank": sat["res"]["rank"], "rank_s": rank_of(sat["res"]),
             "pivots": sat["res"]["pivots"]}
 
 

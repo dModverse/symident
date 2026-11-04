@@ -124,8 +124,9 @@ def test_hodgkin_huxley():
 
 def test_translation_gauge_real_coordinates():
     obs = det(f_ab(), G_AB, reconstruct=True)
-    # with every coordinate positive the orbit leaves the domain: no chart
-    assert len(si.reduce(obs).remaining) == 1
+    # with every coordinate positive the orbit leaves the domain: a chart on the orbits a sign condition names
+    b = next(b for b in si.reduce(obs).blocks if b["type"] == "curved")
+    assert b["coverage"] == "partial" and b["sign_conditions"] == ["kd - q_1 > 0"]
     red = si.reduce(obs, positive=["B", "kB", "kd", "kE", "s"])
     assert red.remaining == []
     assert det(f_ab(), G_AB, trafo=red.trafo).identifiable
@@ -232,6 +233,9 @@ def test_trig_half_angle():
     r = det({"x": "-k*x + A*cos(2*pi*w*time + ph)"}, {"y": "c*x"})
     assert set(r.info["coordinates"]) == {"x", "A", "c", "k", "w", "ph"}
     assert set(r.symmetries[0]["generator"]) == {"A", "c", "x"}
+    # angle terms that sum to zero leave their factor free
+    r = det({"x": "-a*x + k*(sin(pi*(time + 1)) + sin(pi*time))"}, {"y": "x"}, trafo={"x": "1"})
+    assert set(r.info["coordinates"]) == {"a", "k"} and (r.rank, r.dim) == (1, 2)
 
     # a direction that is no scaling comes back in the full angle
     r = det({"x": "-k*x"}, {"y": "sin(a)*x"}, reconstruct=True)

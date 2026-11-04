@@ -222,3 +222,52 @@ def test_a_switch_in_fixed_parameters_takes_its_value_per_experiment(tmp_path):
     (tmp_path / "p.yaml").write_text(y + "condition_files: [conditions.tsv]\nexperiment_files: [experiments.tsv]\n")
     m = si.read_petab(str(tmp_path / "p.yaml"))
     assert "piecewise" not in m.odes["x"] and [t["si_switch1"] for t in m.trafo] == ["1", "2"]
+
+
+def _conditions(tmp_path, rows):
+    """Two experiments e0 and e1 of the problem in `tmp_path`, with the condition table `rows`."""
+    (tmp_path / "conditions.tsv").write_text("conditionId\ttargetId\ttargetValue\n" + rows)
+    (tmp_path / "experiments.tsv").write_text("experimentId\ttime\tconditionId\ne0\t0\tc0\ne1\t0\tc1\n")
+    (tmp_path / "measurements.tsv").write_text("observableId\texperimentId\ttime\tmeasurement\n"
+                                              "obs\te0\t1\t1\nobs\te1\t1\t1\n")
+    y = (tmp_path / "p.yaml").read_text()
+    (tmp_path / "p.yaml").write_text(y + "condition_files: [conditions.tsv]\nexperiment_files: [experiments.tsv]\n")
+    return si.read_petab(str(tmp_path / "p.yaml"))
+
+
+def test_the_time_of_an_sbml_event_takes_its_value_per_experiment(tmp_path):
+    import libsbml
+
+    def build(model):
+        _species(model)
+        p = model.createParameter()
+        p.setId("t_on"), p.setValue(2), p.setConstant(True)
+        e = model.createEvent()
+        e.setId("dose"), e.setUseValuesFromTriggerTime(True)
+        tr = e.createTrigger()
+        tr.setInitialValue(False), tr.setPersistent(True), tr.setMath(libsbml.parseL3Formula("time >= t_on"))
+        a = e.createEventAssignment()
+        a.setVariable("x"), a.setMath(libsbml.parseL3Formula("5"))
+    _problem(tmp_path, build)
+    m = _conditions(tmp_path, "c0\tt_on\t1\nc1\tk\tk\n")
+    assert [(e["time"], e["cond"]) for e in m.events] == [("(1)", [0]), ("(2)", [1])]
+
+
+def test_an_id_the_expression_language_cannot_read_is_renamed_in_the_model_and_the_tables(tmp_path):
+    import libsbml
+
+    def build(model):
+        _species(model)
+        for name in ("_k", "X_k", "pi"):
+            p = model.createParameter()
+            p.setId(name), p.setValue(1), p.setConstant(True)
+        model.getReaction(0).getKineticLaw().setMath(libsbml.parseL3Formula("_k*X_k*k*x*V"))
+    _problem(tmp_path, build)
+    (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\t_s*x\t1\n")
+    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\n_s\tlog10\t0.1\t10\t1\t1\n"
+                                             "_k\tlog10\t0.1\t10\t1\t1\nX_k\tlin\t0\t10\t3\t0\n")
+    m = _conditions(tmp_path, "c0\t_k\t_s\nc1\tpi\t2\n")
+    assert m.petab["renamed"] == {"_k": "X_k_", "pi": "pi_", "_s": "X_s"}
+    assert m.observables == [{"obs": "X_s*x"}] * 2 and sorted(m.petab["estimated"]) == ["X_k_", "X_s", "k"]
+    assert [t["X_k_"] for t in m.trafo] == ["X_s", "X_k_"] and "X_k_" in m.odes["x"]

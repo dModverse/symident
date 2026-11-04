@@ -5,15 +5,16 @@ import warnings
 
 import numpy as np
 
-from ... import _core, state
+from ... import _core, session, state
 from ...errors import SYMPY_FAILS, InapplicableError, RouteError, swallow, sympy_fail
-from ...gfp import PRIMES, in_span, null_residues, random_point
+from ...gfp import PRIMES, in_span, null_residues, random_point, uniform_point, verify_prime
 from ...par import thread_map
 from ...rexpr import sym_sort
 from ...sym.msolve import msolve_timeout
 from ...sym.parse import model_sympify
 from ..classify import joint_expand_scal, peel_scalings, report_physical
 from ..closedform import recast_backsub
+from ..conditions import scaling_component
 from ..fields import (
     exact_scaling_set,
     field_check,
@@ -28,6 +29,7 @@ from ..fields import (
     static_fields,
 )
 from ..rank import nullspace_basis, saturate_certify
+from ..verify import verify_in_nullspace
 from .context import Run, ok, strs
 from .guard import saturation_guard
 from .joint import JointSystem
@@ -51,6 +53,20 @@ def _rational_forms(exprs):
     try:
         _, parse = _make_local_parse([str(x) for x in exprs])
         return all(_is_rational_expr(parse(str(x).replace("^", "**"))) for x in exprs)
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return False
+
+
+def _in_rational_span(w, ws):
+    """Whether the integer weights `w` are a rational combination of the weight vectors `ws`."""
+    names = sorted({k for v in [w, *ws] for k in v})
+    if not ws:
+        return False
+    try:
+        import sympy as spy
+        E = spy.Matrix([[spy.Rational(str(v.get(k, 0))) for k in names] for v in ws])
+        return E.rank() == E.col_join(spy.Matrix([[spy.Rational(str(w.get(k, 0))) for k in names]])).rank()
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return False
@@ -336,19 +352,20 @@ class Analysis:
 
     def _gap_proof(self, sc):
         """Gap order raised until the truncated rank reaches the gapcert bound; False without a bound or at the cap."""
-        from ... import session
         from ..gapcert import gap_bound
         run = self.run
         if self.joint or not run.chain_groups or self.recast:
             return False
-        b = gap_bound(self.multi["tapes"], run.chain_groups, list(self.znames), int(sc["nt_used"]), PRIMES[0],
+        b = gap_bound(self.multi["tapes"], run.chain_groups, list(self.znames), int(sc["nt_used"]), verify_prime(),
                       session.current().rng("gap.bound", ",".join(self.znames)))
         self.gap_bound = b
         if b["bound"] is None:
             return False
-        if rank_of(sc["ref"]) >= b["bound"]:
+        if self._gap_reached(rank_of(sc["ref"]), b):
             return True
         for m in range(run.mtot + 1, run.max_gap + 1):
+            if b.get("inconsistent"):
+                return False
             try:
                 r = self.kcall4(sc["point0"], PRIMES[0], sc["nt_used"], m)
             except Exception as exc:
@@ -356,11 +373,33 @@ class Analysis:
                 return False
             if not ok(r):
                 return False
-            if rank_of(r) >= b["bound"]:
+            if self._gap_reached(rank_of(r), b):
                 sc.update(ref=r, mtot_used=m, rank=r["rank"], rank_s=rank_of(r), pivots=r["pivots"])
                 run.mtot = m
                 return True
         return False
+
+    def _gap_reached(self, rank, b):
+        """Whether the truncated `rank` reaches the bound of `b`; a rank above it marks the bound inconsistent."""
+        if rank > b["bound"]:
+            session.note("limits", f"gap bound: the truncated rank {rank} exceeds the bound {b['bound']}, "
+                                   "so the bound is not taken")
+            b["inconsistent"] = True
+            return False
+        return rank == b["bound"]
+
+    @staticmethod
+    def _order_bound(sc, gap_used):
+        """(bound, why): the chance that the certified Lie and gap orders are not sufficient, or why there is none."""
+        if not sc.get("certified"):
+            return None, None
+        ob = sc.get("order_bound")
+        if ob is None:
+            return None, sc.get("order_bound_why") or "the certificate has no degree bound"
+        if gap_used is None:
+            return ob, None
+        t = gap_used.get("terms")
+        return (None, "the gap-order bound has no degree bound") if t is None else (float(ob + t), None)
 
     def _gap_why(self, sc):
         """None when the rank bound proves the gap order sufficient, else why it stopped."""
@@ -390,12 +429,17 @@ class Analysis:
         """The proven Lie order per block, then the per-chain caps lowered."""
         run = self.run
         run.nt_cap = []
-        sc["certified"] = self.rank_cap < self.nz and rank_of(sc["ref"]) >= self.rank_cap
+        # a full rank, or a rank at the cap set by the exact scalings, cannot rise with the order
+        sc["certified"] = rank_of(sc["ref"]) >= self.nz or \
+            (self.rank_cap < self.nz and rank_of(sc["ref"]) >= self.rank_cap)
+        sc["order_bound"] = 0.0 if sc["certified"] else None
         hint = state.get("order_hint")
         if hint is not None and hint.get("certified") is not False and \
                 list(sc.get("block_orders") or []) == list(hint.get("block_orders") or []):
             sc["certified"] = True
             sc["cert_orders"] = True
+            sc["order_bound"] = hint.get("order_bound")
+            sc["order_bound_why"] = hint.get("order_bound_why")
         if not sc["certified"] and not self.stacked_first and not run.nuis_cols:
             self._certificate(sc)
         nb = self.sys.kc if self.joint else (len(run.chain_groups) if run.chain_groups else -1)
@@ -418,6 +462,26 @@ class Analysis:
             if state.env("LIEDIAG"):
                 print(f"[liediag] joint block Lie orders: {','.join(map(str, run.nt_cap))}")
 
+    def _cert_degrees(self):
+        """(degrees, why): per certificate block the state_degrees() of each segment, None where one has none."""
+        from ..bound import no_degree, state_degrees
+        run, tapes = self.run, self.multi["tapes"]
+        groups = run.chain_groups if run.has_gaps else [[i] for i in range(len(tapes))]
+        out, why = [], None
+        for idx in groups:
+            mds = []
+            for i in idx:
+                t = tapes[i]
+                ml = strs(t.get("jet_f") or t.get("model_lines"))
+                ol = [f"_y{j} = {e}" for j, e in enumerate(strs(t["jet_g"]))] if t.get("jet_f") else \
+                    strs(t.get("obs_lines"))
+                md = state_degrees(ml, ol, [l.split("=", 1)[0].strip() for l in ml])
+                if md is None and why is None:
+                    why = no_degree([l.split("=", 1)[1] for l in ml + ol]) or "SymPy found no degree"
+                mds.append(md)
+            out.append(mds)
+        return out, why
+
     def _cert_start(self, sc, n):
         """Per block the saturated order plus the plateau, where the saturation knows it."""
         bo = sc.get("block_orders")
@@ -433,14 +497,21 @@ class Analysis:
         own_threads = not run.has_gaps and not self.joint
         threads = run.cores if own_threads else 1
         mapf = (lambda f, xs: thread_map(f, xs, run.cores)) if threads == 1 and run.cores > 1 else None
-        orders = None
-        if all(s is not None and len(s) > 0 for s in seeds):
+        cap = max(64, 4 * (len(self.z_slots) + run.n_states))
+        if run.nuis_order is not None:
+            # past the exact orders of the input chains a row is that of a polynomial stand-in
+            cap = min(cap, int(run.nuis_order) - int(sc.get("mtot_used") or 0))
+        degs, why = (None, "the resting states are solved modulo the engine prime only") if self.joint else \
+            self._cert_degrees()
+        sc["order_bound_why"] = why
+        orders, terms = None, []
+        if all(s is not None and len(s) > 0 for s in seeds) and cap >= 1:
             try:
                 orders = lie_certificate(segs, seeds, run.n_leaves, run.n_states,
-                                         self.sys.z_slots_local if self.joint else run.z_slots, P1,
-                                         cap=max(64, 4 * (len(self.z_slots) + run.n_states)),
+                                         self.sys.z_slots_local if self.joint else run.z_slots,
+                                         P1 if degs is None else verify_prime(), cap=cap,
                                          map_fn=mapf, threads=threads,
-                                         start=self._cert_start(sc, len(segs)))
+                                         start=self._cert_start(sc, len(segs)), degs=degs, terms=terms)
             except Exception as e:
                 swallow(e, "Lie order certificate")
                 if state.env("LIEDIAG"):
@@ -456,11 +527,19 @@ class Analysis:
             except Exception as exc:
                 swallow(exc, "certified kernel")
                 rc = None
-            if ok(rc):
+            if ok(rc) and rank_of(rc) < rank_of(sc["ref"]):
+                # an order below the one the scan needed cannot be sufficient
+                session.note("limits", f"Lie order certificate: the rank at the certified order {need} is below "
+                                       f"the rank of the scan at order {int(sc['nt_used'])}; the scanned order "
+                                       "is kept")
+                sc.update(certified=False, uncertified=list(range(len(orders))))
+            elif ok(rc):
+                cert = all(o is not None for o in orders)
                 sc.update(ref=rc, nt_used=need, rank=rc["rank"], rank_s=rank_of(rc), pivots=rc["pivots"],
-                          block_orders=ordv, block_driver=int(np.argmax(ordv)),
-                          certified=all(o is not None for o in orders),
-                          uncertified=[i for i, o in enumerate(orders) if o is None], cert_orders=True)
+                          block_orders=ordv, block_driver=int(np.argmax(ordv)), certified=cert,
+                          uncertified=[i for i, o in enumerate(orders) if o is None], cert_orders=True,
+                          order_bound=(float(sum(terms)) if cert and len(terms) == len(orders) and
+                                       all(t is not None for t in terms) else None))
         if state.env("LIEDIAG"):
             print(f"[liediag] certified block orders: {orders}")
 
@@ -486,11 +565,13 @@ class Analysis:
         self._mark_states()
         run.mtot = int(sc.get("mtot_used") or 0)
         gap_why = self._gap_why(sc) if run.has_gaps else None
+        gap_used = None
         if gap_why is not None and self._gap_proof(sc):
-            gap_why = None
+            gap_why, gap_used = None, self.gap_bound
         elif gap_why is not None and getattr(self, "gap_bound", None) is not None:
             b = self.gap_bound
             gap_why += (f" (no rank bound: {b['why']})" if b["bound"] is None else
+                        f" (the rank exceeds its bound {b['bound']})" if b.get("inconsistent") else
                         f" (the rank stays below its bound {b['bound']} up to the cap)")
         nz, n_seg = self.nz, len(self.multi["tapes"])
         result = {"method": "observability", "engine": "analytic",
@@ -505,6 +586,9 @@ class Analysis:
                   "gap_certificate": None if run.series_gaps else gap_why,
                   "series_certified": gap_why is None if run.series_gaps else None,
                   "series_certificate": gap_why if run.series_gaps else None,
+                  "gap_bound": None if gap_used is None else int(gap_used["bound"]),
+                  "order_bound": self._order_bound(sc, gap_used)[0],
+                  "order_bound_why": self._order_bound(sc, gap_used)[1],
                   "sat_score": rank_score(sc["ref"]), "non_identifiable": []}
         self.phys_params0 = [z for z in self.znames if z not in self.zsn]
         if self.joint:
@@ -526,6 +610,16 @@ class Analysis:
                                   "short": sc["rank_s"] != nz and
                                   int(sc["nt_used"]) + (0 if run.series_gaps else run.mtot) +
                                   (_margin() if self.verify else 0) > int(run.nuis_order)}
+        if run.nuis_cols:
+            result["projection"] = self._projection(sc)
+        elif self.joint and not self._jx_regular(sc):
+            result["projection"] = {"status": "unchecked",
+                                    "of": "the resting states, whose Jacobian is singular at the base point"}
+        if run.nuis_order is not None and not run.nuis_cols:
+            # the chains of known inputs: exact up to their order, a polynomial stand-in past it
+            result["known_short"] = sc["rank_s"] != nz and \
+                int(sc["nt_used"]) + (0 if run.series_gaps else run.mtot) + \
+                (_margin() if self.verify else 0) > int(run.nuis_order)
         if sc["rank_s"] == nz:
             return self._modulo_nuisance(result)
         if self.joint:
@@ -710,14 +804,24 @@ class Analysis:
         except Exception as exc:
             swallow(exc, "scalings of the model")
             res = None
-        if res is None:
+        # a scaling is exact where initial values and events are checked too: those of the whole model come first
+        ws = self.exact_scalings(self.scal_fixed)
+        states = {l.split("=", 1)[0].strip() for t in self.multi["tapes"] for l in strs(t.get("model_lines"))}
+
+        def lift(w):
+            # a scaling acts on the states by its weights; with unknown inputs the lift gives their change
+            return {x: scaling_component(v, x) for x, v in w.items() if x in states and str(v) != "0"} \
+                if self.run.nuis_cols else None
+        dirs = [{"vector": dict(w), "exact": True, "state_components": lift(w)} for w in ws] + \
+            [dict(d, exact=_in_rational_span(d["vector"], ws)) for d in (res or {}).get("non_identifiable", [])]
+        if not dirs:
             return [], np.zeros((self.nz, 0), dtype=np.int64)
-        exact = not res.get("skipped")
+        res = dict(res or {}, non_identifiable=dirs)
         if self.joint:
             sys = self.sys
             res = joint_expand_scal(res, sys.state_base, sys.kc, sys.held_param_of, sys.pinned())
         peel = peel_scalings(res, self.znames, self.nz, np.asarray(self.sc["point0"])[self.z_slots],
-                             PRIMES[0], self.N, exact=exact,
+                             PRIMES[0], self.N,
                              modulo=(self.free_cols, self.run.nuis_cols) if self.run.nuis_cols else None)
         return peel["scaling"], peel["Bmat"]
 
@@ -766,6 +870,8 @@ class Analysis:
             from .proof import chain_bound
             result["bound"] = chain_bound(self, result)
         kernel = {"coords": list(self.znames), "N": self.N, "p": P}
+        if state.get("random_kernel"):
+            kernel["random"] = self._random_kernel()
         if self.stacked_first:
             if not _settled(result) and not self.stacked_quick:
                 return {"rerun_blocks": True}
@@ -1024,8 +1130,7 @@ class Analysis:
             e[j] = 1
             if in_span(basis, e, n, P) and not in_span(span, e, n, P):
                 span = np.concatenate([span, e.reshape(n, 1)], axis=1)
-                nm = self.znames[phys[j]]
-                keep.append({"support": [nm], "type": "scaling", "vector": {nm: 1}, "closed_form": True})
+                keep.append(self._unit_fill(phys[j]))
         for k in range(Nphys.shape[1]):
             if len(keep) >= basis.shape[1]:
                 break
@@ -1034,11 +1139,116 @@ class Analysis:
             span = np.concatenate([span, Nphys[:, [k]]], axis=1)
             supp = sym_sort([self.znames[phys[j]] for j in np.nonzero(Nphys[:, k])[0]])
             if len(supp) == 1:
-                keep.append({"support": supp, "type": "scaling", "vector": {supp[0]: 1}, "closed_form": True})
+                keep.append(self._unit_fill(self.znames.index(supp[0])))
                 continue
             keep.append({"support": supp, "type": "general", "closed_form": False,
                          "reason": "not reconstructed in closed form"})
         return keep
+
+    def _distances(self):
+        """Per state of the tapes the fewest steps of the right-hand sides from it to an observable."""
+        dist = {}
+        for t in self.multi["tapes"]:
+            rhs = {}
+            for l in strs(t.get("model_lines")):
+                lhs, e = l.split("=", 1)
+                rhs[lhs.strip()] = set(re.findall(r"[A-Za-z_.][A-Za-z0-9_.]*", e))
+            reach = set(re.findall(r"[A-Za-z_.][A-Za-z0-9_.]*", " ".join(l.split("=", 1)[-1]
+                                                                          for l in strs(t.get("obs_lines")))))
+            k, seen = 0, set()
+            while reach - seen:
+                for x in reach - seen:
+                    dist[x] = min(dist.get(x, k), k)
+                seen |= reach
+                reach = seen | {y for x in seen if x in rhs for y in rhs[x]}
+                k += 1
+        return dist
+
+    def _jx_regular(self, sc):
+        """Whether the resting Jacobian J_x of every condition solved directly is invertible at the base point."""
+        sys, P = self.sys, PRIMES[0]
+        for ci in sys.equil_conds:
+            try:
+                sc0 = sys.solve_cond(sc["point0"], P, ci)
+            except Exception as exc:
+                swallow(exc, "resting Jacobian at the base point")
+                return False
+            if sc0 is None:
+                return False
+            if sc0.get("cont"):
+                # a continued condition takes its rows as series, not at the point
+                continue
+            Jx = (sc0.get("sol") or {}).get("df_jx") or []
+            if not len(Jx):
+                continue
+            M = np.array([[int(x) % P for x in row] for row in Jx], dtype=np.int64)
+            if M.shape[0] != M.shape[1] or int(_core.sym_rref_mod(M.astype(np.float64), P)["rank"]) < M.shape[0]:
+                return False
+        return True
+
+    def _projection(self, sc):
+        """{"status", ...} of the rank modulo the nuisance coordinates, which a point where they drop rank can raise."""
+        run = self.run
+        top = int(sc["nt_used"]) + int(run.mtot)
+        names = [self.znames[c] for c in run.nuis_cols]
+        dist, starts = self._distances(), self.multi.get("nuisance_starts") or {}
+        # a jet that k steps of the dependencies separate from an observable enters the rows from order k on
+        can = [j for j, nm in enumerate(names)
+               if dist.get(starts.get(nm, nm), dist.get(re.sub(r"_0$", "", nm), 0)) <= top]
+
+        def full(r):
+            B = np.asarray(r.get("nuisance_block"), dtype=np.int64).reshape(-1, len(names))
+            return not can or int(_core.sym_rref_mod(B[:, can].astype(np.float64), int(r["p"]))["rank"]) == len(can)
+        # full column rank of the columns that can enter a row proves the rank, at the base point or at a uniform
+        # point of the same rank
+        base = dict(sc["ref"], p=PRIMES[0])
+        if base.get("nuisance_block") is not None and full(base):
+            return {"status": "proven"}
+        if self.joint:
+            return {"status": "unchecked"}
+        q = verify_prime()
+        pt = uniform_point(len(sc["point0"]), q, session.current().seed("projection", ",".join(names)))
+        try:
+            r = self.kcall4(pt, q, sc["nt_used"], sc.get("mtot_used") or 0)
+        except Exception as exc:
+            swallow(exc, "the rank modulo the nuisance coordinates at a random point")
+            r = None
+        if not ok(r) or r.get("nuisance_block") is None:
+            return {"status": "unchecked"}
+        if rank_of(r) != rank_of(sc["ref"]):
+            return {"status": "differs", "base": int(rank_of(sc["ref"])), "random": int(rank_of(r))}
+        if full(dict(r, p=q)):
+            return {"status": "proven"}
+        return {"status": "verified", "columns": len(can), "order": top}
+
+    def _random_kernel(self):
+        """{"N", "p"}: the kernel at the orders taken at a point uniform modulo the verification prime, or None."""
+        sc, q = self.sc, verify_prime()
+        pt = uniform_point(len(sc["point0"]), q, session.current().seed("random kernel"))
+        try:
+            r = self.kcall(pt, q, sc["nt_used"])
+        except Exception as exc:
+            swallow(exc, "the kernel at a random point")
+            return None
+        if not ok(r):
+            return None
+        piv = {int(x) for x in np.atleast_1d(r["pivots"])}
+        return {"N": nullspace_basis(r, [c for c in range(self.nz) if c not in piv], q), "p": q}
+
+    def _unit_fill(self, col):
+        """The unit direction of column `col`, closed only where the kernel holds it at the verification points too."""
+        nm, sc = self.znames[col], self.sc
+        e = {"support": [nm], "type": "scaling", "vector": {nm: 1}, "closed_form": True}
+        try:
+            held = verify_in_nullspace(e, col, self.znames, self.leaf_names_aug, sc["point0"], sc["nt_used"],
+                                       self.kcall, sc.get("pool"), 0, self.nz)
+        except Exception as exc:
+            swallow(exc, "unit direction at the verification points")
+            held = False
+        if held:
+            return e
+        return {"support": [nm], "type": "general", "closed_form": False,
+                "reason": "the kernel holds it at the base point only"}
 
     def _gap_guard(self, sc, margin=2):
         """The rank at `margin` gap orders past the reported one, at the same point and Lie order."""

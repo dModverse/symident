@@ -1,3 +1,64 @@
+# symident 0.13.0
+
+## Certificates and levels
+
+* A certified Lie order and the gap-order bound hold except with probability at most
+  `info["order_bound"]`, which the error bound of verified results includes; where no bound
+  applies, `info["order_bound_why"]` names the reason. `info["gap_bound"]` is the bound that
+  proved the gap order; an event time that holds a symbol gets none.
+* The certificate frees a state that an event value reads. A certified rank below the scanned
+  one leaves the order uncertified, named in `info["limits"]`.
+* Ranks modulo unknown inputs, resting states and switch surfaces are proven where the projected
+  columns have full rank, else verified with the probability in `info["projection"]`. The
+  printout says what a verified rank or a lower bound rests on.
+* Verification points are uniform modulo the verification prime, and the error bound counts the
+  points drawn (`info["bound"]["draws"]`).
+* An exact scaling holds for the initial values, the events and the resting model as well; an
+  exact lift needs every parameter component constant along the flow.
+* The chains of known inputs are lengthened while the Lie order reaches past them
+  (`info["known_inputs"]`).
+
+## Switches and unknown inputs
+
+* An unknown input may enter a model with switches: it is continuous at every surface and
+  analytic between two switches. Each condition needs an input of its own; a switch on the
+  input, an event after the start and an initial value or event that reads it are refused.
+* A coordinate is non-identifiable only if it is so in every allowed regime; the state at a
+  switch is any point of its surface.
+* A state that starts at zero and that every regime and event keeps at zero is taken out of the
+  model first (`info["zero_states"]`).
+
+## Resting states
+
+* Where a drained reaction or the resting balances have several solutions, `info["branches"]`
+  names the one taken.
+* Under `equilibrate`, a state without dynamics that is not an input rests at a value of its
+  own, and an event at the start applies on top of it.
+* A logarithm, a fractional power and the base of a free exponent need a positive argument on
+  the declared domain, in the right-hand sides, observables, initial values and event values;
+  otherwise an error names the symbols. With `reduce_cq` the check reads the model before the
+  elimination.
+
+## Reduction
+
+* A non-polynomial atom such as `log(x)` and an AM-GM certificate count as positive only where
+  proven; an entry or a pin without a certificate is listed under `unproven`.
+* Without declared bounds, a block whose sections all need a sign condition is reduced on part
+  of the domain, with the conditions in `sign_conditions`; such a section ranks last.
+* Alternative reductions are ranked by their level first.
+* Under `equilibrate`, `reduce` lifts a direction that leaves the resting equations unchanged,
+  with state components 0, for resting systems of up to eight states.
+
+## Model and PEtab
+
+* The conserved totals of a reaction network are integer combinations of the species; the
+  totals of an ODE model may have parameter coefficients, such as volumes in `A + V*B`.
+* `pi` and Euler's number are numbers in the angles of trigonometric functions.
+* `read_petab()` renames ids the expression language cannot read (`m.petab["renamed"]`), takes
+  the time of an SBML event per experiment, and reads problems with thousands of reactions and
+  experiments.
+* The verbose printout splits the elapsed time into rank, reconstruction and proofs.
+
 # symident 0.12.0
 
 ## Unknown inputs

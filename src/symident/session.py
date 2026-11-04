@@ -14,11 +14,14 @@ class Session:
     def __init__(self, seed=0, model=""):
         self.root = hashlib.blake2b(f"{int(seed)}\0{model}".encode(), digest_size=16).digest()
         self.deadline = None
-        self.notes = {"limits": [], "errors": [], "branches": []}
+        # draws: per passing kernel check, the number of points it drew
+        self.notes = {"limits": [], "errors": [], "branches": [], "draws": []}
         self.control = None
         self.primes = None
         self.depth = 0
         self.vprimes = {}
+        # per system of resting balances, the factors that its taken branch solves
+        self.pins = {}
 
     def seed(self, name, *key):
         """A 63-bit seed for the stage `name` and the key, the same in every process."""
@@ -32,7 +35,7 @@ class Session:
 
 
 def note(kind, what):
-    """Record `what` under `kind` ("limits", "errors") once in the running session."""
+    """Record `what` under `kind` ("limits", "errors", "branches", "draws") once in the running session."""
     s = state.get("session")
     if s is not None and what not in s.notes[kind]:
         s.notes[kind].append(what)

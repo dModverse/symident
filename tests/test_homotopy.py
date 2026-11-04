@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import sympy as spy
 
+import symident as si
 from symident.detection import symmetry_detection
 from symident.detection.classify import classify_direction
 from symident.detection.fields import ser_inv, ser_mul
@@ -210,7 +211,9 @@ def test_homotopy_closes_a_direction_of_a_start_with_radicals():
              conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}})
 
     def run(hom):
-        return symmetry_detection(**m, reconstruct=True, control=reconst_control(homotopy=hom))["symmetries"]
+        # with the jet route off, only the homotopy closes a start with radicals
+        with si.switches(NOJET=True):
+            return symmetry_detection(**m, reconstruct=True, control=reconst_control(homotopy=hom))["symmetries"]
     assert not all(d["explicit"] for d in run(False))
     on = run(True)
     assert all(d["explicit"] for d in on) and any(str(d["route"]).startswith("homotopy fit") for d in on)

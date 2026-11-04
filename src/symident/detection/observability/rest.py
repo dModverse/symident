@@ -13,7 +13,7 @@ from ...par import process_map
 from ...sym.continuation import continue_resting_state
 from ...sym.msolve import MsolveMissingError, msolve_threads
 from ...sym.restforward import solve_forward_modular
-from ...sym.steady import resting_kind, solve_steady_state_modular
+from ...sym.steady import pin_branch, resting_kind, solve_steady_state_modular
 from ..forward import SolveRates
 
 
@@ -276,6 +276,13 @@ class RestingStates:
         rv = [int(sol["rates"][r]) % p for r in self.fwd_rates]
         if any(v == 0 for v in rv):
             return None
+        free = sorted(str(x) for x in self.real_state_names if x not in set(diag.S if diag is not None else ()))
+        # the backward solves at other points take roots on the branch of the seed
+        pin_branch(self.models[self.fwd_cond], list(self.real_state_names), list(self.solve_param_names), forc,
+                   self.held_names or None, {**pv, **sol["rates"], **sol["val_by"]}, p)
+        session.note("branches", f"forward seed: the resting states {', '.join(free) or '-'} drawn, the rates "
+                                 f"{', '.join(map(str, self.fwd_rates))} solved from the balances; the result holds "
+                                 "on the component of the resting set these values parametrize")
         point = np.array(point, dtype=np.int64)
         for r, v in zip(self.fwd_rates, rv):
             point[run.slot(r)] = v

@@ -1,6 +1,7 @@
 """Schwartz-Zippel bound on the chance that the kernel check at random points passes a wrong closed form."""
 
 import functools
+import math
 
 import sympy as spy
 
@@ -37,8 +38,87 @@ def _model_degrees(f_items, g_items, x0_items):
     dB = int(spy.Poly(B, *syms).total_degree())
     dA = max([_degs(e)[0] + dB - _degs(e)[1] for e in f.values()] + [0])
     gd = [_degs(h) for h in g]
-    d0 = max([1] + [max(_degs(e)) for e in x0])
+    # the initial values enter the coordinates over their common denominator
+    d0 = max(1, _vector_degree(x0)) if x0 else 1
     return dA, dB, gd, d0
+
+
+def field_degrees(F, G, X):
+    """(dA, dB, gd) as in _model_degrees of the field F and the functions G in the symbols X, None if not rational."""
+    try:
+        F, G = [spy.sympify(e) for e in F], [spy.sympify(e) for e in G]
+        if not all(_rational(e) for e in F + G) or sum(spy.count_ops(e) for e in F + G) > _ROW_OPS:
+            return None
+        X = list(X) or [spy.Symbol("_")]
+
+        def degs(e):
+            num, den = spy.fraction(spy.together(e))
+            return int(spy.Poly(num, *X).total_degree()), int(spy.Poly(den, *X).total_degree())
+        B = spy.Integer(1)
+        for e in F:
+            B = spy.lcm(B, spy.fraction(spy.together(e))[1])
+        dB = int(spy.Poly(B, *X).total_degree())
+        dA = max([degs(e)[0] + dB - degs(e)[1] for e in F] + [0])
+        return dA, dB, [degs(h) for h in G]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+
+
+def no_degree(exprs):
+    """Why `exprs` have no degree bound: the first term that is not rational, or their size; None otherwise."""
+    from ..sym.parse import to_r
+    try:
+        es = [model_sympify(str(e)) for e in exprs]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return "an expression SymPy does not read"
+    for e in es:
+        bad = next((a for a in spy.preorder_traversal(e)
+                    if a.is_Function or (a.is_Pow and not a.exp.is_Integer)), None)
+        if bad is not None:
+            return f"{to_r(bad)} is not rational"
+    if sum(spy.count_ops(e) for e in es) > _ROW_OPS:
+        return f"the terms exceed {_ROW_OPS} operations"
+    return None
+
+
+def state_degrees(model_lines, obs_lines, states):
+    """field_degrees() of the right-hand sides and observables in the states, every other symbol a constant."""
+    try:
+        f = [model_sympify(str(l).split("=", 1)[1]) for l in model_lines]
+        g = [model_sympify(str(l).split("=", 1)[1]) for l in obs_lines]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    return field_degrees(f, g, [spy.Symbol(str(x)) for x in states])
+
+
+def lie_row_degree(md, k):
+    """Degree bound of the cleared rows of the Lie order k from (dA, dB, gd), as in identity_degree."""
+    dA, dB, gd = md
+    return max([a_h + k * max(dQ + dB + dA - 1, 0) + dQ + dB for a_h, dQ in gd] + [0])
+
+
+def rows_degree(rows):
+    """The largest degree of a row over its own common denominator, None where not rational or too large."""
+    out = 0
+    try:
+        for r in rows:
+            r = [spy.sympify(e) for e in r if spy.sympify(e) != 0]
+            if not r:
+                continue
+            if sum(spy.count_ops(e) for e in r) > _ROW_OPS or not all(_rational(e) for e in r):
+                return None
+            out = max(out, _vector_degree(r))
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    return out
+
+
+# operations of one row past which no degree is taken
+_ROW_OPS = 20000
 
 
 def identity_degree(f, g, x0, order, vector):
@@ -135,8 +215,15 @@ def chain_degree(f, g, x0, events, order, gap_order, vector, times=None):
     return int(worst)
 
 
-def kernel_bound(f, g, x0, order, vectors, q, points, events=None, gap_order=0):
-    """{"degree", "points", "prime", "probability"} for the closed forms `vectors`, or None where it does not apply."""
+def drawn(points):
+    """The most points a kernel check of the running session drew for the `points` that passed."""
+    from .. import state
+    ses = state.get("session")
+    return max([int(points)] + list((ses.notes["draws"] if ses is not None else None) or []))
+
+
+def kernel_bound(f, g, x0, order, vectors, q, points, events=None, gap_order=0, draws=None):
+    """{"degree", "points", "draws", "prime", "probability"} for the closed forms `vectors`, None if inapplicable."""
     if events:
         degs = [chain_degree(f, g, x0, events, order, gap_order, v) for v in vectors]
     else:
@@ -144,5 +231,7 @@ def kernel_bound(f, g, x0, order, vectors, q, points, events=None, gap_order=0):
     if not degs or any(d is None for d in degs):
         return None
     d = max(degs)
-    return {"degree": d, "points": points, "prime": int(q),
-            "probability": float(len(vectors) * (min(1.0, d / q)) ** points)}
+    draws = max(int(draws or points), points)
+    # the passing points are `points` of the draws: a union over the subsets, each a uniform sample
+    return {"degree": d, "points": points, "draws": draws, "prime": int(q),
+            "probability": float(min(1.0, len(vectors) * math.comb(draws, points) * (min(1.0, d / q)) ** points))}

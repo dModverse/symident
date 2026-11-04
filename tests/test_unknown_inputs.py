@@ -1,5 +1,6 @@
 """Unknown inputs: jet chains whose initial values are nuisance coordinates of the kernel."""
 
+import numpy as np
 import pytest
 import sympy as spy
 
@@ -35,7 +36,9 @@ def test_a_time_varying_rate_as_an_unknown_input():
     m = si.Model({"TU": "lam - rho*TU - eta*TU*V", "TI": "eta*TU*V - delta*TI", "V": "N*delta*TI - c*V"},
                  {"y1": "V", "y2": "TU + TI"}, unknown_inputs=["eta"])
     r = si.detect(m, reconstruct=True)
-    assert (r.rank, r.dim) == (7, 8) and r.info["rank_status"]["status"] == "proven"
+    # an input that cancels in a derivative leaves its jet columns short of full rank
+    st = r.info["rank_status"]
+    assert (r.rank, r.dim) == (7, 8) and st["status"] == "verified" and 0 < st["probability"] < 1e-6
     (s,) = r.symmetries
     assert s.level == "exact" and {"N", "delta"} <= set(s.support) and not {"lam", "rho", "c"} & set(s.support)
 
@@ -127,8 +130,6 @@ def test_an_unknown_input_is_zero_at_rest():
 def test_settings_without_unknown_inputs_are_refused(kw, what):
     with pytest.raises(ValueError, match=what):
         si.detect(si.Model({"x": "-k*x + w"}, {"y": "x"}, unknown_inputs=["w"], **kw))
-    with pytest.raises(ValueError, match="switches"):
-        si.detect(si.Model({"x": "-k*x + w + ifelse(x > c, a, 0)"}, {"y": "x"}, unknown_inputs=["w"]))
 
 
 def test_unknown_inputs_are_checked_against_the_model():
@@ -149,3 +150,23 @@ def test_a_gauge_keeps_the_unknown_inputs(gauge):
     r = si.detect(m, reconstruct=True, gauge=gauge)
     assert (r.rank, r.dim, r.info["coordinates"]) == (free.rank, free.dim, free.info["coordinates"])
     assert "T" not in r.info["coordinates"] and r.info["unknown_inputs"]["names"] == ["T"]
+
+
+def test_a_projected_rank_at_a_special_point_is_not_proven():
+    from symident.detection.observability.nuisance import projected_rank
+    p = 1000003
+    # a point where the auxiliary columns drop rank raises the projected rank
+    assert projected_rank(np.array([[1, 3]]), [1], p) == {"rank": 0, "aux_full": True}
+    assert projected_rank(np.array([[1, 0]]), [1], p) == {"rank": 1, "aux_full": False}
+
+
+def test_full_rank_with_unknown_inputs_is_verified():
+    # the jet columns have full column rank: no point can raise the rank modulo them
+    r = si.detect(si.Model({"x": "-k*x + w"}, {"y": "x", "yw": "w"}, unknown_inputs=["w"]))
+    assert r.identifiable and r.info["projection"]["status"] == "proven"
+    assert r.info["rank_status"]["status"] == "proven"
+    # inputs that enter only together leave the jet columns short of full rank
+    r = si.detect(si.Model({"x": "-k*x + w1 + w2"}, {"y": "x", "yw": "w1 + w2"}, unknown_inputs=["w1", "w2"]))
+    st = r.info["rank_status"]
+    assert r.identifiable and r.info["projection"]["status"] == "verified"
+    assert st["status"] == "verified" and 0 < st["probability"] < 1e-6

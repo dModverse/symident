@@ -71,7 +71,8 @@ def test_summary_computation_lines():
         "  saturation: certified except condition 1, 3 (rank bound not reached)",
         "  gauge: fixing k leaves the general directions on 2 coordinates (s: up to 4); gauge=None takes it",
         "  2 conditions, 3 segments",
-        "  switches: 1 surface, 2 regimes, 1 excluded sign pattern (info['switching'])",
+        "  switches: 1 surface, 2 regimes, 1 excluded sign pattern (info['switching']); a direction is free "
+        "only where it is free in every allowed regime, from any point of a switching surface",
         "  settings: reconstruct=True",
         "  saturation guard: FAILED (r; directions may be over-reported)",
         "  elapsed: 1.2s"]
@@ -152,3 +153,19 @@ def test_sections_detailed_explain_each_choice():
     assert "certified positive where q_3 > 0" in txt and "does not represent it" in txt
     for word in ("face", "balance", "pin:", "orthant reaches it"):
         assert word not in txt
+
+
+def test_a_rank_that_is_not_proven_names_what_it_rests_on():
+    pj = {"status": "verified", "of": "the unknown inputs", "probability": 1e-8}
+    rs = {"status": "verified", "probability": 1e-8,
+          "why": "full rank at a point; the rank modulo the unknown inputs holds at a random point modulo a prime"}
+    info = {"engine": "modular", "settings": {}, "rank_status": rs, "projection": pj}
+    lines = report.result_lines(res([], rank=5, info=info), width=200)
+    assert lines[0] == "Result:  structurally locally identifiable (rank 5 / 5)"
+    assert "unless the columns of the unknown inputs drop rank" in lines[1] and "closed form" not in lines[1]
+    closed = dict(rs, why="every direction is closed and lies in the kernel; " + rs["why"])
+    line = report.result_lines(res([SCAL], info=dict(info, rank_status=closed)), width=200)[1]
+    assert "unless a verified closed form is wrong or the columns of the unknown inputs drop rank" in line
+    low = {"status": "lower bound", "probability": None, "why": "the rank modulo the unknown inputs differs"}
+    line = report.result_lines(res([], rank=5, info=dict(info, rank_status=low)), width=200)[1]
+    assert line.endswith("the full rank may hold at this point only.")

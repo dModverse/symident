@@ -24,7 +24,7 @@ from ..forward import fwd_adopt, perprime_forward_multi, perprime_forward_shared
 from ..interp import entry_degrees, exp_backsub, interpolate_direction
 from ..perprime import interpolate_perprime
 from ..relevance import build_shared_bank, dense_need, direction_relevance
-from ..verify import verify_direction, verify_in_nullspace, verify_perprime
+from ..verify import verify_direction, verify_in_nullspace
 from .context import ints, ok, strs
 from .homotopy import Homotopy
 from .narrow import _CSUFFIX, Narrow
@@ -41,6 +41,9 @@ def _actionable(reason):
     """Whether a reason names a cap or setting to change."""
     return reason is not None and any(w in str(reason) for w in ("raise", "cap", "timeout", "time limit"))
 
+
+# samples of a dense fit past which the log-coordinate gauge is tried first
+_LOG_FIRST = 2000
 
 class Reconstruction:
     """The residual directions of one analysis, closed in turn by each route."""
@@ -506,18 +509,18 @@ class Reconstruction:
                                       an.kbatch, bank, fast_only, aux_leaves=an.aux_leaves, degrees=degrees)
         self.pool_next = d["pool_next"]
         e = dict(d["entry"])
-        rel_leaves = e.pop("relevant_leaves", None)
+        e.pop("relevant_leaves", None)
         if log_coords and e.get("closed_form"):
             e["vector"] = {nm: simplify(f"({x})*{_coord(nm)}") for nm, x in e["vector"].items()}
         verified = False
         if e.get("closed_form"):
             vargs = (e, fc, an.znames, an.leaf_names_aug, sc["point0"], sc["nt_used"], an.kcall)
-            def in_null():
+            def in_null(cols=None):
                 return (verify_in_nullspace(*vargs, sc["pool"], self.pool_next, an.nz,
-                                                               self.dir_call))
+                                                               self.dir_call, cols=cols))
             if per_prime:
-                verified = verify_perprime(*vargs, sc["pivots"], sc["pool"], self.pool_next, an.nz,
-                                           rel_leaves=rel_leaves)
+                # a fit per prime states only the columns off the resting states and the anchor
+                verified = in_null(None if self.phys_cols is None else self.phys_cols + [fc])
             elif log_coords:
                 verified = in_null()
             else:
@@ -611,7 +614,16 @@ class Reconstruction:
             needs.append(0 if "over" in degs else
                          dense_need(m["rel_by_entry"], self.ctrl,
                                     [d if isinstance(d, int) else None for d in degs])["max_need"])
-        dense_dir = [i for i, nd in enumerate(needs) if nd > 0]
+        # where the log-coordinate gauge closes a direction of large need, its fit is the cheaper one
+        early = [None] * len(self.residual)
+        if any(nd > _LOG_FIRST for nd in needs) and not expired(self.ctrl):
+            lg = logcoord_gauge(self.residual, an.scal_rows, PRIMES[0], an.nz, sc, self.zvals0)
+            for ii in range(len(self.residual) if len(lg["anchors"]) == len(self.residual) else 0):
+                if needs[ii] > _LOG_FIRST and lg["residue_fns"][ii] is not None:
+                    rec = self.one(lg["anchors"][ii], lg["residue_fns"][ii], log_coords=True)
+                    self.attempt("log-coordinate gauge", rec)
+                    early[ii] = rec if rec.get("closed_form") else None
+        dense_dir = [i for i, nd in enumerate(needs) if nd > 0 and early[i] is None]
         self.tlog(f"relevance/need: {len(dense_dir)} dense dir(s), needs=[{','.join(map(str, needs))}]")
         bank = None
         if dense_dir:
@@ -625,6 +637,9 @@ class Reconstruction:
         bank_missing = run.ss_constraint and len(dense_dir) > 0 and bank is None
         interp = []
         for ii, fc in enumerate(self.residual):
+            if early[ii] is not None:
+                interp.append(early[ii])
+                continue
             r = self.one(fc, None, per_prime=True) if bank_missing else \
                 self.one(fc, None, bank=bank, degrees=degrees[ii])
             if not r.get("closed_form") and run.ss_constraint and not bank_missing:

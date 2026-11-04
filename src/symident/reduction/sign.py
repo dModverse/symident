@@ -84,6 +84,67 @@ def inside_bounds(entries, invariants, names, support, tries=40):
     return seen > 0
 
 
+def _numeric(Is, vals, names):
+    """A float test that the entries `need` are positive and finite at a point, None where SymPy gives none."""
+    import math
+
+    def fn(e):
+        xs = sorted(e.free_symbols, key=str)
+        return spy.lambdify(xs, e, "math"), [str(x) for x in xs]
+    try:
+        fI, fE = [fn(I) for I in Is], {k: fn(e) for k, e in vals.items()}
+    except (SyntaxError, TypeError, NameError, *SYMPY_FAILS):
+        return None
+
+    def run(pt, need):
+        try:
+            env = dict(pt)
+            for n, (f, a) in zip(names, fI):
+                env[n] = f(*[env[x] for x in a])
+            for k in need:
+                f, a = fE[k]
+                v = f(*[env[x] for x in a])
+                if not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
+                    return False
+            return True
+        except (ArithmeticError, ValueError, TypeError, KeyError):
+            return False
+    return run
+
+
+def positive_somewhere(entries, invariants, names, support, tries=40):
+    """A sampled point {coordinate: value} whose orbit has every entry of a positive coordinate positive, else None."""
+    import random
+
+    from ..sym.parse import model_sympify
+    vals = {k: model_sympify(str(v)) for k, v in entries.items()}
+    rng = random.Random(len(support) + len(entries))
+    pos = positive_set()
+    Is = [spy.sympify(I) for I in invariants]
+    need = [k for k in vals if pos is None or k in set(pos)]
+    fast = _numeric(Is, vals, names)
+
+    def at(e, values):
+        # by name: the symbols of the invariants and of the entries differ in their assumptions
+        return e.xreplace({x: values[str(x)] for x in e.free_symbols if str(x) in values})
+    # the orbit through a positive point of the coordinates the invariants read
+    free = sorted(set(support) | {str(x) for e in Is for x in e.free_symbols})
+    for _ in range(tries):
+        pt = {x: spy.Rational(rng.randint(1, 99), rng.randint(1, 99)) for x in free}
+        # floats screen the samples, the exact rationals decide
+        if fast is not None and not fast({k: float(v) for k, v in pt.items()}, need):
+            continue
+        try:
+            sol = {k: at(v, {**pt, **{n: at(I, pt) for n, I in zip(names, Is)}}) for k, v in vals.items()}
+            ok = all(x.is_number and x.is_finite and x.is_real and (x > 0 or (pos is not None and k not in set(pos)))
+                     for k, x in sol.items())
+        except (ZeroDivisionError, TypeError, *SYMPY_FAILS):
+            continue
+        if ok:
+            return {k: str(x) for k, x in pt.items()}
+    return None
+
+
 def positive_set_of(positive, coords):
     """The positive coordinates among `coords` from `positive`, None for all; unknown names warn."""
     DOMAIN["bounds"] = []
@@ -161,7 +222,18 @@ def num_sign(e):
     return 1 if v > 0 else -1
 
 
-def sgn_poly(pp):
+def _atom_sign(g, depth):
+    """+1 for a non-coordinate generator proven positive: exp, a positive number, a power of a positive base; else 0."""
+    if isinstance(g, spy.exp):
+        return 1
+    if g.is_number:
+        return 1 if num_sign(g) == 1 else 0
+    if g.is_Pow and depth <= 8 and sgn(g.base, depth + 1) == 1:
+        return 1
+    return 0
+
+
+def sgn_poly(pp, depth=0):
     """Sign of a radical-free polynomial on the declared domain; 0 when undecided."""
     try:
         ex = spy.expand(pp)
@@ -198,7 +270,8 @@ def sgn_poly(pp):
     pos = positive_set()
     real = set(DOMAIN["real_carriers"])
     try:
-        gens = [str(g) for g in P.gens]
+        gobj = list(P.gens)
+        gens = [str(g) for g in gobj]
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return 0
@@ -209,29 +282,32 @@ def sgn_poly(pp):
         free = [g not in pos_s and not (re.match(r"^si_red_c[0-9]+$", g) and g not in real) for g in gens]
     else:
         free = [g in real for g in gens]
+    # a generator such as log(x) is positive only where its own sign is proven, else real
+    free = [fr if go.is_Symbol else _atom_sign(go, depth) != 1 for fr, go in zip(free, gobj)]
     for j, fr in enumerate(free):
         if fr and np.any(expts[:, j] % 2 != 0):
             return 0
     fcols = [j for j, fr in enumerate(free) if fr]
 
-    def anchored(sg):
-        # a real coordinate with even powers only vanishes somewhere: a term free of it keeps the sign strict
-        return not fcols or any(sg * cf[i] > 0 and not np.any(expts[i, fcols]) for i in range(len(cf)))
+    def anchored(c):
+        # a real coordinate with even powers only vanishes somewhere: a positive term free of it keeps the sign strict
+        return any(c[i] > 0 and not (fcols and np.any(expts[i, fcols])) for i in range(len(c)))
     if np.all(cf > 0):
-        return 1 if anchored(1) else 0
+        return 1 if anchored(cf) else 0
     if np.all(cf < 0):
-        return -1 if anchored(-1) else 0
+        return -1 if anchored(-cf) else 0
     if algebraic:
         return 0
-    if absorb(expts, cf):
-        return 1 if anchored(1) else 0
-    if absorb(expts, -cf):
-        return -1 if anchored(-1) else 0
+    for sg in (1, -1):
+        bud = absorb(expts, sg * cf)
+        if bud is not None:
+            # the AM-GM pairs are only nonnegative: strictness rests on the budget they leave
+            return sg if anchored(bud) else 0
     return 0
 
 
 def absorb(expts, cf):
-    """Whether AM-GM absorbs every negative term by two positive ones whose exponents average to its own."""
+    """Budget per term left once AM-GM absorbs each negative term by two positives averaging its exponents, or None."""
     return _absorb_exact(expts, cf)
 
 
@@ -266,8 +342,14 @@ def _absorb_exact(expts, cf):
             if need == 0:
                 break
         if need > 0:
-            return False
-    return sum(bud) > 0
+            return None
+    return bud
+
+
+def budget_spent():
+    """Whether the work budget or the deadline of the section search is spent, without spending a unit."""
+    cap, d = DOMAIN.get("work_cap"), DOMAIN["deadline"]
+    return (cap is not None and DOMAIN.get("work", 0) > cap) or (d is not None and time.monotonic() > d)
 
 
 def time_up():
@@ -337,7 +419,7 @@ def sgn_raw(pp, depth=0):
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             return 0
-        s1, s2 = sgn_poly(fr[0]), sgn_poly(fr[1])
+        s1, s2 = sgn_poly(fr[0], depth), sgn_poly(fr[1], depth)
         if s1 == 0 or s2 == 0:
             return 0
         return s1 * s2

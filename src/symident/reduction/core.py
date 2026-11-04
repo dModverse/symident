@@ -222,8 +222,11 @@ LEVELS = ("exact", "verified", "checked", "open")
 
 def unproven_of(b):
     """The claims of a reduced block that are not proven, named."""
-    if b.get("status") != "reduced" or b.get("type") == "scaling":
+    if b.get("status") != "reduced":
         return []
+    if b.get("type") == "scaling":
+        return [] if b.get("reach", True) else [f"each orbit along {k} meets {k} = {v}"
+                                                  for k, v in (b.get("pins") or {}).items()]
     out = [] if b.get("reach") else ["every level set of the invariants is one orbit"]
     sec = b.get("section") or []
     pins = b.get("pins") or {}
@@ -243,6 +246,7 @@ def unproven_of(b):
                 out.append(f"each orbit meets {k} = {pins[k]} at most once")
     if b.get("count") == "upper bound" and not b.get("reach"):
         out.append("the number of invariants, an upper bound")
+    out += [f"{e} positive inside the declared bounds" for e in b.get("unproven_entries") or []]
     return out
 
 def detection_positive(obj):
@@ -334,7 +338,7 @@ def _face_proof(obj, b, pins, sol, gen_of, coords, degrees):
     rhs = info.get("model_rhs")
     rest, lift_level = None, "exact"
     if eq and rhs:
-        lifted = lifted_generators(b["labels"], gen_of, rhs)
+        lifted = lifted_generators(b["labels"], gen_of, rhs, info.get("model_inputs") or ())
         if lifted is not None:
             rest = face_state_limit(b, pins, sol["gauge"], lifted[0], list(rhs), degrees)
             lift_level = lifted[1]
@@ -347,10 +351,14 @@ def _face_proof(obj, b, pins, sol, gen_of, coords, degrees):
     return reach, why, level
 
 
-def lifted_generators(labels, gen_of, rhs):
+# the largest resting system lifted symbolically; a larger one leaves the face proof without it
+_LIFT_STATES = 8
+
+
+def lifted_generators(labels, gen_of, rhs, inputs=()):
     """The generators of `labels` with state components tangent to f = 0 and the level of the lift, or None."""
     # stated components lift when X(f_i) = sum_j f_j d(xi_i)/d(x_j); otherwise xi_x = -J^{-1} f_theta xi_theta,
-    # exact when det J has one sign on the domain, else checked
+    # exact when det J has one sign on the domain, else checked; the inputs are 0 at rest
     import sympy as spy
 
     from .expr import red_locals, red_sympify
@@ -361,8 +369,9 @@ def lifted_generators(labels, gen_of, rhs):
                      [str(v) for l in labels for v in ((gen_of.get(l) or {}).get("state_components") or {}).values()])
     X = [spy.Symbol(x) for x in states]
     level, J = "exact", None
+    rest = {spy.Symbol(str(u)): spy.Integer(0) for u in inputs}
     try:
-        F = {x: red_sympify(str(f).replace("^", "**"), loc) for x, f in rhs.items()}
+        F = {x: red_sympify(str(f).replace("^", "**"), loc).subs(rest) for x, f in rhs.items()}
         out = []
         for l in labels:
             d = gen_of.get(l) or {}
@@ -378,6 +387,14 @@ def lifted_generators(labels, gen_of, rhs):
                     if spy.cancel(lhs - rhs_) != 0:
                         return None
             else:
+                # a generator that leaves f unchanged at fixed states lifts with zero state components
+                ft = spy.Matrix([spy.cancel(sum(c * spy.diff(F[x], k) for k, c in xi.items())) for x in states])
+                if all(e == 0 for e in ft):
+                    out.append({str(k): str(v) for k, v in xi.items() if v != 0})
+                    continue
+                if len(states) > _LIFT_STATES:
+                    session.note("limits", f"lift of {l} to the resting state: {len(states)} states")
+                    return None
                 if J is None:
                     J = spy.Matrix([F[x] for x in states]).jacobian(X)
                     det = spy.cancel(J.det(method="berkowitz"))
@@ -385,7 +402,6 @@ def lifted_generators(labels, gen_of, rhs):
                         return None
                     if sgn(det) == 0:
                         level = "checked"
-                ft = spy.Matrix([sum(c * spy.diff(F[x], k) for k, c in xi.items()) for x in states])
                 xs = J.LUsolve(-ft)
                 xi.update({x: spy.cancel(e) for x, e in zip(X, xs)})
             out.append({str(k): str(v) for k, v in xi.items() if v != 0})
@@ -495,9 +511,16 @@ def _chart_valid(res, dim):
     return len(names) == dim - len(res.get("removed") or [])
 
 
+def _signed(res):
+    """Whether a block of the reduction covers only the orbits that sign conditions name."""
+    return any(b.get("sign_conditions") for b in res.get("blocks") or [])
+
+
 def _chart_rank(res):
-    """Sort key of a reduction: more directions removed, then a rational trafo; ties keep the build order."""
-    return (-len(res.get("removed") or []), not _rational_chart(res))
+    """Sort key of a reduction: level, directions removed, no sign conditions, rational trafo; ties keep build order."""
+    lv = res.get("level")
+    return (LEVELS.index(lv) if lv in LEVELS else len(LEVELS), -len(res.get("removed") or []),
+            _signed(res), not _rational_chart(res))
 
 
 def symmetry_reduction(obj, *args, alternatives=False, **kw):
@@ -524,7 +547,10 @@ def _reduction_charts(obj, *args, alternatives=False, **kw):
     res = run()
     if not isinstance(res, dict) or not res.get("blocks"):
         return res
-    if _rational_chart(res) and not alternatives:
+    # a root only in a section under sign conditions asks for no alternative: none replaces such a section
+    weak = {k for b in res["blocks"] if b.get("sign_conditions") for k in (b.get("pins") or {})}
+    if _rational_chart(dict(res, trafo={k: v for k, v in (res.get("trafo") or {}).items() if k not in weak})) \
+            and not alternatives:
         res["alternatives"] = []
         return res
     found = [res]
@@ -733,10 +759,13 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                                  "selects the face")
             rooted = sol.get("solved") and sol.get("root_note") is not None
             pos = positive_set()
-            if (not sol.get("solved") or rooted) and pos is not None and set(b["support"]) - set(pos):
+            weak = sol.get("solved") and bool(sol.get("sign_conditions"))
+            if (not sol.get("solved") or rooted or weak) and pos is not None and set(b["support"]) - set(pos):
                 sol_r = solve_invariants(b, scal_pins, coords, inv_start, prefer_real=True, split_pair=split_pair,
                                          gens=block_generators(b["labels"], gen_of))
-                if sol_r.get("solved") and (not rooted or sol_r.get("root_note") is None):
+                # a section under sign conditions, on part of the orbits only, replaces no solved one
+                if sol_r.get("solved") and (not rooted or sol_r.get("root_note") is None) and \
+                        not (sol.get("solved") and sol_r.get("sign_conditions")):
                     sol = sol_r
             if work_cap is not None and DOMAIN["work"] > work_cap:
                 session.note("limits", f"section search of {', '.join(b['labels'])}: reduce(work_cap={work_cap}) "
@@ -764,10 +793,18 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                                                                              coords, (d_poly, d_darboux, d_exp))
                 gauge_val = list(dict.fromkeys(sol["pins"][g] for g in sol.get("gauge") or []))
                 b["coverage"] = sol.get("coverage")
+                b["unproven_entries"] = list(sol.get("unproven_entries") or [])
+                b["sign_conditions"] = list(sol.get("sign_conditions") or [])
                 b["solved_domain"] = sol.get("solved_domain")
                 notes = [(", ".join(sol["section"])) if sol.get("section") is not None
                          else f"{', '.join(sol.get('gauge') or [])} = {', '.join(gauge_val)}"]
-                notes.append(f"entries certified positive for positive values of the new parameters only; one that "
+                witness = ", ".join(f"{k} = {v}" for k, v in (sol.get("sign_witness") or {}).items())
+                notes.append(f"entries {', '.join(b['unproven_entries'])} without a positivity certificate, kept "
+                             "inside the declared bounds" if b["unproven_entries"] else
+                             f"entries without a positivity certificate: the trafo covers the orbits where "
+                             f"{', '.join(b['sign_conditions'])}, a sampled orbit among them ({witness})"
+                             if b["sign_conditions"] else
+                             f"entries certified positive for positive values of the new parameters only; one that "
                              f"takes both signs leaves part of the {domain_name()} outside the trafo"
                              if sol.get("coverage") == "partial" else
                              "entries certified positive for every value of the invariants")
@@ -795,7 +832,11 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                     certs.append("every level set of the invariants is one orbit: it is the graph of the "
                                  "solved coordinates over a connected set of gauge values, and the generators are "
                                  "independent on the gauge everywhere")
-                if sol.get("coverage") == "partial":
+                if b["sign_conditions"]:
+                    certs.append(f"trafo certified where {', '.join(b['sign_conditions'])}, the other entries "
+                                 f"positive for positive values of the new parameters; the orbits outside are not "
+                                 f"covered")
+                elif sol.get("coverage") == "partial":
                     certs.append(f"trafo certified for positive values of the new parameters only: one that takes "
                                  f"both signs leaves part of the {domain_name()} uncovered")
                 else:

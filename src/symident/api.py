@@ -420,7 +420,9 @@ class Reduction:
         ``count``, ``injective`` (every orbit meets the section at most once; not claimed
         under partial coverage or on a face) and ``reach`` (every level set of the
         invariants is one orbit). ``coverage`` is ``"partial"`` when the section covers part
-        of the positive orthant only. A face section (``face``) holds ``face_why``, why the
+        of the positive orthant only; ``sign_conditions`` then lists the entries without a
+        positivity certificate as conditions on the new parameters, and the trafo covers the
+        orbits on which they hold. A face section (``face``) holds ``face_why``, why the
         model is not shown continuous up to the face (``None`` when it is), and
         ``face_level``.
     removed, remaining : list of str
@@ -429,8 +431,9 @@ class Reduction:
         Labels of listed directions that depend on the others and need no reduction.
     alternatives : list of dict
         Other global sections the model allows, each with ``trafo``, ``pins``,
-        ``removed``, ``remaining`` and ``rational``; the returned one removes the most
-        directions and prefers a rational trafo.
+        ``removed``, ``remaining`` and ``rational``; the returned one has the best level,
+        removes the most directions, and prefers sections without ``sign_conditions`` and
+        a rational trafo.
     partial : list of str
         Removed directions whose section covers only part of the positive orthant: some
         positive coordinates have no positive preimage in the new parameters.
@@ -522,8 +525,9 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
     scalings_only : bool
         Only the scaling symmetries, from an exact integer kernel.
     equilibrate : bool, optional
-        Start at a steady state with the inputs at zero; defaults to ``model.equilibrate``,
-        else ``False``.
+        Start at a steady state with the inputs at zero, then apply the events at the start;
+        a state without dynamics that is not an input rests at a value of its own.
+        Defaults to ``model.equilibrate``, else ``False``.
     reduce_cq : bool, optional
         Report moiety freedoms on conserved totals instead of single species; defaults to
         ``model.reduce_cq``, else ``False``.

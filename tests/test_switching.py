@@ -100,6 +100,15 @@ def test_pi_and_euler_number_in_a_switched_model():
     assert r.info["switching"]["surfaces"] == ["c - x = 0"]
 
 
+def test_an_angle_in_a_switched_model_takes_pi_as_the_number():
+    f = {"x": "piecewise(-a*x, time > 1, -b*x) + k*(sin(pi*(time + 1)) + sin(pi*time))"}
+    r = det(f, {"y": "x"}, trafo={"x": "1"})
+    assert (r.rank, r.dim) == (2, 3)
+    # a large multiple of pi reduces to its period
+    f = {"x": "piecewise(-a*x, time > 1, -b*x) + k*sin(pi*(50*time - 179999/2))"}
+    assert det(f, {"y": "x"}, trafo={"x": "1"}).identifiable
+
+
 def test_a_switch_on_parameters_only_needs_its_side():
     f = {"x": "min(p, 2) - k*x"}
     with pytest.raises(ValueError, match="parameters only"):
@@ -442,8 +451,8 @@ def test_every_copy_of_a_switch_starts_its_inputs_by_an_event(monkeypatch):
     from symident.detection import hybrid
     rows, build = {}, hybrid._rows_model
 
-    def keep(st, copies, fresh):
-        rows.update(build(st, copies, fresh))
+    def keep(*a):
+        rows.update(build(*a))
         return rows
     monkeypatch.setattr(hybrid, "_rows_model", keep)
     f = {"x": "piecewise(-k1*x*u, x > thr, -k2*x)", "u": "0"}
@@ -453,3 +462,131 @@ def test_every_copy_of_a_switch_starts_its_inputs_by_an_event(monkeypatch):
     assert not any("u" in t for t in rows["trafo"]) and len(rows["trafo"]) > 4
     assert sorted(e["cond"][0] for e in starts) == list(range(len(rows["trafo"])))
     assert all(e["time"] == "0" and e["value"] == "w" for e in starts)
+
+
+def test_a_parameter_counts_unless_every_allowed_regime_hides_it():
+    # a coordinate is free only where every allowed regime leaves it free
+    f = {"x": "piecewise(-k1*x, x > 2, -k2*x)"}
+    r = det(f, {"y": "x"}, trafo={"x": "1"})
+    assert r.identifiable and r.info["coordinates"] == ["k1", "k2"]
+    r = det(f, {"y": "x"}, trafo={"x": "1"}, regimes=["x < 2"], reconstruct=True)
+    (s,) = r.symmetries
+    assert (r.rank, r.dim) == (1, 2) and s.support == ["k1"] and s.level == "exact"
+
+
+def test_a_parameter_of_an_excluded_regime_is_reported():
+    f = {"x": "piecewise(-k1*x, x > 0, -k2*x)"}
+    with pytest.warns(UserWarning, match="default positive=True"):
+        r = det(f, {"y": "x"}, reconstruct=True)
+    assert (r.rank, r.dim) == (2, 3) and "k2" in r.info["coordinates"]
+    (s,) = r.symmetries
+    assert s.support == ["k2"] and s.level == "exact" and s.generator == {"k2": "1"}
+    assert r.info["rank_status"]["status"] == "proven"
+    r = det(f, {"y": "x"}, positive=False)
+    assert (r.rank, r.dim) == (3, 3)
+
+
+def test_every_regime_enters_a_start_and_a_switched_copy():
+    from types import SimpleNamespace
+
+    from symident.detection.hybrid import _uncovered
+    cd = SimpleNamespace(name="c1", regimes=[[1], [-1]])
+    full = [{"cd": cd, "sides": [1]}, {"cd": cd, "sides": [1], "switch": (1, [-1])},
+            {"cd": cd, "sides": [-1]}, {"cd": cd, "sides": [-1], "switch": (1, [1])}]
+    st = SimpleNamespace(conds=[cd], unknown=[])
+    assert _uncovered(st, full) == []
+    assert _uncovered(st, full[:2]) == [("c1", [1], "switched"), ("c1", [-1], "start")]
+    assert _uncovered(st, [full[0], full[2]]) == [("c1", [1], "switched"), ("c1", [-1], "switched")]
+
+
+def test_a_fresh_coordinate_that_reaches_no_observable_keeps_the_rank_proven():
+    f = {"x": "piecewise(-a*x, x > c, -b*x)", "z": "-d*z"}
+    r = det(f, {"y": "x"}, reconstruct=True)
+    assert (r.rank, r.dim) == (4, 6) and r.info["rank_status"]["status"] == "proven"
+    assert (r.info["projection"] or {}).get("status", "proven") == "proven"
+
+
+def test_fresh_coordinates_that_drop_rank_together_are_checked_at_a_random_point():
+    f = {"w": "-c*w", "x": "piecewise(-a*x, w > h, -b*x)", "z": "-d*z"}
+    r = det(f, {"y1": "w", "y2": "x*z"}, trafo={"w": "1"}, reconstruct=True)
+    pj, st = r.info["projection"], r.info["rank_status"]
+    assert (r.rank, r.dim) == (5, 7) and pj["status"] == "verified"
+    assert st["status"] == "verified" and 0 < st["probability"] < 1e-4
+
+
+def test_a_state_that_every_regime_keeps_at_zero_leaves_the_model():
+    f = {"x1": "-c*x1", "x2": "piecewise(0, x1 > h, -k*x2)"}
+    g = {"y1": "x1", "y2": "x2"}
+    r = det(f, g, trafo={"x1": "1", "x2": "0"}, reconstruct=True)
+    assert (r.rank, r.dim) == (1, 3) and r.info["rank_status"]["status"] == "proven"
+    assert sorted(s.support[0] for s in r.symmetries) == ["h", "k"]
+    assert {s.level for s in r.symmetries} == {"exact"} and r.info["zero_states"] == ["x2"]
+    # an event that sets the state keeps it in the model
+    r = det(f, g, trafo={"x1": "1", "x2": "0"}, events=[{"var": "x2", "time": 2, "value": "1", "method": "add"}])
+    assert r.info["zero_states"] is None and r.dim == 3
+    # zero in one condition only: the copies of that condition start anywhere on the surface, a limit names it
+    r = det(f, g, trafo=[{"x1": "1", "x2": "0"}, {"x1": "1", "x2": "1"}])
+    assert r.info["zero_states"] is None
+    assert any("x2" in lim and "stay at zero" in lim for lim in r.info["limits"])
+
+
+def test_a_state_driven_off_zero_through_a_chain_stays_in_the_model():
+    f = {"x1": "-c*x1", "x2": "piecewise(a, x1 > h, -k*x2)", "x3": "x2 - d*x3", "x4": "x3 - d*x4",
+         "x5": "-e*x5"}
+    r = det(f, {"y1": "x1", "y2": "x4 + x5"}, trafo={"x1": "1", "x2": "0", "x3": "0", "x4": "0", "x5": "0"})
+    assert r.info["zero_states"] == ["x5"]
+
+
+def _with_input(f, g, trafo, **kw):
+    m = si.Model(f, g, trafo=trafo, unknown_inputs=["w"], events=kw.pop("events", None),
+                 conditions=kw.pop("conditions", None))
+    return si.detect(m, cores=1, reconstruct=True, **kw)
+
+
+def test_an_unknown_input_is_continuous_across_a_switch():
+    # the input absorbs a change of the dynamics only if the change is continuous across the surface
+    r = _with_input({"x": "w - piecewise(k1, x < c, k2)*x"}, {"y": "x"}, {"x": "x0"})
+    ui = r.info["unknown_inputs"]
+    assert ui["names"] == ["w"] and not ui["short"] and r.info["switching"] is not None
+    assert set(r.info["coordinates"]) == {"c", "k1", "k2", "x0"} and (r.rank, r.dim) == (3, 4)
+    (s,) = r.symmetries
+    assert s.level == "exact" and s.support == ["k1", "k2"] and r.info["rank_proven"] == 1
+    same_span(r, [{"k1": 1, "k2": 1}])
+
+
+def test_an_unknown_input_takes_up_only_the_rates_of_what_it_drives():
+    r = _with_input({"x": "w - k*x", "z": "piecewise(a, x < c, b)*x - d*z"}, {"y1": "x", "y2": "z"},
+                    {"x": "x0", "z": "z0"})
+    (s,) = r.symmetries
+    assert s.support == ["k"] and s.level == "exact" and r.rank == r.dim - 1 and r.info["rank_proven"] == 1
+
+
+def test_a_switch_that_a_kink_of_the_input_can_hide_is_not_visible():
+    # a jump that first shows at the order where a derivative of the input enters is absorbed by a kink
+    r = _with_input({"x": "w + piecewise(0, x < c, a*(x - c))"}, {"y": "x"}, {"x": "x0"})
+    (cd,) = r.info["switching"]["conditions"]
+    assert set(cd["visibility"].values()) != {"visible"}
+    assert r.rank == 1 and not r.identifiable
+
+
+def test_unknown_inputs_with_switches_refuse_later_events_and_switches_on_the_input():
+    with pytest.raises(ValueError, match="events after the start"):
+        _with_input({"x": "w - piecewise(k1, x < c, k2)*x"}, {"y": "x"}, {"x": "x0"},
+                    events=[{"var": "x", "time": 2, "value": 1, "method": "add"}])
+    with pytest.raises(ValueError, match="switch on the unknown input"):
+        _with_input({"x": "piecewise(a, w < c, b) - k*x"}, {"y": "x"}, {"x": "x0"})
+    f, cols = {"x": "s*w - piecewise(k1, x < c, k2)*x"}, {"s": [1, 2]}
+    with pytest.raises(ValueError, match="enters several conditions"):
+        _with_input(f, {"y": "x"}, {"x": "x0"}, conditions={"rows": ["a", "b"], "cols": cols})
+
+
+def test_an_unknown_input_of_its_own_per_condition_with_switches():
+    f, g = {"x": "s*w - piecewise(k1, x < c, k2)*x"}, {"y": "x"}
+    m = si.Model(f, g, trafo={"x": "x0"}, unknown_inputs=["w", "w2"],
+                 conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "w2"]}})
+    r = si.detect(m, cores=1, reconstruct=True)
+    assert (r.rank, r.dim) == (3, 4) and r.info["rank_proven"] == 1
+    same_span(r, [{"k1": 1, "k2": 1}])
+    m = si.Model(f, g, trafo={"x": "x0"}, unknown_inputs=["w"],
+                 conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "0"]}})
+    assert si.detect(m, cores=1).identifiable

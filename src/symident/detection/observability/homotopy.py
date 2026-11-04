@@ -5,9 +5,19 @@ import re
 
 import numpy as np
 
-from ... import _core, state
+from ... import _core, session, state
 from ...errors import SYMPY_FAILS, swallow, sympy_fail
-from ...gfp import PRIMES, extra_primes, invmod, matinv_modp, mono_table, mulmod, random_point, verify_prime
+from ...gfp import (
+    PRIMES,
+    extra_primes,
+    invmod,
+    matinv_modp,
+    mono_table,
+    mulmod,
+    random_point,
+    uniform_point,
+    verify_prime,
+)
 from ...rexpr import sym_sort
 from ...sym.linalg import sym_rat_recon_big
 from ...sym.modp import eval_rational_mod
@@ -372,16 +382,18 @@ class Homotopy:
         return {"support": sym_sort(list(entries)), "vector": entries, "type": "general",
                 "closed_form": True, "route": route}
 
-    def _in_kernel(self, entries, mi_plain, tries=None):
-        """Whether the shared kernel at a fresh point holds `entries`, states read as resting values of `mi_plain`."""
+    def _in_kernel(self, entries, mi_plain, tries=None, need=2):
+        """Whether the shared kernel at `need` fresh uniform points holds `entries`, states at rest in `mi_plain`."""
         an, sys, q = self.an, self.sys, verify_prime()
-        tries = tries or sys.hom_tries
+        # a resting state has a root modulo q at part of the points only
+        tries = max(tries or sys.hom_tries, 12 * need)
         n = len(self.base)
         idx = {nm: c for c, nm in enumerate(an.znames)}
         start = self.rec.pool_next
-        self.rec.pool_next += tries * (n + 1)
+        self.rec.pool_next += tries
+        passed = 0
         for k in range(tries):
-            pt = np.asarray(an.sc["pool"](start + k * (n + 1) + np.arange(n)), dtype=np.int64)
+            pt = uniform_point(n, q, session.current().seed("homotopy kernel", start + k))
             rq = an.kcall(pt, q, self.nt)
             if not rq.get("ok"):
                 continue
@@ -394,7 +406,12 @@ class Homotopy:
                 if got is None:
                     return False
                 v[idx[nm]] = got % q
-            return in_kernel(rq, v, list(range(sys.n_shared)), an.nz, q)
+            if not in_kernel(rq, v, list(range(sys.n_shared)), an.nz, q):
+                return False
+            passed += 1
+            if passed >= need:
+                session.note("draws", k + 1)
+                return True
         return False
 
     def run(self, fcs):

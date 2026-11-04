@@ -52,7 +52,7 @@ def _rhs(lines):
 
 
 def regime_identities(regime, field, skip=()):
-    """(label, expression) of [Y, F] per state equation but those of `skip`, and Y(h) per observable."""
+    """(label, expression) of [Y, F] per state but `skip` and per constant coordinate, and Y(h) per observable."""
     Y = _Field(field)
     F = _rhs(regime["f"])
     skip = {spy.Symbol(str(x)) for x in skip}
@@ -63,6 +63,11 @@ def regime_identities(regime, field, skip=()):
         xi = Y.at(x)
         out.append((f"[Y, F] on {x}", Y(fx) - sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F),
                                                spy.Integer(0))))
+    for th, xi in Y.c.items():
+        if th in F or th in skip or not xi.free_symbols & set(F):
+            continue
+        out.append((f"[Y, F] on {th}", sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F),
+                                          spy.Integer(0))))
     for line in regime["g"]:
         h = _expr(str(line).split("=", 1)[1]) if "=" in str(line) else _expr(str(line))
         out.append((f"Y({h})", Y(h)))

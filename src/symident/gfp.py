@@ -140,6 +140,27 @@ def random_point(n, seed=1):
     return out
 
 
+def uniform_point(n, q, seed=1):
+    """Residues uniform on [0, q) by rejection from the MINSTD generator, deterministic in seed and the session seed."""
+    from .session import current
+    m = 2147483647
+    if not 1 < q < m:
+        raise ValueError("uniform_point: the modulus is not between 2 and 2^31 - 2")
+    x = current().seed("uniform point", int(seed)) % m
+    if x == 0:
+        x = 1
+    top = ((m - 1) // q) * q
+    out = np.zeros(n, dtype=np.int64)
+    for i in range(n):
+        while True:
+            x = (48271 * x) % m
+            # x - 1 is uniform on [0, m - 2]
+            if x - 1 < top:
+                out[i] = (x - 1) % q
+                break
+    return out
+
+
 class Pool:
     """Distinct primes as generic evaluation coordinates, grown on demand (1-based k)."""
 

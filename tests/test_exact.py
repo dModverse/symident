@@ -186,9 +186,10 @@ def test_directions_below_exact_get_the_bound():
                  trafo={"x1": "D", "x2": "0"}, conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}})
     with si.switches(NOFIELDS=True):
         r = si.detect(m, reconstruct=True)
-    assert {s.level for s in r.symmetries} == {"verified"}
+    # the scaling of the whole model is exact without a field proof
+    assert "verified" in {s.level for s in r.symmetries} <= {"exact", "verified"}
     assert {p["reason"] for p in r.info["proof"]} == {"switched off (NOFIELDS)"}
-    assert 0 < r.info["bound"]["probability"] < 1e-12 and r.info["bound"]["points"] == 2
+    assert 0 < r.info["bound"]["probability"] < 1e-6 and r.info["bound"]["points"] == 2
 
 
 def test_the_regime_detections_of_the_combined_lift_keep_to_their_budget():
@@ -211,25 +212,28 @@ def test_unproven_directions_are_listed_and_printed_with_their_level():
 
 
 def test_the_bound_covers_events_after_the_start():
+    # a direction that is no scaling
     ev = [{"var": "A", "time": 0, "value": "d", "method": "add"},
           {"var": "A", "time": 5, "value": "d", "method": "add"}]
-    m = si.Model({"A": "-k*A"}, {"y": "s*A"}, trafo={"A": "0"}, events=ev)
+    m = si.Model({"A": "-k*A"}, {"y": "(a + b)*A"}, trafo={"A": "0"}, events=ev)
     with si.switches(NOFIELDS=True):
         r = si.detect(m, reconstruct=True)
-    assert [s.level for s in r.unproven()] == ["verified"]
-    assert 0 < r.info["bound"]["probability"] < 1e-10
-    # an event time that depends on the parameters enters as a rational function of them
-    m = si.Model({"A": "-k*A"}, {"y": "s*A"}, trafo={"A": "0"},
+    assert "verified" in [s.level for s in r.unproven()]
+    assert 0 < r.info["bound"]["probability"] < 1e-6
+    # an event time in the parameters enters the degree as a rational function of them, but the
+    # gap order has no rank bound with a moving boundary
+    m = si.Model({"A": "-k*A"}, {"y": "(a + b)*A"}, trafo={"A": "0"},
                  events=[dict(ev[0]), dict(ev[1], time="tau")])
     with si.switches(NOFIELDS=True):
         r = si.detect(m, reconstruct=True)
-    assert r.unproven() and 0 < r.info["bound"]["probability"] < 1e-10
+    assert r.info["bound"]["degree"] > 0 and r.info["bound"]["probability"] is None
+    assert r.info["gap_certified"] is False and any("free symbol" in lim for lim in r.info["limits"])
 
 
 def test_the_bound_holds_in_the_recast_coordinates_of_a_symbolic_exponent():
     m = si.Model({"x": "v*u^n/(K^n + u^n) - d*x", "u": "-e*u"}, {"y": "x"})
     r = si.detect(m, reconstruct=True)
-    assert r.unproven() and 0 < r.info["bound"]["probability"] < 1e-10
+    assert r.unproven() and 0 < r.info["bound"]["probability"] < 1e-5
 
 
 def test_the_rank_status_says_how_far_the_number_of_directions_holds():
@@ -242,7 +246,7 @@ def test_the_rank_status_says_how_far_the_number_of_directions_holds():
                  events=[{"var": "A", "time": 0, "value": "dose", "method": "add"}])
     r = si.detect(m, reconstruct=True)
     st = r.info["rank_status"]
-    assert st["status"] == "verified" and 0 < st["probability"] < 1e-10
+    assert st["status"] == "verified" and 0 < st["probability"] < 1e-6
     assert "The rank is verified, not proven" in repr(r)
     r = si.detect(si.Model({"x1": "-k*x1 + a*(x2 - x1)", "x2": "-k*x2 + a*(x1 - x2)"}, {"y": "x1"},
                            trafo={"x1": "1", "x2": "1"}), engine="symbolic")
@@ -374,3 +378,34 @@ def test_a_kernel_check_on_part_of_the_entries_is_checked_not_verified(monkeypat
     assert verify.verify_in_nullspace(full, 0, ["a"], [], [1], 1, None, None, 0, 1)
     assert finalize.level_of(full, full["vector"]) == "verified"
     assert finalize.level_of(dict(entry, exact=True), entry["vector"]) == "exact"
+
+
+def test_a_direction_that_leaves_out_resting_state_columns_is_verified_on_the_ones_it_states():
+    import numpy as np
+
+    from symident.detection import finalize, verify
+    # a check on the given columns ignores the entries of the others, a full check does not
+    def kcall(pt, p, nt):
+        R = np.array([[1, 0, -1, 0], [0, 1, 1, 0], [0, 0, -1, 1]]) % p
+        return {"ok": True, "R": R.ravel(), "pivots": [0, 1, 3], "rank": 3, "dim": 4}
+    names = ["a", "b", "s1", "s2"]
+
+    def check(vec, cols):
+        e = {"vector": vec}
+        return verify.verify_in_nullspace(e, 2, names, names, [1] * 4, 1, kcall, None, 0, 4, cols=cols), e
+    held, e = check({"a": "1", "b": "-1", "s1": "1"}, [0, 1])
+    assert held and finalize.level_of(e, e["vector"]) == "verified"
+    assert not check({"a": "2", "b": "-1", "s1": "1"}, [0, 1])[0]
+    assert not check({"a": "1", "b": "-1", "s1": "1"}, None)[0]
+
+
+def test_a_lift_whose_parameter_components_move_along_the_flow_is_refused():
+    from symident.detection.fields import exact_direction
+    rg = {"f": ["x = -k*x"], "g": ["y = c*x"]}
+    # a parameter component that moves along the flow is no symmetry, whatever the state identities say
+    field = {"k": "k*x", "c": "-c*x", "x": "x^2"}
+    assert certify(regime_identities(rg, field))["ok"] is False
+    light = {"regimes": [rg], "gens": [[{}]], "regime_of": [1], "joins": [], "states": ["x"],
+             "tapes": [{"ver_ic": ["x = x"], "ver_t0": [], "ver_ev": []}]}
+    assert exact_direction(light, field, [[0]], False)["ok"] is not True
+    assert exact_direction(light, {"c": "-c", "x": "x"}, [[0]], False)["ok"] is True

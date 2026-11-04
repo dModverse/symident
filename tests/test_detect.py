@@ -275,6 +275,57 @@ def test_only_drained_species_rest_at_zero():
     assert set(equil_zero_states(rx["stoichiometry"], rx["species"], rx["rates"], [])) == {"A", "B"}
 
 
+def test_a_drained_reaction_with_several_reactants_forces_no_zero():
+    from symident.detection.core import _ode_zero_states
+    # a drained reaction with two reactants rests where one of them is zero
+    assert equil_zero_states([[-1, -1]], ["A", "B"], ["k*A*B"], []) == []
+    assert _ode_zero_states({"A": "-k*A*B", "B": "-k*A*B"}, []) == []
+    assert equil_zero_states([[-1]], ["A"], ["k*A"], []) == ["A"]
+    assert _ode_zero_states({"A": "-k*A", "B": "-k*A*B"}, []) == ["A"]
+
+
+def test_a_resting_branch_is_named_and_analyzed():
+    rx = network(("", "A", "kA*u"), ("", "B", "kB*w"), ("A + B", "", "k*A*B"), ("", "u", "0"), ("", "w", "0"))
+    obs = {"yA": "sA*A", "yB": "sB*B"}
+    ev = [event("u", 0, "d1"), event("w", 0, "d2")]
+    cg = grid(["c1", "c2"], d1=[1, 2], d2=[3, 1])
+    r = detect(reactions=rx, observables=obs, inputs=["u", "w"], events=ev, conditions=cg, equilibrate=True)
+    (b,) = [b for b in r.info["branches"] if "A + B" in b]
+    assert "A = 0" in b and "B = 0" in b
+    # the branch taken is analyzed like the explicit model of that branch
+    assert "B" in r.info["coordinates"]
+    explicit = detect(reactions=rx, observables=obs, inputs=["u", "w"], events=ev, conditions=cg,
+                      trafo={"A": "0"})
+    assert (r.rank, r.dim) == (explicit.rank, explicit.dim)
+
+
+def test_recast_arguments_need_the_declared_domain():
+    with pytest.raises(ValueError, match=r"\bK\b"):
+        detect({"x": "-k*x"}, {"y": "log(K)*x"}, positive=["k", "x"])
+    with pytest.raises(ValueError, match=r"\bx\b.*not declared positive"):
+        detect({"x": "-k*x^n"}, {"y": "x"}, positive=["k", "n"])
+    with pytest.raises(ValueError, match=r"\ba\b"):
+        detect({"x": "-k*x"}, {"y": "x"}, trafo={"x": "sqrt(a)"}, positive=["k", "x"])
+    assert detect({"x": "-k*x"}, {"y": "log(K)*x"}, positive=["k", "x", "K"]).rank == 2
+
+
+def test_an_event_scaling_is_an_exact_scaling_without_reconstruct():
+    m = si.Model({"x": "-k*x"}, {"y": "s*x"}, events=[event("x", "tau", "x/2 + d2")])
+    (s,) = si.detect(m).symmetries
+    w = {k: int(v) for k, v in s.weights.items()}
+    assert s.type == "scaling" and s.level == "exact"
+    assert w in ({"d2": 1, "s": -1, "x": 1}, {"d2": -1, "s": 1, "x": -1})
+
+
+def test_a_peeled_scaling_is_exact_only_when_the_whole_model_proves_it(monkeypatch):
+    import symident.detection.observability.analysis as an
+    monkeypatch.setattr(an, "exact_scaling_set", lambda multi, fixed: [])
+    # with the proofs by lifts off, only the scalings of the whole model make a peeled scaling exact
+    with si.switches(NOFIELDS=True):
+        (s,) = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"})).symmetries
+    assert s.type == "scaling" and s.level != "exact"
+
+
 def test_condition_zero_state_held_at_zero():
     # the equilibrate verdict matches the explicit steady state given per condition
     rx = network(("", "A", "k1"), ("A", "", "d1*A"), ("", "B", "k2*A"), ("B", "", "d2*B"),
@@ -417,10 +468,9 @@ def test_equilibrate_free_hill_exponent():
 
 
 def test_equilibrate_hill_closed_form_recast():
-    ev = [event("u", -1, "var_u", "replace")]
+    # a constant state given per condition rests at that value in each condition
     r = detect({"p": "kpr/(1+kinh*p^nhill) - dp*p + kin*u", "u": "0"}, {"y": "s*p"},
-               equilibrate=True, events=ev, conditions=grid(["ctrl", "stim"], var_u=[0, 1]),
-               reconstruct=True)
+               equilibrate=True, conditions=grid(["ctrl", "stim"], u=[0, 1]), reconstruct=True)
     assert all(d["explicit"] for d in r.symmetries)
     exprs = generator_strings(r)
     assert any("p^nhill" in x for x in exprs)
@@ -447,6 +497,22 @@ def test_michaelis_hill_reconstruct_log_factor():
                reconstruct=True)
     assert all(d["explicit"] for d in r.symmetries)
     assert any("log(" in x for x in generator_strings(r))
+
+
+def test_log_observable_of_an_eliminated_species():
+    # a logarithm positive in the full model is positive on the manifold of the conserved total
+    rx = network(("A", "B", "k1 * A * (1 + kin*u)"), ("B", "A", "k2 * B"), ("0", "u", "0"))
+    ev = [event("u", 0, "dose", "replace")]
+    args = dict(reactions=rx, equilibrate=True, inputs=["u"], events=ev,
+                conditions=grid(["d1", "d2"], dose=[1, 2]))
+    pos = ["A", "B", "u", "k1", "k2", "kin", "sA", "sB"]
+    obs = {"yA": "log(sA * A)", "yB": "log(sB * B + oB)"}
+    r_t = detect(**args, observables=obs, reduce_cq=True, positive=pos + ["oB"])
+    r_f = detect(**args, observables=obs, reduce_cq=False, positive=pos + ["oB"])
+    assert (r_t.rank, r_t.dim) == (r_f.rank, r_f.dim)
+    for p in (pos + ["c"], True):
+        with pytest.raises(ValueError, match="needs a positive argument"):
+            detect(**args, observables={"yA": "log(sA * A - c)", "yB": "sB * B"}, reduce_cq=True, positive=p)
 
 
 def test_equilibrate_held_variable_moiety():
@@ -1328,12 +1394,12 @@ def test_rate_zero_test_is_exact_for_other_rates():
 def test_the_sink_weights_solve_the_lp_exactly():
     from symident.detection.cq import _exact_lp, _sink_cluster
     # rows are reactions, columns species
-    assert _sink_cluster(np.array([[-1.0, 0.0], [0.0, 1.0]])) == [0]
-    assert _sink_cluster(np.array([[-1.0, 1.0], [1.0, -1.0]])) == []
+    assert _sink_cluster(np.array([[-1.0, 0.0], [0.0, 1.0]]))[0] == [0]
+    assert _sink_cluster(np.array([[-1.0, 1.0], [1.0, -1.0]]))[0] == []
     # a weight ratio with a denominator past what a rounded float recovers
     p, q = 1000003, 999983
     M = [[-p, q], [p, -q], [-1, 0]]
-    assert _sink_cluster(np.array(M, dtype=float)) == [0]
+    assert _sink_cluster(np.array(M, dtype=float))[0] == [0]
     assert _exact_lp([[Fraction(a) for a in row] for row in M], [Fraction(-1), Fraction(0)]) == \
         [Fraction(q, p), Fraction(1)]
 
@@ -1401,10 +1467,13 @@ def test_several_resting_branches_are_recorded():
     f = {"x": "c + a*x - b*x^3 + kin*u - d*x*z", "z": "e*x - g*z", "u": "0"}
     m = si.Model(f, {"y": "s*x"}, inputs=["u"],
                  events=[{"var": "u", "time": 0, "value": "1", "method": "replace"}])
-    assert si.detect(m, equilibrate=True).info["branches"] == []
+    # the forward seed names the component it samples and picks no root
+    br = si.detect(m, equilibrate=True).info["branches"]
+    assert len(br) == 1 and br[0].startswith("forward seed")
     with si.switches(NOFWDSEED=True):
         r = si.detect(m, equilibrate=True)
-    assert r.info["branches"] == ["resting states x, z: several interior roots modulo p, the first is taken"]
+    (b,) = r.info["branches"]
+    assert b.startswith("resting states x, z: several interior roots modulo p, all conjugate")
     assert any(line.startswith("  branch: resting states x, z") for line in str(r.summary()).split("\n"))
 
 
@@ -1502,7 +1571,7 @@ def test_an_event_value_reads_the_state_at_the_event():
 
 
 def test_free_exponents_of_states_with_given_initial_values():
-    assert detect({"x": "-k*x^n"}, {"y": "x"}, trafo={"x": "1"}, positive=["k", "n"]).identifiable
+    assert detect({"x": "-k*x^n"}, {"y": "x"}, trafo={"x": "1"}, positive=["k", "n", "x"]).identifiable
     assert detect({"x": "a*x^(3/4)-x/K^(1/4)"}, {"y": "x"}).identifiable
 
 
@@ -1736,6 +1805,25 @@ def test_reduce_cq_reads_the_totals_of_an_ode_model():
         si.detect(leak, reduce_cq=True)
 
 
+def test_the_totals_of_a_reaction_network_are_integer_combinations():
+    rx = si.Model(reactions={"species": ["A", "B", "C"], "stoichiometry": [[-1.0, 1.0, 0.0], [0.0, -2.0, 1.0]],
+                             "rates": ["k1*A", "k2*B^2"]}, observables={"y": "s*C"})
+    assert rx.totals == {"total1": "A + B + 2*C"}
+    still = si.Model(reactions={"species": ["A"], "stoichiometry": [[0.0]], "rates": ["k*A"]},
+                     observables={"y": "s*A"})
+    assert still.totals == {"total1": "A"}
+
+
+def test_a_total_whose_coefficients_hold_a_volume():
+    # a declared total with a parameter in its coefficients replaces a state as a coordinate
+    m = si.Model({"A": "-k1*A*(1+u) + V*k2*B", "B": "k1*A*(1+u)/V - k2*B", "u": "0"}, {"y": "s*B"},
+                 inputs=["u"], events=[event("u", "0", "1")], totals={"T": "A + V*B"})
+    r = si.detect(m, equilibrate=True, reduce_cq=True)
+    assert (r.rank, r.dim) == (3, 5) and "T" in r.info["coordinates"]
+    assert sorted(sorted(x.support) for x in r.symmetries) == [["T", "V"], ["V", "s"]]
+    assert all(x.level == "exact" for x in r.symmetries)
+
+
 @pytest.mark.parametrize("kw, name", [
     (dict(known_inputs=["U"]), "U"),
     (dict(known_inputs=["x"]), "x"),
@@ -1789,6 +1877,36 @@ def test_a_rate_set_to_zero_by_the_trafo_rests_like_a_constant_state():
     assert si.reduce(r, allow_checked=True).checks["loop"]["ok"] is not None
 
 
+def _ligand(method="replace", **kw):
+    rx = network(("L", "L + R", "u*L"), ("R", "", "d*R"), ("A", "B", "k1*R*A + kb*A"), ("B", "A", "k2*B"))
+    return detect(reactions=rx, observables={"y": "s*B"}, events=[event("L", 0, "dose", method)],
+                  equilibrate=True, **kw)
+
+
+def supports_of(r, kind=None):
+    return sorted(sorted(s.support) for s in r.symmetries if kind is None or s.type == kind)
+
+
+def test_an_event_at_the_start_sets_a_constant_state_on_top_of_its_resting_value():
+    r = _ligand(reconstruct=True)
+    assert (r.rank, r.dim) == (5, 9) and "L" in r.info["coordinates"]
+    assert r.info["rank_status"]["status"] == "proven" and all(s.level == "exact" for s in r.symmetries)
+    assert supports_of(r) == [["A", "s"], ["L", "dose", "u"], ["dose", "k1", "kb"], ["k1", "u"]]
+    # an input rests at zero
+    r = _ligand(inputs=["L"])
+    assert (r.rank, r.dim) == (5, 8)
+    assert supports_of(r) == [["A", "s"], ["dose", "u"], ["k1", "u"]]
+
+
+@pytest.mark.parametrize("method, scalings", [
+    ("replace", [["A", "s"], ["L", "dose", "u"], ["k1", "u"]]),
+    ("multiply", [["A", "s"], ["L", "u"], ["k1", "u"]]),
+])
+def test_an_exact_scaling_leaves_the_resting_model_invariant(method, scalings):
+    assert supports_of(_ligand(method), "scaling") == scalings
+    assert supports_of(_ligand(method, scalings_only=True)) == scalings
+
+
 @needs_msolve
 def test_the_count_substitutes_the_trafo_into_the_initial_values():
     chained = detect({"x": "-k^2*x"}, {"y": "x"}, trafo={"x": "k", "k": "a"})
@@ -1816,3 +1934,20 @@ def test_the_count_reads_the_model_as_detected():
     r = si.detect(m)
     m.observables = {"y": "x1", "y2": "p*x2"}
     assert r.solution_count()["count"] == 2
+
+
+def _resting_notes(f):
+    m = si.Model(f, {"y": "s*z"}, events=[{"var": "z", "time": 1, "value": "2", "method": "add"}])
+    r = si.detect(m, equilibrate=True, reconstruct=True)
+    return [b for b in r.info["branches"] if b.startswith("resting states")]
+
+
+def test_a_resting_root_names_the_factor_of_its_balance_and_keeps_its_branch():
+    # every point takes its root on the factor of the forward seed
+    notes = _resting_notes({"x": "-k*(x - a)*(x - b)", "z": "c*x - d*z"})
+    assert len(notes) == 1 and re.search(r"\b[ab] - x = 0$", notes[0])
+
+
+def test_conjugate_resting_roots_are_named_as_one_branch():
+    notes = _resting_notes({"x": "a - b*x - c*x^2", "z": "x - d*z"})
+    assert notes and all("conjugate" in b for b in notes)

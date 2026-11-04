@@ -362,7 +362,7 @@ def combined_work(an, light):
 def chain_bound(an, result):
     """info["bound"] of the unproven closed directions from the degree of the kernel's rational system, or None."""
     from ...gfp import verify_prime
-    from ..bound import _vector_degree, chain_degree, identity_degree
+    from ..bound import _vector_degree, chain_degree, drawn, identity_degree, no_degree
     dirs = [d for d in result.get("non_identifiable") or []
             if d.get("closed_form") and not d.get("exact") and d.get("vector")]
     if not dirs:
@@ -397,11 +397,13 @@ def chain_bound(an, result):
                 sympy_fail(exc)
                 d = None
             if d is None:
-                return {"applies": False, "why": "a term is not rational"}
+                why = no_degree(list(fs[0].values()) + list(g.values()) + list(x0.values()) + list(v.values()))
+                return {"applies": False, "why": why or "a term has no degree bound"}
             degs.append(d)
-    q = verify_prime()
-    d = max(degs)
-    return {"degree": d, "points": 2, "prime": int(q), "probability": float(len(vecs) * min(1.0, d / q) ** 2)}
+    q, d, k = verify_prime(), max(degs), drawn(2)
+    # the two passing points are a pair of the k drawn
+    return {"degree": d, "points": 2, "draws": k, "prime": int(q),
+            "probability": float(min(1.0, len(vecs) * math.comb(k, 2) * min(1.0, d / q) ** 2))}
 
 
 def prove_exact(an, result):

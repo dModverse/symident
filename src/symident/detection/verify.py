@@ -5,7 +5,7 @@ import re
 import numpy as np
 
 from .. import _core, session
-from ..gfp import mulmod, null_residues, random_point, verify_prime
+from ..gfp import mulmod, null_residues, uniform_point, verify_prime
 from .closedform import eval_modq
 from .forward import _free_cols
 
@@ -19,7 +19,7 @@ def verify_direction(entry, f, znames, leaf_names, point0, nt_used, kcall, resid
     q = verify_prime()
     leaves = set(leaf_names)
     for k in range(tries):
-        pt = random_point(len(point0), session.current().seed("verify direction", f, k))
+        pt = uniform_point(len(point0), q, session.current().seed("verify direction", f, k))
         rq = kcall(pt, q, int(nt_used))
         if not rq.get("ok"):
             continue
@@ -43,28 +43,28 @@ def verify_direction(entry, f, znames, leaf_names, point0, nt_used, kcall, resid
 
 
 def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, pool, pool_next, nz,
-                        dir_call=None, tries=6, need=2):
-    """Gauge-independent check that a direction lies in the nullspace at `need` of `tries` fresh seeded points.
-
-    A check on part of the entries sets ``entry["partial_check"]``: the error bound does not cover it."""
+                        dir_call=None, tries=6, need=2, cols=None):
+    """Gauge-independent check that a direction lies in the nullspace at `need` of `tries` fresh seeded points."""
     if entry.get("vector") is None:
         return True
     q = verify_prime()
     passed = 0
     for k in range(tries):
-        if passed >= need:
-            return True
-        pt = random_point(len(point0), session.current().seed("verify kernel", f, pool_next, k))
-        ok_ = _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q)
+        pt = uniform_point(len(point0), q, session.current().seed("verify kernel", f, pool_next, k))
+        ok_ = _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q, cols)
         if ok_ is False:
             return False
+        # the error bound does not cover a check on part of the stated entries
         if ok_ == "partial":
             entry["partial_check"] = True
         passed += ok_ in (True, "partial")
-    return passed >= need
+        if passed >= need:
+            session.note("draws", k + 1)
+            return True
+    return False
 
 
-def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q):
+def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q, cols=None):
     """The check of verify_in_nullspace() at one point: True, False, "partial" when only the entries it can
     evaluate pass, or None where the kernel does not exist."""
     rq = kcall(pt, q, int(nt_used))
@@ -74,6 +74,11 @@ def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_c
     v = np.zeros(nz, dtype=np.int64)
     v[f] = 1
     known = np.ones(nz, dtype=bool)
+    if cols is not None:
+        # the entry states the columns `cols`; off them a kernel vector may take any value
+        known[:] = False
+        known[list(cols) + [f]] = True
+    stated = known.copy()
     for nm, ex in entry["vector"].items():
         if nm not in znames:
             continue
@@ -97,51 +102,11 @@ def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_c
             if v[fcol] % q:
                 recon = (recon + mulmod(basis[j], int(v[fcol]) % q, q)) % q
         ok = bool(np.all(((recon - v) % q == 0)[known]))
-        return "partial" if ok and not known.all() else ok
+        return "partial" if ok and not known[stated].all() else ok
     # the free columns do not all evaluate: membership of the known part in the kernel
-    return "partial" if _core.sym_solve_mod(basis[:, known].T, v[known] % q, q) is not None else False
-
-
-def verify_perprime(entry, f, znames, leaf_names, point0, nt_used, kcall, pivots, pool, pool_next,
-                    nz, rel_leaves=None, tries=80):
-    """Strict check for the coupled steady-state path: fresh points with the same pivots."""
-    if entry.get("vector") is None:
+    if _core.sym_solve_mod(basis[:, known].T, v[known] % q, q) is None:
         return False
-    q = verify_prime()
-    pn = pool_next
-    pert_idx = list(range(len(point0))) if rel_leaves is None else list(rel_leaves)
-    piv0 = [int(x) for x in np.atleast_1d(pivots)]
-    for _ in range(tries):
-        pt = np.array(point0, dtype=np.int64)
-        if pert_idx:
-            pt[pert_idx] = pool(pn + np.arange(len(pert_idx)))
-        pn += len(pert_idx) + 1
-        rq = kcall(pt, q, int(nt_used))
-        if not pert_idx and not rq.get("ok"):
-            return False
-        if not rq.get("ok") or [int(x) for x in np.atleast_1d(rq["pivots"])] != piv0:
-            continue
-        env = {nm: int(pt[i]) for i, nm in enumerate(leaf_names)}
-        v = np.zeros(nz, dtype=np.int64)
-        v[f] = 1
-        bad = False
-        for nm, ex in entry["vector"].items():
-            if nm not in znames:
-                continue
-            got = eval_modq(ex, env, q)
-            if got is None:
-                bad = True
-                break
-            v[znames.index(nm)] = got % q
-        if bad:
-            continue
-        recon = np.zeros(nz, dtype=np.int64)
-        for fcol in _free_cols(rq, nz):
-            vf = int(v[fcol]) % q
-            if vf:
-                recon = (recon + mulmod(null_residues(rq, fcol, q), vf, q)) % q
-        return bool(np.all((recon - v) % q == 0))
-    return False
+    return "partial" if not known[stated].all() else True
 
 
 def in_kernel(rq, v, known, nz, q):
