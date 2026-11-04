@@ -157,7 +157,7 @@ def install_msolve(dir=None, version=None, jobs=None, quiet=False, ask=None):
     script = resources.files("symident").joinpath("tools", "build-msolve.sh")
     with resources.as_file(script) as sp:
         env = dict(os.environ, **{"SYMIDENT_" + k: state.env_value(k) for k in
-                                  ("GMP_VERSION", "MPFR_VERSION", "FLINT_VERSION", "OMP_STUB_H")
+                                  ("GMP_VERSION", "MPFR_VERSION", "FLINT_VERSION")
                                   if state.env_value(k)},
                    SYMIDENT_LIBS_CACHE=dir, SYMIDENT_MSOLVE_VERSION=str(version),
                    SYMIDENT_JOBS=str(int(jobs)), CC=os.environ.get("CC", "cc"))

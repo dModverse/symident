@@ -197,7 +197,7 @@ class StateFit:
             out += _leading(lines, names)
         return out
 
-    def _series(self, ns, nm, reli, d, p, T, base):
+    def _series(self, ns, nm, d, p, T, base):
         """Series of a variable along the line: a state from the continuation, a parameter linear in t."""
         if nm in self.var:
             mi, sn = self.var[nm]
@@ -230,7 +230,7 @@ class StateFit:
             if es is None:
                 return None
             es = [int(x) % p for x in es[:T]]
-            var = [self._series(ns, nm, reli, d, p, T, base) for nm in names]
+            var = [self._series(ns, nm, d, p, T, base) for nm in names]
             pw = [[[1] + [0] * (T - 1)] for _ in names]
             mono = []
             for m in mons:

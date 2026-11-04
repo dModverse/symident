@@ -198,14 +198,6 @@ def set_positive(x):
     return old
 
 
-def _num_val(e):
-    try:
-        return float(spy.N(e))
-    except SYMPY_FAILS as exc:
-        sympy_fail(exc)
-        return None
-
-
 def num_sign(e):
     """The sign of a number, exact for a rational, else by evaluation with guaranteed precision; None if undecided."""
     try:
@@ -546,8 +538,8 @@ def _forms(e):
     return out
 
 
-def _dom_key(prefix, e):
-    return f"{prefix}:{bool(DOMAIN['no_roots'])}:{','.join(sorted(DOMAIN['real_carriers']))}|{spy.srepr(e)}"
+def _pos_key(e):
+    return f"pos:{bool(DOMAIN['no_roots'])}:{','.join(sorted(DOMAIN['real_carriers']))}|{spy.srepr(e)}"
 
 
 def pos_form(e):
@@ -556,7 +548,7 @@ def pos_form(e):
     key = None
     if cache is not None:
         try:
-            key = _dom_key("pos", e)
+            key = _pos_key(e)
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             key = None

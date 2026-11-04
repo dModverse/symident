@@ -226,8 +226,6 @@ inline std::string as<std::string>(const Value& x) {
   throw std::runtime_error("not a string");
 }
 
-inline std::string as_string(const std::string& s) { return s; }
-
 [[noreturn]] inline void stop(const std::string& msg) { throw std::runtime_error(msg); }
 
 }  // namespace Rcpp

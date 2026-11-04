@@ -561,7 +561,7 @@ def static_fields_symbolic(conds, param_names, forcings=None):
             lines += list(eqs(sg['f']).values()) + list(eqs(sg['g']).values())
             lines += [str(e['value']) for e in _as_list(sg.get('ev'))]
         lines += [str(e['value']) for e in _as_list(c.get('t0'))]
-    local, parse0 = _make_local_parse(lines + pnames)
+    _, parse0 = _make_local_parse(lines + pnames)
     parse = functools.lru_cache(maxsize=None)(parse0)
 
     # pass 1, per distinct condition: static states, the parameters seen outside their

@@ -67,8 +67,7 @@
   "gaugePreference": "AUTO"
  },
  "env": {
-  "DMOD_MSOLVE": "",
-  "DMOD_SYM_NOCHUNK": ""
+  "DMOD_MSOLVE": ""
  },
  "options": {}
 }

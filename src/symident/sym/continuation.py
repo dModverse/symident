@@ -69,8 +69,8 @@ def continue_resting_state(model, state_names, param_names, param_vals, dirs, re
     forcings = set(_as_list(forcings))
     state_names = _as_list(state_names)
     param_names = _as_list(param_names)
-    (param_syms, solve_states, polys, Jx, Jt, gens, jx_terms, jt_terms, poly_bi, gen_lin,
-     lin_terms, point_plan) = _ss_compile(model, state_names, param_names, forcings, linear=False)
+    (param_syms, solve_states, polys, _, _, gens, jx_terms, jt_terms, _, _, _,
+     _) = _ss_compile(model, state_names, param_names, forcings, linear=False)
     key = (tuple(model), tuple(state_names), tuple(param_names), tuple(sorted(forcings)))
     cached = _cont_cache.get(key)
     if cached is None:

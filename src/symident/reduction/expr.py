@@ -115,7 +115,7 @@ def group_by(sets):
 def reduce_schedule(V, p):
     """Pivots (row, column) of a greedy elimination of `V` mod `p` with low fill-in, and the final fill."""
     V = np.array(V, dtype=np.int64)
-    k, n = V.shape
+    k = V.shape[0]
     used = [False] * k
     sched = []
     for _ in range(k):

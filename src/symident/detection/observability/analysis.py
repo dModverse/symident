@@ -137,7 +137,7 @@ class Analysis:
         return self.sys.kcall(point, p, Nt, Mtot)
 
     def kcall_sat(self, point, p, Nt, Mtot=0):
-        """The kernel for the saturation, rank only in joint mode unless WIDESAT is set."""
+        """The kernel for the saturation, rank only in joint mode without nuisance columns."""
         if self.joint and not self.run.nuis_cols:
             return self.sys.kcall(point, p, Nt, Mtot, rank_only=True)
         return self.sys.kcall(point, p, Nt, Mtot)
@@ -171,7 +171,7 @@ class Analysis:
                                            list(prime_vec), int(Nt), run.cores)
             return [self.sys.with_relations(os_[i], point_list[i], prime_vec[i]) for i in range(n)]
         if self.chunked and n > 0:
-            per = state.get("chunk_points", 2 * max(1, run.cores))
+            per = 2 * max(1, run.cores)
             out = []
             for s in range(0, n, per):
                 out.extend(self.sys.chunk(point_list[s:s + per], prime_vec[s:s + per], Nt))
@@ -888,8 +888,7 @@ class Analysis:
             checks = []
             if not sc.get("certified"):
                 try:
-                    checks.append(saturation_guard(self._guard_call, self.point0_solved,
-                                                   sc["nt_used"], sc["rank_s"]))
+                    checks.append(saturation_guard(self._guard_call, self.point0_solved, sc["nt_used"]))
                 except Exception as e:
                     swallow(e, "saturation guard")
                     checks.append({"ok": None, "method": "saturation guard", "reason": str(e)})
@@ -1245,7 +1244,7 @@ class Analysis:
         e = {"support": [nm], "type": "scaling", "vector": {nm: 1}, "closed_form": True}
         try:
             held = verify_in_nullspace(e, col, self.znames, self.leaf_names_aug, sc["point0"], sc["nt_used"],
-                                       self.kcall, sc.get("pool"), 0, self.nz)
+                                       self.kcall, 0, self.nz)
         except Exception as exc:
             swallow(exc, "unit direction at the verification points")
             held = False
@@ -1342,7 +1341,7 @@ class Analysis:
         if not proof.get("ok") and len(set(regime_keys(self.multi["tapes"]))) <= 3:
             try:
                 proof = field_proof(self.multi, self.N, self.znames, run.leaf_names, self.point0_solved,
-                                    self.field_chains, self.field_joint, run.cores, setup=None,
+                                    self.field_chains, self.field_joint, run.cores,
                                     fixed=self.field_fixed(self.N))
             except RouteError as e:
                 proof = {"ok": False, "why": str(e)}

@@ -11,15 +11,14 @@ from symident.detection import symmetry_detection
 from symident.detection.classify import classify_direction
 from symident.detection.fields import ser_inv, ser_mul
 from symident.detection.observability.reconstruct import Reconstruction
-from symident.detection.series import pade_at, pade_mod, ser_div, series_null
+from symident.detection.series import pade_at, pade_mod, series_null
 from symident.options import reconst_control
 
 P = 1000003
 
 
-def test_series_division_and_inverse_are_exact():
-    a, b = [3, 1, 4, 1], [1, 5, 0, 2]
-    assert ser_mul(ser_div(a, b, P), b, P) == a
+def test_series_inverse_is_exact():
+    b = [1, 5, 0, 2]
     assert ser_mul(ser_inv(b, P), b, P) == [1, 0, 0, 0]
 
 

@@ -217,8 +217,7 @@ def field_setup(multi, chains, cores, fixed=None, fields=None):
         fx = [s for s in (fixed or []) if s in syms and s not in fe]
         try:
             with state.options(inner=True, order_hint=None):
-                r = symmetry_detection(fe, ge, reconstruct=True,
-                                       verify=False, cores=cores_r, verbose=False,
+                r = symmetry_detection(fe, ge, reconstruct=True, verify=False, cores=cores_r,
                                        fixed=fx if fx else None, control=session.current().control)
         except Exception as e:
             swallow(e, "regime detection")
@@ -321,10 +320,9 @@ def field_check(setup, V, znames, leaf_names, point, chains, joint):
     return out
 
 
-def field_proof(multi, N, znames, leaf_names, point, chains, joint, cores, setup=None, fixed=None):
-    """The field certificate of the kernel vectors `N`, from `setup` or a fresh field setup."""
-    if setup is None:
-        setup = field_setup(multi, chains, cores, fixed=fixed)
+def field_proof(multi, N, znames, leaf_names, point, chains, joint, cores, fixed=None):
+    """The field certificate of the kernel vectors `N` from a fresh field setup."""
+    setup = field_setup(multi, chains, cores, fixed=fixed)
     return field_check(setup, N, znames, leaf_names, point, chains, joint)
 
 

@@ -56,9 +56,7 @@
   "cores": 2
  },
  "env": {
-  "DMOD_MSOLVE": "",
-  "DMOD_SYM_NOCHUNK": "",
-  "DMOD_SYM_SOLVEPOOL": "1"
+  "DMOD_MSOLVE": ""
  },
  "options": {}
 }

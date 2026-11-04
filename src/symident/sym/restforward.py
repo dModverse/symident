@@ -263,9 +263,8 @@ def _forward_compile(model, state_names, param_names, forcings, solve_rates, sta
     c = _forward_cache.get(key)
     if c is not None:
         return c
-    (param_syms, solve_states, polys, Jx, Jt, gens0, jx_terms, jt_terms,
-     poly_bi, gen_lin, lin_terms, _pp) = _ss_compile(model, state_names, param_names, forcings,
-                                                     linear=False)
+    (param_syms, solve_states, polys, _, _, gens0, jx_terms, jt_terms,
+     _, _, _, _) = _ss_compile(model, state_names, param_names, forcings, linear=False)
     solve_set = set(solve_rates)
     r_syms = [spy.Symbol(r) for r in solve_rates]
     rgens = [th for th in param_syms if str(th) not in solve_set] + list(solve_states)
@@ -302,8 +301,7 @@ def _forward_compile(model, state_names, param_names, forcings, solve_rates, sta
 
 
 def solve_forward_modular(model, state_names, param_names, state_vals, param_vals, prime,
-                        forcings=None, solve_rates=None, keep_free=None, backend='sympy',
-                        state_solve=None, held=None):
+                        forcings=None, solve_rates=None, keep_free=None, state_solve=None, held=None):
     """Solve f = 0 over GF(prime) for a turnover subset of rates at given resting values, or {'ok': False, 'why'}."""
     p = int(prime)
     model = _as_list(model)

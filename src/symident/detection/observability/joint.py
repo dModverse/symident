@@ -389,7 +389,7 @@ class JointSystem(RestingStates):
         ser = None if loc["S"] is None else series_embed(loc["S"], int(loc["N"]), list(wc), self.nz_wide, p)
         return {"W": W, "series": ser}
 
-    def _project(self, locs, p, cores, sel=None):
+    def _project(self, locs, p, cores):
         """Rows on the shared columns once each condition eliminates its state columns, with series projections."""
         st_l, sh_l = self.per_cond_cols, self.shared_idx
         n_first = len(st_l)

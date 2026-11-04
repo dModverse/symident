@@ -483,11 +483,6 @@ def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20
             "vectors": sel}
 
 
-def bigmod(s, p):
-    """An integer given as a decimal string, modulo p."""
-    return int(str(s)) % p
-
-
 def sqrt_mod(a, p):
     """The smaller square root of a modulo the odd prime p, as the kernel takes it; None for a non-residue."""
     from sympy.ntheory import sqrt_mod as _sqrt

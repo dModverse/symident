@@ -285,7 +285,7 @@ _ss_base_cache = {}
 
 def _ss_base(model, state_names, param_names, forcings, held_state_names):
     """_ss_compile without the linear plans; the point plan holds its kept numerators instead."""
-    local, parse = _make_local_parse(model + list(param_names))
+    _, parse = _make_local_parse(model + list(param_names))
     rhs_by_name = {}
     for raw in model:
         line = _clean(raw)
@@ -375,8 +375,7 @@ def resting_kind(model, state_names, param_names, param_vals, prime, forcings=No
 
 
 def solve_steady_state_modular(model, state_names, param_names, param_vals, prime,
-                            forcings=None, backend='sympy', t0events=None,
-                            recast=None, l_vals=None, joint_mode=False,
+                            forcings=None, t0events=None, recast=None, l_vals=None, joint_mode=False,
                             held_states=None):
     """Point on the interior component of f = 0 over GF(prime) with its sensitivities: {'ok', 'xstar', 'dx'}."""
     model = _as_list(model)
@@ -388,7 +387,7 @@ def solve_steady_state_modular(model, state_names, param_names, param_vals, prim
     held_states = {str(k): int(v) % p for k, v in (held_states or {}).items()}
     cached = _ss_compile(model, state_names, param_names, forcings,
                          tuple(sorted(held_states.keys())))
-    (param_syms, solve_states, polys, Jx, Jt, gens, jx_terms, jt_terms, poly_bi,
+    (param_syms, solve_states, polys, _, _, _, jx_terms, jt_terms, poly_bi,
      generic_linear, lin_terms, point_plan) = cached
     snm = _names(cached)
 
@@ -396,7 +395,7 @@ def solve_steady_state_modular(model, state_names, param_names, param_vals, prim
 
     if point_plan is not None:
         # held pivot states act as parameters; solve the square reduced system
-        (point_states, point_params, held_syms, point_poly_bi,
+        (point_states, point_params, _, point_poly_bi,
          point_generic_linear, point_lin_terms) = point_plan
         ppvals = [(held_states[snm[th]] if snm[th] in held_states
                    else int(param_vals.get(snm[th], 0)) % p) for th in point_params]

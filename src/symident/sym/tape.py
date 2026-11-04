@@ -225,8 +225,7 @@ def _clock_exp(e):
 
 
 def compile_observability_tape_multi(model, observation, condition_subs, condition_ic0,
-                                  fixed=None, parameters=None, backend='sympy',
-                                  equilibrate=False, forcings=None,
+                                  fixed=None, parameters=None, equilibrate=False, forcings=None,
                                   seg_equilibrate=None, condition_events=None,
                                   condition_t0_events=None, joint_steady_state=False,
                                   joint_fixed_states=None, held_state_params=None,
@@ -448,7 +447,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                 rc['inverted'] = False
 
     def any_in(pred):
-        return (any(pred(e) for (f_c, g_c, ic_c, f_ss) in per_cond
+        return (any(pred(e) for (f_c, g_c, ic_c, _) in per_cond
                     for e in list(f_c) + list(g_c) + list(ic_c.values())) or
                 any(pred(e['value']) for evs in ev_per for e in evs) or
                 any(t is not None and pred(t) for t in tm_per))

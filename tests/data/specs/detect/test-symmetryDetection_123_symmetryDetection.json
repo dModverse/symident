@@ -37,9 +37,7 @@
  },
  "env": {
   "DMOD_MSOLVE": "",
-  "DMOD_SYM_LIEPLATEAU_BLOCK": "0",
-  "DMOD_SYM_NOCHUNK": "",
-  "DMOD_SYM_SOLVEPOOL": ""
+  "DMOD_SYM_LIEPLATEAU_BLOCK": "0"
  },
  "options": {}
 }

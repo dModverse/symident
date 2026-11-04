@@ -219,8 +219,7 @@ def exp_factors(preps, darb, d_exp):
         h_str = str(hc["h"])
         lam_str = [str(c) for c in hc["cof"]]
 
-        def rows_at(pt, p, expts_g=expts_g, expts_mu=expts_mu, Ng=Ng, Nmu=Nmu, n=n,
-                   h_str=h_str, lam_str=lam_str):
+        def rows_at(pt, p, expts_g=expts_g, expts_mu=expts_mu, Nmu=Nmu, h_str=h_str, lam_str=lam_str):
             eta = eta_rows(preps, vars_, pt, p)
             if eta is None:
                 return None

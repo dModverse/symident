@@ -10,7 +10,7 @@ import sympy as spy
 
 import symident as si
 from symident import state
-from symident.detection.cq import equil_zero_states
+from symident.detection.cq import _zero_states
 from symident.sym.msolve import MsolveMissingError, _msolve_binary
 from symident.sym.parse import model_sympify
 
@@ -267,21 +267,21 @@ def test_equilibrate_t0_dose():
 def test_only_drained_species_rest_at_zero():
     # a conserved pair beside a degraded species keeps its total at rest
     rx = network(("A", "B", "k1 * A"), ("B", "A", "k2 * B"), ("C", "", "kc * C"))
-    assert equil_zero_states(rx["stoichiometry"], rx["species"], rx["rates"], []) == ["C"]
+    assert _zero_states(rx["stoichiometry"], rx["species"], rx["rates"], [])[0] == ["C"]
     res = detect(reactions=rx, observables={"Aobs": "alpha * A", "Cobs": "s * C"}, equilibrate=True)
     assert "A" in res.info["coordinates"] and ["alpha"] not in [d["support"] for d in res.symmetries]
     # a pair that drains through one of its members empties as a whole
     rx = network(("A", "B", "k1 * A"), ("B", "A", "k2 * B"), ("B", "", "k3 * B"))
-    assert set(equil_zero_states(rx["stoichiometry"], rx["species"], rx["rates"], [])) == {"A", "B"}
+    assert set(_zero_states(rx["stoichiometry"], rx["species"], rx["rates"], [])[0]) == {"A", "B"}
 
 
 def test_a_drained_reaction_with_several_reactants_forces_no_zero():
-    from symident.detection.core import _ode_zero_states
+    from symident.detection.core import _ode_zeros
     # a drained reaction with two reactants rests where one of them is zero
-    assert equil_zero_states([[-1, -1]], ["A", "B"], ["k*A*B"], []) == []
-    assert _ode_zero_states({"A": "-k*A*B", "B": "-k*A*B"}, []) == []
-    assert equil_zero_states([[-1]], ["A"], ["k*A"], []) == ["A"]
-    assert _ode_zero_states({"A": "-k*A", "B": "-k*A*B"}, []) == ["A"]
+    assert _zero_states([[-1, -1]], ["A", "B"], ["k*A*B"], [])[0] == []
+    assert _ode_zeros({"A": "-k*A*B", "B": "-k*A*B"}, [])[0] == []
+    assert _zero_states([[-1]], ["A"], ["k*A"], [])[0] == ["A"]
+    assert _ode_zeros({"A": "-k*A", "B": "-k*A*B"}, [])[0] == ["A"]
 
 
 def test_a_resting_branch_is_named_and_analyzed():

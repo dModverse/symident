@@ -23,18 +23,16 @@ from .sections import translation_compress, unmoved_compress
 from .sign import sgn
 
 
-def block_corank(preps, exact=False):
-    """Moved coordinates minus the block direction rank at a point; with `exact` also whether that rank is generic."""
+def block_corank(preps):
+    """(corank, generic): moved coordinates minus the direction rank at a point, and whether that rank is generic."""
     moved, vars_ = _moved_vars(preps)
     ipt = [int(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 5)]
     r = _direction_rank(preps, moved, vars_, ipt)
-    if not exact:
-        return len(moved) - r
     return len(moved) - r, r >= min(len(preps), len(moved))
 
 
-def independent_set(invs, vars_, target, moved=None, keep_order=False):
-    """A functionally independent subset of invariants by a nonzero minor of the Jacobian, certified at a point."""
+def independent_set(invs, vars_, target, moved=None):
+    """A functionally independent subset of invariants, in order, by a nonzero Jacobian minor certified at a point."""
     if moved is None:
         moved = vars_
     if not invs or target <= 0:
@@ -80,8 +78,7 @@ def independent_set(invs, vars_, target, moved=None, keep_order=False):
             sympy_fail(exc)
             return False
     cand = list(dict.fromkeys(invs))
-    if not keep_order:
-        cand = sorted(cand, key=len)
+
     def select(exact):
         # exact ranks while every gradient is rational, else the float rank throughout
         J, Jx, Jn, sel = np.zeros((0, len(moved))), [], [], []
@@ -113,7 +110,7 @@ def independent_set(invs, vars_, target, moved=None, keep_order=False):
 def solve_block(preps, d_poly, d_darboux, d_exp, sep=True):
     """The invariant stages on one module-reduced sub-block."""
     moved, vars_ = _moved_vars(preps)
-    target, count_exact = block_corank(preps, exact=True)
+    target, count_exact = block_corank(preps)
     certs, found, stage_ = [], [], "monomial"
     certs.append(f"invariant count {target}: " + ("exact, the directions are independent at a point" if count_exact
                                                   else "an upper bound, from a rank at one point"))
@@ -138,7 +135,7 @@ def solve_block(preps, d_poly, d_darboux, d_exp, sep=True):
         is_exp = ["exp(" in c for c in cand]
         tier = [3 if ie else (1 if definite(c) else 2) for c, ie in zip(cand, is_exp)]
         order = sorted(range(len(cand)), key=lambda i: (tier[i], len(cand[i])))
-        return independent_set([cand[i] for i in order], vars_, target, moved, keep_order=True)
+        return independent_set([cand[i] for i in order], vars_, target, moved)
 
     def short():
         return len(found) < target or not all(definite(f) for f in found)

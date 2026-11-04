@@ -780,7 +780,7 @@ def drop_monomial_content(vector, skip=None):
     """The same direction with denominators and common monomials cleared, first component positive."""
     skip = set(_as_list(skip)) if skip is not None else set()
     items = [(str(k), str(v)) for k, v in dict(vector).items()]
-    local, parse = _make_local_parse([v for _, v in items])
+    _, parse = _make_local_parse([v for _, v in items])
     es = [spy.cancel(parse(v)) for _, v in items]
     L = spy.Integer(1)
     for (k, _), e in zip(items, es):
@@ -815,7 +815,7 @@ def exp_backsub_expr(expr, names, values):
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     names, values = as_list(names), as_list(values)
-    local, parse = _make_local_parse([str(expr)] + [str(v) for v in values] +
+    _, parse = _make_local_parse([str(expr)] + [str(v) for v in values] +
                                      [str(n) for n in names])
     e = parse(str(expr))
     sub = {parse(str(n)): parse(str(v)) for n, v in zip(names, values)}
@@ -831,7 +831,7 @@ def trig_full_angle(vector, skip=None):
     """A direction over leaves V = tan(u/2) as the same direction polynomial in sin(u) and cos(u)."""
     skip = set(_as_list(skip)) if skip is not None else set()
     items = [(str(k), str(v)) for k, v in dict(vector).items()]
-    local, parse = _make_local_parse([v for _, v in items])
+    _, parse = _make_local_parse([v for _, v in items])
     es = [spy.sympify(parse(v)) for _, v in items]
     halves = sorted(set().union(*[e.atoms(spy.tan) for e in es]), key=str)
     if not halves:

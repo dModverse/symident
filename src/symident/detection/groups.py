@@ -10,10 +10,9 @@ from .sparse import _ints
 _BLOCK = 32
 
 
-def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves, first=None):
+def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves):
     """Leaves entering a direction only through their sum (add) or product (mul)."""
-    if first is None:
-        first = sc["pool_next"] + 7919
+    first = sc["pool_next"] + 7919
     base = res_s(ref_s, P)
     if base is None:
         return []

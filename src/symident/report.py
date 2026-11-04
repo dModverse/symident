@@ -4,8 +4,6 @@ import re
 import shutil
 import textwrap
 
-_PARTIAL = "∂"
-
 
 def _width(width):
     return width or shutil.get_terminal_size((80, 24)).columns
@@ -337,8 +335,14 @@ def partial_labels(x):
             and b.get("status") == "reduced" for lab in b.get("labels") or []]
 
 
-def red_verdict(x, domain="positive orthant"):
+def _domain(x):
+    """The domain the reduction declared, as the reports name it."""
+    return "positive orthant" if (x.get("settings") or {}).get("positive", True) is True else "declared domain"
+
+
+def red_verdict(x):
     """One line on how many directions the reduction removed, and where the section is partial."""
+    domain = _domain(x)
     n_dir = len(x["removed"]) + len(x["remaining"])
     part = partial_labels(x)
     dep = x.get("dependent") or []
@@ -350,8 +354,9 @@ def red_verdict(x, domain="positive orthant"):
              else "") + ".")
 
 
-def red_chart_lines(x, width, domain="positive orthant"):
+def red_chart_lines(x, width):
     """Report lines of the non-identity trafo entries and the invariants."""
+    domain = _domain(x)
     out = []
     tr = x.get("trafo") or {}
     nonid = {k: v for k, v in tr.items() if v != k}
@@ -453,8 +458,9 @@ def _section_reason(b, what, domain):
     return out
 
 
-def red_section_lines(x, width, domain="positive orthant", detailed=False, detail_call=DETAIL_CALL):
+def red_section_lines(x, width, detailed=False, detail_call=DETAIL_CALL):
     """Report lines of the section of each reduced block; with `detailed`, why it was chosen."""
+    domain = _domain(x)
     rows = _section_rows(x)
     if not rows:
         return []

@@ -7,10 +7,9 @@ from ..fields import rank_of
 from .context import ok as _ok
 
 
-def saturation_guard(kcall, point0, nt_used, reported_rank, margin=None):
-    """The rank past the reported Lie order: stable through `margin` further orders."""
-    if margin is None:
-        margin = int(state.env_value("VERIFY_MARGIN", "6"))
+def saturation_guard(kcall, point0, nt_used):
+    """The rank past the reported Lie order: stable through VERIFY_MARGIN further orders."""
+    margin = max(1, int(state.env_value("VERIFY_MARGIN", "6")))
     P = PRIMES[0]
     try:
         r0 = kcall(point0, P, int(nt_used))
@@ -21,7 +20,6 @@ def saturation_guard(kcall, point0, nt_used, reported_rank, margin=None):
         return {"ok": None, "method": "saturation guard", "reason": "base point not re-evaluable"}
     base = int(rank_of(r0))
     max_r, grow_at = base, None
-    margin = max(1, margin)
 
     def rank_at(k):
         try:

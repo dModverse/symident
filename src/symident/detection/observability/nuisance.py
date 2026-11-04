@@ -12,14 +12,6 @@ def _rref(M, p):
     return R, (np.atleast_1d(rr["piv"]).astype(np.int64) if rank else np.zeros(0, dtype=np.int64))
 
 
-def projected_rank(R, aux, p):
-    """{"rank", "aux_full"}: rank R - rank R[:, aux], and whether R[:, aux] has full column rank."""
-    R = np.asarray(R, dtype=np.int64) % p
-    ra = int(_core.sym_rref_mod(R[:, list(aux)].astype(np.float64), p)["rank"]) if len(aux) and R.size else 0
-    r = int(_core.sym_rref_mod(R.astype(np.float64), p)["rank"]) if R.size else 0
-    return {"rank": r - ra, "aux_full": ra == len(aux)}
-
-
 def quotient(o, cols, p, drop=()):
     """The kernel result `o` modulo the directions within the columns `cols`, its vectors zero on `drop`."""
     if not cols or o is None or not o.get("ok"):

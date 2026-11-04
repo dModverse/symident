@@ -151,9 +151,7 @@
  },
  "env": {
   "DMOD_MSOLVE": "",
-  "DMOD_SYM_NOCHUNK": "",
-  "DMOD_SYM_NOGROUP": "",
-  "DMOD_SYM_SOLVEPOOL": ""
+  "DMOD_SYM_NOGROUP": ""
  },
  "options": {}
 }

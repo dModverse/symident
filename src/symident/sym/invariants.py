@@ -12,7 +12,7 @@ def _parse_generators(gens, extra_lines):
     all_lines = list(extra_lines) + \
         [str(v) for g in gens for v in g.values()] + \
         [str(kk) for g in gens for kk in g.keys()]
-    local, parse = _make_local_parse(all_lines)
+    _, parse = _make_local_parse(all_lines)
     xis = [{str(kk): parse(str(v)) for kk, v in g.items()} for g in gens]
     return xis, parse
 
@@ -23,7 +23,7 @@ def module_reduce_replay(rows, cols, schedule):
     rows = _as_list(rows)
     k = len(rows)
     all_lines = [str(v) for r in rows for v in r.values()] + cols
-    local, parse = _make_local_parse(all_lines)
+    _, parse = _make_local_parse(all_lines)
     E = [{c: (parse(str(r[c])) if c in r and str(r[c]) != "0"
               else spy.Integer(0)) for c in cols} for r in rows]
     C = [[spy.Integer(1 if i == j else 0) for j in range(k)] for i in range(k)]
@@ -113,7 +113,7 @@ def verify_invariants(invariants, generators):
 
 def integrating_factor_integral(Mstr, xi1, xi2, z1, z2):
     """First integral by quadrature from a 2D integrating factor, or None if unevaluated or X(I) != 0."""
-    local, parse = _make_local_parse([str(Mstr), str(xi1), str(xi2),
+    _, parse = _make_local_parse([str(Mstr), str(xi1), str(xi2),
                                       str(z1), str(z2)])
     try:
         M = parse(str(Mstr))

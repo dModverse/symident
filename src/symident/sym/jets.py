@@ -7,8 +7,9 @@ from ..rexpr import replace_symbols
 from .parse import _as_list, _make_local_parse
 
 
-def jet_generator(conds, support, anchor, max_order=8, max_chars=200000, work_limit=None):
+def jet_generator(conds, support, anchor, max_order=8, max_chars=20000, work_limit=None):
     """{'ok': True, 'vector'} with support S from |S| - 1 independent jet gradients, else {'ok': False}."""
+    # a closed form much longer than max_chars is no usable result and costs minutes to verify
     work = [0, 50 * max_chars if work_limit is None else int(work_limit)]
     primary, extra = _jet_expand_chains(conds)
     res = _jet_core(primary, support, anchor, max_order, max_chars, work)

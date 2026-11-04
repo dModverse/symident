@@ -78,7 +78,7 @@ def _const_reduce(dps, nv, p):
         dps = [d for d in dps if d]
 
 
-def _msolve_points(polys, vars_idx, nv, p):
+def _msolve_points(polys, vars_idx, p):
     """Interior points of `polys` over GF(p) as a list of {index: value}, or a fail-dict."""
     import ast
     import subprocess
@@ -113,7 +113,7 @@ def _msolve_points(polys, vars_idx, nv, p):
     data = ast.literal_eval(txt.strip().rstrip(":"))
     if data[0] != 0:
         return {'ok': False, 'why': 'positive-dimensional steady state'}
-    _, nvar, deg, vnames, lin, par = data[1]
+    _, _, deg, vnames, lin, par = data[1]
     if deg <= 0 or par[0] != 1:
         return {'ok': False, 'why': 'no consistent interior point'}
     elim, den, params = par[1][0][1], par[1][1][1], par[1][2]
@@ -182,7 +182,7 @@ def _component_points(polys, nv, p):
                 roots = r if roots is None else roots & r
             pts = [{i: t} for t in sorted(roots)]
         else:
-            pts = _msolve_points([polys[j] for j in js], bv, nv, p)
+            pts = _msolve_points([polys[j] for j in js], bv, p)
             if isinstance(pts, dict):
                 return pts
         if not pts:

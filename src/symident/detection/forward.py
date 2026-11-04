@@ -121,8 +121,8 @@ def _fit_entry(primes, bankU_rows, reli_cols, mons, vals_of, vars_):
 
 
 def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, scaling,
-                     state_col_names, param_names, recast, spy_on, ctrl, phys_cols, models,
-                     real_state_names, solve_param_names, solve_held, ac_in=None, list_anchors=False):
+                     state_col_names, ctrl, phys_cols, models, real_state_names, solve_param_names,
+                     solve_held, ac_in=None, list_anchors=False):
     """Forward-sampling reconstruction of one residual direction over solved resting states."""
     rprimes = all_primes()
     n_prime_fwd = max(2, min(3, len(rprimes) - 1))
@@ -347,7 +347,7 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
             return fb("forward: timeout in fitting")
         if rr is None:
             return fb(f"forward: entry {nm} not a bounded rational (deg>{d_cap})")
-        entries[nm] = simplify(rr["expr"]) if spy_on else rr["expr"]
+        entries[nm] = simplify(rr["expr"])
         entry_reli[nm] = rr["reli"]
 
     ptv = None
@@ -386,9 +386,9 @@ class SolveRates(list):
 
 
 def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, scaling,
-                            state_col_names, recast, spy_on, ctrl, phys_cols, models,
-                            real_state_names, solve_param_names, solve_held, kcall_fwd_sh=None,
-                            select_fn=None, fwd_state=None, map_fn=None):
+                            state_col_names, ctrl, phys_cols, models, real_state_names,
+                            solve_param_names, solve_held, kcall_fwd_sh=None, select_fn=None,
+                            map_fn=None):
     """Every residual direction on the forward route: one transversal, one bank."""
     rprimes = all_primes()
     n_prime_fwd = max(2, min(3, len(rprimes) - 1))
@@ -664,7 +664,7 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                     res = opn("forward: timeout in fitting" if expired(ctrl)
                               else f"forward: entry {nm} not a bounded rational")
                     break
-                entries[nm] = simplify(rr["expr"]) if spy_on else rr["expr"]
+                entries[nm] = simplify(rr["expr"])
                 entry_reli[nm] = rr["reli"]
             if res is not None:
                 out.append(res)
@@ -778,16 +778,16 @@ def fwd_adopt(fwd, n_res):
 
 
 def perprime_forward_multi(residual_free, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz,
-                           scaling, state_col_names, param_names, recast, spy_on, ctrl, phys_cols,
-                           models, real_state_names, solve_param_names, solve_held):
+                           scaling, state_col_names, ctrl, phys_cols, models, real_state_names,
+                           solve_param_names, solve_held):
     """Forward results of the first residual direction per anchor; [] without directions, None without anchors."""
     if not residual_free:
         return []
 
     def fwd1(ac_in, list_anchors):
         return perprime_forward(residual_free[0], sc, kcall, kcall_fwd, znames, z_slots, leaf_names,
-                                nz, scaling, state_col_names, param_names, recast, spy_on, ctrl,
-                                phys_cols, models, real_state_names, solve_param_names, solve_held,
+                                nz, scaling, state_col_names, ctrl, phys_cols, models,
+                                real_state_names, solve_param_names, solve_held,
                                 ac_in=ac_in, list_anchors=list_anchors)
     anchors = fwd1(None, True)
     if not anchors:

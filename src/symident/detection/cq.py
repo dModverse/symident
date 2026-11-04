@@ -281,11 +281,6 @@ def _zero_states(smatrix, species, rates, forcings):
     return [d for d in dead if d not in set(forcings)], branches
 
 
-def equil_zero_states(smatrix, species, rates, forcings):
-    """States forced to zero at steady state with the forcings at zero."""
-    return _zero_states(smatrix, species, rates, forcings)[0]
-
-
 def equil_zero_branches(smatrix, species, rates, forcings):
     """(zero, notes): the forced zeros, then the first reactant of each branch of _zero_states(), a note per choice."""
     taken, notes = [], []

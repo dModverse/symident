@@ -1019,7 +1019,7 @@ def _family(st, cd, cands, alive, why):
                 changes[k, r] = dict(zip(drives[r], sol[len(vecs):]))
             if drop is None:
                 for e in evs:
-                    post = _post(st, e)
+                    post = _post(e)
                     img = _event_image(st, X, e, post)
                     at = [{kk: spy.sympify(v).xreplace(post) for kk, v in Y.items()} for Y in vecs]
                     if _span(at, img, keys) is None:
@@ -1105,7 +1105,7 @@ def _input_jumps(st, cd, fam, keys, surf, models, drives, changes):
     return None
 
 
-def _post(st, e):
+def _post(e):
     v = _sym(e["var"])
     return {v: _compose(v, e["method"], e["value"])}
 
@@ -1372,7 +1372,7 @@ def _relaxed_dim(res, coords, fresh, entering):
 _OF_FRESH = "the fresh coordinates of the switch surfaces"
 
 
-def _at_random(st, rows, res, coords, fresh, entering, need):
+def _at_random(rows, res, coords, fresh, entering, need):
     """(projection, dimension) with the projection checked at a point uniform modulo the verification prime."""
     ker = res["info"]["kernel"]
     rk = ker.get("random")
@@ -1387,10 +1387,10 @@ def _at_random(st, rows, res, coords, fresh, entering, need):
         return {"status": "differs", "of": _OF_FRESH, "base": len(coords) - need,
                 "random": len(coords) - need_r}, need
     cols = len(ker["coords"]) + len([z for z in ker["coords"] if z in set(fresh)])
-    return {"status": "verified", "of": _OF_FRESH, "probability": _minor_bound(st, rows, res, cols)}, need
+    return {"status": "verified", "of": _OF_FRESH, "probability": _minor_bound(rows, res, cols)}, need
 
 
-def _minor_bound(st, rows, res, cols):
+def _minor_bound(rows, res, cols):
     """Schwartz-Zippel bound on a maximal minor of the stacked rows or their fresh columns vanishing, or None."""
     from .core import _model_bound
     order = int(res["info"].get("lie_order_used") or 0)
@@ -1461,9 +1461,9 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
     need, proven = _relaxed_dim(res, coords, fresh, entering)
     projection = None
     if not proven:
-        projection, need = _at_random(st, rows, res, coords, fresh, entering, need)
+        projection, need = _at_random(rows, res, coords, fresh, entering, need)
     if jets:
-        projection = _with_inputs_projection(st, rows, res, projection)
+        projection = _with_inputs_projection(rows, res, projection)
     chosen, why = [], []
     off = fresh + list(jet_fresh) + [x for chain in jets.values() for x in chain]
     if need > 0:
@@ -1507,7 +1507,7 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
     return out
 
 
-def _with_inputs_projection(st, rows, res, projection):
+def _with_inputs_projection(rows, res, projection):
     """The projection with the rank modulo the unknown inputs: the weaker status, chances added where both verified."""
     pj = res["info"].get("projection")
     if not pj or pj.get("status") == "proven":
@@ -1515,7 +1515,7 @@ def _with_inputs_projection(st, rows, res, projection):
     nu = dict(pj, of="the unknown inputs")
     if nu["status"] == "verified":
         ker = res["info"]["kernel"]
-        nu["probability"] = _minor_bound(st, rows, res, len(ker["coords"]))
+        nu["probability"] = _minor_bound(rows, res, len(ker["coords"]))
     if projection is None or projection.get("status") == "proven":
         return nu
     if projection["status"] != "verified":

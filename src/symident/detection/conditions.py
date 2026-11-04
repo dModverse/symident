@@ -141,8 +141,7 @@ def at_time(value, t):
 
 
 def resolve_conditions(conditions, events, initial, symbols, states, const_states=(), forcings=(),
-                       t0=None, equilibrate=False, cond_subs=None, cond_initial=None, n_cond_obs=0,
-                       renamed=()):
+                       equilibrate=False, cond_subs=None, cond_initial=None, n_cond_obs=0, renamed=()):
     """Per-segment substitutions, initial values and events per condition; `renamed` columns substitute the state."""
     n_grid = 0 if conditions is None else conditions.nrow
     Kcond = max(1, len(cond_subs or []), len(cond_initial or []), n_grid, n_cond_obs)
@@ -161,9 +160,7 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
     sub_cols = [c for c in sub_cols if c not in set(ic_cols)]
     ev_all = events or []
     resolve = _resolver(conditions, cond_subs)
-    if t0 is None:
-        t0 = start_time(ev_all, conditions, cond_subs, len(conds))
-    t0 = float(t0)
+    t0 = float(start_time(ev_all, conditions, cond_subs, len(conds)))
 
     def layout(ev, tstr):
         tnum = [time_value(t) for t in tstr]

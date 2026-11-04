@@ -370,12 +370,12 @@ def test_a_kernel_check_on_part_of_the_entries_is_checked_not_verified(monkeypat
     from symident.detection import finalize, verify
     entry = {"vector": {"a": "1"}}
     monkeypatch.setattr(verify, "_in_nullspace_at", lambda *a: "partial")
-    assert verify.verify_in_nullspace(entry, 0, ["a"], [], [1], 1, None, None, 0, 1)
+    assert verify.verify_in_nullspace(entry, 0, ["a"], [], [1], 1, None, 0, 1)
     assert entry["partial_check"]
     assert finalize.level_of(entry, entry["vector"]) == "checked"
     full = {"vector": {"a": "1"}}
     monkeypatch.setattr(verify, "_in_nullspace_at", lambda *a: True)
-    assert verify.verify_in_nullspace(full, 0, ["a"], [], [1], 1, None, None, 0, 1)
+    assert verify.verify_in_nullspace(full, 0, ["a"], [], [1], 1, None, 0, 1)
     assert finalize.level_of(full, full["vector"]) == "verified"
     assert finalize.level_of(dict(entry, exact=True), entry["vector"]) == "exact"
 
@@ -392,7 +392,7 @@ def test_a_direction_that_leaves_out_resting_state_columns_is_verified_on_the_on
 
     def check(vec, cols):
         e = {"vector": vec}
-        return verify.verify_in_nullspace(e, 2, names, names, [1] * 4, 1, kcall, None, 0, 4, cols=cols), e
+        return verify.verify_in_nullspace(e, 2, names, names, [1] * 4, 1, kcall, 0, 4, cols=cols), e
     held, e = check({"a": "1", "b": "-1", "s1": "1"}, [0, 1])
     assert held and finalize.level_of(e, e["vector"]) == "verified"
     assert not check({"a": "2", "b": "-1", "s1": "1"}, [0, 1])[0]

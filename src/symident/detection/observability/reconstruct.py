@@ -342,9 +342,8 @@ class Reconstruction:
         try:
             return perprime_forward_multi(
                 self.residual, self.sc, an.kcall, sys.kcall_fwd, an.znames, an.z_slots, an.leaf_names_aug,
-                an.nz, an.scaling, strs(an.multi.get("z_state_names")), strs(an.multi.get("param_names")),
-                an.recast, True, self.ctrl, self.phys_cols, sys.models, sys.real_state_names,
-                sys.solve_param_names, sys.held_of(0))
+                an.nz, an.scaling, strs(an.multi.get("z_state_names")), self.ctrl, self.phys_cols,
+                sys.models, sys.real_state_names, sys.solve_param_names, sys.held_of(0))
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             return None
@@ -383,7 +382,7 @@ class Reconstruction:
         try:
             fwd = perprime_forward_shared(
                 self.sc, an.kcall, sys.kcall_fwd, an.znames, an.z_slots, an.leaf_names_aug, an.nz,
-                an.scaling, strs(an.multi.get("z_state_names")), an.recast, True, self.ctrl, self.phys_cols,
+                an.scaling, strs(an.multi.get("z_state_names")), self.ctrl, self.phys_cols,
                 sys.models, sys.real_state_names, sys.solve_param_names, sys.held_of(0),
                 kcall_fwd_sh=sys.kcall_fwd_shared,
                 select_fn=sys.fwd_select,
@@ -516,8 +515,7 @@ class Reconstruction:
         if e.get("closed_form"):
             vargs = (e, fc, an.znames, an.leaf_names_aug, sc["point0"], sc["nt_used"], an.kcall)
             def in_null(cols=None):
-                return (verify_in_nullspace(*vargs, sc["pool"], self.pool_next, an.nz,
-                                                               self.dir_call, cols=cols))
+                return verify_in_nullspace(*vargs, self.pool_next, an.nz, self.dir_call, cols=cols)
             if per_prime:
                 # a fit per prime states only the columns off the resting states and the anchor
                 verified = in_null(None if self.phys_cols is None else self.phys_cols + [fc])
@@ -552,7 +550,7 @@ class Reconstruction:
     def full_probe(self):
         """The probe over all leaves, by bisection over leaf groups when there are many."""
         an = self.an
-        if an.n_aug > state.get("group_probe_min", 150):
+        if an.n_aug > 150:
             def all_res(rp, p, zvals=None):
                 v = [null_residues(rp, fc, p) for fc in self.residual]
                 return np.concatenate(v) if v else np.zeros(0, dtype=np.int64)

@@ -217,7 +217,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
     lines = (list(fl.values()) + [v for g in gl for v in g.values()] +
              [v for ic in il for v in ic.values()] +
              [str(k) for k in fl] + [str(t) for t in taken])
-    local, parse = _make_local_parse(lines)
+    _, parse = _make_local_parse(lines)
     pos, _ = declared(positive)
 
     def is_pos(sym):
@@ -403,7 +403,7 @@ def log_arg_event(var, value, method, maps):
     """One event in the log coordinates as {'var', 'value', 'method', 'consts'}, or {'why': ...}."""
     maps = list(maps)
     lines = [str(value)] + [str(m[k]) for m in maps for k in ('v', 'L', 'a', 'b')]
-    local, parse = _make_local_parse(lines)
+    _, parse = _make_local_parse(lines)
     ent = {str(m['v']): (spy.Symbol(str(m['L']), real=True), parse(str(m['a'])),
                          parse(str(m['b']))) for m in maps}
     sub = {parse(v): (spy.exp(Lv) - a) / b for v, (Lv, a, b) in ent.items()}
@@ -439,7 +439,7 @@ def log_arg_back_vec(vec, maps):
     maps = list(maps)
     lines = [str(x) for x in vec.values()] + [str(k) for k in vec] + \
         [str(m[k]) for m in maps for k in ('v', 'L', 'a', 'b')]
-    local, parse = _make_local_parse(lines)
+    _, parse = _make_local_parse(lines)
     V = {str(k): parse(str(x)) for k, x in vec.items()}
     ent = [(parse(str(m['v'])), str(m['L']), parse(str(m['a'])), parse(str(m['b'])))
            for m in maps]
@@ -468,7 +468,7 @@ def log_arg_back_vec(vec, maps):
 
 def scaling_weights(comps):
     """{name: weight} when every component is a number times its own coordinate, else None."""
-    local, parse = _make_local_parse([str(v) for v in comps.values()] +
+    _, parse = _make_local_parse([str(v) for v in comps.values()] +
                                      [str(k) for k in comps])
     out = {}
     for k, v in comps.items():
@@ -487,7 +487,7 @@ def log_chart_generators(gens, coords):
         if g is None:
             exprs_of.append(None)
             continue
-        local, parse = _make_local_parse([str(v) for v in g.values()] + names)
+        _, parse = _make_local_parse([str(v) for v in g.values()] + names)
         exprs_of.append({str(k): spy.sympify(parse(str(v))) for k, v in g.items()})
     all_e = [e for g in exprs_of if g for e in g.values()]
     coord_syms = {spy.Symbol(n) for n in names}
@@ -555,7 +555,7 @@ def exp_chart_generators(gens, coords, positive):
         if g is None:
             exprs_of.append(None)
             continue
-        local, parse = _make_local_parse([str(v) for v in g.values()] + names)
+        _, parse = _make_local_parse([str(v) for v in g.values()] + names)
         exprs_of.append({str(k): spy.expand_log(spy.sympify(parse(str(v))), force=True)
                          for k, v in g.items()})
     coord_syms = {spy.Symbol(n) for n in names}
@@ -614,7 +614,7 @@ def exp_chart_back(expr, v_names, l_names, solve_for=None):
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     v_names, l_names = as_list(v_names), as_list(l_names)
-    local, parse = _make_local_parse([str(expr)] + [str(x) for x in v_names + l_names])
+    _, parse = _make_local_parse([str(expr)] + [str(x) for x in v_names + l_names])
     e = parse(str(expr))
     vp = {str(l): spy.Symbol(str(v), positive=True) for v, l in zip(v_names, l_names)}
     e = e.subs({parse(l): spy.log(v) for l, v in vp.items()})
@@ -629,7 +629,7 @@ def log_chart_back(expr, x_names, thetas, bases, solve_for=None):
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     x_names, thetas, bases = as_list(x_names), as_list(thetas), as_list(bases)
-    local, parse = _make_local_parse([str(expr)] + [str(x) for x in x_names + thetas])
+    _, parse = _make_local_parse([str(expr)] + [str(x) for x in x_names + thetas])
     e = parse(str(expr))
     subs = {}
     logb = None
@@ -649,7 +649,7 @@ def log_param_backsub(expr, comp, x_names, thetas, bases):
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     x_names, thetas, bases = as_list(x_names), as_list(thetas), as_list(bases)
-    local, parse = _make_local_parse([str(expr)] + [str(x) for x in x_names + thetas])
+    _, parse = _make_local_parse([str(expr)] + [str(x) for x in x_names + thetas])
     e = parse(str(expr))
     subs = {}
     for X, th, b in zip(x_names, thetas, bases):
@@ -731,7 +731,7 @@ def recast_backsub_expr(expr, e_names, l_names, bases, exps):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     e_names, l_names, bases, exps = (as_list(e_names), as_list(l_names),
                                      as_list(bases), as_list(exps))
-    local, parse = _make_local_parse(
+    _, parse = _make_local_parse(
         [str(expr)] + [str(x) for x in e_names + l_names + bases + exps])
     e = parse(str(expr))
     subs = {}

@@ -43,8 +43,7 @@
   "method": "observability"
  },
  "env": {
-  "DMOD_MSOLVE": "",
-  "DMOD_SYM_NOCHUNK": "1"
+  "DMOD_MSOLVE": ""
  },
  "options": {}
 }

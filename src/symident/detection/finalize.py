@@ -160,7 +160,7 @@ def complete(syms, positive=True, coordinates=None):
     return out
 
 
-def finalize(raw, method, settings, call=None, elapsed=None, coordinates=None):
+def finalize(raw, method, settings, elapsed=None, coordinates=None):
     """The public result: verdict at top level, computation in info."""
     is_obs = method == "observability"
     raw_syms = raw.get("non_identifiable") if isinstance(raw, dict) else raw
@@ -200,7 +200,7 @@ def finalize(raw, method, settings, call=None, elapsed=None, coordinates=None):
             "proof": [{"support": s["support"], "reason": d.get("proof") or "no exact proof on this path"}
                       for d, s in zip(raw_syms, syms) if s["level"] == "verified"]}
     return {"method": method, "identifiable": identifiable, "rank": rank, "dim": dim,
-            "symmetries": syms, "info": info, "call": call}
+            "symmetries": syms, "info": info}
 
 
 def log_arg_back(raw, la):

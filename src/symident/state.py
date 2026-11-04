@@ -87,7 +87,6 @@ SWITCHES = {
     "MPFR_VERSION": ("install", "MPFR version install_msolve() builds"),
     "FLINT_VERSION": ("install", "FLINT version install_msolve() builds"),
     "JOBS": ("install", "parallel jobs of install_msolve()"),
-    "OMP_STUB_H": ("install", "guard of the OpenMP stub header of the msolve build"),
 }
 
 

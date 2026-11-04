@@ -191,7 +191,7 @@ def rest_parametrization(eqs, rest, params):
         return None
     try:
         nums = [spy.numer(spy.together(e)) for e in eqs]
-        sub, rem, left = _triangular(nums, rest)
+        sub, rem, _ = _triangular(nums, rest)
         if not rem:
             return {"sub": sub, "params": [], "eqs": []}
         rng = random.Random(len(eqs))

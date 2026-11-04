@@ -73,7 +73,7 @@ def _as_list(x):
     return list(x)
 
 
-def get_symbols(exprs, exclude=None):
+def get_symbols(exprs):
     """Symbols of the expressions in order of first appearance (cOde::getSymbols)."""
     seen = {}
     for e in _as_list(exprs):
@@ -82,11 +82,7 @@ def get_symbols(exprs, exclude=None):
         for kind, text in tokens(e):
             if kind == "sym" and text not in seen:
                 seen[text] = True
-    out = list(seen)
-    if exclude:
-        ex = set(exclude)
-        out = [s for s in out if s not in ex]
-    return out
+    return list(seen)
 
 
 def _atomic(text):

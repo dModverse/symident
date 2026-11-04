@@ -149,11 +149,6 @@ def _ode_zeros(fdyn, forcings, known=()):
         zero.update({spy.Symbol(k): 0 for k in new})
 
 
-def _ode_zero_states(fdyn, forcings):
-    """States forced to zero at rest by their right-hand sides, with the inputs at zero."""
-    return _ode_zeros(fdyn, forcings)[0]
-
-
 def _rest_zeros(fdyn, reactions, forcings):
     """The states at zero at rest: those the network and the right-hand sides force, then one per branch, noted."""
     zero = []
@@ -424,7 +419,7 @@ def _gauged(kw):
     gp = kw["gauge_preference"]
     pref = None if gp is None else [gp] if isinstance(gp, str) else list(gp)
     res = gauged_detection({k: v for k, v in kw.items() if k != "gauge_preference"}, pref, kw.get("fixed"),
-                           kw.get("reconstruct"), kw.get("verbose"))
+                           kw.get("reconstruct"))
     ses = state.get("session")
     if ses is not None and ses.depth == 1:
         ses.primes = all_primes()
@@ -771,7 +766,7 @@ def _projection_bound(kw, res):
         return None
     f = dict(kw["f"])
     taken = set(get_symbols(_model_texts(kw))) | set(f)
-    fj, jets = _input_jets(f, list(ui["names"]), int(ui["jet_order"]), taken)
+    fj = _input_jets(f, list(ui["names"]), int(ui["jet_order"]), taken)[0]
     b = _model_bound(dict(kw, f=fj), res, [{"_": "1"}], 1, int(pj["order"]))
     if not isinstance(b, dict) or b.get("probability") is None:
         return None
@@ -970,7 +965,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                        gauge_preference=False, forcings=None, events=None, conditions=None,
                        equilibrate=False, reduce_cq=False, free_initial=None, reconstruct=False,
                        positive=True, verify=True, cores=1, control=None, scalings_only=False,
-                       sym_engine="modular", verbose=False, reactions=None, totals=None,
+                       sym_engine="modular", reactions=None, totals=None,
                        regimes=None, unknown_inputs=None, jet_order=None, nuisance=None, known_order=None):
     """The result dictionary of the detection on plain inputs."""
     control = {**reconst_control(), **dict(control or {})}
@@ -991,15 +986,9 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
     events = as_events(events)
     model_exprs_box = {}
 
-    def deliver(raw, method, coordinates=None):
-        raw = log_arg_back(raw, log_arg)
-        if log_arg is not None and coordinates:
-            coordinates = replace_symbols(log_arg["L"], log_arg["v"], list(coordinates))
-        raw = rename_result(raw, ic_from, ic_to)
-        if ic_from and coordinates:
-            coordinates = replace_symbols(ic_to, ic_from, list(coordinates))
-        res = finalize(raw, method, settings, elapsed=time.monotonic() - t0clock,
-                       coordinates=coordinates)
+    def deliver(raw, method):
+        raw = rename_result(log_arg_back(raw, log_arg), ic_from, ic_to)
+        res = finalize(raw, method, settings, elapsed=time.monotonic() - t0clock)
         res["info"]["model_exprs"] = model_exprs_box["v"]
         res["info"]["model_rhs"] = model_exprs_box["rhs"]
         res["info"]["model_inputs"] = list(forcings)
@@ -1424,7 +1413,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         sr = observability_sympy_multi(
             model=eqn_lines(fdyn), observation=g_lines(), condition_subs=res["subs"],
             condition_ic0=res["ic0"], condition_obs=seg_obs, condition_rest_subs=res["rest_subs"],
-            fixed=fixed or None, parameters=parameters or None, inputs=forcings or None)
+            fixed=fixed or None, parameters=parameters or None)
         if not sr.get("ok"):
             raise ValueError('engine="symbolic": ' +
                              str(sr.get("why") or "could not build the symbolic system."))

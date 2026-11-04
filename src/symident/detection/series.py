@@ -80,19 +80,6 @@ def pade_mod(s, dn, dd, p):
     return {"P": P, "Q": q}
 
 
-def ser_div(a, b, p):
-    """Quotient of the truncated power series `a` by `b` mod `p`."""
-    N = len(a)
-    q = [0] * N
-    ib = invmod(b[0], p)
-    for k in range(N):
-        acc = int(a[k])
-        for j in range(1, k + 1):
-            acc = (acc - int(b[j]) * q[k - j]) % p
-        q[k] = acc % p * ib % p
-    return q
-
-
 def pade_at(pq, t, p):
     """The Pade approximant `pq` at `t` mod `p`, or None at a pole."""
     def ev(cf):

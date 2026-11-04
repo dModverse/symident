@@ -68,8 +68,7 @@
  },
  "env": {
   "DMOD_MSOLVE": "",
-  "DMOD_SYM_BLOCKMB": "0.000001",
-  "DMOD_SYM_NOCHUNK": ""
+  "DMOD_SYM_BLOCKMB": "0.000001"
  },
  "options": {}
 }

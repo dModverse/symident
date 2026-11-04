@@ -4,6 +4,8 @@
   point. Where the resting state there needs msolve and msolve is missing, the rank is
   verified, and `info["limits"]` names the reason; the analysis itself does not need msolve
   for that check.
+* The report of a reduction on a declared domain names that domain.
+* Wheels for Python 3.15.
 
 # symident 0.13.0
 

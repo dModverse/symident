@@ -69,7 +69,7 @@ def _coords_of(d):
     return list(d["generator"]) if d.get("generator") is not None else list(d.get("support") or [])
 
 
-def gauge_suggest(syms, kernel, coordinates, pref=None, fixed=()):
+def gauge_suggest(syms, kernel, coordinates, fixed=()):
     """The suggested scaling gauge and the plain choice, with the sizes of the general directions each leaves."""
     scal = [d for d in syms if d["type"] == "scaling"]
     gen = [d for d in syms if d["type"] != "scaling"]
@@ -81,7 +81,7 @@ def gauge_suggest(syms, kernel, coordinates, pref=None, fixed=()):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         best = choose_gauge(scal, None, fixed=fixed, kernel=kernel)
-        plain = choose_gauge(scal, pref, fixed=fixed,
+        plain = choose_gauge(scal, None, fixed=fixed,
                              avoid=list(dict.fromkeys(c for d in gen for c in _coords_of(d))))
     return {"gauge": best, "sizes": sorted(shape(best)), "plain": plain,
             "plain_sizes": sorted(shape(plain))}
@@ -137,10 +137,10 @@ def choose_gauge(scal, pref, avoid=(), fixed=(), kernel=None):
     return chosen
 
 
-def gauged_detection(args, pref, fixed, reconstruct, verbose):
+def gauged_detection(args, pref, fixed, reconstruct):
     """Scalings first, then the general directions in a gauge of the scalings."""
     from .core import symmetry_detection
-    args = dict(args, gauge_preference=False, verbose=False)
+    args = dict(args, gauge_preference=False)
     t0 = time.monotonic()
     a1 = dict(args, reconstruct=False)
     with state.options(keep_kernel=True, stacked_quick=True):

@@ -32,8 +32,7 @@ def test_dumps_cleans_values_json_cannot_hold():
 def test_detect_and_reduce_round_trip(monkeypatch):
     # the scaling of x against s, found and removed; the environment is restored after the call
     monkeypatch.delenv("SYMIDENT_SOLVEDIAG", raising=False)
-    out = rjson.detect_json(json.dumps(SPEC), env=json.dumps({"SYMIDENT_SOLVEDIAG": "0"}),
-                            options=json.dumps({"cores": None, "nested": {"a": 1}}))
+    out = rjson.detect_json(json.dumps(SPEC), env=json.dumps({"SYMIDENT_SOLVEDIAG": "0"}))
     res = json.loads(out)
     assert "SYMIDENT_SOLVEDIAG" not in os.environ
     assert res["info"]["settings"]["switches"]["SOLVEDIAG"] == "0"
@@ -46,7 +45,7 @@ def test_detect_and_reduce_round_trip(monkeypatch):
 
 def test_context_restores_a_preset_variable(monkeypatch):
     monkeypatch.setenv("SYMIDENT_PROBE_ONLY", "keep")
-    with rjson._context(json.dumps({"SYMIDENT_PROBE_ONLY": "other"}), None):
+    with rjson._context(json.dumps({"SYMIDENT_PROBE_ONLY": "other"})):
         assert os.environ["SYMIDENT_PROBE_ONLY"] == "other"
     assert os.environ["SYMIDENT_PROBE_ONLY"] == "keep"
 

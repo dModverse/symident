@@ -176,8 +176,7 @@ def _modular_nullspace_int(rows_int, ncols):
 
 def exact_int_kernel(rows, ncols):
     """Primitive integer basis of the kernel of an integer matrix, as int lists."""
-    basis = exact_nullspace([[int(x) for x in r] for r in rows], int(ncols),
-                           integer=True)
+    basis = exact_nullspace([[int(x) for x in r] for r in rows], int(ncols))
     out = []
     for v in basis:
         L = 1
@@ -193,15 +192,14 @@ def exact_int_kernel(rows, ncols):
     return out
 
 
-def exact_nullspace(rows, ncols, integer=False):
-    """Nullspace basis as sympy column vectors; integer=True tries the modular path first."""
+def exact_nullspace(rows, ncols):
+    """Nullspace basis of an integer matrix as sympy column vectors, by the modular path first."""
     if not rows:
         return [spy.Matrix([1 if j == c else 0 for j in range(ncols)])
                 for c in range(ncols)]
-    if integer:
-        basis = _modular_nullspace_int(rows, ncols)
-        if basis is not None:
-            return basis
+    basis = _modular_nullspace_int(rows, ncols)
+    if basis is not None:
+        return basis
     M = spy.Matrix([[spy.sympify(x) for x in row] for row in rows])
     # the modular solver needs a rational matrix; transcendental constants
     # (e.g. log(10) from a log10 observable) route to the exact sympy nullspace

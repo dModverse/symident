@@ -42,7 +42,7 @@ def verify_direction(entry, f, znames, leaf_names, point0, nt_used, kcall, resid
     return False
 
 
-def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, pool, pool_next, nz,
+def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, pool_next, nz,
                         dir_call=None, tries=6, need=2, cols=None):
     """Gauge-independent check that a direction lies in the nullspace at `need` of `tries` fresh seeded points."""
     if entry.get("vector") is None:

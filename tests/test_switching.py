@@ -421,7 +421,7 @@ def test_a_switch_removed_by_the_default_sign_of_a_state_warns():
 def test_regimes_name_a_surface_in_any_form():
     sw = Switches(["VG", "Gthr"])
     h = sw.indicator(spy.sympify("Q1/VG - Gthr"))
-    sgn, parts = sw.factored(spy.sympify("Q1/VG - Gthr"))
+    _, parts = sw.factored(spy.sympify("Q1/VG - Gthr"))
     assert len(parts) == 1 and sw.match(parts[0]) is not None and h.free_symbols == set(sw.ind)
 
 

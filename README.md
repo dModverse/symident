@@ -24,7 +24,7 @@ pip install symident
 ```
 
 Wheels are built for Linux (x86_64, aarch64, glibc 2.28 or newer; tested on Debian
-and Fedora), macOS (x86_64, arm64) and Windows (x86_64), for Python 3.10 to 3.14. Elsewhere
+and Fedora), macOS (x86_64, arm64) and Windows (x86_64), for Python 3.10 to 3.15. Elsewhere
 pip builds from source, which needs a C++17 compiler and CMake; with OpenMP the kernel runs
 on several threads. The development version installs with
 `pip install git+https://github.com/dModverse/symident`.

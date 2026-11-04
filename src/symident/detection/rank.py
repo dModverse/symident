@@ -14,16 +14,10 @@ def _ok(r):
     return r is not None and bool(r.get("ok"))
 
 
-def saturate_certify(kcall, n_leaves, nz, max_m=0, warm=None, probe_block=1, block_call=None,
+def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_block=1, block_call=None,
                      budget=None, block_map=None, nt_min=0, nt_min_block=None, prep=None,
-                     rank_cap=None, block_profile=None, set_caps=None, checks=True):
+                     rank_cap=None, block_profile=None, checks=True):
     """Saturated reference rank after raising the Lie and gap orders, or None without a usable point."""
-    if warm is None:
-        def warm(pts, primes):
-            return None
-    if set_caps is None:
-        def set_caps(orders, point, Mtot, first):
-            return None
     if rank_cap is None:
         rank_cap = nz
     block_call = block_call or []

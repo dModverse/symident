@@ -43,7 +43,7 @@ class Narrow:
             return []
         Nt = min(Nt, self.nt)
         if an.joint:
-            per = state.get("chunk_points", 2 * max(1, run.cores))
+            per = 2 * max(1, run.cores)
             out = []
             for s in range(0, len(point_list), per):
                 out.extend(an.sys.chunk(point_list[s:s + per], prime_vec[s:s + per], Nt, self.cols, self.conds))
@@ -147,9 +147,8 @@ class Narrow:
             reach.append(min(r) if r else 0)
         max_ord = int(min(24, max(8, max(reach) + 2 * self.m)))
         try:
-            # a closed form much longer than this is no usable result and costs minutes to verify
             jg = jet_generator(conds, [an.znames[c] for c in self.cols], an.znames[self.anchor],
-                               max_order=max_ord, max_chars=20000, work_limit=limit)
+                               max_order=max_ord, work_limit=limit)
         except SYMPY_FAILS as err:
             sympy_fail(err)
             rec.tlog(f"narrow: jet error: {err}")
@@ -263,7 +262,7 @@ class Narrow:
                         "reason": "translation-group back-substitution failed"}
             e["route"] = f"{e['route']}, {len(groups)} exchange group" + ("s" if len(groups) > 1 else "")
         if not verify_in_nullspace(e, self.anchor, an.znames, an.leaf_names_aug, sc["point0"], sc["nt_used"],
-                                   an.kcall, sc["pool"], rec.pool_next, an.nz, rec.dir_call):
+                                   an.kcall, rec.pool_next, an.nz, rec.dir_call):
             return {"support": e["support"], "type": "general", "closed_form": False,
                     "reason": "a closed form was reconstructed but failed verification at a fresh prime"}
         eb = an.multi.get("exp_back") or {}

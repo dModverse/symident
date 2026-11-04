@@ -142,7 +142,7 @@ def eval_rational_mod(expr, names, vals, q):
         names = [names]
     if not isinstance(vals, (list, tuple)):
         vals = [vals]
-    local, parse = _make_local_parse([str(expr)] + [str(n) for n in names])
+    _, parse = _make_local_parse([str(expr)] + [str(n) for n in names])
     e = spy.sympify(parse(str(expr)))
     # decimals as the rationals they write: no float enters
     e = e.xreplace({x: spy.Rational(str(x)) for x in e.atoms(spy.Float)})

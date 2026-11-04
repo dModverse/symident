@@ -124,5 +124,3 @@ Installation of msolve:
    FLINT version install_msolve() builds.
 ``JOBS``
    parallel jobs of install_msolve().
-``OMP_STUB_H``
-   guard of the OpenMP stub header of the msolve build.

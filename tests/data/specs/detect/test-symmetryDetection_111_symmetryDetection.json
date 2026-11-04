@@ -12,9 +12,7 @@
   "symEngine": "symbolic"
  },
  "env": {
-  "DMOD_MSOLVE": "",
-  "DMOD_SYM_NOCHUNK": "",
-  "DMOD_SYM_SOLVEPOOL": ""
+  "DMOD_MSOLVE": ""
  },
  "options": {}
 }

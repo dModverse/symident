@@ -64,19 +64,6 @@ def certified_rank(rows):
     return len(sel)
 
 
-def qr_rank(M, tol=1e-7):
-    """Numerical rank by pivoted QR with R's convention |R_ii| > tol |R_11|."""
-    import scipy.linalg
-    M = np.asarray(M, dtype=float)
-    if M.size == 0:
-        return 0
-    R = scipy.linalg.qr(M, mode="r", pivoting=True)[0]
-    d = np.abs(np.diag(R))
-    if not d.size or d[0] == 0:
-        return 0
-    return int(np.sum(d > tol * d[0]))
-
-
 def eta_rows(preps, vars_, pt, p):
     """Log-derivative rows eta_i = xi_i(z)/z_i of a block at one point mod p."""
     idx = [[i for i, v in enumerate(vars_) if v in pr["comps"]] for pr in preps]
@@ -93,16 +80,11 @@ def eta_rows(preps, vars_, pt, p):
     return rows
 
 
-def gcd(a, b):
-    """Greatest common divisor of the absolute values of `a` and `b`."""
-    return math.gcd(int(abs(a)), int(abs(b)))
-
-
-def modular_nullspace(rows_at, n, eval_vars, primes=PRIMES, min_rows=0):
-    """Common nullspace of sampled rows over the primes as primitive integer columns, sampled past `min_rows` rows."""
+def modular_nullspace(rows_at, n, eval_vars, min_rows=0):
+    """Common nullspace of sampled rows over the engine primes as primitive integer columns, past `min_rows` rows."""
     basis_per, pivots_per, n_rows = {}, {}, 0
     nv = len(eval_vars)
-    for pi, p in enumerate(primes, start=1):
+    for pi, p in enumerate(PRIMES, start=1):
         pool = Pool()
         rows = np.zeros((0, n), dtype=np.int64)
         prev, flat = -1, 0
@@ -157,7 +139,7 @@ def modular_nullspace(rows_at, n, eval_vars, primes=PRIMES, min_rows=0):
         return {"basis": None, "rows": n_rows}
     nf = basis_per[use[0]].shape[1]
     residues = np.stack([basis_per[pi].flatten(order="F") for pi in use], axis=1)
-    rec = rat_recon(residues, [primes[pi - 1] for pi in use])
+    rec = rat_recon(residues, [PRIMES[pi - 1] for pi in use])
     if any(d == "0" for d in rec["den"]):
         return {"basis": None, "rows": n_rows}
     num = [int(x) for x in rec["num"]]

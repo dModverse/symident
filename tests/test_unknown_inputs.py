@@ -1,6 +1,5 @@
 """Unknown inputs: jet chains whose initial values are nuisance coordinates of the kernel."""
 
-import numpy as np
 import pytest
 import sympy as spy
 
@@ -150,14 +149,6 @@ def test_a_gauge_keeps_the_unknown_inputs(gauge):
     r = si.detect(m, reconstruct=True, gauge=gauge)
     assert (r.rank, r.dim, r.info["coordinates"]) == (free.rank, free.dim, free.info["coordinates"])
     assert "T" not in r.info["coordinates"] and r.info["unknown_inputs"]["names"] == ["T"]
-
-
-def test_a_projected_rank_at_a_special_point_is_not_proven():
-    from symident.detection.observability.nuisance import projected_rank
-    p = 1000003
-    # a point where the auxiliary columns drop rank raises the projected rank
-    assert projected_rank(np.array([[1, 3]]), [1], p) == {"rank": 0, "aux_full": True}
-    assert projected_rank(np.array([[1, 0]]), [1], p) == {"rank": 1, "aux_full": False}
 
 
 def test_full_rank_with_unknown_inputs_is_verified():

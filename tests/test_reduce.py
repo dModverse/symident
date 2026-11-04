@@ -796,7 +796,7 @@ def test_square_root_of_a_perfect_square_is_taken():
 def test_partial_chart_is_named_in_the_verdict():
     red = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}), positive=["k"], reconstruct=True).reduce()
     assert red.partial == ["X₁"]
-    assert "covers only part of the positive orthant" in str(red).splitlines()[0]
+    assert "covers only part of the declared domain" in str(red).splitlines()[0]
 
 
 def test_the_declared_positive_names_of_the_detection_need_not_be_coordinates():
@@ -925,8 +925,7 @@ def test_invariants_are_checked_against_the_generators_as_detected():
 
 def test_independence_of_invariants_with_exp_is_certified():
     from symident.reduction.blocks import independent_set
-    assert independent_set(["exp(a)*b", "exp(2*a)*b^2", "c*exp(b)"], ["a", "b", "c"], 2,
-                           keep_order=True) == ["exp(a)*b", "c*exp(b)"]
+    assert independent_set(["exp(a)*b", "exp(2*a)*b^2", "c*exp(b)"], ["a", "b", "c"], 2) == ["exp(a)*b", "c*exp(b)"]
 
 
 def test_the_invariant_count_says_whether_it_is_exact():
@@ -1037,7 +1036,7 @@ def test_a_sampled_vector_is_checked_before_it_is_chosen(monkeypatch):
     expts = np.array([[1, 0], [1, 1]])
     calls = []
 
-    def fake(rows_at, n, eval_vars, primes=None, min_rows=0):
+    def fake(rows_at, n, eval_vars, min_rows=0):
         calls.append(min_rows)
         return {"basis": np.array([[1, 0], [0, 1]], dtype=np.int64), "rows": 3}
     monkeypatch.setattr(ri, "modular_nullspace", fake)

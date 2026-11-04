@@ -13,8 +13,7 @@ def _lie_deriv(h, states, rhs):
 
 
 def observability_sympy_multi(model, observation, condition_subs=None, condition_ic0=None,
-                            fixed=None, parameters=None, inputs=None, backend='sympy',
-                            condition_obs=None, condition_rest_subs=None):
+                            fixed=None, parameters=None, condition_obs=None, condition_rest_subs=None):
     """Pure-symbolic multi-condition observability, the exact cross-check of the modular multi-condition engine."""
     def as_l(v):
         return list(v) if isinstance(v, (list, tuple)) else ([] if v is None else [v])

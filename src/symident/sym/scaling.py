@@ -10,7 +10,7 @@ from .. import state
 from ..errors import SYMPY_FAILS, InapplicableError, sympy_fail
 from .charts import _exp_atom, _hyp_to_exp
 from .linalg import exact_nullspace
-from .parse import _as_list, _clean, _make_local_parse, _read_equations
+from .parse import _as_list, _clean, _make_local_parse
 from .recast import _TRIG, _TRIG_RECIPROCAL
 
 
@@ -128,9 +128,8 @@ def _exp_split(expr, logs=False):
     return rec(_hyp_to_exp(expr)), exps
 
 
-def _scaling_rows(diff_equations, obs_functions, m, zvars, inter_offset, logs=False,
-                  seen=None):
-    """(rows, ninter, skipped): sparse monomial-exponent rows of one (f, g) system for the scaling kernel."""
+def _scaling_rows(diff_equations, obs_functions, m, zvars, logs=False, seen=None):
+    """(rows, skipped): sparse monomial-exponent rows of one (f, g) system for the scaling kernel."""
     skipped = 0
     seen = set() if seen is None else seen
 
@@ -167,7 +166,7 @@ def _scaling_rows(diff_equations, obs_functions, m, zvars, inter_offset, logs=Fa
             if k not in keys:
                 keys.add(k)
                 rows.append(dict(k))
-    return rows, 0, skipped
+    return rows, skipped
 
 
 def _materialize_rows(rows, ncols):
@@ -181,9 +180,9 @@ def _materialize_rows(rows, ncols):
     return out
 
 
-def _scaling_gens(rows, ncols, nz):
-    """Primitive integer generators of the scaling kernel over the first nz weight columns."""
-    basis = exact_nullspace(rows, ncols, integer=True) if rows else []
+def _scaling_gens(rows, nz):
+    """Primitive integer generators of the scaling kernel over the nz weight columns."""
+    basis = exact_nullspace(rows, nz) if rows else []
     cvecs = [[v[j] for j in range(nz)] for v in basis
              if any(v[j] != 0 for j in range(nz))]
     gens = []
@@ -244,7 +243,7 @@ def verify_scalings(scalings, tapes):
                   _as_list(t.get('ver_t0', []))]
         if t.get('ver_time'):
             lines.append('_ = %s' % t['ver_time'])
-    local, parse = _make_local_parse(lines)
+    _, parse = _make_local_parse(lines)
 
     def split(line):
         lhs, rhs = _clean(line).split('=', 1)
@@ -337,44 +336,6 @@ def _scaling_gens_recast(gens, znames, nz, recast):
     return out
 
 
-def scaling_symmetries(all_variables, diff_equations, obs_functions, m, params,
-                      fixed=(), verbose=True):
-    """Exact scaling symmetries z_i -> lam^{c_i} z_i from the integer kernel; `fixed` gets weight zero."""
-    zvars = list(all_variables[:m]) + list(params)
-    nz = len(zvars)
-    znames = [str(s) for s in zvars]
-    fixedset = set(str(s) for s in fixed)
-
-    sparse, ninter, skipped = _scaling_rows(diff_equations, obs_functions, m, zvars, nz,
-                                            logs=True)
-    ncols = nz + ninter
-    rows = _materialize_rows(sparse, ncols)
-    for j in range(nz):                      # a fixed coordinate does not scale
-        if znames[j] in fixedset:
-            row = [0] * ncols
-            row[j] = 1
-            rows.append(row)
-
-    non_id = _scaling_nonid(_scaling_gens(rows, ncols, nz), znames, nz)
-
-    if verbose:
-        print('-' * 60)
-        print('%d scaling symmetry/ies (exact integer kernel)%s:'
-              % (len(non_id), '' if not skipped else
-                 ', %d non-polynomial term(s) skipped' % skipped))
-        for d in non_id:
-            print('  ' + ', '.join('%s^(%s)' % (k, d['vector'][k])
-                                   for k in d['support']))
-
-    return {
-        'method': 'scaling',
-        'count': len(non_id),
-        'non_identifiable': non_id,
-        'coordinates': znames,
-        'skipped': skipped,
-    }
-
-
 def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=None,
                            recast=None, logs=False, extra_model=None, extra_obs=None):
     """Scaling symmetries common to every condition; `inputs` and `fixed` do not scale."""
@@ -439,12 +400,10 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
     znames = [str(s) for s in zvars]
     m = len(state_syms)
 
-    rows, inter_offset, skipped, seen = [], nz, 0, set()
+    rows, skipped, seen = [], 0, set()
     for c in range(K):
-        sparse, ninter, sk = _scaling_rows(per_f[c], per_g[c], m, zvars, inter_offset,
-                                           logs, seen)
+        sparse, sk = _scaling_rows(per_f[c], per_g[c], m, zvars, logs, seen)
         rows.extend(sparse)
-        inter_offset += ninter
         skipped += sk
         # the extra values in rounds with at most one per state
         pending = list(per_xf[c])
@@ -457,28 +416,24 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
                     fx[i] = e
                     used.add(i)
             pending = rest
-            sparse, ninter, sk = _scaling_rows(fx, [], m, zvars, inter_offset, logs, seen)
+            sparse, sk = _scaling_rows(fx, [], m, zvars, logs, seen)
             rows.extend(sparse)
-            inter_offset += ninter
             skipped += sk
         if per_xg[c]:
-            sparse, ninter, sk = _scaling_rows([spy.Integer(0)] * m, per_xg[c], m, zvars,
-                                               inter_offset, logs, seen)
+            sparse, sk = _scaling_rows([spy.Integer(0)] * m, per_xg[c], m, zvars, logs, seen)
             rows.extend(sparse)
-            inter_offset += ninter
             skipped += sk
     if skipped and state.env("LIEDIAG"):
         print('[liediag] scaling_symmetries_multi: %d non-polynomial term(s) skipped '
               '(a scaling they would forbid may be over-reported)' % skipped)
-    ncols = inter_offset
-    dense = _materialize_rows(rows, ncols)
+    dense = _materialize_rows(rows, nz)
     for j in range(nz):
         if znames[j] in fixedset:
-            row = [0] * ncols
+            row = [0] * nz
             row[j] = 1
             dense.append(row)
 
-    gens = _scaling_gens(dense, ncols, nz)
+    gens = _scaling_gens(dense, nz)
     # the integer kernel treats each recast E as free; recover the symbolic-weight scalings
     recast = _as_list(recast)
     if recast:
@@ -488,43 +443,3 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
         non_id = _scaling_nonid(gens, znames, nz)
     return {'method': 'scaling', 'count': len(non_id), 'non_identifiable': non_id,
             'coordinates': znames, 'skipped': skipped}
-
-
-def scaling_symmetries_single(model, observation, inputs=None, fixed=None, parameters=None,
-                              verbose=False):
-    """Scaling symmetries of one condition from the integer kernel of its exponent rows."""
-    model = _as_list(model)
-    observation = _as_list(observation)
-    input_names = _as_list(inputs)
-    fixed_names = _as_list(fixed)
-    extra_params = _as_list(parameters)
-    local, parse = _make_local_parse(model + observation + input_names + fixed_names + extra_params)
-    variables, diff_equations, params = _read_equations(model, parse)
-    _, obs_functions, params = _read_observation(observation, variables, params, parse)
-    for pn in extra_params:
-        s = local.get(pn, spy.Symbol(pn))
-        if s not in params and s not in variables:
-            params.append(s)
-    input_syms = [local.get(nm, spy.Symbol(nm)) for nm in input_names]
-    fixed_syms = [local.get(nm, spy.Symbol(nm)) for nm in fixed_names]
-    for s in input_syms:
-        if s in params:
-            params.remove(s)
-    # a declared input that is also a state is a constant: its equation is dropped
-    keep = [i for i, v in enumerate(variables) if v not in input_syms]
-    variables = [variables[i] for i in keep]
-    diff_equations = [diff_equations[i] for i in keep]
-    all_variables = list(variables) + list(input_syms) + list(params)
-    return scaling_symmetries(all_variables, diff_equations, obs_functions, len(variables), params,
-                             fixed=fixed_syms, verbose=verbose)
-
-
-def _read_observation(observation, variables, parameters, parse):
-    obs_vars, obs_functions, obs_parameters = _read_equations(observation, parse)
-    for var in variables:
-        if var in obs_parameters:
-            obs_parameters.remove(var)
-    for par in parameters:
-        if par in obs_parameters:
-            obs_parameters.remove(par)
-    return obs_vars, obs_functions, parameters + obs_parameters
