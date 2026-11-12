@@ -28,7 +28,7 @@ step() { echo "==> $*" >&2; }
 step "GMP $GMP"
 fetch "https://ftp.gnu.org/gnu/gmp/gmp-$GMP.tar.xz" gmp.tar.xz
 tar xf gmp.tar.xz
-# generic build triples: the binary runs on every CPU of its architecture, not only on the
+# generic build triples: the binary runs on every CPU of the architecture, not only on the
 # one that built it
 (cd "gmp-$GMP" && ./configure --build="$(sh ./configfsf.guess)" --prefix="$PREFIX" \
    --disable-shared --enable-static --with-pic >&2 && make -j"$JOBS" >&2 && make install >&2)

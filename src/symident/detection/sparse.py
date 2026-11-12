@@ -27,7 +27,7 @@ def laurent_candidates(nvar, d_num, d_den):
 
 
 def bot_reconcile(per_prime):
-    """Rational coefficients of a sparse polynomial from its fits per prime, or None when the supports differ."""
+    """Rational coefficients of a sparse polynomial from the fits per prime, or None when the supports differ."""
     np_ = len(per_prime)
 
     def key(m):

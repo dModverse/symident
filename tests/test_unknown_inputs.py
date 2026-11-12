@@ -35,7 +35,7 @@ def test_a_time_varying_rate_as_an_unknown_input():
     m = si.Model({"TU": "lam - rho*TU - eta*TU*V", "TI": "eta*TU*V - delta*TI", "V": "N*delta*TI - c*V"},
                  {"y1": "V", "y2": "TU + TI"}, unknown_inputs=["eta"])
     r = si.detect(m, reconstruct=True)
-    # an input that cancels in a derivative leaves its jet columns short of full rank
+    # an input that cancels in a derivative leaves the input jet columns short of full rank
     st = r.info["rank_status"]
     assert (r.rank, r.dim) == (7, 8) and st["status"] == "verified" and 0 < st["probability"] < 1e-6
     (s,) = r.symmetries

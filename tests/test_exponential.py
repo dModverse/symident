@@ -65,7 +65,7 @@ def test_modular_state_in_exp():
 
     # a known initial value removes the translation
     assert general(det(f_ab(), G_AB, trafo={"A": "0"})) == []
-    # an observable inside exp() holds the same information as its argument
+    # an observable inside exp() holds the same information as the argument
     assert det({"A": "-k*A"}, {"y": "s*exp(A)"}).identifiable
 
 
@@ -124,7 +124,7 @@ def test_hodgkin_huxley():
 
 def test_translation_gauge_real_coordinates():
     obs = det(f_ab(), G_AB, reconstruct=True)
-    # with every coordinate positive the orbit leaves the domain: a chart on the orbits a sign condition names
+    # with every coordinate positive the orbit leaves the domain: the reduction covers the orbits a sign condition names
     b = next(b for b in si.reduce(obs).blocks if b["type"] == "curved")
     assert b["coverage"] == "partial" and b["sign_conditions"] == ["kd - q_1 > 0"]
     red = si.reduce(obs, positive=["B", "kB", "kd", "kE", "s"])
@@ -192,7 +192,7 @@ def test_events_abs_log_of_sums():
     gg = {"y": "s*x"}
     # a known dose separates s and K; log(2) enters exactly, as a known constant
     assert det(gz, gg, events=[event("x", 0, "2", "replace")]).identifiable
-    # a dose in a parameter joins the chart
+    # a dose in a parameter joins the coordinate change
     r = det(gz, gg, events=[event("x", 0, "D", "replace")], reconstruct=True)
     assert set(r.symmetries[0]["generator"]) == {"D", "K", "s"}
     with pytest.raises(Exception, match="add"):
@@ -215,7 +215,7 @@ def test_events_abs_log_of_sums():
     assert expr_equal(gen["x"], f"-({gen['c']})")
     red = si.reduce(r)
     assert det(fc, gc, trafo=red.trafo).identifiable
-    # log(1 + K/x) = log(K + x) - log(x): x keeps log(x), K takes the chart of log(K + x)
+    # log(1 + K/x) = log(K + x) - log(x): x keeps log(x), K takes the coordinate log(K + x)
     for _ in range(3):
         r = det({"x": "r*x*log(1 + K/x)"}, gg)
         assert r.rank == 3
@@ -246,7 +246,7 @@ def test_trig_half_angle():
     r = det({"x": "-k*x"}, {"y": "cos(a + b)*x"})
     assert (r.rank, r.dim) == (2, 4)
 
-    # a state reset by a later event restarts its half angle; a shift does not
+    # a state reset by a later event restarts the half angle; a shift does not
     fs = {"x": "-k*sin(x)"}
     ev = [event("x", 0, "x0", "replace"), event("x", 1, "x1", "replace")]
     assert det(fs, {"y": "c*x"}, events=ev).identifiable
@@ -263,11 +263,11 @@ def test_log_and_powers_of_sums_products():
     def run(fx):
         return det({"x": fx, "y": "k2 - d2*y"}, {"h1": "x", "h2": "y"}, positive=pos)
 
-    # a log of a sum of states, the chart log(1 + x + y) in place of y
+    # a log of a sum of states, the coordinate log(1 + x + y) in place of y
     assert run("k1 - d1*x*log(1 + x + y)").identifiable
     # a free Hill exponent of a sum
     assert run("k1*(x + y)^n/(K^n + (x + y)^n) - d1*x").identifiable
-    # a fractional power of a product splits into powers of its factors
+    # a fractional power of a product splits into powers of the factors
     assert run("k1*sqrt(x*y) - d1*x").identifiable
     # a free power of a product: a and k1 enter only as k1*a^n
     r = run("k1*(a*y)^n - d1*x")

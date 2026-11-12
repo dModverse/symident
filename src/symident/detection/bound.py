@@ -101,7 +101,7 @@ def lie_row_degree(md, k):
 
 
 def rows_degree(rows):
-    """The largest degree of a row over its own common denominator, None where not rational or too large."""
+    """The largest degree of a row over the common denominator of the row, None where not rational or too large."""
     out = 0
     try:
         for r in rows:

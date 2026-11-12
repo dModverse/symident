@@ -68,7 +68,7 @@ def reconstruct_entry(sample_u, mons, residues, primes):
 
 
 def simplify(expr):
-    """`expr` cancelled by SymPy as a string, every name a symbol; `expr` itself when that fails."""
+    """`expr` canceled by SymPy as a string, every name a symbol; `expr` itself when that fails."""
     try:
         out = _RPrinter().doprint(spy.cancel(model_sympify(str(expr))))
     except SYMPY_FAILS as exc:
@@ -95,7 +95,7 @@ def recast_backsub(vector, recast):
 
 
 def eval_modq(expr, env, q):
-    """Rational expression at the integer point env modulo q; None if its denominator vanishes."""
+    """Rational expression at the integer point env modulo q; None if the denominator vanishes."""
     try:
         v = eval_rational_mod(str(expr), list(env.keys()), [int(x) for x in env.values()], int(q))
     except SYMPY_FAILS as exc:

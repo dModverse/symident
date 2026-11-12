@@ -11,7 +11,14 @@ from ..errors import SYMPY_FAILS, RouteError, swallow, sympy_fail
 from ..gfp import PRIMES, invmod, mulmod, random_point, uniform_point, verify_prime
 from ..par import process_map
 from ..rexpr import get_symbols, sym_sort
-from ..sym.exact import certify, event_identities, initial_identities, regime_identities
+from ..sym.exact import (
+    certify,
+    event_identities,
+    initial_identities,
+    initial_lift,
+    linear_lift,
+    regime_identities,
+)
 from ..sym.fields import (
     extend_fields,
     lift_start,
@@ -88,7 +95,7 @@ def series_stack(res, sblocks, nz, N, p, cores=1):
 
 
 def rank_of(r):
-    """The series rank of a kernel result, else its rank."""
+    """The series rank of a kernel result, else the plain rank."""
     return r["rank"] if r.get("rank_s") is None else r["rank_s"]
 
 
@@ -183,7 +190,7 @@ def exact_scaling_set(multi, fixed):
 
 
 def regime_keys(tapes):
-    """Key per tape from its model and observation lines; equal keys share one regime."""
+    """Key per tape from the model and observation lines of the tape; equal keys share one regime."""
     return ["\n".join(_lines(t.get("model_lines")) + ["\x1f"] + _lines(t.get("obs_lines")))
             for t in tapes]
 
@@ -330,7 +337,7 @@ _IDENT = re.compile(r"[A-Za-z._][A-Za-z0-9._]*")
 
 
 def extended_fields(setup, chains):
-    """Fields of the first chain's regime, extended to its initial-value and event-value parameters."""
+    """Fields of the first chain's regime, extended to the initial-value and event-value parameters of the chain."""
     reg1 = setup["regime_of"][chains[0][0]]
     t1 = setup["tapes"][chains[0][0]]
     groups = [_evs(t1.get("ver_t0"))] + [_evs(setup["tapes"][i].get("ver_ev")) for i in chains[0][1:]]
@@ -419,7 +426,7 @@ def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chai
     return out
 
 
-# suffix of an initial value that is a coordinate named like its state
+# suffix of an initial value that is a coordinate named like the state
 INIT = "__0"
 
 
@@ -522,7 +529,7 @@ def exact_direction(setup, field, chains, joint, init=()):
     used = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
     extra = {k: v for k, v in dict(field).items() if k.endswith(INIT)}
     theta = {k: v for k, v in dict(field).items() if k not in set(states)}
-    # a jet of an unknown input has no identity, its component prolongs the input's; the last
+    # a jet of an unknown input has no identity: the jet component prolongs the input component; the last
     # jet has no derivative in the chain
     jets, tops = setup.get("jets") or (), set(setup.get("jet_tops") or ())
     def names(v):
@@ -538,8 +545,18 @@ def exact_direction(setup, field, chains, joint, init=()):
         if res["ok"] is True:
             of[r] = field
             continue
-        # in another regime the direction may need other state components
         own = [ch for ch in chains if setup["regime_of"][ch[0]] - 1 == r]
+        # initial values set by other parameters: the state components from their identities
+        if own and not jets and not joint:
+            ics = [f"{x.strip()} = {_rename_init(e.strip(), init)}" for x, e in
+                   (line.split("=", 1) for line in _lines(setup["tapes"][own[0][0]].get("ver_ic")))]
+            lifts = (initial_lift(field, ics, states, regimes[r]["f"]), linear_lift(field, regimes[r], ics, states))
+            lift = next((x for x in lifts if x is not None and
+                         certify(regime_identities(regimes[r], x, jets))["ok"] is True), None)
+            if lift is not None:
+                of[r] = lift
+                continue
+        # in another regime the direction may need other state components
         alt = None if jets else \
             combined_field(extended_fields(setup, own) if own else setup["gens"][r], theta, states)
         res = certify(regime_identities(regimes[r], alt, jets)) if alt is not None else res
@@ -716,7 +733,7 @@ def event_space(V, evi, evm, fixed, n_states, p):
     """A basis of the directions of the affine space V after the events, in their order."""
     V = np.asarray(V, dtype=np.int64).reshape(-1, n_states).copy()
     fixed = np.atleast_1d(np.asarray(fixed, dtype=bool))
-    # a replace by a value over the leaves resets its state, a value that reads a state or a multiply frees it
+    # a replace by a value over the leaves resets the target state, a value that reads a state or a multiply frees it
     for s, m, fx in zip(np.atleast_1d(evi), np.atleast_1d(evm), fixed):
         if m == 0 and fx:
             V[:, int(s)] = 0
@@ -818,7 +835,7 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
 
 
 def rescaled_lift(target, form, states):
-    """State components of the lift of `form` rescaled to its multiple `target`, None if it is no multiple."""
+    """State components of the lift of `form` rescaled to the multiple `target` of `form`, None if it is no multiple."""
     if not states:
         return states
     try:

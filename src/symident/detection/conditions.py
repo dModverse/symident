@@ -3,6 +3,7 @@
 import math
 import re
 
+from ..errors import InputError
 from ..rexpr import as_number, eval_numeric, get_symbols, is_number, replace_symbols, sym_sort
 from ..sym.charts import log_param_backsub
 
@@ -37,6 +38,10 @@ class Grid:
     def __init__(self, rows, cols):
         self.rows = [str(r) for r in rows]
         self.cols = {str(k): list(v) for k, v in cols.items()}
+        bad = [k for k, v in self.cols.items() if len(v) != len(self.rows)]
+        if bad:
+            raise InputError(f"conditions: the column {bad[0]} has {len(self.cols[bad[0]])} entries "
+                             f"for {len(self.rows)} rows")
 
     @classmethod
     def from_any(cls, x):
@@ -102,7 +107,7 @@ def compose_event(cur, method, value):
 
 
 def _resolver(conditions, cond_subs):
-    """resolve(val, ci): a value with its grid cell and the per-condition trafo of condition `ci` applied."""
+    """resolve(val, ci): a value with the grid cell and the per-condition trafo of condition `ci` applied."""
     cols = set(conditions.colnames()) if conditions is not None else set()
 
     def resolve(val, ci):
@@ -194,7 +199,7 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
         is_t0, seg_of, seg_times = layout(ev, ev_time)
 
         def value(i, k=k, ev=ev, ev_time=ev_time):
-            # an event value reads the clock at its event time
+            # an event value reads the clock at the event time
             return at_time(resolve(ev[i]["value"], k), ev_time[i])
         n_seg = len(seg_times)
         n_gaps = max(n_gaps, n_seg - 1)

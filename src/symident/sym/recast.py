@@ -923,7 +923,7 @@ def _engine_holds(constants=(), degrees=()):
 
 
 def _is_sqrt_rational(e):
-    """Whether e is rational in its symbols and roots that the engine's primes hold."""
+    """Whether e is rational in the symbols it reads and roots that the engine's primes hold."""
     e = spy.sympify(e)
     roots = [a for a in e.atoms(spy.Pow) if a.exp.is_Rational and not a.exp.is_Integer]
     for a in roots:

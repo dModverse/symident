@@ -113,7 +113,8 @@ class PlainSystem:
     solve_held = ()
 
     def hom_prepare(self, point):
-        """Moves every leaf; fits the radical initial values, each with the factor of its relation zero at `point`."""
+        """Moves every leaf; fits the radical initial values, each with the factor of the leaf relation zero at
+        `point`."""
         run = self.run
         self.hom_params = list(run.leaf_names)
         self.nz_wide = self.n_shared = len(run.znames)

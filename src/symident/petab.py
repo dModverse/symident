@@ -6,7 +6,7 @@ import os
 import re
 from fractions import Fraction
 
-from .errors import InapplicableError
+from .errors import SYMPY_FAILS, InapplicableError, sympy_fail
 from .rexpr import get_symbols, replace_symbols, tokens
 
 _TIME_TRIGGER = re.compile(r"^\s*\(?\s*time\s*(>=|>)\s*(.+?)\s*\)?\s*$")
@@ -26,7 +26,7 @@ def _need(module):
 
 
 def _near_zero(text, rel=1e-12):
-    """Whether `text` is a sum of numbers that cancels to below `rel` of its largest term."""
+    """Whether `text` is a sum of numbers that cancels to below `rel` of the largest term."""
     from tokenize import TokenError
 
     import sympy as spy
@@ -106,7 +106,7 @@ def _tables(base, files):
 
 
 def _sub(expr, table):
-    """`expr` with each symbol of `table` replaced by its value in parentheses."""
+    """`expr` with each symbol of `table` replaced by the value from `table` in parentheses."""
     keys = [k for k in get_symbols([expr]) if k in table]
     return replace_symbols(keys, [f"({table[k]})" for k in keys], expr) if keys else expr
 
@@ -274,7 +274,7 @@ def read_sbml(path, names=()):
 
 
 def rescaled(new, conc):
-    """The assignments `new` with each concentration in a compartment it resizes kept at its amount,
+    """The assignments `new` with each concentration in a compartment it resizes kept at the amount of the species,
     concentrations first, so that every value reads the state before the assignment."""
     vols = set(conc.values())
     out = [(x, v) for x, v in new.items() if x not in vols]
@@ -349,7 +349,8 @@ def _piecewise_value(args, table):
     for v, c in pairs + ([(args[-1], "1 > 0")] if len(args) % 2 else []):
         try:
             hit = model_sympify(_sub(c, table))
-        except Exception:
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
             return None
         if hit not in (True, False):
             return None
@@ -421,7 +422,8 @@ def _zero(expr):
     from .sym.parse import model_sympify
     try:
         return model_sympify(expr) == 0
-    except Exception:
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
         return False
 
 
@@ -517,7 +519,7 @@ def read_petab(path):
     Model
         One condition per experiment (v1: per pair of preequilibration and simulation
         condition) with measurements. The estimated parameters stay symbols; every other
-        parameter takes its nominal or SBML value. ``Model.equilibrate`` is set when every
+        parameter takes the nominal or SBML value. ``Model.equilibrate`` is set when every
         experiment starts with a preequilibration, and ``Model.reduce_cq`` when the
         preequilibrated network has conserved totals. ``Model.positive`` holds the estimated
         parameters of the model on a log scale or with a positive lower bound. ``m.petab``
@@ -537,16 +539,16 @@ def read_petab(path):
     An id that the expression language cannot read, one with a leading underscore or one that
     names a constant such as ``pi``, gets an ``X`` in front or an ``_`` behind, in the model and
     in every table; ``m.petab["renamed"]`` maps the ids of the problem to the new names. The time
-    of an SBML event takes the values of its parameters in each experiment.
+    of an SBML event takes the values of the event parameters in each experiment.
 
     A volume that a rate rule changes is a state, one that an assignment rule in time and
-    parameters gives enters with its time derivative, and a concentration in either is
+    parameters gives enters with the time derivative of the volume, and a concentration in either is
     diluted by :math:`-[x] V'/V`. A volume that an event or a period resets keeps the amount
     of every species in it that the reset does not set. The noise model does not enter, nor
-    does a log transformation of an observable. A placeholder of an observable takes its
+    does a log transformation of an observable. A placeholder of an observable takes the
     override from the measurement table; one observable measured with several overrides in an
     experiment becomes one observable per override. A parameter that a later period changes
-    becomes its value at the start plus an input, zero at rest, that an event at the start of
+    becomes the value at the start plus an input, zero at rest, that an event at the start of
     the period sets. A species target of a period after the first is an event. A switch
     between two expressions at a time that every experiment fixes becomes a step state, off
     during a preequilibration, that an event switches on at that time or at the start.
@@ -713,7 +715,7 @@ def read_petab(path):
                 for tr, x0 in zip(trafos, starts):
                     tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
     if all(pre):
-        # a state without dynamics keeps its initial value through the preequilibration
+        # a state without dynamics stays at the initial value through the preequilibration
         for tr, x0 in zip(trafos, starts):
             tr.update({x: x0[x] for x in states if odes.get(x) == "0" and x in x0})
     # a total that rounding of the SBML values leaves next to zero is zero
@@ -729,6 +731,9 @@ def read_petab(path):
     one = len(names) == 1
     if net is not None:
         net = dict(net, stoichiometry=[[float(c) for c in r] for r in net["stoichiometry"]])
+    if totals:
+        from .detection.cq import exact_totals
+        totals = exact_totals(totals, odes)
     m = Model(odes, observables[0] if one else observables, trafo=trafos[0] if one else trafos,
               conditions=None if one else {"rows": names, "cols": {}}, events=events or None,
               inputs=inputs, totals=totals, reactions=net, equilibrate=all(pre), positive=positive,

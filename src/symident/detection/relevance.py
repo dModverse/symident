@@ -15,7 +15,7 @@ def _optimistic(residue_fn):
 
 
 def direction_relevance(f, ref, pivots, z_slots, n_leaves, point0, rel_probe, residue_fn):
-    """Base nullspace vector, its support columns and the leaves moving each entry."""
+    """Base nullspace vector, the support columns and the leaves moving each entry."""
     P = PRIMES[0]
     zvals0 = None if z_slots is None else np.asarray(point0)[z_slots]
 

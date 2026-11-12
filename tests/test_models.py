@@ -51,7 +51,7 @@ def plain(spec):
     """Whether a spec is one condition without events, inputs, switches or a per-condition trafo,
     so that a lifted generator can be checked on the equations directly."""
     tr = spec.get("trafo")
-    # a coordinate named like a state is its initial value, which the lifted field moves apart
+    # a coordinate named like a state is the initial value of that state, which the lifted field moves apart
     return (spec.get("positive") in (None, True) and isinstance(tr, dict) and set(spec["f"]) <= set(tr)
             and not spec.get("conditions") and not spec.get("events") and not spec.get("forcings")
             and not spec.get("equilibrate") and not spec.get("reduceCQ") and isinstance(spec.get("g"), dict)
@@ -102,7 +102,7 @@ def test_detection(path):
 
 def vanishes(e):
     """Whether `e` simplifies to 0: a root of a positive symbol shifted by a constant becomes a new
-    positive symbol, and the radicands are factored so that a square leaves its root."""
+    positive symbol, and the radicands are factored so that a square leaves the root."""
     for _ in range(3):
         if spy.simplify(e) == 0:
             return True

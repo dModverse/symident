@@ -1,4 +1,4 @@
-"""External programs: msolve built from source into a per-user cache, and its lookup."""
+"""External programs: msolve built from source into a per-user cache, and the lookup of msolve."""
 
 import functools
 import glob
@@ -100,7 +100,8 @@ def find_msolve():
 def install_msolve(dir=None, version=None, jobs=None, quiet=False, ask=None):
     """Build msolve from source into a per-user cache.
 
-    msolve solves the coupled resting-state systems of ``detect(..., equilibrate=True)``.
+    msolve solves the coupled resting-state systems of ``detect(..., equilibrate=True)`` and the
+    systems of :meth:`~symident.Symmetries.solution_count`.
     It is built with static GMP, MPFR and FLINT; the build needs a C compiler, ``make``,
     ``m4`` and ``curl`` or ``wget``, network access and a few minutes. Not available on
     Windows. With the default ``dir`` symident finds the build without further settings; for
@@ -109,7 +110,7 @@ def install_msolve(dir=None, version=None, jobs=None, quiet=False, ask=None):
     Parameters
     ----------
     dir : str, optional
-        Cache directory; defaults to :func:`cache_dir`.
+        Cache directory; defaults to :func:`~symident.install.cache_dir`.
     version : str, optional
         msolve release; defaults to ``SYMIDENT_MSOLVE_VERSION``, else the tested release.
     jobs : int, optional

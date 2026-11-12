@@ -1,6 +1,6 @@
-"""Behaviour of the reduction: invariants, sections, charts and zero limits.
+"""Behavior of the reduction: invariants, sections, reparametrizations and zero limits.
 
-Assertions are mathematical: invariants are checked by X(I) = 0, charts by evaluating
+Assertions are mathematical: invariants are checked by X(I) = 0, reparametrizations by evaluating
 them, reparametrizations by detecting again with the emitted trafo.
 """
 
@@ -336,18 +336,18 @@ def test_egf_mek_erk_cascade_reduced_end_to_end():
     obs = {"pMEK_obs": "scale_pMEK * pMEK", "pERK_obs": "scale_pERK * pERK"}
     egf = det(None, obs, reactions=reactions, reduce_cq=False, reconstruct=True)
     r = red(egf)
-    # three unit scalings and the rational confounder alone in its curved block
+    # three unit scalings and the rational confounder alone in a curved block
     assert sorted(b["type"] for b in r.blocks) == ["curved", "scaling", "scaling", "scaling"]
     cb = blocks_of(r, "curved")[0]
     assert len(cb["labels"]) == 1
     assert len(cb["invariants"]) == 2
     # on the section EGF_EGFR = 1 the confounder invariant reads (EGF + 1)*(EGFR + 1)
     assert any(expr_equal(iv, "EGF*EGFR + EGF + EGFR") for iv in cb["invariants"])
-    # a positive chart requires an offset
+    # a positive reparametrization requires an offset
     assert cb["status"] == "reduced"
     assert not r.remaining
     assert any("offsets of the new parameters" in c for c in cb["certificates"])
-    # the chart stays positive for every positive outer value
+    # the reparametrization stays positive for every positive outer value
     vals = [0.7, 2.3, 1.9, 0.31, 1.7, 0.45, 1.1, 0.9]
     outer = list(dict.fromkeys(r.coordinates + [v for e in r.trafo.values() for v in variables(e)]))
 
@@ -360,7 +360,7 @@ def test_egf_mek_erk_cascade_reduced_end_to_end():
     for scale in (1e-3, 1, 1e3):
         z = chart(u_at(scale))
         assert all(math.isfinite(v) and v > 0 for v in z.values())
-    # new_parameters at the chart point returns the outer value
+    # new_parameters at the mapped point returns the outer value
     u = u_at(1)
     z = chart(u)
     for nm, m in cb["new_parameters"].items():
@@ -451,10 +451,10 @@ def test_positive_declares_certificate_domain():
     assert none.remaining
     assert curved(none)["status"] == "invariant_only"
     assert "declared domain" in curved(none)["reason"]
-    # the invariants are unchanged up to their form, only the chart is gone
+    # the invariants are unchanged up to their form, only the reparametrization is gone
     assert len(curved(none)["invariants"]) == len(curved(full)["invariants"])
     assert all(any(expr_equal(iv, jv) for jv in curved(full)["invariants"]) for iv in curved(none)["invariants"])
-    # k_d left real holds the real invariant k_p + k_d; the chart still holds
+    # k_d left real holds the real invariant k_p + k_d; the reparametrization still holds
     short = red(res, fixed=["s"], positive=["P", "pP", "k_p"])
     assert curved(short)["status"] == "reduced"
     assert "real" in curved(short)["solved_domain"].values()
@@ -881,9 +881,12 @@ def test_the_reduction_reads_the_level_of_the_directions():
     m = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"Aobs": "alpha*A"}, trafo={"k1": "k2*B/A"},
                  events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
     r = si.detect(m, reconstruct=True)
-    assert [s.level for s in r.symmetries] == ["verified"]
+    assert [s.level for s in r.symmetries] == ["exact"]
+    # the level of the detection as a verified closed form would leave it
+    raw = r.to_dict()
+    raw["symmetries"][0]["level"] = "verified"
     with pytest.warns(UserWarning, match="verified, not proven"):
-        red = r.reduce()
+        red = si.reduce(raw)
     assert red.level == "verified" and [b["generator_level"] for b in red.blocks] == ["verified"]
     assert red.blocks[0]["unproven"] == []
     assert "rests on a verified closed form" in " ".join(repr(red).split())
@@ -1335,3 +1338,21 @@ def test_lift_of_parameters_the_resting_state_does_not_read():
     lifted, level = lifted_generators(["X1"], gen_of, rhs, inputs=["u"])
     assert level == "exact"
     assert set(lifted[0]) == {"K", "k"}
+
+
+def test_an_invariant_of_a_resting_state_is_no_trafo_entry():
+    f = {"x": "k1/(1+k2*y1^2) - k3*x", "y1": "k4*x - k5*y1"}
+    r = si.detect(si.Model(f, {"o": "s*y1"}), equilibrate=True, reconstruct=True)
+    red = si.reduce(r)
+    assert not any("x" in str(v).split("+") or "x" == str(v) for v in (red.trafo or {}).values())
+    assert len(red.remaining) == 1 and red.checks["loop"]["ok"] is True
+
+
+def test_a_system_of_invariants_past_the_degree_cap_is_a_limit_not_a_hang():
+    f = {"A": "-k1*A*B + k2*C", "B": "-k1*A*B + k2*C", "C": "k1*A*B - k2*C"}
+    m = si.Model(f, {"Aobs": "alpha*A"}, trafo={"k1": "k2*C/(A*B)"},
+                 events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
+    with pytest.warns(UserWarning, match="verified, not proven"):
+        red = si.detect(m, reconstruct=True).reduce(check=False)
+    assert red.remaining == ["X₁"] and [b["status"] for b in red.blocks] == ["invariant_only"]
+    assert any("above 32" in lim for lim in red.limits)

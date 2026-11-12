@@ -1,5 +1,7 @@
 """Resting states over GF(p) solved forward for turnover rates."""
 
+import contextlib
+import contextvars
 import sys
 
 import sympy as spy
@@ -9,9 +11,22 @@ from .modp import _eval_terms, _poly_terms, _solve_mod
 from .parse import _as_list
 from .steady import _ss_compile
 
+_excluded = contextvars.ContextVar("excluded_rates", default=())
+
+
+@contextlib.contextmanager
+def excluding_rates(names):
+    """Within the block a rate in `names` is never picked to be solved for."""
+    token = _excluded.set(tuple(names))
+    try:
+        yield
+    finally:
+        _excluded.reset(token)
+
 
 def _forward_rate_pick(rhs_by_name, solve_states, param_names, forcings, keep_free=None):
-    """One rate per solve state entering its balance linearly, never from `keep_free`; None if no matching exists."""
+    """One rate per solve state entering the balance of that state linearly, never from `keep_free`; None if no
+    matching exists."""
     keep_free = set(keep_free or [])
     # never solve for a recast coordinate: it multiplies a turnover rate, which would make
     # f bilinear in the rates
@@ -35,7 +50,9 @@ def _forward_rate_pick(rhs_by_name, solve_states, param_names, forcings, keep_fr
             coef = pv.nth(1)
             turnover = s_sym in coef.free_symbols
             neg = coef.could_extract_minus_sign()
-            lst.append((0 if (turnover and neg) else 1 if turnover else 2, str(r)))
+            # the lowest power of the state first: the rate of the highest power divides by it
+            dx = spy.Poly(coef, s_sym).degree() if turnover and coef.is_polynomial(s_sym) else 0
+            lst.append(((0 if (turnover and neg) else 1 if turnover else 2, dx), str(r)))
             appear[str(r)] = appear.get(str(r), 0) + 1
         cand[s] = lst
     order = sorted(solve_states, key=lambda s: len(cand[s]))
@@ -314,6 +331,7 @@ def solve_forward_modular(model, state_names, param_names, state_vals, param_val
     held = set(_as_list(held))
     picked = solve_rates is None
     if solve_rates is None:
+        keep_free = set(keep_free or []) | set(_excluded.get())
         (_ps, _ss, _polys, *_r) = _ss_compile(model, state_names, param_names, forcings, linear=False)
         rhs_by_name = {str(_ss[i]): _polys[i] for i in range(len(_ss))}
         ss_names = [str(s) for s in _ss if str(s) not in held]

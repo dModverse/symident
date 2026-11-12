@@ -212,7 +212,7 @@ class RestingStates:
         return self._seed(point, p, sol, ci, rates=sol.get("rates"))
 
     def base_key(self, point, p):
-        """Key of the diagonal base of a point: its values off Z."""
+        """Key of the diagonal base of a point: the values of the point off Z."""
         jp = self.joint_pv(point, p)
         z = set(self.diag.Z)
         return (p, tuple(v for n, v in jp["param_vals"].items() if n not in z),
@@ -308,11 +308,11 @@ class RestingStates:
                 and not self.held_names)
 
     def cont_active(self, ci):
-        """Whether condition `ci` is eligible for continuation and its continuation is not switched off."""
+        """Whether condition `ci` is eligible for continuation and the continuation is not switched off."""
         return self.cont_eligible(ci) and not self.cont_off[ci]
 
     def cont_trace(self, ci, success):
-        """Print once per condition whether its continuation succeeded, when timing is on."""
+        """Print once per condition whether the continuation of the condition succeeded, when timing is on."""
         if self.cont_seen[ci] or not self.run.timing:
             return
         self.cont_seen[ci] = True
@@ -327,7 +327,7 @@ class RestingStates:
         return [n for n in self.model_params[ci] if n not in base]
 
     def cont_cond(self, point, p, ci):
-        """Condition ci continued along its own parameters from the first condition."""
+        """Condition ci continued along the parameters of ci from the first condition."""
         run = self.run
         pv = self.joint_pv(point, p)
         key = ("cont", self.solve_key(p, pv, ci), self.cont_t)

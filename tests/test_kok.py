@@ -1,4 +1,4 @@
-"""The IFNalpha model of Kok et al. (2020) over its 25 conditions: four exact scalings."""
+"""The IFNalpha model of Kok et al. (2020) over 25 conditions: four exact scalings."""
 
 import os
 import sys

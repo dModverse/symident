@@ -1,4 +1,4 @@
-"""The homotopy route: series helpers, exact directions along parameter lines, its guards."""
+"""The homotopy route: series helpers, exact directions along parameter lines, guards."""
 
 from types import SimpleNamespace
 
@@ -111,7 +111,7 @@ def test_states_entering_a_resting_equation_linearly_are_eliminated():
     lines = [sat, "R = k*x - dR*R - b*L*R", "L = -b*L*R", "A = b*L*R - dA*A"]
     core, rel = reduce_relations(lines, ["x", "R", "A"], ["L"])
     assert core == ["x"] and len(rel) == 1
-    # an all-linear system keeps its states for the linear solve
+    # an all-linear system keeps the states for the linear solve
     lin = ["x1 = kb + kin - (k1 + kl)*x1", "x2 = k1*x1 - k2*x2"]
     assert reduce_relations(lin, ["x1", "x2"])[0] == ["x1", "x2"]
 

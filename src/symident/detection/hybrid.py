@@ -68,7 +68,7 @@ def is_zero(e):
 
 
 def solve_linear(g, prefer):
-    """(s, expr) solving g = 0 for the first symbol of `prefer` its numerator is linear in, else None."""
+    """(s, expr) solving g = 0 for the first symbol of `prefer` in which the numerator of g is linear, else None."""
     num = spy.fraction(spy.together(spy.sympify(g)))[0]
     for s in prefer:
         if s not in num.free_symbols:
@@ -103,7 +103,7 @@ class _Cond:
 
 
 class _Setup:
-    """The hybrid model with its conditions, regimes and surfaces."""
+    """The hybrid model with conditions, regimes and surfaces."""
 
     def __init__(self, hy, kw, regimes=None):
         self.hy = hy
@@ -220,7 +220,7 @@ class _Setup:
                 if grid is not None and vv in grid.colnames():
                     vv = grid.cell(c, vv)
                 T = app(_parse(tv))
-                # an event value reads the clock at its event time
+                # an event value reads the clock at the event time
                 cd.events.append({"var": e["var"], "time": T, "value": app(_parse(vv)).xreplace({TIME: T}),
                                   "method": e["method"], "index": i})
             cd.equil = self.equilibrate
@@ -329,7 +329,7 @@ class _Setup:
         for j in cd.surfaces:
             if not self.gfun(cd, j).free_symbols & moving:
                 raise HybridError(f"condition {cd.name}: the switch on {self.hy.surface(j)} depends on "
-                                  f"parameters only, so no trajectory crosses it; name its side with "
+                                  f"parameters only, so no trajectory crosses it; name the side with "
                                   f"`regimes`, for instance regimes=[{self.hy.text(j, 1)!r}]")
 
     def _check_start(self, cd, pick):
@@ -543,7 +543,7 @@ def _copies(st, names=None):
             if sol is not None:
                 pt[sol[0]] = sol[1].xreplace(pt)
             if ev is not None:
-                # the state just after a root event fired at this point of its surface
+                # the state just after a root event fired at this point of the event surface
                 v = _sym(ev["var"])
                 if str(v) not in st.dyn:
                     continue
@@ -557,7 +557,7 @@ def _copies(st, names=None):
 
 
 def _jet_chains(st, order, names):
-    """{input: [input, its jets]} of the unknown inputs the model reads, `order` names each."""
+    """{input: [input, jets of the input]} of the unknown inputs the model reads, `order` names each."""
     # in a condition that renames an input the chain stands for the new name
     read = set().union(*[e.free_symbols for e in st.f.values()],
                        *[e.free_symbols for g in st.hy.g for e in g.values()])
@@ -614,7 +614,7 @@ def _uncovered(st, copies):
 
 
 def _switched(cp, st):
-    """The copy and its versions switched at a fixed time into every other regime of its condition."""
+    """The copy and the versions of it switched at a fixed time into every other regime of the condition."""
     # with unknown inputs the input restarts at a switch off the surfaces, and a copy from a free point stands in
     if st.unknown:
         return [cp]
@@ -657,7 +657,7 @@ def _rows_model(st, copies, fresh, jets=None, jet_fresh=None, order=0):
         cd = cp["cd"]
         rows.append(f"{cd.name}#{i + 1}")
         if grid is not None:
-            # the jets of a copy hold the input its condition names
+            # the jets of a copy hold the input the condition of the copy names
             for col in grid.colnames():
                 if col not in st.unknown:
                     cols.setdefault(col, []).append(grid.cols[col][cd.index])
@@ -771,7 +771,8 @@ def _zero_set(st, cd):
     fields = [st.model(cd, r)[0] for r in cd.regimes]
     later = [(e["var"], e["method"], e["value"]) for e in cd.events if not e["t0"]] + \
         [(str(e["var"]), e.get("method", "replace"), cd.apply(_parse(e["value"]))) for e in st.root_events]
-    # a state is checked again only when a state its right-hand sides or later events name has left the set
+    # a state is checked again only when a state named in the right-hand sides or later events
+    # of the checked state has left the set
     uses = {x: {str(s) for e in [f[x] for f in fields] + [v for var, _, v in later if var == x]
                 for s in spy.sympify(e).free_symbols} for x in zs}
     check = set(zs)
@@ -1014,7 +1015,7 @@ def _family(st, cd, cands, alive, why):
                 # modulo the directions of the unknown inputs, whose coefficients are the input change
                 sol = _span(vecs + list(drives[r].values()), _bracket(st, X, f), keys)
                 if sol is None:
-                    drop = (k, "the regimes do not leave its span invariant")
+                    drop = (k, "the regimes do not leave the span invariant")
                     break
                 changes[k, r] = dict(zip(drives[r], sol[len(vecs):]))
             if drop is None:
@@ -1055,12 +1056,12 @@ def _family(st, cd, cands, alive, why):
         if ok:
             out.append(i)
         else:
-            why.append(f"{cands[i].origin}: condition {cd.name}: its start vector leaves the span")
+            why.append(f"{cands[i].origin}: condition {cd.name}: the start vector leaves the span")
     return [i for i in alive if i in out]
 
 
 def _drives(st, f, h):
-    """{input: its direction on the states} of the unknown inputs that no observable of the regime reads."""
+    """{input: direction of the input on the states} of the unknown inputs that no observable of the regime reads."""
     read = set().union(*[v.free_symbols for v in h.values()])
     return {u: {_sym(x): spy.diff(f[x], _sym(u)) for x in st.f} for u in st.unknown if _sym(u) not in read}
 
@@ -1068,7 +1069,7 @@ def _drives(st, f, h):
 def _input_jumps(st, cd, fam, keys, surf, models, drives, changes):
     """(index, reason) of a member whose input change jumps where a trajectory crosses a surface, else None."""
     vecs = [X for _, X in fam]
-    # a regime where the direction of an input lies in the span leaves its change free
+    # a regime where the direction of an input lies in the span leaves the change of that input free
     free = [{u for u, g in d.items() if _span(vecs, g, keys) is not None} for d in drives]
     index = {tuple(r): i for i, r in enumerate(cd.regimes)}
     for j in cd.surfaces:
@@ -1101,7 +1102,7 @@ def _input_jumps(st, cd, fam, keys, surf, models, drives, changes):
                     if shift is not None:
                         jump -= moved[k] / speed * sum(c * changes[n, ib].get(u, 0) for n, c in enumerate(shift))
                     if not is_zero(spy.sympify(jump).xreplace(rep)):
-                        return k, f"its change of the unknown input {u} jumps at {st.hy.surface(j)}"
+                        return k, f"the change of the unknown input {u} jumps at {st.hy.surface(j)}"
     return None
 
 
@@ -1121,7 +1122,8 @@ def _event_image(st, X, e, post):
 
 
 def _hidden_jumps(st, cd, fam, keys, surf):
-    """(index, reason) of a member that moves a surface that is not visible and would see its switch, else None."""
+    """(index, reason) of a member that moves a surface that is not visible and would see the switch of that surface,
+    else None."""
     vecs = [X for _, X in fam]
     for j in cd.surfaces:
         if cd.vis[j] == _VISIBLE:
@@ -1213,7 +1215,7 @@ def _scaling_candidates(st):
                                  extra_obs=xo)
     out = []
     for d in r["non_identifiable"]:
-        # the weight of an unknown input is its input change
+        # the weight of an unknown input is the input change
         w = {k: int(spy.Rational(v)) for k, v in d["vector"].items() if k not in st.unknown}
         theta = {k: v * _sym(k) for k, v in w.items() if k not in st.f}
         states = {cd.index: {k: v * _sym(k) for k, v in w.items() if k in st.f} for cd in st.conds}
@@ -1446,7 +1448,7 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
         copies, fresh = _copies(st, names)
         miss = _uncovered(st, copies)
         if miss:
-            raise HybridError("internal: a regime enters no copy of its condition: " +
+            raise HybridError("internal: a regime enters no copy of the condition: " +
                               "; ".join(f"{c}: {', '.join(st.text(r))} ({k})" for c, r, k in miss))
         jet_fresh = _jet_values(copies, jets, names)
         rows = _rows_model(st, copies, fresh, jets, jet_fresh, order)
@@ -1528,7 +1530,7 @@ def _with_inputs_projection(rows, res, projection):
 
 
 def _candidate(e):
-    """A direction of the stacked kernel that the rule does not prove: its support and closed form."""
+    """A direction of the stacked kernel that the rule does not prove: support and closed form."""
     pub = public_symmetry(e)
     return {"type": pub["type"], "support": pub["support"], "generator": pub["generator"]}
 

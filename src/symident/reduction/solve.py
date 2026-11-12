@@ -8,7 +8,7 @@ import re
 import numpy as np
 import sympy as spy
 
-from .. import state
+from .. import session, state
 from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import Pool
 from ..rexpr import sym_sort
@@ -56,6 +56,22 @@ def _q_names(n, coords, start):
     return out
 
 
+# the product of the degrees of the invariants in the carriers, past which the system is not solved
+SOLVE_DEGREE_CAP = 32
+
+
+def _bezout(eqs, carriers):
+    """The Bezout bound of the polynomial system `eqs` in the `carriers`, 1 for one equation."""
+    syms = [spy.Symbol(v) for v in carriers]
+    out = 1
+    for e in eqs:
+        try:
+            out *= max(spy.Poly(spy.fraction(spy.cancel(spy.together(e)))[0], *syms).total_degree(), 1)
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+    return out if len(eqs) > 1 else 1
+
+
 def _negative(entries):
     """Whether an entry is negative for positive carriers, so not positive on any wider domain."""
     with carriers_real([]):
@@ -80,7 +96,7 @@ def _memo_solve(b, pins, coords, inv_start, prefer_real, split_pair, gens, signe
     ses = state.get("session")
     if ses is None or DOMAIN["deadline"] is not None:
         return _solve_invariants(*args)
-    # the alternative charts of one reduction search equal blocks again; the work spent is replayed
+    # the alternative reparametrizations of one reduction search equal blocks again; the work spent is replayed
     try:
         key = pickle.dumps((b, pins, list(coords), inv_start, prefer_real, split_pair, gens, signed_ok,
                             DOMAIN["positive"], DOMAIN["bounds"], DOMAIN["no_roots"], DOMAIN["real_carriers"],
@@ -174,6 +190,12 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             gens=None, signed_ok=False):
     best = best_root = signed = None
     eqs = [Ies[l] - spy.Symbol(tmp_n[l]) for l in range(len(Ies))]
+    bezout = _bezout(eqs, carriers)
+    if bezout > SOLVE_DEGREE_CAP:
+        session.note("limits", f"section search: the invariants of {', '.join(b['labels'])} give a system of "
+                               f"degree up to {bezout} in the carriers, above {SOLVE_DEGREE_CAP}")
+        out["reason"] = f"the system of the invariants has degree up to {bezout}, above the cap {SOLVE_DEGREE_CAP}"
+        return out
     try:
         sol_carr = [_str_keys(d) for d in spy.solve(eqs, [spy.Symbol(v) for v in carriers], dict=True)]
     except SYMPY_FAILS as exc:
@@ -581,7 +603,6 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
     if best_root is not None:
         return best_root
     if cut:
-        from .. import session
         session.note("limits", f"section search over {', '.join(b['support'])}: " + "; ".join(dict.fromkeys(cut)))
     if best is not None:
         return best

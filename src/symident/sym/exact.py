@@ -8,7 +8,7 @@ import sympy as spy
 from ..errors import SYMPY_FAILS, sympy_fail
 from .parse import model_sympify
 
-# operations of one identity beyond which it is left undecided rather than cancelled
+# operations of one identity beyond which it is left undecided rather than canceled
 SIZE_CAP = 20000
 
 
@@ -29,7 +29,7 @@ def _zero(e):
 
 
 class _Field:
-    """A field as SymPy expressions with its derivation."""
+    """A field as SymPy expressions with the derivation of the field."""
 
     def __init__(self, field):
         self.c = {spy.Symbol(str(k)): _expr(str(v)) for k, v in dict(field).items()}
@@ -99,6 +99,104 @@ def initial_identities(ic_lines, field):
     return [(f"initial value of {x}", Y.at(x).xreplace(x0) - Y(e)) for x, e in x0.items()]
 
 
+def _conserved(f_lines, sts):
+    """Constant vectors c, as {state: coefficient}, with c . f = 0 identically in the states and parameters."""
+    F = {x: f for x, f in _rhs(f_lines).items() if x in sts}
+    if not F or any(f.has(spy.Float) for f in F.values()):
+        return []
+    try:
+        syms = sorted(set().union(*(f.free_symbols for f in F.values())), key=str)
+        terms = [dict(spy.Poly(spy.expand(f), *syms).terms()) for f in F.values()] if syms else []
+    except spy.PolynomialError:
+        return []
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return []
+    monos = sorted({m for t in terms for m in t})
+    if not monos:
+        return []
+    kernel = spy.Matrix([[t.get(m, 0) for t in terms] for m in monos]).nullspace()
+    return [dict(zip(F, v)) for v in kernel]
+
+
+def initial_lift(field, ic_lines, states, f_lines=()):
+    """`field` with state components from the initial values set by other parameters, or None.
+
+    The identity xi_X(x0) = Y(x0_X) gives a component at the start; solving "X = x0_X" for the
+    parameters that set the initial values reads it on the states, where `f_lines` conserve a
+    combination of the states through the total that those values give it. The identities decide it."""
+    Y = _Field(field)
+    sts = {spy.Symbol(str(x)) for x in states}
+    x0 = _rhs(ic_lines)
+    moved = {}
+    for x, e in x0.items():
+        if x in sts and x not in Y.c and e != x and not _zero(Y(e)):
+            moved[x] = e
+    pars = sorted(set().union(*(e.free_symbols for e in moved.values())) - sts, key=str)
+    if not moved or not pars:
+        return None
+    eqs = [x - e for x, e in moved.items()]
+    totals = [sum((c * (x - x0.get(x, x)) for x, c in law.items()), spy.Integer(0))
+              for law in _conserved(f_lines, sts)]
+    try:
+        sol = spy.solve([t for t in totals if t.free_symbols & set(pars)], pars, dict=True) if totals else []
+        if len(sol) != 1 or set(sol[0]) != set(pars):
+            sol = spy.solve(eqs, pars, dict=True)
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    if len(sol) != 1:
+        return None
+    out = dict(field)
+    for x, e in moved.items():
+        out[str(x)] = str(spy.cancel(Y(e).subs(sol[0])))
+    return out
+
+
+def linear_lift(field, regime, ic_lines, states):
+    """`field` with state components xi = G x for a regime linear in the states, or None.
+
+    The identities [Y, F] = 0, Y(h) = 0 and xi(x0) = Y(x0) are linear in the entries of G; the
+    identities of the lift decide it."""
+    Y = _Field(field)
+    F = {x: f for x, f in _rhs(regime["f"]).items() if str(x) in {str(s) for s in states}}
+    xs = list(F)
+    if not xs or any(x in Y.c for x in xs):
+        return None
+    n = len(xs)
+    G = spy.Matrix(n, n, lambda i, j: spy.Symbol(f"_g{i}_{j}"))
+    try:
+        M = spy.Matrix([[spy.diff(F[a], b) for b in xs] for a in xs])
+        if any(spy.cancel(F[a] - sum((M[i, j] * xs[j] for j in range(n)), spy.Integer(0))) != 0
+               for i, a in enumerate(xs)):
+            return None
+        eqs = list(spy.Matrix([[Y(M[i, j]) for j in range(n)] for i in range(n)]) + M * G - G * M)
+        xi = G * spy.Matrix(xs)
+        for line in regime["g"]:
+            h = _expr(str(line).split("=", 1)[1]) if "=" in str(line) else _expr(str(line))
+            e = Y(h) + sum((spy.diff(h, x) * xi[i] for i, x in enumerate(xs)), spy.Integer(0))
+            eqs += spy.Poly(spy.together(e), *xs).coeffs() if e != 0 else []
+        x0 = _rhs(ic_lines)
+        if any(x not in x0 for x in xs):
+            return None
+        eqs += list(G * spy.Matrix([x0[x] for x in xs]) - spy.Matrix([Y(x0[x]) for x in xs]))
+        eqs = [e for e in eqs if e != 0]
+        sol = spy.solve(eqs, list(G), dict=True)
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    if len(sol) != 1:
+        return None
+    G = G.xreplace({g: sol[0].get(g, g) for g in G})
+    G = G.xreplace({g: 0 for g in G.free_symbols if str(g).startswith("_g")})
+    out = dict(field)
+    for i, x in enumerate(xs):
+        comp = spy.cancel(sum((G[i, j] * xs[j] for j in range(n)), spy.Integer(0)))
+        if comp != 0:
+            out[str(x)] = str(comp)
+    return out
+
+
 def _lie(F, e):
     return sum((fx * spy.diff(e, x) for x, fx in F.items() if x in e.free_symbols), spy.Integer(0))
 
@@ -124,7 +222,8 @@ def _vanishes(e, rng):
 
 
 def output_identities(regime, ic_lines, vector):
-    """(label, v(L^k h(x0))) per output h, k = 0 at rest, else below its first vanishing Lie derivative; or None."""
+    """(label, v(L^k h(x0))) per output h, k = 0 at rest, else below the first vanishing Lie derivative of h; or
+    None."""
     F = _rhs(regime["f"])
     x0 = _rhs(ic_lines)
     V = _Field(vector)
@@ -186,7 +285,19 @@ def _triangular(nums, rest):
 
 
 def rest_parametrization(eqs, rest, params):
-    """{"sub", "params", "eqs"} parametrizing eqs = 0 by `rest`, then by `params` entering linearly; or None."""
+    """{"sub", "params", "eqs"} parametrizing eqs = 0 by `rest`, then by `params` entering linearly; or None.
+
+    The parameters solved for are taken in the order given; where that order fails, each parameter first in turn.
+    """
+    params = list(params)
+    for order in [params] + [[p] + [q for q in params if q != p] for p in params]:
+        out = _rest_parametrization(eqs, rest, order)
+        if out is not None:
+            return out
+    return None
+
+
+def _rest_parametrization(eqs, rest, params):
     if not eqs or len(eqs) > _REST_EQS:
         return None
     try:

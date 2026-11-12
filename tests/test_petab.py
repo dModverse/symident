@@ -271,3 +271,10 @@ def test_an_id_the_expression_language_cannot_read_is_renamed_in_the_model_and_t
     assert m.petab["renamed"] == {"_k": "X_k_", "pi": "pi_", "_s": "X_s"}
     assert m.observables == [{"obs": "X_s*x"}] * 2 and sorted(m.petab["estimated"]) == ["X_k_", "X_s", "k"]
     assert [t["X_k_"] for t in m.trafo] == ["X_s", "X_k_"] and "X_k_" in m.odes["x"]
+
+
+@pytest.mark.parametrize("name", sorted(BENCH))
+def test_the_totals_of_a_benchmark_model_are_conserved_exactly(name):
+    from symident.detection.cq import check_conserved
+    m = bench(name)
+    check_conserved(dict(m.totals or {}), m.odes)

@@ -43,8 +43,8 @@ def test_generators_grouped_scalings_first():
 def test_reduction_hints_singular_and_plural():
     assert report.reduction_hint_lines(res([]), width=200) == []
     one = report.reduction_hint_lines(res([SCAL, GEN]), width=200)
-    assert one[1] == "  X₁ is a scaling: gauge it by holding any one of its coordinates fixed, at any value."
-    assert one[2] == "  X₂ is not a scaling: reparametrize onto its invariants with reduce()."
+    assert one[1] == "  X₁ is a scaling: gauge it by holding any one of the coordinates fixed, at any value."
+    assert one[2] == "  X₂ is not a scaling: reparametrize onto the invariants with reduce()."
     two = report.reduction_hint_lines(res([SCAL, SCAL]), width=200)
     assert two[1].startswith("  X₁, X₂ are scalings: gauge them")
 

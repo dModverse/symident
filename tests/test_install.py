@@ -116,7 +116,7 @@ def test_install_msolve_declined(monkeypatch, tmp_path, capsys):
 
 
 def stub_build(monkeypatch, returncode=0, working=True):
-    # the build script replaced: it leaves a fake msolve and prints its prefix last
+    # the build script replaced: it leaves a fake msolve and prints the prefix last
     real = subprocess.run
 
     def run(args, **kw):

@@ -50,7 +50,8 @@ def _degrees_at(cap, f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, line
 
 
 def entry_degrees(f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, ctrl, lines=2):
-    """Per support entry the degree of its dense fit; "over" past degree_cap_max, None where no line gave values."""
+    """Per support entry the degree of the dense fit of the entry; "over" past degree_cap_max, None where no line gave
+    values."""
     if not rel["relevant"]:
         return [None] * len(rel["support_cols"])
     cap = int(ctrl["degree_cap"])
@@ -100,7 +101,7 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
         for c in support_cols:
             e = const_entry(c)
             if e is None:
-                return fallback("a constant entry could not be lifted from its residues")
+                return fallback("a constant entry could not be lifted from the residues")
             entries[znames[c]] = e
         entries[znames[f]] = "1"
         return {"pool_next": box["pool_next"], "entry": {"support": sym_sort(list(entries)),
@@ -210,7 +211,7 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
         if not reli:
             e = const_entry(c)
             if e is None:
-                return fallback("a constant entry could not be lifted from its residues")
+                return fallback("a constant entry could not be lifted from the residues")
             entries[znames[c]] = e
             how.append("constant")
             continue
@@ -225,7 +226,7 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
             if e is None and expired(ctrl):
                 return fallback(_TIMEOUT)
             if e is None:
-                return fallback(f"an entry couples {len(reli)} variables and the sparse fit hit its caps "
+                return fallback(f"an entry couples {len(reli)} variables and the sparse fit hit the caps "
                                 f"(laurent_deg_num={ctrl['laurent_deg_num']}, general_deg_num="
                                 f"{ctrl['general_deg_num']}, general_deg_den={ctrl['general_deg_den']}, "
                                 f"term_cap={ctrl['term_cap']}); raise these, or raise relevance_cap="

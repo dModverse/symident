@@ -230,7 +230,7 @@ class Switches:
         return spy.Function(name)(*args) if fn is None else fn(*args)
 
     def parse(self, text):
-        """The expression with its switches written in the indicators."""
+        """The expression with the switches written in the indicators."""
         return spy.sympify(_val(_Reader(str(text), self).expr())).xreplace(self.consts)
 
 
@@ -376,7 +376,7 @@ def hybrid_model(f, g, positive, events=None, inputs=(), taken=()):
     Gs = [{k: sw.parse(v) for k, v in x.items()} for x in gl]
     if sw.by_default:
         warnings.warn("the default positive=True decides the sign of " + ", ".join(dict.fromkeys(sw.by_default)) +
-                      ", which holds a state, and removes its switch; pass `positive` without that state to keep "
+                      ", which holds a state, and removes the switch; pass `positive` without that state to keep "
                       "the switch", stacklevel=4)
     root_of = []
     for e in roots:

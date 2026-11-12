@@ -20,7 +20,7 @@ class Session:
         self.primes = None
         self.depth = 0
         self.vprimes = {}
-        # per system of resting balances, the factors that its taken branch solves
+        # per system of resting balances, the factors that the taken branch of the system solves
         self.pins = {}
 
     def seed(self, name, *key):

@@ -9,13 +9,13 @@ from .parse import _as_list, _make_local_parse
 
 
 def _modp_rational(val, p):
-    """Map a sympy Rational (or integer-valued expression) to its residue mod p."""
+    """Map a sympy Rational (or integer-valued expression) to the residue mod p."""
     r = spy.Rational(val)
     return (int(r.p) % p) * pow(int(r.q) % p, p - 2, p) % p
 
 
 class _Mono(tuple):
-    """Exponent tuple that also holds its nonzero (index, exponent) pairs."""
+    """Exponent tuple that also holds the nonzero (index, exponent) pairs."""
 
     def __new__(cls, expo):
         t = tuple.__new__(cls, expo)

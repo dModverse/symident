@@ -292,14 +292,14 @@ def check_levels(obj, allow_open=False, allow_checked=False):
                 d.get("support") in verified for d in obj.get("symmetries") or [] if d.get("level") == "checked"):
             why = f"only, since {b.get('why') or 'no error bound applies'}"
         else:
-            why = "on part of its entries only"
+            why = "on part of the entries only"
         raise ValueError(f"a direction is checked at random points {why} (level 'checked'); "
-                         "pass allow_checked=True to reduce on its closed form anyway")
+                         "pass allow_checked=True to reduce on the closed form anyway")
     if "checked" in levels:
         warnings.warn("a direction is checked at random points without an error bound; the reduction "
-                      "rests on its closed form (Reduction.level)", stacklevel=3)
+                      "rests on the closed form (Reduction.level)", stacklevel=3)
     elif "verified" in levels:
-        warnings.warn("a direction is verified, not proven; the reduction rests on its closed form "
+        warnings.warn("a direction is verified, not proven; the reduction rests on the closed form "
                       "(Reduction.level)", stacklevel=3)
 
 
@@ -324,7 +324,8 @@ def monotone_pins(b, gens):
 
 
 def _face_proof(obj, b, pins, sol, gen_of, coords, degrees):
-    """Whether every level set is one orbit with the face in its closure, why the face is not regular, and the level."""
+    """Whether every level set is one orbit with the face in the closure of that orbit, why the face is not regular,
+    and the level."""
     info = obj.get("info") or {}
     if info.get("recast_coordinates"):
         return False, "the model is not checked at the face in log or exponential coordinates", None
@@ -442,7 +443,8 @@ def _positive_symbols(res):
 
 
 def composed_check(res):
-    """Over Q: every pin holds under the trafo and every block invariant maps to its q_l under the pins of its block."""
+    """Over Q: every pin holds under the trafo and every block invariant maps to the matching q_l under the pins of
+    the block."""
     import sympy as spy
 
     from ..sym.parse import _make_local_parse
@@ -521,6 +523,14 @@ def _chart_rank(res):
     lv = res.get("level")
     return (LEVELS.index(lv) if lv in LEVELS else len(LEVELS), -len(res.get("removed") or []),
             _signed(res), not _rational_chart(res))
+
+
+def _outside_coordinates(sol, b, coords, states):
+    """The states in a solved section or the invariants that are no coordinate, sorted."""
+    texts = [str(v) for v in (sol.get("pins") or {}).values()] + [str(v) for v in (sol.get("meaning") or {}).values()]
+    texts += [str(x) for x in sol.get("section") or []] + [str(x) for x in b.get("invariants") or []]
+    names = {m for t in texts for m in re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", t)}
+    return sorted((names & set(states)) - set(coords))
 
 
 def symmetry_reduction(obj, *args, alternatives=False, **kw):
@@ -638,7 +648,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
         o = ordered(obj)
         wr = weight_rows(o["syms"])
         W, Wc = wr["W"], wr["cols"]
-        # a scaling dependent on the earlier ones needs no reduction of its own
+        # a scaling dependent on the earlier ones needs no separate reduction
         indep, dep_rows = [], []
         for r in range(W.shape[0]):
             if rank_modp(W[indep + [r]].T) > len(indep):
@@ -740,7 +750,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
             if work_cap is not None and DOMAIN["work"] > work_cap and not sol.get("solved"):
                 session.note("limits", f"face section search of {', '.join(b['labels'])}: "
                                        f"reduce(work_cap={work_cap}) reached")
-            # the gauge section search has a budget of its own
+            # the gauge section search has a separate budget
             DOMAIN["work"] = 0
             if sol.get("solved"):
                 sol = face_carriers(sol, coords, inv_start)
@@ -773,6 +783,11 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
             elif DOMAIN["deadline"] is not None and time.monotonic() > DOMAIN["deadline"]:
                 session.note("limits", f"section search of {', '.join(b['labels'])}: reduce(timeout={timeout}) "
                                        "reached")
+            if sol.get("solved"):
+                foreign = _outside_coordinates(sol, b, coords, (obj.get("info") or {}).get("model_rhs") or {})
+                if foreign:
+                    sol = {"solved": False, "reason": f"the invariants involve {', '.join(foreign)}, a resting "
+                                                     "state that no parameter expression gives"}
             if sol.get("solved"):
                 nums = []
                 for q in sol.get("inv_names") or []:
@@ -822,7 +837,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                     certs.append("section: each balance ratio has a derivative of one sign along each generator")
                 if b["injective"]:
                     certs.append("section met at most once: the solved entries give back every point of "
-                                 "the section from its invariants, so two points of one orbit on it coincide")
+                                 "the section from the invariants, so two points of one orbit on it coincide")
                 if b["face"] and b["reach"] and b.get("face_why") is None:
                     certs.append("face reached in the limit: every orbit closes on the face point, where "
                                  "the model is continuous, so the face point gives the output of the orbit" +
@@ -844,7 +859,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                                  ", ".join(f"{k} {v}" for k, v in (sol.get("solved_domain") or {}).items()) + ")")
                 if sol.get("shifted"):
                     certs.append(f"offsets of the new parameters certified for {', '.join(sol['shifted'])}: the "
-                                 f"shifted invariant exceeds its offset on the whole {domain_name()}")
+                                 f"shifted invariant exceeds the offset on the whole {domain_name()}")
                 b["certificates"] = b["certificates"] + certs
             else:
                 b["reason"] = sol.get("reason") or b.get("reason")

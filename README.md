@@ -4,12 +4,14 @@
 [![docs](https://img.shields.io/badge/docs-dmodverse.github.io%2Fsymident-blue)](https://dmodverse.github.io/symident/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+<!-- description-start -->
+
 Structural identifiability of ODE models by Lie symmetries over finite fields.
 
 symident finds the non-identifiable directions of an ODE model with observables,
 conditions, events and inputs, returns them as exact generators where possible, and
-reduces the model to identifiable parameters. The rank of the OIM is computed over F_p in
-a C++ kernel; closed forms are reconstructed by sparse interpolation and proven over Q, or
+reduces the model to identifiable parameters. The rank of the OIM is computed over F<sub>p</sub> in
+a C++ kernel; closed forms are reconstructed by sparse interpolation and proven over ℚ, or
 checked at random points modulo a large prime, with an error bound where one applies.
 
 symident continues the Lie-symmetry analysis of dMod (Merkt, Timmer and Kaschek,
@@ -17,22 +19,18 @@ symident continues the Lie-symmetry analysis of dMod (Merkt, Timmer and Kaschek,
 [method page](https://dmodverse.github.io/symident/method.html) states the method and the
 work it builds on.
 
+<!-- description-end -->
+
 ## Installation
 
 ```sh
 pip install symident
 ```
 
-Wheels are built for Linux (x86_64, aarch64, glibc 2.28 or newer; tested on Debian
-and Fedora), macOS (x86_64, arm64) and Windows (x86_64), for Python 3.10 to 3.15. Elsewhere
-pip builds from source, which needs a C++17 compiler and CMake; with OpenMP the kernel runs
-on several threads. The development version installs with
-`pip install git+https://github.com/dModverse/symident`.
-
-Steady-state analyses whose resting states need a coupled nonlinear solve, and
-`solution_count()`, use [msolve](https://msolve.lip6.fr); on Linux and macOS `symident.install_msolve()` builds it
-into a per-user cache. The [installation page](https://dmodverse.github.io/symident/install.html)
-covers Windows and other setups.
+Wheels exist for Linux, macOS and Windows and Python 3.10 to 3.15. The
+[installation page](https://dmodverse.github.io/symident/install.html) covers the build
+from source, the PEtab extra, [msolve](https://msolve.lip6.fr) for coupled steady states,
+and the use from R through dMod2.
 
 ## Example
 

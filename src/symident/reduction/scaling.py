@@ -25,7 +25,7 @@ def red_coordinates(obj):
 
 
 def coords_of(d):
-    """The coordinates of direction `d`: its generator entries, else its support."""
+    """The coordinates of direction `d`: the generator entries, else the support."""
     return list(d["generator"]) if d.get("generator") is not None else list(d.get("support") or [])
 
 
@@ -76,7 +76,7 @@ def int_kernel(M):
 
 
 def primitive_rows(M):
-    """`M` with each row divided by the gcd of its entries."""
+    """`M` with each row divided by the gcd of the row entries."""
     M = np.asarray(M, dtype=np.int64)
     if M.shape[0] == 0:
         return M
@@ -116,7 +116,7 @@ def scaling_fixed(W, cols, fixed):
 
 
 def certify_transversal(W, cols, T):
-    """Integer matrix expressing `W` through its columns `T`, or None unless `T` is a transversal."""
+    """Integer matrix expressing `W` through the columns `T` of `W`, or None unless `T` is a transversal."""
     A = W[:, [cols.index(t) for t in T]].astype(float)
     if A.shape[0] != len(T):
         return None

@@ -68,7 +68,7 @@ def observability_sympy_multi(model, observation, condition_subs=None, condition
             ic_c[X] = spy.sympify(e).subs(subs_map_ic)
         per_cond.append((f_c, g_c, ic_c))
 
-    # a state is a free coordinate iff its symbol survives in its initial value in
+    # a state is a free coordinate iff the state symbol survives in the initial value in
     # some condition; parameters are all remaining free symbols; both minus `fixed`
     free_states = [X for X in S
                    if any(X in ic_c[X].free_symbols for (_, _, ic_c) in per_cond)]

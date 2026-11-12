@@ -1,7 +1,7 @@
 Quickstart
 ==========
 
-A model with two states, one observed up to an unknown scale:
+A model with two states, observed up to an unknown scale:
 
 .. code-block:: python
 
@@ -25,12 +25,11 @@ A model with two states, one observed up to an unknown scale:
 
    exact = proven over Q.
 
-The coordinates are the parameters ``k1``, ``k2``, ``s`` and the initial values of ``A``
-and ``B``. Four combinations of them are identifiable; the fifth direction scales both
-initial values up and ``s`` down without changing ``y``. The printout gives the direction
-as a vector field: ``ξ(A) = A`` says that ``A`` changes at the rate ``A``, so ``A`` and
-``B`` grow by the same factor while ``s`` shrinks by it. The :doc:`guide` explains the
-notation. :meth:`~symident.Symmetries.reduce` removes the direction:
+The coordinates are ``k1``, ``k2``, ``s`` and the initial values of ``A`` and ``B``; four
+combinations are identifiable. ``ξ(A) = A`` is the rate at which ``A`` changes along the
+direction: ``A`` and ``B`` grow by one factor while ``s`` shrinks by it, and ``y`` stays
+the same (notation in the :doc:`guide`). :meth:`~symident.Symmetries.reduce` removes the
+direction:
 
 .. code-block:: python
 
@@ -47,5 +46,5 @@ notation. :meth:`~symident.Symmetries.reduce` removes the direction:
      {X₁}  A = 1
      summary(detailed=True) explains each section.
 
-Fixing the initial value of ``A`` at one leaves an identifiable model: every orbit of the
-scaling is a ray and meets ``A = 1`` exactly once.
+Every orbit of the scaling is a ray and meets ``A = 1`` once, so fixing the initial value
+of ``A`` at one leaves an identifiable model.

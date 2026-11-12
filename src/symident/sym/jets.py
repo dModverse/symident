@@ -139,7 +139,7 @@ def _jet_expand_chains(conds):
             for ev in _as_list(sg.get('ev', [])):
                 ev = dict(ev)
                 X, v, how = str(ev['var']), str(ev['value']), str(ev['method'])
-                # at gap order 0 a state in the value is its start value before the events
+                # at gap order 0 a state in the value stands for the start value before the events
                 v = replace_symbols(list(pre), ['(%s)' % e for e in pre.values()], v)
                 old = icd.get(X, X)
                 icd[X] = ('(%s)' % v if how == 'replace' else

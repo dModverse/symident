@@ -13,7 +13,7 @@ def _rref(M, p):
 
 
 def quotient(o, cols, p, drop=()):
-    """The kernel result `o` modulo the directions within the columns `cols`, its vectors zero on `drop`."""
+    """The kernel result `o` modulo the directions within the columns `cols`, with kernel vectors zero on `drop`."""
     if not cols or o is None or not o.get("ok"):
         return o
     nz, r = int(o["dim"]), int(o["rank"])

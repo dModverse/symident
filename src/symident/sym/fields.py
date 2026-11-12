@@ -659,14 +659,14 @@ def static_fields_symbolic(conds, param_names, forcings=None):
             except spy.PolynomialError:
                 linear = False
             if not linear:
-                return {'fields': [], 'why': 'a static resting equation not linear in its state',
+                return {'fields': [], 'why': 'a static resting equation not linear in the state',
                         'static': static_of}
             try:
                 own = spy.solve(num, xs)
             except NotImplementedError:
                 own = []
             if len(own) != 1:
-                return {'fields': [], 'why': 'a static resting equation not solved for its state',
+                return {'fields': [], 'why': 'a static resting equation not solved for the state',
                         'static': static_of}
             rows.append([spy.cancel(spy.diff(e, a).xreplace({xs: own[0]})) for a in
                          [parse(y) for y in absorbed]])

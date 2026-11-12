@@ -81,7 +81,7 @@ def darboux_cofactors(candidates, generators):
 
 
 def verify_invariants(invariants, generators):
-    """Per invariant, whether its Lie derivative along every generator cancels to literal 0."""
+    """Per invariant, whether the Lie derivative of the invariant along every generator cancels to literal 0."""
     invs = [str(i) for i in _as_list(invariants)]
     xis, parse = _parse_generators(generators, invs)
     out = []

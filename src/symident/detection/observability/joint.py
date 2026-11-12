@@ -265,7 +265,8 @@ class JointSystem(RestingStates):
         return M
 
     def cond_local(self, mi, obs, sc0, p, scale=True):
-        """One condition's rows on its local columns, state columns scaled unless continued; None rejects the point."""
+        """One condition's rows on the local columns of the condition, state columns scaled unless continued; None
+        rejects the point."""
         from ..fields import ser_inv, ser_mul
         if not ok(obs):
             return None
@@ -390,7 +391,8 @@ class JointSystem(RestingStates):
         return {"W": W, "series": ser}
 
     def _project(self, locs, p, cores):
-        """Rows on the shared columns once each condition eliminates its state columns, with series projections."""
+        """Rows on the shared columns once each condition eliminates the state columns of the condition, with series
+        projections."""
         st_l, sh_l = self.per_cond_cols, self.shared_idx
         n_first = len(st_l)
         r_p, Q, r_ps, QS, prec, series = 0, [], 0, [], [], True
@@ -435,7 +437,7 @@ class JointSystem(RestingStates):
     # ---- kernels --------------------------------------------------------------------
 
     def cond_obs(self, ci, ptc, p, Nt, Mtot, ser=None):
-        """One condition's observability kernel at its seeded resting state."""
+        """One condition's observability kernel at the seeded resting state of the condition."""
         run = self.run
         pt = np.asarray(ptc, dtype=np.int64) % p
         if run.has_gaps:

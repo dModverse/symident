@@ -87,7 +87,8 @@ def _detect_log_params(exprs, states):
 
 
 def _log_param_denominators(base_of, exprs):
-    """Per parameter the lcm L of its exponent denominators, so X = base^(theta/L) has integer powers."""
+    """Per parameter the lcm L of the exponent denominators of the parameter, so X = base^(theta/L) has integer
+    powers."""
     den = {t: 1 for t in base_of}
     for e in exprs:
         for at in spy.sympify(e).atoms(spy.exp, spy.Pow):
@@ -194,12 +195,12 @@ def _log_numbers(e, consts):
     return e.xreplace(rep)
 
 
-# degree past which a log argument is split by its common factors only, not factored
+# degree past which a log argument is split by common factors only, not factored
 _FACTOR_DEGREE = 8
 
 
 def _split(u):
-    """u over a common denominator, factored, or split by its common factors when its degree is high."""
+    """u over a common denominator, factored, or split by the common factors of u when the degree is high."""
     t = spy.together(u)
     try:
         deg = max((spy.Poly(x, *x.free_symbols).total_degree() if x.free_symbols else 0)
@@ -223,7 +224,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
     def is_pos(sym):
         return pos is None or str(sym) in pos
 
-    # a power of a product splits into powers of its positive factors, and a non-integer
+    # a power of a product splits into powers of the positive factors, and a non-integer
     # power of a sum becomes exp(exponent*log(sum)), which the log coordinates make rational
     def norm(e):
         P = {x: spy.Symbol(str(x), positive=True) for x in e.free_symbols if is_pos(x)}
@@ -233,7 +234,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
                          lambda x: spy.exp(x.exp * spy.log(x.base)))
 
     def sum_powers(e):
-        # u^c of a sum u with c not an integer is exp(c*log(u)): its base is treated like log(u)
+        # u^c of a sum u with c not an integer is exp(c*log(u)): the base u is treated like log(u)
         return [pw.base for pw in e.atoms(spy.Pow) if pw.base.is_Add and pw.exp.is_Rational
                 and not pw.exp.is_Integer]
     F = {k: norm(parse(str(v))) for k, v in fl.items()}
@@ -261,13 +262,13 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
             return
         if v in chart and (spy.simplify(chart[v][0] - a) != 0 or
                            spy.simplify(chart[v][1] - b) != 0):
-            # two logarithms of one symbol: no chart, the recasts take its powers and logarithms
+            # two logarithms of one symbol: no coordinate change, the recasts take the powers and logarithms
             contested.add(v)
             return
         chart[v] = (a, b)
 
     # pass 0 claims log(v) and v^(p/q) of symbols, pass 1 the affine arguments, so a
-    # plain logarithm keeps its symbol whatever the order of the terms
+    # plain logarithm keeps the symbol whatever the order of the terms
     def scan(e, ps):
         e = e.xreplace({at: spy.log(_split(at.args[0])) for at in e.atoms(spy.log)})
         e = spy.expand_log(e, force=True)
@@ -317,7 +318,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
             for pw in e.atoms(spy.Pow):
                 if pw.base in given and not pw.exp.is_number and is_pos(pw.base):
                     claim(pw.base, zero, one)
-        # an initial value of a transformed state enters as the logarithm of its argument
+        # an initial value of a transformed state enters as the logarithm of the argument
         while True:
             n0 = len(chart)
             for ic in I:
@@ -332,7 +333,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
                 break
     except ValueError as err:
         return {'why': str(err)}
-    # an affine chart turns a free power of its symbol into a power of a sum
+    # an affine coordinate change turns a free power of the symbol into a power of a sum
     for e in list(F.values()) + [e for g in G for e in g.values()]:
         for pw in e.atoms(spy.Pow):
             v = pw.base
@@ -467,7 +468,7 @@ def log_arg_back_vec(vec, maps):
 
 
 def scaling_weights(comps):
-    """{name: weight} when every component is a number times its own coordinate, else None."""
+    """{name: weight} when every component is a number times the coordinate of that component, else None."""
     _, parse = _make_local_parse([str(v) for v in comps.values()] +
                                      [str(k) for k in comps])
     out = {}
@@ -661,6 +662,18 @@ def log_param_backsub(expr, comp, x_names, thetas, bases):
     return str(spy.powsimp(spy.cancel(e.subs(subs))))
 
 
+def _split_power_bases(per_cond):
+    """`per_cond` with a product base of a symbolic power split into powers of the factors, (2*K)^n as 2^n*K^n."""
+    def split(e):
+        e = spy.sympify(e)
+        if any(not pw.exp.is_number and not pw.base.is_Symbol and not pw.base.is_number
+               for pw in e.atoms(spy.Pow)):
+            return spy.expand_power_base(e, force=True)
+        return e
+    return [([split(e) for e in f_c], [split(e) for e in g_c], {k: split(v) for k, v in ic_c.items()},
+             [split(e) for e in f_ss]) for (f_c, g_c, ic_c, f_ss) in per_cond]
+
+
 def _detect_power_atoms(per_cond, states=()):
     """Sorted (base, n) of the symbolic powers base^(c*n), n not a state, or None for another power."""
     pairs = set()
@@ -726,7 +739,7 @@ def _apply_power_recast(pairs, S, per_cond):
 
 
 def recast_backsub_expr(expr, e_names, l_names, bases, exps):
-    """An expression with E -> base**exp and L -> log(base) substituted back, cancelled."""
+    """An expression with E -> base**exp and L -> log(base) substituted back, canceled."""
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
     e_names, l_names, bases, exps = (as_list(e_names), as_list(l_names),

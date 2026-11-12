@@ -76,7 +76,8 @@ def _values(rows, env, p, memo):
 
 
 class _Condition:
-    """Rows of one condition over its states and parameters, order by order, resting states at their initial value."""
+    """Rows of one condition over the states and parameters of the condition, order by order, resting states at their
+    initial value."""
 
     def __init__(self, f, g, ic, S, fixed):
         ic = {X: spy.sympify(ic[X]) for X in S}
@@ -133,7 +134,7 @@ def _certify(cond, cap, p, seed):
         return "the rows have no exact domain"
     if dm.rank() != r:
         return "the generic rank at a point is below the exact rank"
-    # the initial values: each state at its initial value at the same point
+    # the initial values: every state at the initial value at the same point
     at, mem = dict(env), {}
     for X, e in zip(cond.S, sic):
         at[X] = _eval(e, env, 1, p, mem)[0]

@@ -413,7 +413,7 @@ def _connected(polys, g):
             best = (x, lower, upper, keep)
     if best is None:
         return False
-    # one elimination suffices: the fibers are intervals, so the set is connected iff its projection is
+    # one elimination suffices: the fibers are intervals, so the set is connected iff the projection of the set is
     x, lower, upper, keep = best
     proj = keep + [spy.Mul(*spy.fraction(spy.cancel(spy.together(u - lo)))) for lo in lower for u in upper]
     return _connected(proj, [y for y in g if y != x])
@@ -902,7 +902,8 @@ def face_section(b, pins, dens=()):
 
 
 def face_carriers(sol, coords, inv_start):
-    """`sol` with each coordinate the face moves pinned to a fresh carrier q_<k> holding its value there."""
+    """`sol` with each coordinate the face moves pinned to a fresh carrier q_<k> holding the value of the coordinate
+    there."""
     m = sol["meaning"]
     moved = [u for u, v in m.items() if re.sub(r"\s", "", v) != u and u in set(coords)]
     m = {u: m[u] for u in moved}
@@ -1119,7 +1120,7 @@ def unmoved_compress(preps):
 
 
 def match_carriers(adm):
-    """One distinct carrier per entry from its candidate list in `adm`, or None."""
+    """One distinct carrier per entry from the candidate list of the entry in `adm`, or None."""
     n = len(adm)
     pick = [None] * n
 

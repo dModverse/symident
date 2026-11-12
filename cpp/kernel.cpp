@@ -1,8 +1,8 @@
-// Exact GF(p) kernel for the observability analytic path of symmetryDetection().
+// Exact GF(p) kernel for the analytic observability path of detect().
 // Builds the observability-identifiability matrix by a Taylor-mode construction
 // over a finite field (Lie derivatives as truncated power series in time,
 // parameter gradients as forward-mode dual numbers), reduces it, and supports
-// the rational reconstruction used by the R orchestration. Primes are < 2^31 so
+// the rational reconstruction used by the Python side. Primes are < 2^31 so
 // residue products stay below 2^62 in uint64; the CRT product of four primes
 // stays below 2^124 in unsigned __int128 (symRatRecon only; compilers without
 // __int128 leave it out and the Python side reconstructs with arbitrary precision).
@@ -141,7 +141,7 @@ bool sqrtmod(u64 a, u64 p, u64& r) {
   return true;
 }
 
-// Reduce a (possibly negative) R integer to its residue in [0, p).
+// Reduce a (possibly negative) integer to the residue in [0, p).
 inline u64 red(long long x, u64 p) {
   long long v = (long long)x % (long long)p; if (v < 0) v += p; return (u64)v;
 }
@@ -156,7 +156,7 @@ inline std::vector<std::string> to_svec(const CharacterVector& v) {
   return o;
 }
 
-// Parse a signed decimal integer to its residue modulo p (handles arbitrary length
+// Parse a signed decimal integer to the residue modulo p (handles arbitrary length
 // without overflow); anything but digits after the sign is an error.
 u64 parse_mod(const std::string& s, u64 p) {
   size_t i = 0;
@@ -208,7 +208,7 @@ inline void dual_mul_acc(u64* o, const u64* X, const u64* Y, int w, u64 p) {
 // polynomial in the gaps vanishes for generic gaps iff every coefficient does).
 struct PolyBasis {
   int K, Mtot, nMono, w;
-  int serAxis, Tser;                           // a series axis with its own order, or -1
+  int serAxis, Tser;                           // a series axis with a separate order, or -1
   std::vector<std::vector<int> > idx;          // nMono multi-indices, degree-ordered
   std::vector<std::vector<int> > sumSlot;      // sumSlot[a][b] = slot(idx[a]+idx[b]) or -1
   std::vector<std::vector<std::pair<int,int> > > decomp;  // decomp[s] = {(a,b): a+b == s}
@@ -560,8 +560,8 @@ LSer ls_axpy(const LSer& a, const LSer& b, u64 sgn, u64 p) {
   return o;
 }
 
-// The value at eps = 1 of the series c (n known coefficients) by its smallest Pade form
-// N/D, D(0) = 1, with n at least twice its unknowns plus one and every coefficient
+// The value at eps = 1 of the series c (n known coefficients) by the smallest Pade form
+// N/D, D(0) = 1, with n at least twice the number of unknowns plus one and every coefficient
 // consistent. False if none exists or D(1) = 0.
 static bool pade_at_one(const std::vector<u64>& c, int n, u64 p, u64& val) {
   for (int tot = 0; 2 * (tot + 1) + 1 <= n; ++tot) {
@@ -606,13 +606,13 @@ static bool pade_at_one(const std::vector<u64>& c, int n, u64 p, u64& val) {
 
 // Kernel of the series echelon rows U (rank r, entries mod eps^N) at eps = 1: each vector
 // by back substitution in Laurent series from eps^0, accepted only if every entry is a
-// rational function its known coefficients determine (pade_at_one).
+// rational function determined by the known coefficients (pade_at_one).
 bool series_kernel_at_one(const std::vector<std::vector<u64> >& U, int r, int nz, int N,
                           u64 p, std::vector<std::vector<u64> >& K) {
   std::vector<int> pc(r, -1), pv(r, N);
   std::vector<char> isPiv(nz, 0);
   for (int t = 0; t < r; ++t) {
-    // the pivot of row t: its entry of minimal valuation among columns no earlier
+    // the pivot of row t: the entry of minimal valuation among columns no earlier
     // row pivots on, ties to the lowest column (as rref_series_mod chose it)
     for (int c = 0; c < nz; ++c) {
       if (isPiv[c]) continue;
@@ -1165,7 +1165,7 @@ bool build_one_condition(const CondRaw& cd,
 }
 
 // build_one_condition over column blocks on `threads` threads: each block holds the
-// value and its own dual lanes, the rows are assembled over all columns. A steady-state
+// value and a separate range of dual lanes, the rows are assembled over all columns. A steady-state
 // seed is laid out over all columns, so a seeded condition is built unblocked.
 double chain_block_bytes();
 
@@ -1220,7 +1220,7 @@ bool build_one_condition_blocked(const CondRaw& cd,
   return true;
 }
 
-// One chain segment in thread-safe plain C++: the regime-substituted tape, its
+// One chain segment in thread-safe plain C++: the regime-substituted tape, the
 // reduced constants, and the optional first-segment steady-state seed, IC tape
 // and state-dose event map. Constants are reduced against the single call prime.
 struct SegRaw {
@@ -1320,8 +1320,8 @@ bool eval_tape_poly(std::vector<std::vector<u64> >& V, const std::vector<int>& o
 
 // Build one condition's chain (all segments) at a single point/prime, propagating
 // the state across each gap as a formal power series and applying state-dose
-// events on the carry. leafPt holds the leaf residues; the z-leaves seed a dual
-// unit. Returns false on a vanishing denominator. Touches no R object.
+// events to the propagated state. leafPt holds the leaf residues; the z-leaves seed a dual
+// unit. Returns false on a vanishing denominator. Reads only flat vectors, so threads may call it.
 bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
                      int nz, int w, const std::vector<int>& dualCol,
                      const std::vector<int>& leafPt, int Nt, int Mtot, u64 p,
@@ -1334,7 +1334,7 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
   int nSeg = (int)segs.size();
   int K = nSeg - 1; if (K < 1) K = 1;
   // a continuation series in the leaves (coefficients of eps^1..eps^T) on one more axis,
-  // read on the line with coefficient 1; in line mode that axis has its own order Tser
+  // read on the line with coefficient 1; in line mode that axis has a separate order Tser
   int serAxis = -1;
   if (ser) { serAxis = K; K += 1; }
   bool lineMode = ser && Tser >= 0;
@@ -1370,7 +1370,7 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
         if (pb.idx[mo][serAxis] > 0 && tv[(size_t)mo * w]) return false;
     }
 
-  // each segment's left boundary time with its duals; the gaps between them set the
+  // each segment's left boundary time with duals; the gaps between them set the
   // line Delta_i = lineC[i] * eps along which the rank is taken
   std::vector<std::vector<u64> > tau(nSeg, std::vector<u64>(w, 0));
   std::vector<char> moves(nSeg, 0);
@@ -1446,7 +1446,7 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
     if (lineMode) rows_to_series_axis(rows, from, pb, nz, Ns, srows, lane != nullptr);
     else rows_to_line(rows, from, pb, lineC, nz, Mtot + 1, p, srows, lane != nullptr);
     // where the output is not analytic across a moving boundary, the boundary time is
-    // itself read off the output: its gradient joins the rows
+    // itself read off the output: the gradient of the boundary time joins the rows
     if (sj > 0 && moves[sj]) {
       bool kink = leftJet.size() != seg.gOut.size();
       for (size_t gi = 0; gi < seg.gOut.size() && !kink; ++gi) {
@@ -1596,7 +1596,7 @@ int chain_inner_threads(int cores, int outer) {
   return inner;
 }
 
-// build_one_chain over column blocks: each block holds the value and its own dual
+// build_one_chain over column blocks: each block holds the value and a separate range of dual
 // lanes, the rows are assembled over all columns. Rows and series rows keep the order
 // of the unblocked call, zero series rows dropped.
 bool build_chain_blocked(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
@@ -1660,7 +1660,7 @@ bool build_chain_blocked(const std::vector<SegRaw>& segs, int nLeaves, int nStat
 
 // Multi-condition observability over a shared coordinate space. Each element of
 // `tapes` is one condition on the same slot layout: leaves [0, nLeaves), states
-// [nLeaves, nLeaves + nStates), then its own instructions. Initial values are a
+// [nLeaves, nLeaves + nStates), then the instructions of the condition. Initial values are a
 // leaf slot (icLeaf >= 0) or a rational constant icNum/icDen. Leaves and duals are
 // shared, so the stacked rows give the intersection nullspace. Conditions are built
 // in parallel over `cores` threads. ok is FALSE on a vanishing denominator.
@@ -1682,11 +1682,12 @@ List symObsNullMulti(List tapes, int nLeaves, int nStates,
     if (dualCol[L] >= 0) leafVal[L][1 + dualCol[L]] = 1;
   }
 
-  // serial pre-pass into plain C++: the parallel region must touch no R object
+  // serial pre-pass into flat vectors: the parallel region reads no Value or List, whose named
+  // access can insert and whose conversion copies
   std::vector<CondRaw> td(T);
   for (int t = 0; t < T; ++t) td[t] = extract_cond_raw(tapes[t], nStates, w);
 
-  // parallel per-condition build: each thread owns its row block; a vanishing
+  // parallel per-condition build: each thread owns one row block; a vanishing
   // denominator in any condition marks failure (no early return inside OpenMP).
   std::vector<std::vector<std::vector<u64> > > perRows(T);
   std::vector<char> okFlag(T, 1);
@@ -1914,7 +1915,7 @@ List symObsNullBatch(List tapes, int nLeaves, int nStates, IntegerVector zSlots,
   std::vector<int> dualCol(nLeaves, -1);
   for (int c = 0; c < nz; ++c) dualCol[zSlots[c]] = c;
 
-  // copy out of R for the parallel region; constants are reduced per prime inside
+  // flat copy of the points for the parallel region; constants are reduced per prime inside
   // the build, so one extraction serves every pair
   std::vector<int> pts((size_t)nB * nLeaves);
   for (int bi = 0; bi < nB; ++bi)
@@ -1973,7 +1974,7 @@ List symObsNullBatch(List tapes, int nLeaves, int nStates, IntegerVector zSlots,
   return out;
 }
 
-// Series echelon rows as an R integer matrix (rank x nz*N).
+// Series echelon rows as an integer matrix (rank x nz*N).
 static IntegerMatrix series_matrix(const std::vector<std::vector<u64> >& S, int rank, int width) {
   IntegerMatrix M(rank, width);
   for (int i = 0; i < rank; ++i)
@@ -1983,7 +1984,7 @@ static IntegerMatrix series_matrix(const std::vector<std::vector<u64> >& S, int 
 
 // Where the series rank falls below the rank of the stacked coefficient rows, some
 // kernel direction moves with the gap lengths. If the series kernel is polynomial in
-// eps it is replaced by its value at eps = 1, the actual gaps: R, pivots and rank then
+// eps it is replaced by the value at eps = 1, the actual gaps: R, pivots and rank then
 // describe that kernel, and `atOne` says so.
 static void kernel_at_one_or_keep(const std::vector<std::vector<u64> >& ser, int rankS,
                                   int nz, int N, u64 p,
@@ -2014,7 +2015,7 @@ static List chain_result(const std::vector<std::vector<u64> >& R, const std::vec
 // Multi-segment observability with exact generic timing across events. `chains`
 // holds one ordered segment list per condition, each segment a regime-substituted
 // tape; the first may hold an IC seed. The nSeg-1 gaps are formal lengths Delta t_i:
-// the state crosses a gap by promoting its local-time Taylor coefficients into that
+// the state crosses a gap by promoting the local-time Taylor coefficients into that
 // gap's axis. Each segment's output jet, to total gap-degree Mtot, contributes
 // z-gradient rows per gap monomial; a direction is non-identifiable iff every
 // monomial annihilates it, so the stacked rows are reduced once over GF(p).
@@ -2028,11 +2029,11 @@ List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots
   for (int c = 0; c < nz; ++c) dualCol[zSlots[c]] = c;
   int T = chains.size();
 
-  // serial pre-pass into plain C++: the parallel build must touch no R object
+  // serial pre-pass into flat vectors: the parallel build reads no Value or List
   std::vector<int> leafPt(nLeaves);
   for (int L = 0; L < nLeaves; ++L) leafPt[L] = point[L];
   // a chain whose rank saturated at a lower Lie order is built only to that order:
-  // its rows at Nt add nothing, and the jet cost grows with the order
+  // the rows at Nt add nothing, and the jet cost grows with the order
   std::vector<int> ntOf(T, Nt);
   if (NtChain.size() == T)
     for (int t = 0; t < T; ++t) ntOf[t] = std::min(Nt, (int)NtChain[t]);
@@ -2057,10 +2058,10 @@ List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots
       throw std::invalid_argument("point_ser must have one row per leaf");
     }
   }
-  // line mode without a series: the leaves stay at the point, the axis still has its order
+  // line mode without a series: the leaves stay at the point, the axis still has an order
   if (lineMode && leafSer.empty()) leafSer.assign(nLeaves, std::vector<u64>(1, 0));
 
-  // parallel per-condition build: each thread owns its row block; a vanishing
+  // parallel per-condition build: each thread owns one row block; a vanishing
   // denominator in any condition marks failure (no early return inside OpenMP).
   std::vector<std::vector<std::vector<u64> > > perRows(T), perSer(T);
   std::vector<char> okFlag(T, 1);
@@ -2099,7 +2100,7 @@ List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots
     for (size_t i = 0; i < perSer[t].size(); ++i) ser.push_back(std::move(perSer[t][i]));
   int rankS = rref_series_mod(ser, nz, N, p, std::vector<char>(nz, 1));
   bool atOne = false;
-  // along a line the result is the series in t, not its value at t = 1
+  // along a line the result is the series in t, not the value at t = 1
   if (!lineMode) kernel_at_one_or_keep(ser, rankS, nz, N, p, rows, pivots, atOne);
   return chain_result(rows, pivots, nz, rankS, ser, N, atOne);
 }
@@ -2295,7 +2296,8 @@ List symObsNullChainSeedBatch(List chains, IntegerVector evalChain,
   int nPr = (int)distinct.size();
   int N = Mtot + 1;
 
-  // serial pre-pass per distinct prime: the parallel build must touch no R object
+  // serial pre-pass per distinct prime into flat vectors: the parallel build reads no Value
+  // or List
   std::vector<std::vector<std::vector<SegRaw> > >
       segsRaw(nPr, std::vector<std::vector<SegRaw> >(T));
   for (int t = 0; t < T; ++t) {
@@ -2378,7 +2380,7 @@ List symObsNullChainSeedBatch(List chains, IntegerVector evalChain,
 // Batched twin of per-point symObsNullChain calls on the plain gap path: every
 // (point, chain) jet in one OpenMP loop, then each point's stacked rows reduced as
 // symObsNullChain does, again in parallel. `points` (nB x nLeaves) holds one leaf
-// point per evaluation and `primes` its prime; NtChain caps a chain's Lie order as in
+// point per evaluation and `primes` the matching prime; NtChain caps a chain's Lie order as in
 // symObsNullChain. Segments are extracted once per (chain, distinct prime).
 List symObsNullChainPointBatch(List chains, int nLeaves, int nStates, IntegerVector zSlots,
                                IntegerMatrix points, NumericVector primes, int Nt, int Mtot,
@@ -2405,7 +2407,7 @@ List symObsNullChainPointBatch(List chains, int nLeaves, int nStates, IntegerVec
   int nPr = (int)distinct.size();
   int N = Mtot + 1;
 
-  // serial pre-pass: the parallel part must touch no R object
+  // serial pre-pass into flat vectors: the parallel part reads no Value or List
   std::vector<std::vector<std::vector<SegRaw> > >
       segsRaw(nPr, std::vector<std::vector<SegRaw> >(T));
   for (int t = 0; t < T; ++t) {
@@ -2507,7 +2509,7 @@ List symSeriesRank(IntegerMatrix S, int nz, int N, double pIn, IntegerVector col
   int rank = rref_series_mod(A, nz, N, p, mask, cores, false, &P);
   List out = List::create(_["rank"] = rank, _["S"] = series_matrix(A, rank, nz * N));
   // atOneBelow: the rank of the stacked coefficient rows; below it, try the kernel at
-  // eps = 1 and return its reduced rows
+  // eps = 1 and return the reduced kernel rows
   if (atOneBelow > rank && !cols.size()) {
     std::vector<std::vector<u64> > K, R;
     std::vector<int> piv;
@@ -2596,7 +2598,7 @@ SEXP symSolveMod(IntegerMatrix A, IntegerVector b, double pIn) {
   return x;
 }
 
-// Compiled twin of R's .sym_rref_modp (joint/equilibrate path, per sample point).
+// Compiled twin of gfp.rref_modp (joint/equilibrate path, per sample point).
 // Entries are doubles in [0, p); returns the pivot rows, 0-based pivot columns and
 // rank.
 List symRrefMod(NumericMatrix M, double pIn) {
@@ -2899,7 +2901,7 @@ IntegerVector symMonoResidues(IntegerMatrix expts, IntegerVector bases, double p
 
 
 // Berlekamp-Massey order (LFSR length) of a GF(p) sequence: the number of terms
-// the sequence requires, used to grow the sparse sampling until it stabilises.
+// the sequence requires, used to grow the sparse sampling until it stabilizes.
 int symBMorder(IntegerVector seq, double pIn) {
   u64 p = (u64) pIn;
   int len = seq.size();
@@ -2910,7 +2912,7 @@ int symBMorder(IntegerVector seq, double pIn) {
 
 
 // Univariate Cauchy (rational) interpolation A(t)/B(t) = r(t) over GF(p), with
-// deg A = dN, deg B = dD, from samples (tnodes, rvals); normalised so B(0) = 1.
+// deg A = dN, deg B = dD, from samples (tnodes, rvals); normalized so B(0) = 1.
 // Returns the values A(1) and B(1) (= N(point)/D(s) and D(point)/D(s) when the
 // caller samples r along the ray s + t*(point - s)). status is "ok",
 // "ambiguous" (the (dN, dD) guess does not give a one-dimensional fit) or

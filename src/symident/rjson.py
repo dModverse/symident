@@ -118,7 +118,8 @@ def reduce_json(obj, args, env=None):
 
 
 def _loop(spec, red, gauge):
-    """The detection of `spec` with the trafo of the reduction applied: its directions against the remaining ones."""
+    """The detection of `spec` with the trafo of the reduction applied: the directions found against the remaining
+    ones."""
     from .api import loop_outcome, reduced_model
     want = len(red.get("remaining") or [])
     rm = reduced_model(dict(spec.get("f") or {}), spec.get("g"), spec.get("trafo"), spec.get("conditions"),

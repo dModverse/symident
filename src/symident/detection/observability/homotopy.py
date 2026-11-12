@@ -92,7 +92,8 @@ class Homotopy:
         return dict.fromkeys(self.pars, 0)
 
     def basis(self, ns, p):
-        """Residual directions along the line as series vectors, each one on its own gauge column; None if singular."""
+        """Residual directions along the line as series vectors, each one on a separate gauge column; None if
+        singular."""
         key = ("W", self.mode, tuple(self.fcs))
         if key in ns:
             return ns[key]
@@ -259,7 +260,8 @@ class Homotopy:
             return None
 
     def fit_entry(self, a, i):
-        """Entry i of direction a as a rational function of its relevant parameters, held at the verification prime."""
+        """Entry i of direction a as a rational function of the relevant parameters of the entry, held at the
+        verification prime."""
         reli = self.rel[a][i]
         if not reli:
             return self._constant(a, i)

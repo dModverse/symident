@@ -22,7 +22,7 @@ def det(f, g, **kw):
 
 
 def value(sw, e, point):
-    # the parsed expression at a point, each indicator set by the sign of its function
+    # the parsed expression at a point, each indicator set by the sign of the indicator function
     pt = {spy.Symbol(k): spy.Rational(v) for k, v in point.items()}
     ind = {h: int(bool(q.xreplace(pt) > 0)) for h, q in zip(sw.ind, sw.funcs)}
     return e.xreplace(ind).xreplace(pt)
@@ -104,7 +104,7 @@ def test_an_angle_in_a_switched_model_takes_pi_as_the_number():
     f = {"x": "piecewise(-a*x, time > 1, -b*x) + k*(sin(pi*(time + 1)) + sin(pi*time))"}
     r = det(f, {"y": "x"}, trafo={"x": "1"})
     assert (r.rank, r.dim) == (2, 3)
-    # a large multiple of pi reduces to its period
+    # a large multiple of pi reduces to one period
     f = {"x": "piecewise(-a*x, time > 1, -b*x) + k*sin(pi*(50*time - 179999/2))"}
     assert det(f, {"y": "x"}, trafo={"x": "1"}).identifiable
 
@@ -131,7 +131,7 @@ def test_one_crossing_free_initial_state():
 
 
 def test_hidden_state_across_thresholds():
-    # (ii) a parameter that acts only on a state hidden in its own regime is identifiable
+    # (ii) a parameter that acts only in one regime, on a state hidden there, is identifiable
     # once another regime observes that state: a field commuting with both regimes keeps
     # their mixed Lie derivatives
     f = {"x": "-k*x + piecewise(0, x > c1, z)",
@@ -177,7 +177,7 @@ def test_time_event_and_input():
 
 
 def test_two_conditions():
-    # (vi) a symmetry acts on every condition with its own initial values
+    # (vi) a symmetry acts on every condition with the initial values of that condition
     f = {"x": "piecewise(-k1*x, x > c, -k2*x)"}
     cond = {"rows": ["A", "B"], "cols": {}}
     r = det(f, {"y": "s*x"}, trafo=[{"x": "2"}, {"x": "xb"}], conditions=cond)
@@ -202,7 +202,7 @@ def test_equilibrate():
 def test_infeasible_regime_is_excluded():
     # (viii) a sign pattern the declared signs contradict is no regime, so a parameter
     # that acts only there is no coordinate; a surface between regimes with the same
-    # dynamics is invisible, and its threshold is free
+    # dynamics is invisible, and the threshold is free
     f = {"x": "piecewise(-k1*x, x > c1, -k2*x, x > c1 + d, -k3*x)"}
     r = det(f, {"y": "x"}, reconstruct=True)
     sw = r.info["switching"]
@@ -216,7 +216,7 @@ def test_infeasible_regime_is_excluded():
 
 def test_switch_on_a_hidden_state():
     # a switch that acts only on states that never reach the observables is invisible: a
-    # direction that moves its surface is not lost, and the hidden parameters are free
+    # direction that moves the switch surface is not lost, and the hidden parameters are free
     f = {"x": "-k*x", "z": "piecewise(-a*z, z > c, -b*z)"}
     r = det(f, {"y": "s*x"}, reconstruct=True)
     assert r.info["switching"]["conditions"][0]["visibility"] == {"c - z = 0": "invisible"}
@@ -300,7 +300,7 @@ def test_surface_without_a_rational_point_is_undecided():
      {"c": "1", "s": "-1", "x": "1"}),
 ])
 def test_scaling_through_a_switched_observable_or_event(f, g, events, weights):
-    # a scaling of the state and its threshold survives a switched observable and a
+    # a joint scaling of state and threshold survives a switched observable and a
     # multiplicative event alike
     r = det(f, g, events=events, reconstruct=True)
     assert (r.rank, r.dim) == (4, 5)
@@ -314,7 +314,7 @@ def test_heaviside_jump_observed_directly():
 
 
 def test_regimes_per_condition():
-    # each condition keeps to its named regime, so neither sees a surface
+    # each condition keeps to the regime it names, so neither sees a surface
     cg = {"rows": ["a", "b"], "cols": {"x0": [3, 1]}}
     r = det({"x": "piecewise(-k1*x, x > 2, -k2*x)"}, {"y": "x"}, trafo={"x": "x0"}, fixed=["x0"],
             conditions=cg, regimes={"a": ["x > 2"], "b": ["x < 2"]})
@@ -323,7 +323,7 @@ def test_regimes_per_condition():
 
 
 def test_time_switch():
-    # a switch in time alone is a surface like any other: its time is kept
+    # a switch in time alone is a surface like any other: the switch time is kept
     f = {"x": "piecewise(-k1*x, time > tau, -k2*x)"}
     r = det(f, {"y": "x"}, trafo={"x": "x0"})
     assert r.identifiable and r.dim == 4
@@ -384,18 +384,26 @@ def test_a_field_with_integer_weights_is_a_scaling():
 
 
 def test_a_direction_the_rule_does_not_prove_is_a_candidate_not_a_symmetry():
-    m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"},
-                 inputs=["u"], events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"},
-                                       {"var": "x2", "root": "x1 - c", "value": "0", "method": "replace"}],
-                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
-    r = si.detect(m, equilibrate=True, reconstruct=True)
-    assert (r.rank, r.dim) == (5, 7)
+    m = si.Model({"x": "-k*x", "z": "a"}, {"y": "s*x"},
+                 events=[{"var": "x", "root": "z - c", "value": "x0", "method": "replace"}])
+    r = si.detect(m, reconstruct=True)
     assert {s.level for s in r.symmetries} == {"exact"}
     cands = r.info["switching"]["candidates"]
     assert len(r.symmetries) + len(cands) == r.dim - r.rank
     assert all(c["support"] and c["type"] in ("scaling", "general") for c in cands)
     assert r.info["rank_status"]["status"] == "lower bound" and r.info["switching"]["uncertified"]
     assert "up to" in repr(r) and "Candidates, not proven" in repr(r)
+
+
+def test_directions_through_a_condition_and_a_root_are_proven():
+    m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"},
+                 inputs=["u"], events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"},
+                                       {"var": "x2", "root": "x1 - c", "value": "0", "method": "replace"}],
+                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
+    r = si.detect(m, equilibrate=True, reconstruct=True)
+    assert (r.rank, r.dim) == (5, 7) and {s.level for s in r.symmetries} == {"exact"}
+    assert len(r.symmetries) == r.dim - r.rank and not r.info["switching"]["candidates"]
+    assert r.info["rank_status"]["status"] == "proven"
 
 
 def test_a_direction_that_moves_a_root_surface_is_no_symmetry():

@@ -42,7 +42,7 @@ def switches(**kw):
     Parameters
     ----------
     **kw
-        Switch names (see the user guide) with their values; a value sets the switch,
+        Switch names, listed in the API reference, with their values; a value sets the switch,
         ``False`` or ``None`` clears it. A switch set here wins over the
         environment variable ``SYMIDENT_<NAME>``.
 

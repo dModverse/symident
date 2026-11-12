@@ -1,3 +1,42 @@
+# symident 0.13.2
+
+* The directions under `equilibrate` are the same for every naming and order of the
+  parameters: the forward route solves another rate where the kernel refutes a form, takes
+  the forms outside the span of the directions found, and the parametrization of the resting
+  states tries each parameter first in turn.
+* A direction through a conserved total, or of a model linear in its states, is proven exact
+  where the state components solve the identities: the total reads an initial value on all
+  its states, and the components of a linear model are solved from the identities.
+* The linear conservation laws of `odes` are the `totals` when omitted, as for `reactions`.
+* A symbolic power with a product base, as `(2*K)^n`, is split into powers of the factors.
+* Under `equilibrate`, a power `b^n` of a positive rational `b` joins the base of `K^n`, as in
+  `(2*K)^n`, or is held as a generic constant, with `log(b)` independent of the other
+  constants; the second case is named in `info["limits"]`.
+* Under `equilibrate`, a direction through the resting value of a subsystem that no event
+  reaches is proven exact with events after or at the start, where the states that follow
+  need components affine in them.
+* The text of `info["rank_proof"]` is `proven symmetries` whenever the exact directions fill the
+  kernel, whichever routes found them.
+* `reduce` leaves a direction unreduced when its invariants read a resting state.
+* A wrong model or argument raises `InputError`, a `ValueError`, that names it: the shape of
+  the stoichiometry, an empty, unparsable or zero-dividing expression, a keyword or a state in
+  `parameters`, an incomplete event, the length of a condition column, a total that is not
+  conserved, `detect()` and `reduce()` arguments. An ignored `trafo` entry under
+  `equilibrate` is also an entry in `info["limits"]`.
+* `reduce` does not solve a system of invariants of degree above 32 in the carriers; the
+  block keeps its invariants, and `Reduction.limits` names the cap.
+* A total that the right-hand sides do not conserve raises an `InputError`, also without
+  `reduce_cq` and `equilibrate`. The totals that a stoichiometry gives are kept where the
+  equations conserve them exactly, as for a PEtab model with compartments of different sizes.
+* Under `equilibrate` without `reduce_cq`, the state that holds the free resting value of a
+  moiety is taken from the states of its total until the directions have closed forms; a
+  direction that stays open names `reduce_cq` in `info["limits"]`.
+* The user guide and the method page list the reasons in `info["proof"]`.
+
+* A general direction is proven exact where a `trafo` sets initial values through other
+  parameters, as `A = T - B`: the state components follow from the initial-value identities,
+  solved for those parameters.
+
 # symident 0.13.1
 
 * A rank under `equilibrate` is proven where the resting Jacobian is invertible at the base
@@ -30,10 +69,10 @@
 ## Switches and unknown inputs
 
 * An unknown input may enter a model with switches: it is continuous at every surface and
-  analytic between two switches. Each condition needs an input of its own; a switch on the
+  analytic between two switches. Each condition needs a separate input; a switch on the
   input, an event after the start and an initial value or event that reads it are refused.
 * A coordinate is non-identifiable only if it is so in every allowed regime; the state at a
-  switch is any point of its surface.
+  switch is any point of the surface.
 * A state that starts at zero and that every regime and event keeps at zero is taken out of the
   model first (`info["zero_states"]`).
 
@@ -41,8 +80,8 @@
 
 * Where a drained reaction or the resting balances have several solutions, `info["branches"]`
   names the one taken.
-* Under `equilibrate`, a state without dynamics that is not an input rests at a value of its
-  own, and an event at the start applies on top of it.
+* Under `equilibrate`, a state without dynamics that is not an input rests at the initial value,
+  and an event at the start applies on top of it.
 * A logarithm, a fractional power and the base of a free exponent need a positive argument on
   the declared domain, in the right-hand sides, observables, initial values and event values;
   otherwise an error names the symbols. With `reduce_cq` the check reads the model before the

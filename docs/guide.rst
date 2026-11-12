@@ -1,24 +1,20 @@
 User guide
 ==========
 
-One model runs through detection, reduction and a variant with a switch: a
-precursor ``x1`` is made at a basal rate and on a stimulus ``u``, and is either converted
-into the observed product ``x2`` or degraded. The system is at steady state before the
-stimulus, which is switched on at :math:`t = 0` with two doses.
+Running example: a precursor ``x1``, made basally and on a stimulus ``u``, becomes the
+observed product ``x2`` or is degraded; from rest, ``u`` switches on at :math:`t = 0` with
+one of two doses.
 
-The model
----------
-
-As ODEs with the observable, the model reads
+Model formulation
+-----------------
 
 .. math::
 
    \dot x_1 = k_b + k_{in}\, u - (k_1 + k_l)\, x_1, \qquad
    \dot x_2 = k_1 x_1 - k_2 x_2, \qquad \dot u = 0, \qquad y = s\, x_2 .
 
-:class:`symident.Model` takes it either as a reaction network or as ODEs; both give the
-same model. A reaction network lists the species, the stoichiometry (one row per
-reaction, one column per species) and the rates:
+:class:`symident.Model` takes a reaction network (species, stoichiometry with one row per
+reaction, rates) or ODEs; both give the same model:
 
 .. code-block:: python
 
@@ -33,14 +29,7 @@ reaction, one column per species) and the rates:
                 events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"}],
                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
 
-The five reactions are basal production of ``x1`` (``kb``), production on the stimulus
-(``kin*u``), conversion into ``x2`` (``k1``), degradation of ``x1`` (``kl``) and
-degradation of ``x2`` (``k2``). Only ``x2`` is measured, up to the unknown scale ``s``.
-``u`` takes part in no reaction: it is an input, zero at rest, and the event sets it to
-``dose`` at :math:`t = 0`. The two conditions differ in the dose.
-
-As ODEs, the right-hand sides are a dict from state to expression, followed by the
-observables:
+The input ``u`` is zero at rest until the event. As ODEs:
 
 .. code-block:: python
 
@@ -53,36 +42,35 @@ observables:
 Arguments of :class:`~symident.Model`:
 
 ``inputs``
-   input states, zero at the start and at rest; an event sets them.
+   input states, zero at the start and at rest; events set them.
 ``unknown_inputs``
    unknown functions of time (see `Unknown inputs`_).
 ``known_inputs``
-   known functions of time of no assumed form, such as a recorded forcing: their values and
-   time derivatives are known symbols, as many as the Lie order needs
-   (``info["known_inputs"]``).
+   known functions of time of no assumed form, such as a recording; values and time
+   derivatives are known symbols, as many as the Lie order needs (``info["known_inputs"]``).
 ``events``
-   a list of dicts with ``var``, ``time``, ``value`` and ``method`` (``replace``, ``add``
-   or ``multiply``); ``root`` in place of ``time`` fires where an expression changes sign.
+   dicts with ``var``, ``time``, ``value`` and ``method`` (``replace``, ``add``,
+   ``multiply``); ``root`` in place of ``time`` fires where an expression changes sign.
 ``conditions``
-   one row per experimental condition; a numeric cell fixes a symbol in that condition,
-   a string replaces it by that expression, a renaming in the simplest case. A dict
-   ``{"rows": [...], "cols": {name: [values]}}`` or a pandas data frame. A free initial
-   value is shared by the conditions unless the grid or ``trafo`` sets it.
+   one row per condition, as ``{"rows": [...], "cols": {name: [values]}}`` or a data frame;
+   a number fixes a symbol, a string replaces it by an expression or name. Free initial
+   values are shared unless the grid or ``trafo`` sets them.
 ``trafo``
-   a parameter transformation; an entry named like a state is its initial value.
+   a parameter transformation; an entry named like a state sets the initial value.
 ``fixed``
    known symbols; they take generic values.
 ``parameters``
-   further symbols treated as parameters; the coordinates of the analysis do not change.
+   further symbols treated as parameters; the coordinates stay the same.
 ``totals``
-   conserved totals, name to expression, each conserved by the right-hand sides; computed
-   from ``reactions`` when omitted. ``reduce_cq`` eliminates one species per total.
+   conserved totals, name to expression, conserved by the right-hand sides; computed from
+   ``reactions`` when omitted. ``reduce_cq`` eliminates one species per total.
 
-Expressions
-~~~~~~~~~~~
+.. _expressions:
 
-Right-hand sides, observables, initial values and event values are built from ``+``,
-``-``, ``*``, ``/``, powers (``^`` or ``**``) and these functions:
+Expression language
+~~~~~~~~~~~~~~~~~~~
+
+Expressions use ``+``, ``-``, ``*``, ``/``, powers (``^`` or ``**``) and these functions:
 
 ==============================  ===========================================================
 Exponential and logarithm       ``exp``, ``exp2``, ``exp10``, ``b^x`` with a positive
@@ -99,27 +87,27 @@ Hyperbolic                      ``sinh``, ``cosh``, ``tanh``, ``coth``, ``sech``
                                 ``acsch``
 Switches                        ``piecewise``, ``ifelse``, ``Heaviside``, ``sign``,
                                 ``abs``, ``max``, ``min``, comparisons and logical
-                                operators (see `Switches`_)
+                                operators (see `Switches and regimes`_)
 ==============================  ===========================================================
 
-These are the expressions of cppDE (``?cppDE::expressions``): ``acot(x)`` is
-``atan(1/x)``, and likewise for the other inverse reciprocal functions. ``pi`` is the
-number π and cannot name a symbol; ``E`` is a name and ``exp(1)`` is Euler's number;
-``time`` is the clock. A logarithm, a root, a fractional power and the base of a free
-exponent need an argument that is positive on the coordinates declared ``positive``, in
-initial values and event values too, and a power is rational only as a
-fraction: ``x^(1/2)``, not ``x^0.5``. ``floor``, ``ceiling`` and ``round`` are refused;
-write their steps with ``piecewise()``. Any other function, ``erf`` and ``erfc`` among
-them, needs ``engine="symbolic"``, which accepts every SymPy function but is meant for
-small models. Further functions can be requested at
-https://github.com/dModverse/symident/issues.
+The language is that of cppDE (``?cppDE::expressions``):
 
-Detection
----------
+- ``acot(x)`` is ``atan(1/x)``, likewise for the other inverse reciprocal functions.
+- ``pi`` is π and cannot name a symbol; ``E`` is a name; ``exp(1)`` is Euler's number;
+  ``time`` is the clock.
+- Logarithms, roots, fractional powers and bases of free exponents need an argument
+  positive on the ``positive`` coordinates, also in initial and event values.
+- A rational power is a fraction: ``x^(1/2)``, not ``x^0.5``.
+- ``floor``, ``ceiling`` and ``round`` are refused; write their steps with ``piecewise()``.
+- Other functions, such as ``erf`` and ``erfc``, need ``engine="symbolic"`` (every SymPy
+  function, small models); requests to https://github.com/dModverse/symident/issues.
 
-:func:`symident.detect` returns the non-identifiable directions as a
-:class:`~symident.Symmetries` object. With ``equilibrate=True`` every condition starts at
-its steady state with the inputs at zero:
+Symmetry detection
+------------------
+
+:func:`symident.detect` returns the non-identifiable directions as
+:class:`~symident.Symmetries`. ``equilibrate=True`` starts every condition at a steady state
+with the inputs at zero:
 
 .. code-block:: python
 
@@ -147,74 +135,73 @@ its steady state with the inputs at zero:
 
    exact = proven over Q.
 
-Of the six parameters only four combinations are identifiable. Each direction is printed
-as its generator: ``ξ(θ)`` is the rate at which the coordinate ``θ`` (a parameter or a free
-initial value) changes along the direction, and coordinates that do not change are left
-out. Along each direction the observables stay the same:
+``ξ(θ)`` is the rate of change of the coordinate ``θ``, a parameter or free initial value,
+along the direction; unchanged coordinates are omitted. The observables stay the same:
 
-- :math:`X_1` raises both production rates and lowers the scale ``s`` by the same
-  factor. ``x2`` grows in proportion, and ``s*x2`` stays the same: the absolute
-  production rates are not identifiable, only ``kb*s`` and ``kin*s``.
-- :math:`X_2` shifts flux between the two fates of ``x1``: it raises ``k1``, lowers
-  ``kl`` by the same amount and lowers the production rates. The total outflow
-  ``k1 + kl`` is unchanged, so ``x1`` relaxes at the same rate, and so is the flux into
-  ``x2``, ``k1*kb/(k1 + kl)`` at rest and ``k1*kin/(k1 + kl)`` per dose. ``x2`` sees only
-  these combinations, never the split itself.
+- :math:`X_1` scales ``kb`` and ``kin`` up and ``s`` down: only ``kb*s`` and ``kin*s``
+  are identifiable;
+- along :math:`X_2` the outflow ``k1 + kl`` and the flux into ``x2``, ``k1*kb/(k1 + kl)``
+  at rest and ``k1*kin/(k1 + kl)`` per dose, stay fixed, which is all ``x2`` sees.
 
-Every direction has a ``level``: ``exact`` (proven over Q), ``verified`` (checked at
-random points with the error probability in ``info["bound"]``), ``checked`` (the same
-test without an error bound, or on part of the entries) or ``open`` (no closed form). ``res.unproven()`` returns the
-verified and checked directions.
+The ``level`` of a direction is
 
-A locally identifiable model may still have a discrete symmetry, such as two rate constants
-that enter only through their sum and product. ``res.solution_count()`` counts the values of
-the coordinates that give the output of a random point modulo a prime, over the algebraic
-closure: a value outside the declared domain, such as ``-k`` where only ``k^2`` enters,
-counts too. A count above one is a candidate symmetry, found at that point, not proven.
-It needs msolve (see :doc:`install`) and one condition without events, switches or unknown
-inputs, detected without ``equilibrate`` and ``reduce_cq``; for a model that is not rational
-it returns None.
+``exact``
+   proven over Q;
+``verified``
+   checked at random points, error probability in ``info["bound"]``;
+``checked``
+   the same test without an error bound, or on part of the entries;
+``open``
+   no closed form.
 
-The rank, and with it the number of directions, is ``proven``, ``verified`` (with a
-probability) or a ``lower bound``, in which case the model may have fewer
-non-identifiable directions. ``info["rank_status"]`` gives the status and the reason, and
-the printout says when the rank is not proven. :doc:`method` states when each level and
-status applies.
+``res.unproven()`` returns the verified and checked directions. The rank is ``proven``,
+``verified`` (with a probability) or a ``lower bound`` (then the model may have fewer
+non-identifiable directions); ``info["rank_status"]`` gives status and reason, the printout
+flags an unproven rank, and :doc:`method` states when each applies.
 
-Options of :func:`~symident.detect`:
+A discrete symmetry, such as two rate constants entering only through sum and product,
+survives local identifiability. ``res.solution_count()`` counts, over the algebraic
+closure, the coordinate values giving the output of a random point modulo a prime, also
+outside the declared domain (``-k`` where only ``k^2`` enters); a count above one is a
+candidate at that point, not proven. It needs msolve (:doc:`install`) and one condition
+without events, switches or unknown inputs, detected without ``equilibrate`` and
+``reduce_cq``, and returns None for a non-rational model.
+
+Options of :func:`~symident.detect` (the others are documented there):
 
 ``reconstruct``
-   return general directions as exact rational functions (otherwise by their support).
+   general directions as exact rational functions, otherwise by their support.
 ``equilibrate``
-   start every condition at its steady state, with the inputs at zero.
+   start every condition at a steady state, inputs at zero. Each conserved total adds a
+   free resting value; a direction moving it is reconstructed, on the total, with
+   ``reduce_cq=True``, else it may stay without closed form (``info["limits"]``).
 ``positive``
-   the coordinates known to be positive, all by default; logarithms, roots and switch
-   conditions are decided on this domain. An entry may be an expression, such as
-   ``"1-x"`` for a fraction ``x`` below one; :func:`~symident.reduce` then prefers
-   sections inside that bound.
+   coordinates known to be positive (default all); logarithms, roots and switch conditions
+   are decided on this domain. An entry may be an expression, such as ``"1-x"`` for a
+   fraction ``x`` below one; :func:`~symident.reduce` then prefers sections inside it.
 ``gauge``
    ``False`` reconstructs every direction; ``None`` fixes one coordinate per scaling,
    chosen to keep the general directions narrow; a list ranks the coordinates to fix.
+``verify``
+   check the rank where the Lie order is not proven sufficient; ``False`` skips it.
+``scalings_only``
+   only the scaling symmetries, from an exact integer kernel.
 ``cores``
    threads and worker processes.
 
-:func:`~symident.detect` documents the others.
+``res.summary()`` adds Lie order, rank proof, suggested gauge and what stopped part of the
+detection. ``res.info`` (keys under :class:`~symident.Symmetries`) holds the details; a
+nonempty ``info["limits"]`` means a direction without closed form may have one, and
+``info["assumptions"]`` holds declared domain, switch starts and the error probability of a
+verified result. ``res.symmetries`` lists :class:`~symident.Symmetry` objects, ``to_dict()``
+the raw result.
 
-``res.summary()`` adds how the result was obtained: the Lie order, the rank proof, the
-suggested gauge and whatever stopped part of the detection. ``res.info`` holds the
-details, listed under :class:`~symident.Symmetries`. While ``info["limits"]`` is not
-empty, a direction reported without closed form may have one. ``info["assumptions"]``
-holds the declared domain and switch starts the result assumes, and the error probability
-of a verified result. ``res.symmetries`` lists the directions as
-:class:`~symident.Symmetry`; ``to_dict()`` returns the raw result.
+Reduction to identifiable parameters
+------------------------------------
 
-Reduction
----------
-
-:func:`symident.reduce` (or ``res.reduce()``) returns a reparametrization that removes the
-directions. A scaling is removed by fixing one of its coordinates; a general direction by
-its invariants, the combinations that stay constant along it, and each invariant becomes a
-new parameter ``q_1, q_2, ...``:
+:func:`symident.reduce` (or ``res.reduce()``) removes the directions: a scaling by fixing
+one coordinate of it, a general direction by the invariants, the combinations constant
+along it, which become new parameters ``q_1, q_2, ...``:
 
 .. code-block:: python
 
@@ -242,46 +229,41 @@ new parameter ``q_1, q_2, ...``:
      {X₂}  kl = 0
      summary(detailed=True) explains each section.
 
-The reduced model fixes the scale at ``s = 1`` and moves all outflow of ``x1`` into the
-conversion, ``kl = 0``. Its parameters are the identifiable combinations found above:
-``q_1`` is the total outflow rate of ``x1``, ``q_2`` and ``q_3`` are the basal and the
-stimulated flux into ``x2``, each in units of the measured signal. ``k2`` is identifiable
-and stays as it is.
-
-Each line under ``Sections`` picks one point on every orbit of the listed directions;
-``red.summary(detailed=True)`` explains why. The section ``kl = 0`` lies on the boundary
-of the parameter space, which the orbits reach only in a limit; the model is continuous up
-to it, so the limit gives the output of the orbit.
+``q_1`` is the outflow rate of ``x1``, ``q_2`` and ``q_3`` the basal and stimulated flux
+into ``x2`` in units of the signal; ``k2`` stays. Each line under ``Sections`` is one block
+of jointly reduced directions and picks one point per orbit; ``red.summary(detailed=True)``
+says why. ``kl = 0`` lies on the boundary, which the orbits reach only in a limit; the model
+is continuous there, so the limit gives the output of the orbit.
 
 ``red.level`` is ``exact`` when every claim is proven, ``verified`` or ``checked`` when a
-direction rests on a closed form of that level, and ``open`` when a claim of a section is
-not proven; the printout names such claims. ``red.checks`` holds the check of the trafo
-over Q and the detection on the reduced model (``check=True``); the summary line says when
-that detection does not confirm the reduction. A direction of level ``open`` is an error
-unless ``allow_open=True``, which leaves it in place. A ``checked`` direction, or a result
-whose saturation guard saw the rank still grow, is an error unless ``allow_checked=True``;
-a ``verified`` one gives a warning.
+direction rests on a closed form of that level, and ``open`` when a section claim is not
+proven (named in the printout).
+``red.checks`` holds the check of the trafo over Q and, with ``check=True``, the detection on
+the reduced model, flagged in the summary line when it does not confirm the reduction.
+Unproven directions:
 
-``red.trafo`` is the transformation as a dict of strings, ready to be composed with
-the model's parameters:
+- ``open``: an error unless ``allow_open=True``, which leaves the direction in place;
+- ``checked``, or a saturation guard that saw the rank still grow: an error unless
+  ``allow_checked=True``;
+- ``verified``: a warning.
+
+``red.trafo`` is the transformation as a dict of strings:
 
 .. code-block:: python
 
    red.trafo
    # {'k1': 'q_1', 'k2': 'k2', 'kb': 'q_2', 'kin': 'q_3', 'kl': '0', 's': '1'}
 
-An entry for a symbol that the condition grid sets goes into the cells of the grid. Under
-``equilibrate`` an entry named like a state pins the resting value it holds, not an initial
-value; the model takes a numeric one in ``fixed``. The closed loop of ``check=True`` applies
-the trafo this way.
+An entry for a symbol of the condition grid goes into the grid cells. Under
+``equilibrate`` an entry named like a state pins the resting value; a numeric one goes into ``fixed``.
+``check=True`` applies the trafo this way.
 
 PEtab problems
 --------------
 
 :func:`symident.read_petab` (or :meth:`symident.Model.from_petab`) reads a
-`PEtab <https://petab.readthedocs.io>`_ problem [Schmiester2021]_, format version 1 or 2, into
-a :class:`~symident.Model`. It needs the extra ``symident[petab]`` (python-libsbml and
-PyYAML). Reading the model of [Raia2011]_ from the
+`PEtab <https://petab.readthedocs.io>`_ problem [Schmiester2021]_, format 1 or 2, into a
+:class:`~symident.Model`; it needs ``symident[petab]``. The model of [Raia2011]_ from the
 `benchmark collection <https://github.com/Benchmarking-Initiative/Benchmark-Models-PEtab>`_
 [Hass2019]_:
 
@@ -309,39 +291,39 @@ PyYAML). Reading the model of [Raia2011]_ from the
 
    exact = proven over Q.
 
-The scale of each transcript readout trades against its production rate; ``res.reduce()``
-fixes ``SOCS3_accumulation = 1`` and ``CD274mRNA_production = 1``.
+Each transcript readout scale trades against the production rate of the transcript;
+``res.reduce()`` fixes ``SOCS3_accumulation = 1`` and ``CD274mRNA_production = 1``.
 
-Estimated parameters stay symbols; every other parameter takes its nominal value. Each
-experiment with measurements becomes one condition, a preequilibration sets
-``equilibrate``, and the estimated parameters on a log scale or with a positive lower
-bound become ``Model.positive``, the default of ``detect(positive=)``. The noise model does
-not enter. An SBML or PEtab feature without a counterpart in the model, such as an
-algebraic rule, a delay or a fast reaction, raises :class:`~symident.PEtabError`.
-An id that the expression language cannot read, such as one with a leading underscore, is
-renamed. ``m.petab`` lists the experiments, the estimated parameters, the fixed values and
-the renamed ids; :func:`~symident.read_petab` documents the mapping.
+The mapping, documented in :func:`~symident.read_petab` and recorded in ``m.petab``
+(experiments, estimated parameters, fixed values, renamed ids):
+
+- estimated parameters stay symbols, the others take their nominal values;
+- each experiment with measurements is one condition; a preequilibration sets
+  ``equilibrate``;
+- estimated parameters on a log scale or with a positive lower bound form
+  ``Model.positive``, the default of ``detect(positive=)``;
+- the noise model does not enter;
+- an id the expression language cannot read, such as one with a leading underscore, is
+  renamed;
+- an SBML or PEtab feature without counterpart, such as an algebraic rule, a delay or a
+  fast reaction, raises :class:`~symident.PEtabError`.
 
 Unknown inputs
 --------------
 
-An input whose course nobody recorded, such as an emission history, a forcing to be
-reconstructed or an intake, is an *unknown input*: a function of time of no assumed form,
-written as a symbol in the right-hand sides and observables without an equation of its own
-and listed in ``unknown_inputs``. The question is whether the parameters are identifiable
-whatever the input does. A direction may then change the input along with the parameters;
-the input itself is not asked about and does not count in ``rank`` and ``dim``.
+An *unknown input*, such as an emission history or an intake, is a function of time of no
+assumed form: a symbol without equation, listed in ``unknown_inputs``. The parameters are
+analyzed whatever the input does; a direction may change the input, which does not count in
+``rank`` and ``dim``.
 
-An input of known form, such as dosing steps, a physical law or the spline a fit will use,
-belongs in the model with its coefficients as ordinary parameters, and the result holds for
-that form only. The two answers differ: a parameter that is non-identifiable with an unknown
-input is non-identifiable under every parametrization flexible enough, while a parameter
-that is identifiable under a parametrization may be so only because the form is taken as
-exact. A recorded input whose form is not modeled goes into ``known_inputs``: its jets are
-known symbols, so the result holds for a generic recorded course.
+An input of known form (dosing steps, a physical law, the spline a fit will use) belongs in
+the model, coefficients as parameters, and the result holds for that form only.
+Non-identifiable with an unknown input implies non-identifiable under every flexible enough
+parametrization; the converse fails, since identifiability under a parametrization may
+rest on taking the form as exact. A recorded input of unmodeled form goes into
+``known_inputs``; the result then holds for a generic recorded course.
 
-A glacier length ``L`` that relaxes to the
-temperature anomaly ``T`` on the time scale ``tau``, with only ``L`` measured:
+A glacier length ``L`` relaxing to the temperature anomaly ``T`` on the time scale ``tau``:
 
 .. code-block:: python
 
@@ -368,51 +350,39 @@ temperature anomaly ``T`` on the time scale ``tau``, with only ``L`` measured:
 
    exact = proven over Q.
 
-Only the initial length is identifiable. The sensitivity ``c`` trades against the scale of
-``T``, and every ``tau`` fits the record with the temperature
-``T = -(tau*L' + L)/c`` that its input change describes. ``s.input_change`` holds
-:math:`\xi(T)` for each exact direction; the type and the reduction refer to the parameters
-and initial values, so ``res.reduce()`` fixes ``c = 1`` and ``tau = 1``.
+Only the initial length is identifiable: ``c`` trades against the scale of ``T``, and every
+``tau`` fits with ``T = -(tau*L' + L)/c``. ``Symmetry.input_change`` holds :math:`\xi(T)`
+per exact direction; type and reduction concern parameters and initial values only
+(``res.reduce()`` fixes ``c = 1``, ``tau = 1``).
 
-Every condition sees the same unknown input; a string in ``conditions`` renames it in a
-condition, which gives that condition an input of its own when the new name is listed in
-``unknown_inputs`` too, and a number fixes it there. An event leaves the input as it is:
-the input is one analytic function across it, so a jump of a state can separate parameters
-that the input absorbs otherwise. Under ``equilibrate`` the input is zero at rest, like
-every input, and arbitrary from the start on. An event or a ``trafo`` entry for the input
-and ``engine="symbolic"`` are refused.
-
-With switches (see :doc:`method`) the input is continuous where a trajectory crosses a
-surface and analytic between two crossings, while its derivatives may jump at a crossing.
-Each condition then needs an input of its own, renamed in ``conditions``. A switch on the
-input, an event after the start and an initial value or event value that reads the input
-are refused.
+- All conditions share the input; a string in ``conditions`` renames it (a separate input
+  if the new name is in ``unknown_inputs``), a number fixes it.
+- The input is analytic across an event, so a state jump can separate parameters the
+  input absorbs otherwise.
+- Under ``equilibrate`` it is zero at rest and arbitrary from the start on.
+- With switches each condition needs a separate input (:doc:`method`).
+- Refused: an event or ``trafo`` entry for the input, ``engine="symbolic"``.
 
 .. warning::
 
-   A polynomial stand-in for an unknown input, a chain ``w' = w1, ..., wd' = 0`` written as
-   states with free initial values, is a family of :math:`d + 1` numbers, not an unknown
-   input. Once the Lie order passes :math:`d + 1` the output determines them, and
-   parameters that trade against the input look identifiable: with a cubic stand-in for
-   ``T`` the glacier model above reports ``tau`` as identifiable. A spline is a polynomial
-   on each segment, so the local analysis sees the same.
+   A polynomial stand-in for an unknown input, a chain ``w' = w1, ..., wd' = 0`` of states
+   with free initial values, is :math:`d + 1` numbers, not an unknown input. Past Lie order
+   :math:`d + 1` the output determines them, and parameters trading against the input look
+   identifiable: with a cubic stand-in for ``T`` the glacier model reports ``tau``
+   identifiable. A spline, a polynomial per segment, looks the same to the local analysis.
 
-``info["unknown_inputs"]`` lists the jets of each input (see :doc:`method`), the
-Lie order up to which they are exact, and whether the analysis reached past it. The jets
-grow with the model; ``reconst_control(input_jet_order=)`` sets their number, and a chain
-shorter than the Lie order needs makes the rank a lower bound with an entry in
-``info["limits"]``. Unless the rank is full or exact directions fill the kernel, it is a
-lower bound, since the jets grow with the Lie order and no order is proven sufficient. A
-direction without a lift that is a function of the states, the parameters and the input
-stays ``checked``, with no input change.
+``info["unknown_inputs"]`` lists per input the jets (:doc:`method`), the Lie order up to
+which they are exact, and whether the analysis went past it. ``reconst_control(input_jet_order=)``
+sets the number of jets, which grows with the model; too short a chain makes the rank a
+lower bound (``info["limits"]``). A direction without a lift as a function of states,
+parameters and input stays ``checked``, without input change.
 
-Stationary profiles
-~~~~~~~~~~~~~~~~~~~
+Stationary spatial profiles
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A profile observed at steady state, :math:`0 = F(x, u, u_x, u_{xx}, \theta)` in one space
-dimension, is an ODE in :math:`x`. Written as a first-order system with :math:`x` in the
-role of time, it is an ordinary model. The morphogen gradient :math:`D u'' = k u`, with the
-profile ``u`` measured:
+A steady-state profile :math:`0 = F(x, u, u_x, u_{xx}, \theta)` in one space dimension is
+an ordinary model, a first-order system with :math:`x` as time. The morphogen gradient
+:math:`D u'' = k u`:
 
 .. code-block:: python
 
@@ -432,29 +402,25 @@ profile ``u`` measured:
 
    exact = proven over Q.
 
-Only the decay length :math:`\sqrt{D/k}` is identifiable. The initial values are the
-profile and its slope at the first point. A source term whose shape is not known,
-``v = (k*u - s)/D`` with ``unknown_inputs=["s"]``, frees ``D`` and ``k`` separately.
+Only the decay length :math:`\sqrt{D/k}` is identifiable; the initial values are profile
+and slope at the first point. A source of unknown shape, ``v = (k*u - s)/D`` with
+``unknown_inputs=["s"]``, frees ``D`` and ``k`` separately.
 
-Switches
---------
+Switches and regimes
+--------------------
 
-Right-hand sides and observables may switch between regimes:
-``piecewise(v1, c1, v2, c2, ..., otherwise)`` in SBML order (``0`` where no condition
-holds and no ``otherwise`` is given), ``ifelse(c, a, b)``, the comparisons ``<``, ``>``,
-``<=``, ``>=``, the operators ``&&``, ``||`` and ``!``, ``Heaviside()``, ``sign()``,
-``abs()``, ``max()`` and ``min()``. A condition that the coordinates declared
-``positive`` decide is resolved, so ``abs(x)`` is ``x`` and ``x > 0`` is true for a
-positive ``x``. ``x == c`` counts as false and ``x != c`` as true unless both sides agree
+The switch functions are those of the expression table, with the comparisons ``<``,
+``>``, ``<=``, ``>=`` and the operators ``&&``, ``||``, ``!``.
+``piecewise(v1, c1, v2, c2, ..., otherwise)`` takes SBML order and is ``0`` where no
+condition holds and no ``otherwise`` is given; ``ifelse(c, a, b)``. Conditions decided by the
+``positive`` coordinates are resolved: for a positive ``x``, ``abs(x)`` is ``x`` and
+``x > 0`` true. ``x == c`` is false and ``x != c`` true unless both sides agree
 identically.
 
-Which regimes a data set visits is not known in advance, so a coordinate is
-non-identifiable only if it is so in every regime the declared signs allow. A parameter that
-acts only in a regime that the declared signs exclude, such as ``k2`` in
-``piecewise(-k1*x, x > 0, -k2*x)`` with a positive ``x``, stays a coordinate and is
-reported non-identifiable.
-
-In the guide's model, let the degradation of ``x1`` act only above a threshold ``thr``:
+A coordinate is non-identifiable only if it is so in every regime the declared signs allow;
+a parameter of an excluded regime, such as ``k2`` in ``piecewise(-k1*x, x > 0, -k2*x)``
+with a positive ``x``, is reported non-identifiable. With degradation of ``x1`` only above a
+threshold ``thr``:
 
 .. code-block:: python
 
@@ -481,27 +447,21 @@ In the guide's model, let the degradation of ``x1`` act only above a threshold `
 
    exact = proven over Q.
 
-The flux split :math:`X_2` of the plain model is gone: below the threshold only ``k1``
-drains ``x1``, above it ``k1 + kl`` does, and the observable registers the change, so
-``k1`` and ``kl`` are determined separately. The scaling remains, with the threshold
-moving along with ``x1``. With a known threshold, ``fixed=["thr"]``, the switch breaks
-the scaling as well.
+:math:`X_2` is gone: the observable registers the change of outflow from ``k1`` to
+``k1 + kl`` at the threshold, so ``k1`` and ``kl`` are determined separately. The scaling remains, with ``thr`` moving along;
+``fixed=["thr"]`` breaks it too.
 
-A direction is reported when the observables of every regime stay unchanged along it and
-it keeps the visible switching surfaces, the events and the given initial values. Every
-sign pattern of the switching functions counts as a regime, whether or not a trajectory
-reaches it, so a parameter that acts only in a regime the trajectory never enters is
-reported identifiable; ``regimes`` below restricts the analysis to regimes known to be
-visited. The state at a switch is
-likewise any point of the surface, not the one the trajectory reaches. A state that starts
-at zero in every condition and that every regime and event keeps at zero is the exception:
-the analysis runs without it and lists it in ``info["zero_states"]``, and a parameter that
-only such a state reads is reported non-identifiable. :doc:`method` states the rule.
+A reported direction leaves the observables of every regime unchanged and keeps the visible
+switching surfaces, the events and the given initial values. Every sign pattern of the
+switching functions is a regime, reached or not, so a parameter of a regime never entered is
+reported identifiable unless ``regimes`` excludes that regime. The state at a switch is any
+point of the surface; :doc:`method` states the rule and the exception of states that stay
+at zero (``info["zero_states"]``).
 
-A switch is *visible* when the observables tell its two sides apart on the surface, as
-here; ``info["switching"]["conditions"]`` gives the visibility per condition. A switch
-that acts only on states that never reach the observables is invisible, and its surface
-may move:
+A switch is *visible* when the observables tell the two sides apart on the surface, as
+here, *invisible* when it acts only on states that never reach the observables, so that the
+surface may move, and *undecided* otherwise; ``info["switching"]["conditions"]`` gives the
+visibility per condition:
 
 .. code-block:: python
 
@@ -510,16 +470,14 @@ may move:
    r2.info["switching"]["conditions"][0]["visibility"]
    # {'c - z = 0': 'invisible'}
 
-``a``, ``b``, ``c`` and the initial value of ``z`` are free, and ``s`` and the initial
-value of ``x`` are determined only as the product ``s*x``. A switch that is neither
-visible nor invisible is ``undecided``.
+``a``, ``b``, ``c`` and the initial value of ``z`` are free; ``s`` and the initial value of
+``x`` enter only as ``s*x``.
 
-``regimes`` lists the regimes an experiment visits, one list for every condition or a
-dict from condition name to list. Each entry is a comparison or a list of comparisons; the
-first is the regime at the start. Then only these regimes and the surfaces between them
-count, and a parameter of a regime outside them is reported non-identifiable. A model
-without a switch that the declared signs leave open rejects ``regimes``. An experiment
-that stays below the threshold never sees ``kl``:
+``regimes`` lists the visited regimes, one list for every condition or a dict by condition
+name; an entry is a comparison or a list of them, the first the regime at the start. Only
+these regimes and the surfaces between them count; a parameter of another regime is
+reported non-identifiable. A model without a switch left open by the
+declared signs rejects ``regimes``. An experiment below the threshold never sees ``kl``:
 
 .. code-block:: python
 
@@ -547,29 +505,22 @@ that stays below the threshold never sees ``kl``:
 
    exact = proven over Q.
 
-``kl`` and ``thr`` are free, each on its own. The start below the threshold is declared,
-not derived from the initial values, so the result holds for this experiment, and
-``info["assumptions"]["starts"]`` lists the declaration. A start that the initial values
-contradict is an error.
+``kl`` and ``thr`` are free, independently. The start is declared, not derived, so the
+result holds for this experiment; ``info["assumptions"]["starts"]`` lists it, and a start
+the initial values contradict is an error.
 
-A switch on time alone, such as ``time > tau``, is a surface like the others. An event
-with ``root`` in place of ``time`` resets its state each time the root expression changes
-sign.
+A switch on time alone, such as ``time > tau``, is a surface like the others. An event with
+``root`` resets ``var`` each time the root expression changes sign. Where the rule is not
+proven for every direction, the rank is a lower bound, ``info["switching"]["uncertified"]``
+says why, and the printout lists the open directions as candidates
+(``info["switching"]["candidates"]``), not as symmetries. :doc:`method` lists the options
+and models that switches refuse.
 
-When the rule of the switches is not proven for every direction, the rank is a lower
-bound and ``info["switching"]["uncertified"]`` says why. The directions the rule leaves
-open are no symmetries of the result: the printout lists them as candidates, and
-``info["switching"]["candidates"]`` holds them. A model with
-switches rejects ``gauge``, ``reduce_cq``, ``free_initial`` and ``engine="symbolic"``, and
-a switch on parameters alone needs its side in ``regimes``. With ``equilibrate``, every
-resting state of every regime needs a closed form.
+Reconstruction settings
+-----------------------
 
-Settings
---------
-
-:func:`symident.reconst_control` collects the settings of the saturation and the
-reconstruction; pass the result as ``control`` to :func:`~symident.detect`. Among them,
-with their defaults:
+:func:`symident.reconst_control` builds the ``control`` of :func:`~symident.detect`
+(saturation and reconstruction); defaults in parentheses:
 
 ``degree_cap``, ``degree_cap_max``
    the degree bound of the dense fit (4) and the degree up to which a wider entry is
@@ -581,26 +532,25 @@ with their defaults:
 ``seed``
    the seed of every random choice (0).
 
-Raise a cap when ``info["limits"]`` names it; :func:`~symident.reconst_control` documents
-the others. The same model, settings and seed give the same result, whatever ``cores``.
+Raise a cap that ``info["limits"]`` names; :func:`~symident.reconst_control` lists the
+others. Model, settings and seed fix the result for any ``cores``.
 
-Diagnostics
------------
+Diagnostic output
+-----------------
 
-``detect(trace=True)`` prints the stage times; ``trace="full"`` adds the Lie order
-diagnostics. Further diagnostics and route choices are set by an environment variable
-``SYMIDENT_<NAME>``, or as a keyword of :func:`symident.switches` inside a ``with`` block,
-which wins over the environment:
+``detect(trace=True)`` prints stage times, ``trace="full"`` also Lie order diagnostics.
+Switches set further diagnostics and route choices, as an environment variable
+``SYMIDENT_<NAME>`` or, taking precedence, a keyword of :func:`symident.switches` in a
+``with`` block:
 
 ``DEBUG``
    raise the exceptions a route would record in ``info["errors"]``.
 ``DIAG``
    every diagnostic output on.
 
-They change how a result is reached, not what it reports as proven. The active ones are
-recorded in ``info["settings"]["switches"]``, an unknown name gives a warning, and
-:doc:`api` lists every switch. :doc:`install` describes
-``SYMIDENT_MSOLVE`` and ``SYMIDENT_CACHE``, and how the switches are set from R.
+Switches change how a result is reached, not what it proves. ``info["settings"]["switches"]``
+records the active ones; an unknown name warns. :doc:`api` lists all, :doc:`install`
+covers ``SYMIDENT_MSOLVE``, ``SYMIDENT_CACHE`` and R.
 
 References
 ----------

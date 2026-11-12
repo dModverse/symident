@@ -13,7 +13,9 @@ from ...sym.exact import (
     _rhs,
     _triangular,
     certify,
+    event_identities,
     output_identities,
+    regime_identities,
     rest_identities,
     rest_parametrization,
 )
@@ -50,7 +52,8 @@ def _weights(vec):
 
 
 def _exact_scalings(an, dirs):
-    """Marks exact the directions proportional to an exact scaling of the model, its state weights as the lift."""
+    """Marks exact the directions proportional to an exact scaling of the model, with the state weights of the scaling
+    as the lift."""
     ws = [_weights(w) for w in an.exact_scalings(an.scal_fixed)]
     coords = set(an.znames) - {an.znames[i] for i in an.run.nuis_cols}
     for d in dirs:
@@ -70,7 +73,7 @@ def _exact_scalings(an, dirs):
 
 
 def recast_extended(vec, recast):
-    """`vec` with its components on the recast states E = b^n, L = log(b); None for an inverted recast."""
+    """`vec` with components on the recast states E = b^n, L = log(b); None for an inverted recast."""
     if any(r.get("inverted") for r in recast):
         return None
     out = dict(vec)
@@ -84,7 +87,8 @@ def recast_extended(vec, recast):
 
 
 def representatives(d):
-    """The distinct forms of `d` to lift: as found (a scaling as w*z), canonical, times its common denominator."""
+    """The distinct forms of `d` to lift: as found (a scaling as w*z), canonical, times the common denominator of
+    `d`."""
     vec = {k: str(v) for k, v in d["vector"].items()}
     if d.get("type") == "scaling":
         vec = {k: scaling_component(w, k) for k, w in vec.items()}
@@ -115,7 +119,7 @@ def lift_of(d, rep, states):
 
 
 def _forms(an, d):
-    """The representatives of `d` with its input components, in recast coordinates where the analysis is."""
+    """The representatives of `d` with the input components, in recast coordinates where the analysis is."""
     if d.get("input_vector"):
         # each form of the coordinates with the input components scaled alike
         form = d.get("input_form") or representatives(d)[0]
@@ -149,7 +153,7 @@ def _output_proof(light, chains, vec):
 
 
 def light_proofs(light, chains, dirs, joint, plain, forms):
-    """Each of `dirs` proven by the lift of one of its forms, else, with `plain`, by its output identities."""
+    """Each of `dirs` proven by the lift of one form of the direction, else, with `plain`, by the output identities."""
     for d in dirs:
         first = None
         fs = forms(d)
@@ -205,7 +209,7 @@ def _mod(e, vals, p):
 
 
 def _pivots(sys_):
-    """Held moiety pivots as {state: parameter}, each resting at the value of its parameter."""
+    """Held moiety pivots as {state: parameter}, each resting at the value of the parameter of the pivot."""
     return {spy.Symbol(x): spy.Symbol(sys_.held_param_of[x]) for x in sys_.held_names}
 
 
@@ -260,7 +264,7 @@ def _rest_proof(an, d):
         vec = {k: str(model_sympify(v).xreplace(one)) for k, v in vec.items()}
     # an identity free of resting states holds one condition's own; with every resting Jacobian regular
     # at the base point each resting variety is a graph over the parameters, the joint one projects
-    # dominantly onto each, and each condition is proven on its own; else all are parametrized together
+    # dominantly onto each, and each condition is proven separately; else all are parametrized together
     rest = [x for _, xs, _ in conds for x in xs]
     vsyms = set().union(*[model_sympify(v).free_symbols for v in vec.values()]) if vec else set()
     pt = dict(base)
@@ -296,8 +300,8 @@ def _rest_proof(an, d):
     return certify(ids)
 
 
-def static_setup(an, light):
-    """`light` with the states resting in every segment at their resting values; None if none or not rational."""
+def _static_states(an, light):
+    """The states that no event targets and that rest at their resting values in every segment, alone."""
     sys_, tapes = an.sys, light["tapes"]
     chains = an.field_chains
     targets = {str(e["var"]) for ch in chains for i in ch
@@ -318,6 +322,85 @@ def static_setup(an, light):
         if not drop:
             break
         S -= drop
+    return S
+
+
+def affine_lift(setup, field, chains):
+    """`field` with components xi = G z + a on the states z, solved from the identities of the regimes, all one
+    affine system in z, their observables and events; None where there is none or no solution."""
+    states = [spy.Symbol(x) for x in setup["states"]]
+    regs = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
+    if not regs or not states or any(setup["regimes"][r] != setup["regimes"][regs[0]] for r in regs):
+        return None
+    rg = setup["regimes"][regs[0]]
+    n = len(states)
+    G = spy.Matrix(n, n, lambda i, j: spy.Symbol(f"_g{i}_{j}"))
+    a = spy.Matrix(n, 1, lambda i, j: spy.Symbol(f"_a{i}"))
+    xi = G * spy.Matrix(states) + a
+    unknown = list(G) + list(a)
+    lifted = dict(field, **{str(z): str(xi[i]) for i, z in enumerate(states)})
+    ids = [e for _, e in regime_identities(rg, lifted)] + \
+        [e for ch in chains for i in ch for ev in [_evs(setup["tapes"][i].get("ver_t0"))] if ev
+         for _, e in event_identities(ev, lifted, lifted, setup["states"])] + \
+        [e for j in setup["joins"] for _, e in event_identities(j["ev"], lifted, lifted, setup["states"])]
+    eqs = []
+    for e in ids:
+        e = spy.together(e)
+        num = spy.numer(e)
+        if num == 0:
+            continue
+        eqs += spy.Poly(num, *states).coeffs()
+    eqs = [q for q in eqs if q != 0]
+    if not eqs:
+        return None
+    sol = spy.solve(eqs, unknown, dict=True)
+    if len(sol) != 1:
+        return None
+    out = dict(field)
+    zero = {u: 0 for u in unknown}
+    for i, z in enumerate(states):
+        comp = spy.cancel(xi[i].xreplace({u: sol[0].get(u, u) for u in unknown}).xreplace(zero))
+        if comp != 0:
+            out[str(z)] = str(comp)
+    return out
+
+
+def _moved_proofs(an, light, dirs):
+    """Marks exact the directions whose lift keeps the resting states of a subsystem the events leave alone."""
+    try:
+        made = moved_setup(an, light)
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        made = f"{type(exc).__name__}"
+    if isinstance(made, str):
+        return _fail(dirs, f"resting subsystem as coordinates: {made}")
+    setup, ctx = made
+    for d in dirs:
+        ex = {}
+        for vec in representatives(d):
+            try:
+                field = moved_field(ctx, vec)
+                ex = exact_direction(setup, field, an.field_chains, True) if field is not None else \
+                    {"ok": None, "why": "no resting components keep the variety tangent"}
+                if ex["ok"] is not True and field is not None:
+                    lifted = affine_lift(setup, field, an.field_chains)
+                    if lifted is not None:
+                        ex = exact_direction(setup, lifted, an.field_chains, True)
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
+                ex = {"ok": None, "why": f"{type(exc).__name__}"}
+            if ex["ok"] is True:
+                d["exact"], d["proof"], d["state_components"] = True, None, lift_of(d, vec, ex.get("states"))
+                break
+        else:
+            _fail([d], f"resting subsystem as coordinates: {ex.get('why') or 'undecided'}")
+
+
+def static_setup(an, light):
+    """`light` with the states resting in every segment at their resting values; None if none or not rational."""
+    sys_, tapes = an.sys, light["tapes"]
+    chains = an.field_chains
+    S = _static_states(an, light)
     if not S:
         return None
     pivot = {x: v for x, v in _pivots(sys_).items() if str(x) in S}
@@ -349,8 +432,92 @@ def static_setup(an, light):
             "tapes": [new_tapes[by_tape[i]] if i in by_tape else tapes[i] for i in range(len(tapes))]}
 
 
+def _subs_events(evs, sub):
+    out = []
+    for e in evs:
+        e = dict(e)
+        for k in ("value", "time", "root"):
+            if e.get(k) is not None and str(e[k]) not in ("NA", "Inf", "-Inf"):
+                e[k] = str(model_sympify(str(e[k])).xreplace(sub))
+        out.append(e)
+    return out
+
+
+def moved_setup(an, light):
+    """(setup, context) with the resting states of a subsystem that no event reaches as constant coordinates, the
+    resting variety parametrized; or the reason there is none."""
+    sys_, tapes, chains = an.sys, light["tapes"], an.field_chains
+    if len(sys_.equil_conds) != 1:
+        return "more than one resting condition"
+    S = _static_states(an, light)
+    if not S:
+        return "no resting subsystem that the events leave alone"
+    pivot = {x: v for x, v in _pivots(sys_).items() if str(x) in S}
+    Ssym = [spy.Symbol(x) for x in sorted(S) if spy.Symbol(x) not in pivot]
+    ci = sys_.equil_conds[0]
+    rest = {k: v.xreplace(pivot) for k, v in _rhs(sys_.models[ci]).items()}
+    eqs = [rest[x] for x in Ssym]
+    params = sorted(set().union(*[e.free_symbols for e in eqs]) - set(Ssym), key=str) if eqs else []
+    par = rest_parametrization(eqs, Ssym, params)
+    if par is None:
+        return "the resting states of the subsystem have no rational parametrization"
+    run = an.run
+    if par["params"]:
+        sol = sys_.solve_cond(an.sc["point0"], PRIMES[0], ci)
+        bc = {y: spy.Integer(int(sol["ptc"][run.slot(str(y))])) for y in Ssym
+              if sol is not None and run.slot(str(y)) is not None}
+        bc.update({spy.Symbol(n): spy.Integer(int(an.sc["point0"][run.slot(n)]))
+                   for n in map(str, params) if run.slot(n) is not None})
+        A = spy.Matrix([[spy.diff(n, q) for q in par["params"]] for n in par["eqs"]])
+        if len(bc) < len(Ssym) + len(params) or not _mod(A.det(), bc, PRIMES[0]):
+            return "the parametrization does not reach the resting branch at the base point"
+    sub = dict(par["sub"])
+    sub.update(pivot)
+    regimes, regime_of, new_tapes, joins = [], [], [], []
+    for j, i in enumerate(chains[0]):
+        t = tapes[i]
+        f = [f"{x} = {e.xreplace(sub)}" for x, e in _rhs(_lines(t.get("model_lines"))).items() if str(x) not in S]
+        g = [f"{l.split('=', 1)[0].strip()} = {model_sympify(l.split('=', 1)[1]).xreplace(sub)}"
+             for l in _lines(t.get("obs_lines"))]
+        regimes.append({"f": f, "g": g})
+        regime_of.append(len(regimes))
+        ic = [l for l in _lines(t.get("ver_ic")) if l.split("=", 1)[0].strip() not in S]
+        new_tapes.append(dict(t, ver_ic=ic, ver_t0=_subs_events(_evs(t.get("ver_t0")), sub)))
+        if j:
+            joins.append({"from": len(regimes) - 2, "to": len(regimes) - 1,
+                          "ev": _subs_events(_evs(t.get("ver_ev")), sub), "chain": 1})
+    order = list(chains[0])
+    by_tape = dict(zip(order, range(len(order))))
+    setup = {"regimes": regimes, "gens": [[{}]] * len(regimes),
+             "regime_of": [regime_of[by_tape[i]] if i in by_tape else 1 for i in range(len(tapes))],
+             "joins": joins, "states": [x for x in light["states"] if x not in S],
+             "tapes": [new_tapes[by_tape[i]] if i in by_tape else tapes[i] for i in range(len(tapes))]}
+    return setup, {"sub": sub, "par": par, "left": [x for x in Ssym if x not in sub]}
+
+
+def moved_field(ctx, vec):
+    """`vec` on the coordinates of the parametrized resting variety, with the components of the resting states that
+    keep it tangent; None where that system has no solution."""
+    sub, par, left = ctx["sub"], ctx["par"], ctx["left"]
+    comp = {spy.Symbol(k): model_sympify(v) for k, v in vec.items()}
+    solved = list(par["params"])
+    field = {k: v.xreplace(sub) for k, v in comp.items() if k not in sub}
+    if left:
+        # the solved parameters p = h(x, q) move as v(p) = h_x xi + h_q v(q)
+        h = [sub[p] for p in solved]
+        rhs = spy.Matrix([comp.get(p, spy.Integer(0)).xreplace(sub) - sum(
+            (spy.diff(hp, q) * field.get(q, spy.Integer(0)) for q in set(field) - set(left)), spy.Integer(0))
+            for p, hp in zip(solved, h)])
+        J = spy.Matrix([[spy.diff(hp, x) for x in left] for hp in h])
+        if J.shape[0] != J.shape[1] or spy.cancel(J.det()) == 0:
+            return None
+        xi = J.LUsolve(rhs)
+        field.update({x: spy.cancel(xi[i]) for i, x in enumerate(left)})
+    return {str(k): str(v) for k, v in field.items() if v != 0}
+
+
 def combined_work(an, light):
-    """Work of the regime detections of the combined lift: per regime, its coordinates times its tape length."""
+    """Work of the regime detections of the combined lift: per regime, the coordinates times the tape length."""
     tapes = an.multi["tapes"]
     keys = regime_keys(tapes)
     first = {k: i for i, k in reversed(list(enumerate(keys)))}
@@ -462,6 +629,9 @@ def prove_exact(an, result):
                     break
             else:
                 _fail([d], f"lift with the resting subsystem fixed: {ex.get('why') or 'undecided'}")
+        left = [d for d in left if not d.get("exact")]
+        if left and not an.recast:
+            _moved_proofs(an, light, left)
     dirs = [d for d in dirs if not d.get("exact")]
     if not dirs:
         return

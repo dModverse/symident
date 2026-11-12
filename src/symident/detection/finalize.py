@@ -274,7 +274,7 @@ def log_arg_back(raw, la):
     if raw.get("coordinates") is not None:
         raw["coordinates"] = ren(raw["coordinates"])
     if isinstance(raw.get("kernel"), dict) and raw["kernel"].get("coords") is not None:
-        # the chart is diagonal, so the kernel in the charted coordinates has the same span pattern
+        # the coordinate change is diagonal, so the kernel in the new coordinates has the same span pattern
         back_of = dict(zip(la["L"], la["v"]))
         raw["kernel"] = dict(raw["kernel"], coords=[back_of.get(z, z) for z in raw["kernel"]["coords"]])
     if raw.get("non_identifiable") is not None:

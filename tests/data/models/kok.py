@@ -1,4 +1,4 @@
-"""IFNalpha signalling in Huh7.5 cells (Kok et al. 2020, Mol Syst Biol), the core model of the
+"""IFNalpha signaling in Huh7.5 cells (Kok et al. 2020, Mol Syst Biol), the core model of the
 dMod2 demo KokMSB2020: reactions, observables, the steady-state trafo and the 25 conditions."""
 
 import csv
@@ -128,7 +128,7 @@ def _chain_of(protein, n):
     return [f"{protein}_LC_{i + 1}" for i in range(n)]
 
 
-# each rule replaces its symbol in every entry, in this order (dMod's insert)
+# each rule replaces the symbol it names in every entry, in this order (dMod's insert)
 RULES = (
     [(x, "STAT1c*degSTAT1/delaySTAT1") for x in _chain_of("STAT1", 3)] +
     [(x, "STAT2c*degSTAT2/delaySTAT2") for x in _chain_of("STAT2", 5)] +

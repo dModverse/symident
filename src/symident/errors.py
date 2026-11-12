@@ -12,6 +12,10 @@ class RouteError(Exception):
     """A route that does not apply or does not close; the message says why."""
 
 
+class InputError(ValueError):
+    """An argument or a part of the model with a wrong form; the message names it."""
+
+
 class InapplicableError(TypeError, ValueError):
     """An expression a helper does not handle; caught where TypeError or ValueError is."""
 

@@ -1,11 +1,14 @@
 """Exact proofs: the identities of a lifted field cancel over Q, one equation at a time."""
 
+import pytest
+
 import symident as si
 from symident.gfp import PRIMES
 from symident.sym.exact import (
     certify,
     event_identities,
     initial_identities,
+    initial_lift,
     output_identities,
     regime_identities,
 )
@@ -20,6 +23,12 @@ def test_a_symmetry_and_its_lift_pass():
     assert certify(initial_identities(["x = x0", "z = 0"], dict(SCALE, x0="x0")))["ok"] is True
     ev = [{"var": "x", "method": "add", "value": "u"}]
     assert certify(event_identities(ev, dict(SCALE, u="u"), dict(SCALE, u="u"), ["x", "z"]))["ok"] is True
+
+
+def test_the_initial_lift_reads_the_start_on_the_states():
+    lift = initial_lift({"T": "T", "k1": "-k1", "k2": "k1"}, ["A = T - B", "B = B"], ["A", "B"])
+    assert lift == {"T": "T", "k1": "-k1", "k2": "k1", "A": "A + B"}
+    assert initial_lift(SCALE, ["x = x0", "z = 0"], ["x", "z"]) is None
 
 
 def test_a_wrong_field_fails_with_the_identity_named():
@@ -56,6 +65,15 @@ def test_a_start_at_rest_proves_directions_through_the_constant_output():
 def test_a_conserved_output_proves_the_rates_it_hides():
     r = si.detect(si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"y": "A + B"}), reconstruct=True)
     assert {s.level for s in r.symmetries} == {"exact"} and len(r.symmetries) == 3
+
+
+def test_initial_values_set_by_a_trafo_give_the_state_components():
+    # A starts at T - B or r*B: T and r are no initial values, the lift solves for them
+    for trafo, xi_a in (({"A": "T - B"}, "A + B"), ({"A": "r*B"}, "-A - B")):
+        m = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"y": "s*B"}, trafo=trafo)
+        r = si.detect(m, reconstruct=True)
+        assert [s.level for s in r.symmetries] == ["exact", "exact"]
+        assert r.symmetries[1].state_components == {"A": xi_a}
 
 
 def test_output_identities_refute_a_wrong_direction():
@@ -95,7 +113,7 @@ def test_a_held_moiety_pivot_rests_at_its_parameter():
 
 
 def test_parameters_of_unobserved_or_vanishing_states_are_exact():
-    # a parameter of a state that no observable of its condition sees
+    # a parameter of a state that no observable of the same condition sees
     m = si.Model({"A": "-k*A", "B": "-q*B"}, [{"yA": "A"}, {"yB": "B"}],
                  conditions={"rows": ["elisa", "wb"], "cols": {"q": ["q1", "q2"]}})
     assert [s.level for s in si.detect(m, reconstruct=True).symmetries] == ["exact"]
@@ -132,7 +150,7 @@ def test_closed_forms_of_the_symbolic_engine_are_proven():
     m = si.Model({"x": "-exp(lk)*x + exp(lb)"}, {"y": "log10(s*x)"}, trafo={"x": "10^lx", "s": "10^ls"})
     r = si.detect(m, engine="symbolic")
     assert r.rank == 3 and [s.level for s in r.symmetries] == ["exact"] and r.info["rank_proven"] == 1
-    # a state at rest from its initial value on is replaced by that value
+    # a state at rest from the initial value on is replaced by that value
     r = si.detect(si.Model({"x": "-k*(x - 1)"}, {"y": "s*x"}, trafo={"x": "1"}), engine="symbolic")
     assert r.info["rank_proof"] == "Lie order proven sufficient, exact kernel"
 
@@ -149,9 +167,7 @@ def test_without_a_certified_lie_order_the_symbolic_engine_proves_by_lifts():
 
 
 def test_a_direction_of_the_reachable_set_says_why_it_stays_below_exact():
-    m = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"Aobs": "alpha*A"}, trafo={"k1": "k2*B/A"},
-                 events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
-    r = si.detect(m, reconstruct=True)
+    r = si.detect(_fields_model(), reconstruct=True)
     (p,) = r.info["proof"]
     assert p["reason"].startswith("lift of the closed form: [Y, F] on")
     assert "output is not a polynomial in t" in p["reason"]
@@ -193,17 +209,16 @@ def test_directions_below_exact_get_the_bound():
 
 
 def test_the_regime_detections_of_the_combined_lift_keep_to_their_budget():
-    m = si.Model({"A": "-(ka + kb)*A", "B1": "ka*A - k1*B1", "B2": "kb*A - k2*B2", "C": "k3*B1 + k4*B2 - kc*C"},
+    m = si.Model({"A": "-(ka + kb)*A", "B1": "ka*A - k1*B1", "B2": "kb*A - k2*B2", "C": "k3*B1 + k4*B2 - kc*C^2"},
                  {"y": "C"}, trafo={"A": "A0", "B1": "0", "B2": "0", "C": "0"}, fixed=["A0"])
     r = si.detect(m, reconstruct=True, control=si.reconst_control(exact_work_cap=1))
     assert any(lim.startswith("exact proof: work") for lim in r.info["limits"])
     assert all("above exact_work_cap=1" in p["reason"] for p in r.info["proof"])
+    assert [s.level for s in si.detect(m, reconstruct=True).symmetries] == ["exact"]
 
 
 def test_unproven_directions_are_listed_and_printed_with_their_level():
-    m = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"Aobs": "alpha*A"}, trafo={"k1": "k2*B/A"},
-                 events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
-    r = si.detect(m, reconstruct=True)
+    r = si.detect(_fields_model(), reconstruct=True)
     assert [s.level for s in r.unproven()] == ["verified"] and r.unproven()[0].explicit
     text = repr(r)
     assert "X₁  (verified)" in text and "not proven" in text and "probability at most" in text
@@ -282,7 +297,7 @@ def test_a_gap_order_below_its_bound_leaves_the_rank_a_lower_bound():
     r = si.detect(_late_switch(), reconstruct=True, verify=False, control=CAP1)
     assert r.info["gap_certified"] is False
     assert r.info["gap_certificate"] == "the rank did not grow from gap order 0 to 1 (the rank stays below " \
-                                        "its bound 3 up to the cap)"
+                                        "the bound 3 up to the cap)"
     assert r.info["rank_status"] == {"status": "lower bound", "probability": None,
                                      "why": "the gap order is not proven sufficient"}
     assert any(lim.startswith("gap order: ") for lim in r.info["limits"])
@@ -308,7 +323,10 @@ def test_the_bound_needs_proven_orders():
 
 
 def _fields_model():
-    return si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"Aobs": "alpha*A"}, trafo={"k1": "k2*B/A"},
+    # the nonlinear balance keeps its direction below exact: the lift needs a state component that is no
+    # combination of the states
+    f = {"A": "-k1*A*B + k2*C", "B": "-k1*A*B + k2*C", "C": "k1*A*B - k2*C"}
+    return si.Model(f, {"Aobs": "alpha*A"}, trafo={"k1": "k2*C/(A*B)"},
                     events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
 
 
@@ -409,3 +427,37 @@ def test_a_lift_whose_parameter_components_move_along_the_flow_is_refused():
              "tapes": [{"ver_ic": ["x = x"], "ver_t0": [], "ver_ev": []}]}
     assert exact_direction(light, field, [[0]], False)["ok"] is not True
     assert exact_direction(light, {"c": "-c", "x": "x"}, [[0]], False)["ok"] is True
+
+
+def test_a_conserved_total_reads_the_initial_value_on_all_its_states():
+    regime = ["A = -k1*A + k2*B", "B = k1*A - k2*B"]
+    lift = initial_lift({"T": "T", "k1": "-k1", "k2": "k1"}, ["A = T", "B = 0"], ["A", "B"], regime)
+    assert lift["A"] == "A + B"
+
+
+def test_directions_through_a_moiety_are_exact():
+    m = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"y": "s*B"}, trafo={"A": "T", "B": "0"})
+    r = si.detect(m, reconstruct=True)
+    assert [s.level for s in r.symmetries] == ["exact", "exact"]
+    assert r.info["rank_proof"] == "proven symmetries"
+    m = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - (k2 + k3)*B"}, {"y": "s*B"}, trafo={"A": "D", "B": "0"})
+    assert [s.level for s in si.detect(m, reconstruct=True).symmetries] == ["exact", "exact"]
+
+
+def _rest_with_events(names, events):
+    """A quadratic resting subsystem, a state it drives, and events on the driven state only."""
+    a, b, c, e, f, g, h = names
+    odes = {"x": f"{a} - {b}*x^2 - {c}*x", "z": f"{f}*x - {e}*z"}
+    return si.detect(si.Model(odes, {"y": f"{g}*z"}, events=events), equilibrate=True, reconstruct=True)
+
+
+@pytest.mark.parametrize("names", [("k1", "k2", "k3", "k4", "k5", "s", "d"),
+                                   ("q9", "a", "b", "c", "e", "r", "w"),
+                                   ("zz", "k", "kk", "k4", "k1", "s", "d")])
+@pytest.mark.parametrize("method, time", [("add", 3), ("replace", 3), ("add", 0)])
+def test_resting_variety_directions_are_exact_with_events_on_a_driven_state(names, method, time):
+    ev = [{"var": "z", "time": time, "value": "w" if method == "add" else "1", "method": method}]
+    ev[0]["value"] = ev[0]["value"].replace("w", names[6])
+    r = _rest_with_events(names, ev)
+    assert [d["level"] for d in r.symmetries].count("exact") == len(r.symmetries) >= 3
+    assert not r.info["proof"]

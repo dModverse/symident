@@ -16,9 +16,9 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
     relevance_cap : int
         Coordinates in one entry for the dense fit; wider entries use sparse interpolation.
     relevance_cap_dir : int
-        Coordinates in one direction; a wider one is reported by its support.
+        Coordinates in one direction; a wider one is reported by the support.
     relevance_cap_sparse : int
-        Coordinates in one entry for the sparse fit; a wider entry is reported by its support.
+        Coordinates in one entry for the sparse fit; a wider entry is reported by the support of the direction.
     degree_cap : int
         Total degree bound of the dense rational fit.
     degree_cap_max : int
@@ -62,7 +62,7 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
         Work budget of those detections, regimes times coordinates times tape length; past it
         the proof is skipped and listed in `info["limits"]`.
     input_jet_order : int
-        Jets per unknown input, the input and its time derivatives; 0 chooses them from the
+        Jets per unknown input, the input and the time derivatives of the input; 0 chooses them from the
         model and lengthens them while the Lie order reaches past them.
 
     Returns

@@ -36,3 +36,5 @@ html_theme = "pydata_sphinx_theme"
 html_title = f"symident {release}"
 html_theme_options = {"navigation_with_keys": False, "show_toc_level": 2}
 html_static_path = []
+# every page is top level, so the section navigation of the left sidebar stays empty
+html_sidebars = {"**": []}

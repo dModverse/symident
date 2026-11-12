@@ -68,7 +68,7 @@ def independent_set(invs, vars_, target, moved=None):
             return None
 
     def certified(rows, fl):
-        # a nonzero maximal minor, its columns chosen by pivoted QR and its value shown nonzero
+        # a nonzero maximal minor: columns chosen by pivoted QR, value shown nonzero
         from scipy.linalg import qr
         cols = sorted(qr(fl, pivoting=True)[2][:len(rows)])
         try:
@@ -353,13 +353,13 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
         for sub, sub_labs in zip(subs, src_of):
             supp = sym_sort(list(dict.fromkeys(c for j in sub for c in mr["preps"][j]["support"])))
             if len(supp) == 1:
-                # a direction along one coordinate: its orbit is the axis where its component keeps one sign
+                # a direction along one coordinate: the orbit is the axis where the component keeps one sign
                 blk = scaling_block(np.array([[1]], dtype=np.int64), supp, sub_labs, fixed)
                 if blk.get("pins") and not _axis_signed(supp[0], [decomp(mr["preps"][j]) for j in sub],
                                                         [preps[g] for g in grp]):
                     blk.update(reach=False, coverage="partial",
                                gauge_note=f"the component on {supp[0]} is not proven of one sign on the domain; "
-                                          f"the orbits between its zeros miss the pin")
+                                          f"the orbits between the zeros miss the pin")
                 blocks.append(blk)
                 continue
             sol = solve_block([mr["preps"][j] for j in sub], d_poly, d_darboux, d_exp, sep)

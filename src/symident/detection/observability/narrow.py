@@ -1,4 +1,4 @@
-"""A residual direction fitted from the kernel restricted to its own support columns."""
+"""A residual direction fitted from the kernel restricted to the support columns of the direction."""
 
 import re
 

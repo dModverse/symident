@@ -67,8 +67,8 @@ def test_kernel_call(path):
 
 
 def _multi_call():
-    """A recorded call with its tape repeated, so that the conditions run in parallel, and
-    the slot of its first constant."""
+    """A recorded call with the tape repeated, so that the conditions run in parallel, and
+    the slot of the first constant."""
     path = next(f for f in FILES if "symObsNullMulti" in f)
     args = {snake(k): snake_keys(v) for k, v in tload(path)["args"].items() if v is not None}
     tape = args["tapes"][0]

@@ -1,4 +1,4 @@
-"""Resting states over GF(p): compiled models, the backward solve and its derivatives."""
+"""Resting states over GF(p): compiled models, the backward solve and the derivatives of the solve."""
 
 import functools
 
@@ -117,8 +117,8 @@ def branch_note(polys, states, at, p):
         return head + ", all conjugate over Q(theta) (the eliminant is irreducible), so the one taken has the " \
                       "rank of each"
     if conj is False:
-        return head + ", the first is taken; the eliminant factors over Q at a point, its factor is not named"
-    return head + ", the first is taken; its factor over Q is not determined"
+        return head + ", the first is taken; the eliminant factors over Q at a point, the factor is not named"
+    return head + ", the first is taken; the factor over Q is not determined"
 
 
 def _branch_key(polys, states):
@@ -192,7 +192,7 @@ def _split_balances(polys, states):
     return tuple(out)
 
 
-# per model, whether its interior resting roots are conjugate
+# per model, whether the interior resting roots are conjugate
 _CONJUGATE = {}
 
 
@@ -284,7 +284,7 @@ _ss_base_cache = {}
 
 
 def _ss_base(model, state_names, param_names, forcings, held_state_names):
-    """_ss_compile without the linear plans; the point plan holds its kept numerators instead."""
+    """_ss_compile without the linear plans; the point plan holds the kept numerators instead."""
     _, parse = _make_local_parse(model + list(param_names))
     rhs_by_name = {}
     for raw in model:
@@ -299,7 +299,7 @@ def _ss_base(model, state_names, param_names, forcings, held_state_names):
     forcing_subs = {spy.Symbol(nm): spy.Integer(0) for nm in forcings}
     f_sym = [spy.sympify(rhs_by_name[str(s)]).subs(forcing_subs) for s in solve_states]
     polys = [spy.expand(spy.fraction(spy.together(fi))[0]) for fi in f_sym]
-    # sparse Jacobians: each equation is differentiated in its own symbols only
+    # sparse Jacobians: each equation is differentiated in the symbols of the equation only
     n_sc = len(solve_states)
     gens = list(param_syms) + list(solve_states)
     fs_sym = [fi.free_symbols for fi in f_sym]
@@ -377,7 +377,8 @@ def resting_kind(model, state_names, param_names, param_vals, prime, forcings=No
 def solve_steady_state_modular(model, state_names, param_names, param_vals, prime,
                             forcings=None, t0events=None, recast=None, l_vals=None, joint_mode=False,
                             held_states=None):
-    """Point on the interior component of f = 0 over GF(prime) with its sensitivities: {'ok', 'xstar', 'dx'}."""
+    """Point on the interior component of f = 0 over GF(prime) with the sensitivities of the point: {'ok', 'xstar',
+    'dx'}."""
     model = _as_list(model)
     forcings = set(_as_list(forcings))
     state_names = _as_list(state_names)
@@ -534,7 +535,7 @@ def solve_steady_state_modular(model, state_names, param_names, param_vals, prim
         col = dx_by.get(nm, [0] * n_s)
         dx[nm] = [col[s_idx[s]] if s in s_idx else 0 for s in state_names]
 
-    # parameter-duals for the recast ic_seed rows. Each entry seeds its generic
+    # parameter-duals for the recast ic_seed rows. Each entry seeds the generic
     # partner (gen) and L: a normal entry derives them from dx[base], an inverted
     # one from dx[E]. gen is E for a normal entry and base for an inverted one.
     for rc in recast_out:
@@ -567,7 +568,7 @@ def solve_steady_state_modular(model, state_names, param_names, param_vals, prim
         for k in ('E', 'base', 'exp', 'E0', 'base0', 'expv'):
             rc.pop(k, None)
 
-    # compose the t0 events onto the seed (value mod p and its parameter-duals)
+    # compose the t0 events onto the seed (value mod p and parameter-duals)
     events = list(t0events) if t0events else []
     if events:
         idx_of_state = {nm: i for i, nm in enumerate(state_names)}

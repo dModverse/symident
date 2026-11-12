@@ -6,7 +6,7 @@ from fractions import Fraction
 import numpy as np
 import sympy as spy
 
-from ..errors import SYMPY_FAILS, sympy_fail
+from ..errors import SYMPY_FAILS, InputError, sympy_fail
 from ..rexpr import eval_numeric, get_symbols, replace_symbols
 from ..sym.parse import _is_rational_expr, _make_local_parse
 
@@ -67,7 +67,7 @@ def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=()):
 
 
 def _coef_expr(total, species, s):
-    """The coefficient of species `s` in the linear `total`, an expression in its other symbols."""
+    """The coefficient of species `s` in the linear `total`, an expression in the other symbols of `total`."""
     rest = [x for x in species if x != s]
     one = replace_symbols(rest + [s], ["0"] * len(rest) + ["1"], total)
     zero = replace_symbols(rest + [s], ["0"] * (len(rest) + 1), total)
@@ -131,7 +131,8 @@ def substitute_cq(totals, f, states, parameters, avoid=()):
 
 
 def check_conserved(totals, f):
-    """ValueError for a total whose time derivative under the right-hand sides `f` does not vanish."""
+    """InputError for a total whose time derivative under the right-hand sides `f` does not vanish."""
+    bad = None
     try:
         _, parse = _make_local_parse([f"{k} = {v}" for k, v in f.items()] + [str(v) for v in totals.values()])
         rhs = {spy.Symbol(k): parse(str(v).replace("^", "**")) for k, v in f.items()}
@@ -139,10 +140,14 @@ def check_conserved(totals, f):
             t = parse(str(e).replace("^", "**"))
             d = sum((spy.diff(t, x) * r for x, r in rhs.items() if x in t.free_symbols), spy.Integer(0))
             if spy.cancel(spy.together(d)) != 0:
-                raise ValueError(f"the total {name} = {e} is not conserved: its time derivative under "
-                                 f"the right-hand sides is {str(d).replace('**', '^')}, not zero")
+                bad = (name, e, d)
+                break
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
+    if bad is not None:
+        name, e, d = bad
+        raise InputError(f"the total {name} = {e} is not conserved: the time derivative under "
+                         f"the right-hand sides is {str(d).replace('**', '^')}, not zero")
 
 
 def conserved_totals(smatrix, species):
@@ -170,8 +175,45 @@ def conserved_totals(smatrix, species):
     return out
 
 
+def exact_totals(totals, odes):
+    """The `totals` that the right-hand sides `odes` conserve exactly."""
+    kept = {}
+    for name, total in (totals or {}).items():
+        try:
+            check_conserved({name: total}, odes)
+        except InputError:
+            continue
+        kept[name] = total
+    return kept
+
+
+def conserved_totals_of_odes(odes):
+    """The linear conservation laws of the right-hand sides `odes` (state to expression) as totals."""
+    from ..sym.exact import _conserved
+    try:
+        laws = _conserved([f"{k} = {v}" for k, v in odes.items()], {spy.Symbol(str(k)) for k in odes})
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return {}
+    out = {}
+    for law in laws:
+        rats = [spy.Rational(law.get(spy.Symbol(str(k)), 0)) for k in odes]
+        coeffs = [Fraction(int(r.p), int(r.q)) for r in rats]
+        scale = math.lcm(*(c.denominator for c in coeffs))
+        v = [int(c * scale) for c in coeffs]
+        if next(c for c in v if c) < 0:
+            v = [-c for c in v]
+        total = " + ".join(s if c == 1 else f"{c}*{s}" for s, c in zip(odes, v) if c)
+        try:
+            check_conserved({"total": total}, odes)
+        except InputError:
+            continue
+        out[f"total{len(out) + 1}"] = total
+    return out
+
+
 def _exact(x):
-    """A stoichiometric coefficient as a rational; a float by its shortest decimal."""
+    """A stoichiometric coefficient as a rational; a float by the shortest decimal."""
     if isinstance(x, (int, Fraction)):
         return Fraction(x)
     if isinstance(x, (float, np.floating)):
@@ -263,7 +305,7 @@ def _zero_states(smatrix, species, rates, forcings):
         for sp in [s for s in alive if s in consumed]:
             j = species.index(sp)
             prod = np.nonzero(S[:, j] > 0)[0]
-            # consumed but no longer produced: zero where a consuming reaction has it as its single reactant
+            # consumed but no longer produced: zero where it is the single reactant of a consuming reaction
             single = any(live[i] and S[i, j] < 0 and
                          all(S[i, species.index(o)] >= 0 for o in alive if o != sp) for i in range(len(rates)))
             if len(prod) and not any(live[k] for k in prod) and single:

@@ -1,4 +1,4 @@
-"""Behaviour of detect(): ranks, verdicts and directions on small models."""
+"""Behavior of detect(): ranks, verdicts and directions on small models."""
 
 import re
 import warnings
@@ -155,7 +155,7 @@ def test_deep_chain():
 
 
 def test_non_rational_observable_rejected():
-    # sqrt(A) is rational only in the log chart of a positive A
+    # sqrt(A) is rational only in log coordinates of a positive A
     with pytest.raises(Exception, match="rational"):
         detect(reactions=canonical(), observables={"Aobs": "sqrt(A)"}, positive=False)
 
@@ -265,12 +265,12 @@ def test_equilibrate_t0_dose():
 
 
 def test_only_drained_species_rest_at_zero():
-    # a conserved pair beside a degraded species keeps its total at rest
+    # a conserved pair beside a degraded species keeps the pair total at rest
     rx = network(("A", "B", "k1 * A"), ("B", "A", "k2 * B"), ("C", "", "kc * C"))
     assert _zero_states(rx["stoichiometry"], rx["species"], rx["rates"], [])[0] == ["C"]
     res = detect(reactions=rx, observables={"Aobs": "alpha * A", "Cobs": "s * C"}, equilibrate=True)
     assert "A" in res.info["coordinates"] and ["alpha"] not in [d["support"] for d in res.symmetries]
-    # a pair that drains through one of its members empties as a whole
+    # a pair that drains through one member empties as a whole
     rx = network(("A", "B", "k1 * A"), ("B", "A", "k2 * B"), ("B", "", "k3 * B"))
     assert set(_zero_states(rx["stoichiometry"], rx["species"], rx["rates"], [])[0]) == {"A", "B"}
 
@@ -467,6 +467,23 @@ def test_equilibrate_free_hill_exponent():
     assert not any("log(" in x for x in gen3)
 
 
+@pytest.mark.parametrize("rhs, n_dirs", [
+    ("k1*x^N/((2*K)^N + x^N) - k2*x", 4),
+    ("k1*x^N/(2^N*K^N + x^N) - k2*x", 4),
+    ("k1*x^N/((3/2*K)^N + x^N) - k2*x", 4),
+    ("k1*(2*x)^N - k2*x + k3", 4),
+])
+@pytest.mark.parametrize("n", ["n", "zz", "a1"])
+def test_equilibrate_number_base_power(rhs, n_dirs, n):
+    # a power b^N of a number joins the base of K^N or is held as a constant, and the names stay
+    r = detect({"x": rhs.replace("N", n)}, {"y": "s*x"}, equilibrate=True, reconstruct=True)
+    assert len(r.symmetries) == n_dirs
+    assert all(d["level"] == "exact" for d in r.symmetries)
+    assert "nb" not in str(r.to_dict()["symmetries"])
+    held = [x for x in r.info["limits"] if "held as a generic constant" in x]
+    assert bool(held) == ("K" not in rhs)
+
+
 def test_equilibrate_hill_closed_form_recast():
     # a constant state given per condition rests at that value in each condition
     r = detect({"p": "kpr/(1+kinh*p^nhill) - dp*p + kin*u", "u": "0"}, {"y": "s*p"},
@@ -578,7 +595,7 @@ def test_multi_condition_common_confounder():
 
 
 def test_gap_dose_resolved_in_own_condition():
-    # the same model with the grid column named apart from or after its first cell
+    # the same model with the grid column named apart from or after the first cell
     def run(colname):
         ev = [event("A", 0, "0", "replace"), event("A", 1, colname, "add")]
         return detect({"A": "-k*A"}, {"y": "A"}, events=ev,
@@ -662,7 +679,7 @@ def test_event_time_parameter_is_coordinate():
     rk = detect({"D": "-ka*D", "A": "ka*D - k*A"}, {"y": "A"}, events=[event("D", "tau", "d", "add")],
                 trafo={"D": "0", "A": "0"})
     assert rk.identifiable is True
-    # a switch the output does not feel leaves its time free
+    # a switch the output does not feel leaves the switch time free
     ri = detect({"A": "-k*A", "u": "0"}, {"y": "A"},
                 events=[event("u", 0, "0"), event("u", "tau", "1")], reconstruct=True)
     assert ri.rank == 2
@@ -1064,7 +1081,7 @@ def test_stacked_rank_proven_by_fields():
     assert st.rank == ref.rank
     assert st.info["rank_proof"] == "proven symmetries"
     assert len(st.symmetries) == len(ref.symmetries)
-    # the gauged detection takes rank and proof from its second step
+    # the gauged detection takes rank and proof from the second step
     gd = detect(f, g, conditions=cg, gauge=None, reconstruct=True)
     assert gd.rank == ref.rank
     assert gd.info.get("rank_proven") is not None
@@ -1099,7 +1116,7 @@ def test_static_subsystem_proves_rank():
     r = detect(reactions=rx, observables=g, conditions=grid(["ctrl", "oe"], plasmid=[0, 1], dose=[1, 1]),
                events=ev, equilibrate=True, reduce_cq=True, gauge=None, reconstruct=True)
     assert r.rank == 7
-    assert r.info["rank_proof"] == "exact scalings and static subsystems"
+    assert r.info["rank_proof"] == "proven symmetries"
     # a subsystem that no event reaches stays at rest and has exact directions
     assert {d.level for d in r.symmetries} == {"exact"}
     st = [d for d in r.symmetries if d.get("route") == "static subsystem"]
@@ -1293,8 +1310,9 @@ def test_forward_route_moves_its_solved_rate():
     r = detect(reactions=rx, observables={"y1": "s1*x1"}, equilibrate=True, reduce_cq=True, reconstruct=True)
     assert (r.rank, r.dim) == (1, 4)
     assert not any(set(d.generator or {}) in ({"k3"}, {"k5"}) for d in r.symmetries)
-    supports = sorted(tuple(sorted(d.support)) for d in r.symmetries)
-    assert ("k2", "k3") in supports and ("k2", "k5") in supports
+    # the basis of the three directions depends on the rate solved for, the directions do not
+    assert len(r.symmetries) == 3 and all(len(d.support) >= 2 for d in r.symmetries)
+    assert [d.level for d in r.symmetries] == ["exact"] * 3
 
 
 def test_sink_behind_a_state_at_zero_leaves_the_resting_system():
@@ -1740,7 +1758,7 @@ def test_the_clock_under_equilibrate_is_an_input_from_the_start():
 
 
 def _scaling_rows(r):
-    """The weights of the scalings of `r` over its coordinates, a zero row without one."""
+    """The weights of the scalings of `r` over the coordinates of `r`, a zero row without one."""
     c = r.info["coordinates"]
     return spy.Matrix([[int(s.weights.get(z, 0)) for z in c] for s in r.symmetries if s.type == "scaling"] or
                       [[0] * len(c)])
@@ -1815,7 +1833,7 @@ def test_the_totals_of_a_reaction_network_are_integer_combinations():
 
 
 def test_a_total_whose_coefficients_hold_a_volume():
-    # a declared total with a parameter in its coefficients replaces a state as a coordinate
+    # a declared total with a parameter in the coefficients replaces a state as a coordinate
     m = si.Model({"A": "-k1*A*(1+u) + V*k2*B", "B": "k1*A*(1+u)/V - k2*B", "u": "0"}, {"y": "s*B"},
                  inputs=["u"], events=[event("u", "0", "1")], totals={"T": "A + V*B"})
     r = si.detect(m, equilibrate=True, reduce_cq=True)
@@ -1943,7 +1961,7 @@ def _resting_notes(f):
 
 
 def test_a_resting_root_names_the_factor_of_its_balance_and_keeps_its_branch():
-    # every point takes its root on the factor of the forward seed
+    # every point takes the root on the factor of the forward seed
     notes = _resting_notes({"x": "-k*(x - a)*(x - b)", "z": "c*x - d*z"})
     assert len(notes) == 1 and re.search(r"\b[ab] - x = 0$", notes[0])
 
@@ -1951,3 +1969,28 @@ def test_a_resting_root_names_the_factor_of_its_balance_and_keeps_its_branch():
 def test_conjugate_resting_roots_are_named_as_one_branch():
     notes = _resting_notes({"x": "a - b*x - c*x^2", "z": "x - d*z"})
     assert notes and all("conjugate" in b for b in notes)
+
+
+# a resting balance with a source, a power and a linear term: the roles take every order of the names
+_ROLES = ("src", "pow", "lin", "scl")
+_NAMINGS = ["abcd", "abdc", "acdb", "badc", "cadb", "dcba"]
+
+
+@pytest.mark.parametrize("power", [2, 3])
+@pytest.mark.parametrize("names", _NAMINGS)
+def test_a_resting_balance_gives_the_same_directions_under_any_naming(power, names):
+    n = dict(zip(_ROLES, names))
+    f = {"x": f"{n['src']} - {n['pow']}*x^{power} - {n['lin']}*x"}
+    r = detect(f, {"y": f"{n['scl']}*x"}, equilibrate=True, reconstruct=True)
+    assert [s.level for s in r.symmetries] == ["exact"] * 3
+    assert r.info["rank_status"]["status"] == "proven"
+
+
+def test_a_free_moiety_is_held_by_the_state_that_closes_the_directions():
+    f = {"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}
+    swapped = {"B": f["B"], "A": f["A"]}
+    for odes in (f, swapped):
+        r = detect(odes, {"y": "s*B"}, equilibrate=True, reconstruct=True)
+        assert [s.level for s in r.symmetries] == ["exact"] * 3 and r.info["rank_status"]["status"] == "proven"
+    three = {"A": "-k1*A + k2*B", "B": "k1*A - k2*B - k3*B + k4*C", "C": "k3*B - k4*C"}
+    assert {s.level for s in detect(three, {"y": "s*B"}, equilibrate=True, reconstruct=True).symmetries} == {"exact"}

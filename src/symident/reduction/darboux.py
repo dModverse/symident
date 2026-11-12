@@ -33,7 +33,7 @@ def apply_x(xi_exprs, f, loc):
 
 
 def subs_rational(e, pt):
-    """`e` at the integer point `pt`, cancelled, as a string."""
+    """`e` at the integer point `pt`, canceled, as a string."""
     pairs = [(spy.Symbol(n), spy.Integer(int(v))) for n, v in pt.items()]
     return str(spy.cancel(e.subs(pairs)))
 

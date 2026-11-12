@@ -35,7 +35,7 @@ from .guard import saturation_guard
 from .joint import JointSystem
 from .plain import PlainSystem
 
-# regimes beyond which the exact proof does not run its own field setup
+# regimes beyond which the exact proof does not run a separate field setup
 _CSUFFIX = re.compile(r"\|c[0-9]+$")
 
 
@@ -48,7 +48,7 @@ def _margin():
 
 
 def _rational_forms(exprs):
-    """Whether every expression is rational in its symbols, model names read as symbols."""
+    """Whether every expression is rational in the symbols it reads, model names read as symbols."""
     from ...sym.parse import _is_rational_expr, _make_local_parse
     try:
         _, parse = _make_local_parse([str(x) for x in exprs])
@@ -243,7 +243,7 @@ class Analysis:
         return True
 
     def _sat_caps(self, orders, point, Mtot, first):
-        """Each chain at its own order plus the plateau during the saturation."""
+        """Each chain at the order of the chain plus the plateau during the saturation."""
         run = self.run
         nb = self.sys.kc if self.joint else (len(run.chain_groups) if run.chain_groups else 0)
         if not (run.has_gaps and len(orders) == nb
@@ -571,8 +571,8 @@ class Analysis:
         elif gap_why is not None and getattr(self, "gap_bound", None) is not None:
             b = self.gap_bound
             gap_why += (f" (no rank bound: {b['why']})" if b["bound"] is None else
-                        f" (the rank exceeds its bound {b['bound']})" if b.get("inconsistent") else
-                        f" (the rank stays below its bound {b['bound']} up to the cap)")
+                        f" (the rank exceeds the bound {b['bound']})" if b.get("inconsistent") else
+                        f" (the rank stays below the bound {b['bound']} up to the cap)")
         nz, n_seg = self.nz, len(self.multi["tapes"])
         result = {"method": "observability", "engine": "analytic",
                   "conditions": n_seg if self.n_conditions is None else int(self.n_conditions),
@@ -657,7 +657,8 @@ class Analysis:
         return report_physical(result, self.znames, aux, self.sc, self.nz, PRIMES[0], "input_vector")
 
     def _physical(self, result):
-        """Joint mode reported in parameter space, a transient recast without its atoms, no nuisance coordinates."""
+        """Joint mode reported in parameter space, a transient recast without the recast atoms, no nuisance
+        coordinates."""
         if self.joint:
             # the atoms of exponential leaves leave the joint report with the state columns
             result = report_physical(result, self.znames, list(self.zsn) + list(self.atom_names), self.sc,
@@ -700,9 +701,7 @@ class Analysis:
         self._prove_exact(result)
         if len(chosen) == ker_dim:
             result["rank_proven"] = ker_dim
-            result["rank_proof"] = ("exact scalings and static subsystems"
-                                    if any(d.get("route") == "static subsystem" for d in chosen)
-                                    else "exact scalings")
+            result["rank_proof"] = "proven symmetries"
         if self.stacked_first and result.get("rank_proven") is None and not self.stacked_quick:
             return {"rerun_blocks": True}
         result["stacked"] = bool(self.stacked_first)
@@ -809,7 +808,7 @@ class Analysis:
         states = {l.split("=", 1)[0].strip() for t in self.multi["tapes"] for l in strs(t.get("model_lines"))}
 
         def lift(w):
-            # a scaling acts on the states by its weights; with unknown inputs the lift gives their change
+            # a scaling acts on the states by the scaling weights; with unknown inputs the lift gives their change
             return {x: scaling_component(v, x) for x, v in w.items() if x in states and str(v) != "0"} \
                 if self.run.nuis_cols else None
         dirs = [{"vector": dict(w), "exact": True, "state_components": lift(w)} for w in ws] + \
@@ -971,7 +970,7 @@ class Analysis:
                 comp = {k: model_sympify(v) for k, v in vec.items()}
                 moved = dict(comp)
                 for r in self.recast:
-                    # a recast power whose base the direction fixes: E moves with its exponent
+                    # a recast power whose base the direction fixes: E moves with the exponent
                     E, L, n = (spy.Symbol(str(r[k])) for k in ("E", "L", "exp"))
                     if str(r["base"]) not in vec and str(r["exp"]) in vec:
                         moved[str(E)] = E * L * comp[str(n)]
@@ -1107,7 +1106,7 @@ class Analysis:
                 keep.append(d)
                 continue
             if not inside:
-                continue  # the kernel fill below supplies the direction with its support
+                continue  # the kernel fill below supplies the support of the direction
             v = np.zeros(n, dtype=np.int64)
             for j, i in enumerate(phys):
                 if self.znames[i] in gen:
@@ -1179,7 +1178,7 @@ class Analysis:
             if sc0 is None:
                 return False
             if sc0.get("cont"):
-                # a continued condition takes its rows as series, not at the point
+                # the rows of a continued condition enter as series, not at the point
                 continue
             Jx = (sc0.get("sol") or {}).get("df_jx") or []
             if not len(Jx):
@@ -1306,8 +1305,7 @@ class Analysis:
         k = int(_core.sym_rref_mod(V.astype(np.float64), PRIMES[0])["rank"]) if V.size else 0
         if result["rank"] + k == result["dim"]:
             result["rank_proven"] = k
-            result["rank_proof"] = ("exact scalings and static subsystems"
-                                    if self.static_rows is not None else "exact scalings")
+            result["rank_proof"] = "proven symmetries"
 
     def _prove_exact(self, result):
         """Closed forms proven over Q (proof.prove_exact)."""

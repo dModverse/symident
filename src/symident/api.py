@@ -9,6 +9,7 @@ import numpy as np
 
 from . import report, state
 from .detection import symmetry_detection
+from .errors import InputError
 from .options import reconst_control
 from .reduction import symmetry_reduction
 from .reduction.core import check_levels, detection_positive, finish_reduction
@@ -45,11 +46,11 @@ class Model:
         species) and ``rates``; it gives the ``totals`` and the zero-state analysis under
         ``equilibrate``.
     totals : dict, optional
-        Conserved totals, name to expression, each conserved by the right-hand sides;
-        computed from ``reactions`` when omitted. ``reduce_cq`` eliminates one species per
-        total.
+        Conserved totals, name to expression, each conserved by the right-hand sides; computed
+        from ``reactions``, else from the linear conservation laws of ``odes``, when omitted.
+        ``reduce_cq`` eliminates one species per total.
     trafo : dict or list of dict, optional
-        Parameter transformation; an entry named like a state is its initial value.
+        Parameter transformation; an entry named like a state sets the initial value of that state.
     conditions : pandas.DataFrame or dict, optional
         One row per condition; a numeric cell fixes a symbol, a string renames it.
         As a dict: ``{"rows": [...], "cols": {name: [values]}}``.
@@ -57,8 +58,8 @@ class Model:
         Events with keys ``var``, ``time``, ``value`` and ``method`` (``replace``,
         ``add`` or ``multiply``); ``root`` in place of ``time`` resets ``var`` each time
         the root expression changes sign, and ``cond`` lists the conditions (from 0) an
-        event belongs to, all by default. Each condition starts at :math:`t = 0`, or at its
-        earliest event when that comes before; an event at the start applies to the initial
+        event belongs to, all by default. Each condition starts at :math:`t = 0`, or at the
+        earliest event of the condition when that comes before; an event at the start applies to the initial
         values.
     inputs : sequence of str
         Input states, zero at the start and at rest; an event sets them.
@@ -88,21 +89,33 @@ class Model:
     def __init__(self, odes=None, observables=None, *, reactions=None, totals=None, trafo=None,
                  conditions=None, events=None, inputs=(), unknown_inputs=(), known_inputs=(), fixed=(),
                  parameters=(), regimes=None, equilibrate=None, positive=None, reduce_cq=None):
+        derived = None
         if reactions is not None:
             sp = list(reactions["species"])
             Sm = reactions.get("stoichiometry", reactions.get("smatrix"))
-            self.reactions = {"species": sp, "smatrix": np.asarray(Sm, dtype=float).tolist(),
-                              "rates": [str(r) for r in reactions["rates"]]}
+            rates = [str(r) for r in reactions["rates"]]
+            shape = np.asarray(Sm, dtype=float).shape
+            if shape != (len(rates), len(sp)):
+                raise InputError(f"`stoichiometry` has shape {shape}, but {len(rates)} rate(s) and {len(sp)} "
+                                 "species need one row per reaction and one column per species")
+            self.reactions = {"species": sp, "smatrix": np.asarray(Sm, dtype=float).tolist(), "rates": rates}
             if odes is None:
                 odes = _rhs_from_reactions(sp, Sm, self.reactions["rates"])
             if totals is None:
                 from .detection.cq import conserved_totals
-                totals = conserved_totals(Sm, sp) or None
+                derived = conserved_totals(Sm, sp)
         else:
             self.reactions = None
         if odes is None:
             raise ValueError("Model: give `odes` or `reactions`.")
+        bad = [k for k, v in odes.items() if v is None]
+        if bad:
+            raise InputError(f"the right-hand side of {bad[0]} has no expression")
         self.odes = {str(k): str(v) for k, v in odes.items()}
+        if totals is None:
+            from .detection.cq import conserved_totals_of_odes, exact_totals
+            totals = (exact_totals(derived, self.odes) if reactions is not None
+                      else conserved_totals_of_odes(self.odes)) or None
         self.observables = observables
         self.totals = totals
         self.trafo = trafo
@@ -181,7 +194,7 @@ class Symmetry(dict):
     reason : str or None
         Why a direction has no closed form.
     complete_generator, factor : dict or None, str or None
-        The generator times ``factor``, a positive function that makes its flow exist
+        The generator times ``factor``, a positive function that makes the flow exist
         for all times; ``None`` for very long components.
     display : dict
         Factored components of a general direction, where shorter.
@@ -409,12 +422,12 @@ class Reduction:
     ----------
     trafo : dict or None
         Parameter transformation over all coordinates; ``None`` if nothing was reduced. An
-        entry named in a condition grid goes into its cells; under ``equilibrate`` an entry
+        entry named in a condition grid goes into the cells of the grid; under ``equilibrate`` an entry
         named like a state pins the resting value it holds, which a model takes in ``fixed``
         when it is a number.
     blocks : list of dict
         One entry per set of coupled directions, with ``status``, ``level``,
-        ``generator_level``, ``unproven`` (the claims of its section not proven) and
+        ``generator_level``, ``unproven`` (the claims of the block section not proven) and
         ``pins``. A general block holds ``invariants`` and ``new_parameters`` (the invariant
         each ``q_<k>`` stands for); a curved one also ``section``, ``solved_domain``,
         ``count``, ``injective`` (every orbit meets the section at most once; not claimed
@@ -447,9 +460,9 @@ class Reduction:
         closed form or rank of the detection is wrong (``None`` without one).
     checks : dict
         ``pins`` and ``invariants``: whether every pin holds under the trafo and every
-        invariant of a block maps to its new parameter, over Q (``failed`` lists the
+        invariant of a block maps to the new parameter of the invariant, over Q (``failed`` lists the
         others); ``loop``: the closed loop of ``reduce(check=True)``, with the number of
-        directions the reduced model has, the number expected and its ``rank_status``.
+        directions the reduced model has, the number expected and the ``rank_status`` of that detection.
     errors : list of str
         Exceptions that the reduction turned into failed routes, such as an alternative
         section left out (see the ``DEBUG`` switch).
@@ -514,6 +527,24 @@ class _Text(str):
         return str(self)
 
 
+def _check_detect(model, *, cores, engine, trace, control, gauge):
+    """InputError for an argument of detect() that no analysis takes."""
+    if not isinstance(model, Model):
+        raise InputError(f"detect() takes a Model, not {type(model).__name__}; build one with Model(odes, observables)")
+    if isinstance(cores, bool) or not isinstance(cores, int) or cores < 1:
+        raise InputError(f"`cores` must be a positive integer, not {cores!r}")
+    if engine not in ("modular", "symbolic"):
+        raise InputError(f"`engine` must be 'modular' or 'symbolic', not {engine!r}")
+    if trace not in (False, True, None, "full"):
+        raise InputError(f"`trace` must be a bool or 'full', not {trace!r}")
+    if control is not None:
+        bad = sorted(set(control) - set(reconst_control()))
+        if bad:
+            raise InputError(f"`control` has no setting {bad[0]}; see reconst_control()")
+    if isinstance(gauge, str):
+        raise InputError(f"`gauge` must be False, None or a sequence of names, not the string {gauge!r}")
+
+
 def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free_initial=None,
            reconstruct=False, positive=None, verify=True, gauge=False, cores=1, control=None,
            engine="modular", trace=False):
@@ -526,7 +557,7 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
         Only the scaling symmetries, from an exact integer kernel.
     equilibrate : bool, optional
         Start at a steady state with the inputs at zero, then apply the events at the start;
-        a state without dynamics that is not an input rests at a value of its own.
+        a state without dynamics that is not an input rests at the initial value.
         Defaults to ``model.equilibrate``, else ``False``.
     reduce_cq : bool, optional
         Report moiety freedoms on conserved totals instead of single species; defaults to
@@ -537,7 +568,9 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
     reconstruct : bool
         Return general directions as exact rational functions.
     positive : bool or sequence of str, optional
-        Coordinates known to be positive; defaults to ``model.positive``, else ``True``.
+        Coordinates known to be positive; defaults to ``model.positive``, else ``True``. An
+        entry may be an expression positive on the domain, such as ``"1-x"`` for a fraction
+        ``x`` below one.
     verify : bool
         Check the rank where the Lie order is not proven sufficient.
     gauge : bool, None or sequence of str
@@ -557,6 +590,7 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
     -------
     Symmetries
     """
+    _check_detect(model, cores=cores, engine=engine, trace=trace, control=control, gauge=gauge)
     # the result holds the model as detected, whatever the caller changes later
     model = copy.deepcopy(model)
     if equilibrate is None:
@@ -565,13 +599,46 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
         positive = True if getattr(model, "positive", None) is None else model.positive
     if reduce_cq is None:
         reduce_cq = bool(getattr(model, "reduce_cq", None))
-    with _trace(trace):
-        raw = symmetry_detection(**model._kwargs(), gauge_preference=gauge, equilibrate=equilibrate,
-                                 reduce_cq=reduce_cq, free_initial=free_initial,
-                                 reconstruct=reconstruct, positive=positive, verify=verify,
-                                 cores=cores, control=control or reconst_control(),
-                                 scalings_only=scalings_only, sym_engine=engine)
-    return Symmetries(raw, model)
+    def run(pivots):
+        with _trace(trace):
+            raw = symmetry_detection(**model._kwargs(), gauge_preference=gauge, equilibrate=equilibrate,
+                                     reduce_cq=reduce_cq, free_initial=pivots,
+                                     reconstruct=reconstruct, positive=positive, verify=verify,
+                                     cores=cores, control=control or reconst_control(),
+                                     scalings_only=scalings_only, sym_engine=engine)
+        return Symmetries(raw, model)
+
+    def n_open(r):
+        return sum(s.level == "open" for s in r.symmetries)
+    res = run(free_initial)
+    free_moiety = equilibrate and not reduce_cq and bool(model.totals)
+    if free_moiety and free_initial is None and n_open(res):
+        # the state that holds the free resting value of a moiety decides which coordinates the directions use
+        for pivots in _pivot_choices(model):
+            alt = run(pivots)
+            if n_open(alt) < n_open(res):
+                res = alt
+            if not n_open(res):
+                break
+    if free_moiety and n_open(res):
+        res.info["limits"] = list(res.info.get("limits") or []) + [
+            "a direction without a closed form moves the resting value of a conserved total; "
+            "reduce_cq=True reconstructs it in the total"]
+    return res
+
+
+# the resting values tried as the free value of each moiety, at most this many choices
+_PIVOT_CHOICES = 6
+
+
+def _pivot_choices(model):
+    """Lists with one state of each total of `model` for the free resting values, `_PIVOT_CHOICES` at most."""
+    import itertools
+
+    from .rexpr import get_symbols
+    per_total = [[x for x in get_symbols([str(t)]) if x in model.odes] for t in model.totals.values()]
+    return [list(c) for c in itertools.islice(itertools.product(*per_total), _PIVOT_CHOICES)] \
+        if all(per_total) else []
 
 
 def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2, separable=True,
@@ -579,13 +646,13 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
            check=True, work_cap=4000):
     """Reparametrization that removes the directions of a detection result.
 
-    A scaling fixes one coordinate; a general direction is replaced by its invariants,
+    A scaling fixes one coordinate; a general direction is replaced by the invariants of the direction,
     each of which becomes a new parameter ``q_<k>``.
 
     Parameters
     ----------
     result : Symmetries or dict
-        A detection result, or its raw form from ``to_dict()``.
+        A detection result, or the raw form from ``to_dict()``.
     fixed : sequence of str, optional
         Coordinates with known values; defaults to the gauge of the result.
     positive : bool or sequence of str, optional
@@ -627,6 +694,13 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
     -------
     Reduction
     """
+    if not isinstance(result, (Symmetries, dict)):
+        raise InputError(f"reduce() takes the result of detect(), not {type(result).__name__}")
+    for name, v in (("d_poly", d_poly), ("d_darboux", d_darboux), ("d_exp", d_exp)):
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            raise InputError(f"`{name}` must be a non-negative integer, not {v!r}")
+    if isinstance(work_cap, bool) or not isinstance(work_cap, int) or work_cap < 0:
+        raise InputError(f"`work_cap` must be a non-negative integer, not {work_cap!r}")
     raw = result.to_dict() if isinstance(result, Symmetries) else result
     if positive is None:
         positive = detection_positive(raw)
@@ -642,13 +716,13 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
 
 def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
     """{"trafo", "conditions", "fixed", "why"}: the model with the reduction trafo `outer` applied, `why` the
-    reason it cannot take it. A key in the grid goes into its cells, a pinned resting value into `fixed`."""
+    reason it cannot take it. A key in the grid goes into the cells of the grid, a pinned resting value into `fixed`."""
     from .detection.conditions import Grid, as_events
     from .rexpr import get_symbols, is_number, replace_symbols
     outer = {str(k): str(v) for k, v in outer.items() if str(v).strip() != str(k)}
     fixed, why = [], None
     if equilibrate:
-        # under equilibrate an entry for a state is its resting value, known when it is a number
+        # under equilibrate an entry for a state is the resting value of that state, known when it is a number
         for k in [k for k in outer if k in f]:
             if not is_number(outer[k]):
                 why = f"the reduction pins the resting value of {k} to {outer.pop(k)}, which `equilibrate` " \
@@ -676,7 +750,7 @@ def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
             return dict(outer)
         inner = {str(k): str(v) for k, v in dict(inner).items()}
         out = {k: replace_symbols(names, vals, v) for k, v in inner.items()}
-        # an entry whose name the model trafo replaced holds in its values only
+        # a symbol the model trafo replaced survives only inside the replaced values
         consumed = set(get_symbols(list(inner.values())))
         return {**{k: v for k, v in outer.items() if k not in out and (k in used or k not in consumed)}, **out}
     trafo = [compose(t) for t in trafo] if isinstance(trafo, (list, tuple)) else compose(trafo)
@@ -684,7 +758,7 @@ def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
 
 
 def _closed_loop(result, red):
-    """The detection on the model with the trafo applied: its directions against the remaining ones."""
+    """The detection on the model with the trafo applied: the directions found against the remaining ones."""
     if result.model is None or result.method != "observability":
         return None
     st = result.info.get("settings") or {}

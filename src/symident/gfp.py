@@ -21,7 +21,8 @@ _ROOTS = [(), ()]
 
 
 def verify_prime():
-    """The prime of the fresh-point checks: in a detection drawn from its seed among primes holding the roots."""
+    """The prime of the fresh-point checks: in a detection drawn from the seed of the detection among primes holding
+    the roots."""
     from . import state
     s = state.get("session")
     if s is None:

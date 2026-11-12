@@ -140,12 +140,12 @@ def reduction_hint_lines(res, width=None):
     sl = [l for l, s in zip(labels, is_scal) if s]
     gl = [l for l, s in zip(labels, is_scal) if not s]
     if sl:
-        out.append(_wrap(", ".join(sl) + (" is a scaling: gauge it by holding any one of its coordinates "
+        out.append(_wrap(", ".join(sl) + (" is a scaling: gauge it by holding any one of the coordinates "
                                           "fixed, at any value." if len(sl) == 1 else
                                           " are scalings: gauge them by holding one coordinate of each "
                                           "fixed, at any value."), "  ", width))
     if gl:
-        out.append(_wrap(", ".join(gl) + (" is not a scaling: reparametrize onto its invariants with "
+        out.append(_wrap(", ".join(gl) + (" is not a scaling: reparametrize onto the invariants with "
                                           "reduce()." if len(gl) == 1 else
                                           " are not scalings: reparametrize onto their invariants with "
                                           "reduce()."), "  ", width))
@@ -246,7 +246,7 @@ def summary_lines(res, verbose=False, width=None):
     elif is_obs and info.get("lie_plateau") is not None:
         if info.get("lie_certified"):
             ob = info.get("order_bound")
-            comp.append("saturation: certified (every segment at the rank bound of its invariant space" +
+            comp.append("saturation: certified (every segment at the rank bound of the invariant space" +
                         ("" if ob == 0 else f"; sufficient except with probability at most {ob:.1e}" if ob is not None
                          else "; the random points of the certificate have no error bound" +
                          (f": {info['order_bound_why']}" if info.get("order_bound_why") else "")) + ")")
@@ -424,7 +424,7 @@ def _section_reason(b, what, domain):
     elif b.get("section"):
         out.append(f"Setting coordinates to 0 gives no point with all others positive on every orbit. "
                    f"The ratio of the two sides of {what} changes in one direction only along "
-                   f"each orbit ({labs} applied to its logarithm has a fixed sign), so the orbit meets "
+                   f"each orbit ({labs} applied to the logarithm has a fixed sign), so the orbit meets "
                    f"{what} at most once. With {what} the invariants give")
     else:
         out.append(f"Neither setting coordinates to 0 nor a ratio of them gives a section. With {what} "
@@ -472,7 +472,7 @@ def red_section_lines(x, width, detailed=False, detail_call=DETAIL_CALL):
         return out
     ind = "    "
     out = ["", "Sections", textwrap.fill(
-        "A direction is removed by choosing one point on each of its orbits. The invariants are "
+        "A direction is removed by choosing one point on each orbit. The invariants are "
         "constant along an orbit and become the new parameters; the section is the equation that "
         "picks the point.", width=max(40, width), initial_indent="  ", subsequent_indent="  ")]
     for lab, what, b in rows:

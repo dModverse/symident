@@ -50,10 +50,10 @@ def test_the_affine_space_after_an_event_is_a_basis():
     from symident.detection.fields import event_space
     p = PRIMES[0]
     V = np.array([[1, 1, 0], [0, 1, 0]], dtype=np.int64)
-    # a replace by a value that reads no state resets its target
+    # a replace by a value that reads no state resets the target
     W = event_space(V, [0], [0], [True], 3, p)
     assert W.shape == (1, 3) and W.tolist() == [[0, 1, 0]]
-    # a value that reads a state frees its target
+    # a value that reads a state frees the target
     W = event_space(V, [2], [1], [False], 3, p)
     assert W.shape == (3, 3)
     W = event_space(V, [1], [2], [True], 3, p)
@@ -63,7 +63,7 @@ def test_the_affine_space_after_an_event_is_a_basis():
 def test_no_gap_bound_with_an_event_time_in_the_parameters():
     r = si.detect(_moving_gap())
     assert r.info["gap_bound"] is None
-    assert r.info["gap_certified"] and r.info["rank_proof"] == "exact scalings"
+    assert r.info["gap_certified"] and r.info["rank_proof"] == "proven symmetries"
 
 
 def test_a_used_gap_bound_is_at_least_the_rank():
@@ -120,8 +120,8 @@ def test_a_free_exponent_of_a_positive_state_keeps_the_order_bound():
                  trafo={"x": "x0", "z": "z0"}, positive=True)
     r = si.detect(m, reconstruct=True)
     assert r.info["lie_certified"] and r.info["order_bound"] is not None and r.info["order_bound_why"] is None
-    assert r.info["rank_status"]["status"] == "verified"
-    assert all(s.level in ("exact", "verified") for s in r.symmetries)
+    assert r.info["rank_status"]["status"] == "proven"
+    assert all(s.level == "exact" for s in r.symmetries)
 
 
 def test_a_missing_order_bound_names_its_reason():

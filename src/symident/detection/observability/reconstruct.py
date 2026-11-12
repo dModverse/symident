@@ -18,6 +18,7 @@ from ...gfp import (
     random_point,
 )
 from ...rexpr import sym_sort
+from ...sym.restforward import excluding_rates
 from ..closedform import expired, recast_backsub, simplify
 from ..fields import field_directions, field_setup
 from ..forward import fwd_adopt, perprime_forward_multi, perprime_forward_shared
@@ -30,6 +31,9 @@ from .homotopy import Homotopy
 from .narrow import _CSUFFIX, Narrow
 
 _STATE_COL = re.compile(r"\|c([0-9]+)$")
+
+# further solved rates the forward route tries after a form that the kernel refutes
+FORWARD_RETRIES = 4
 
 
 def _coord(nm):
@@ -337,6 +341,43 @@ class Reconstruction:
                 out.append(kept.pop(0))
         return out
 
+    def _forward_adopt(self, fwd):
+        """The closed forms of `fwd` for the residual directions: those outside the span of the directions found."""
+        n = len(self.residual)
+        closed = [e for e in fwd or [] if e.get("closed_form")]
+        if n == 0 or len(closed) <= n:
+            return fwd_adopt(fwd or [], n)
+        an, P = self.an, PRIMES[0]
+        env = an._kernel_point()
+        phys = [i for i, z in enumerate(an.znames) if not _CSUFFIX.search(z)]
+        span = np.concatenate([an.scal_tangents, self.closed], axis=1)[phys, :] % P
+        kept = []
+        for e, done in zip(closed, an._complete_forward(self._forward_entries(closed))):
+            v = an._phys_vector(done.get("checked") or done["vector"], env) if done.get("closed_form") else None
+            if v is None or not np.any(v) or in_span(span, v, len(phys), P):
+                continue
+            span = np.concatenate([span, v.reshape(-1, 1)], axis=1)
+            kept.append(e)
+        return kept if len(kept) == n else fwd_adopt(fwd or [], n)
+
+    def _forward_retrying(self, run):
+        """`run()` again without the rates solved in a form that the kernel refutes, until the forms hold."""
+        tried, fwd = [], None
+        for _ in range(FORWARD_RETRIES + 1):
+            with excluding_rates(tried):
+                fwd = run()
+            closed = self._forward_adopt(fwd)
+            if closed is None:
+                return fwd
+            done = self.an._complete_forward(self._forward_entries(closed))
+            if all(e.get("closed_form") for e in done):
+                return fwd
+            new = sorted({r for e in closed for r in e.get("solved_rates") or [] if r} - set(tried))
+            if not new:
+                return fwd
+            tried += new
+        return fwd
+
     def _forward_multi(self):
         an, sys = self.an, self.an.sys
         try:
@@ -379,27 +420,28 @@ class Reconstruction:
         kind = self.rest_kind()
         if kind != ("core" if late else "msolve"):
             return []
-        try:
-            fwd = perprime_forward_shared(
-                self.sc, an.kcall, sys.kcall_fwd, an.znames, an.z_slots, an.leaf_names_aug, an.nz,
-                an.scaling, strs(an.multi.get("z_state_names")), self.ctrl, self.phys_cols,
-                sys.models, sys.real_state_names, sys.solve_param_names, sys.held_of(0),
-                kcall_fwd_sh=sys.kcall_fwd_shared,
-                select_fn=sys.fwd_select,
-                map_fn=self.fork_map)
-        except SYMPY_FAILS as err:
-            sympy_fail(err)
-            if state.env("ROUTEDIAG"):
-                print(f"[fwds] error: {err}")
-            fwd = None
-        except Exception as err:
-            swallow(err, "forward route")
-            if state.env("ROUTEDIAG"):
-                print(f"[fwds] error: {err}")
-            fwd = None
-        if fwd is None:
-            fwd = self._forward_multi()
-        closed = fwd_adopt(fwd or [], len(self.residual))
+        def run():
+            try:
+                fwd = perprime_forward_shared(
+                    self.sc, an.kcall, sys.kcall_fwd, an.znames, an.z_slots, an.leaf_names_aug, an.nz,
+                    an.scaling, strs(an.multi.get("z_state_names")), self.ctrl, self.phys_cols,
+                    sys.models, sys.real_state_names, sys.solve_param_names, sys.held_of(0),
+                    kcall_fwd_sh=sys.kcall_fwd_shared,
+                    select_fn=sys.fwd_select,
+                    map_fn=self.fork_map)
+            except SYMPY_FAILS as err:
+                sympy_fail(err)
+                if state.env("ROUTEDIAG"):
+                    print(f"[fwds] error: {err}")
+                fwd = None
+            except Exception as err:
+                swallow(err, "forward route")
+                if state.env("ROUTEDIAG"):
+                    print(f"[fwds] error: {err}")
+                fwd = None
+            return self._forward_multi() if fwd is None else fwd
+        fwd = self._forward_retrying(run)
+        closed = self._forward_adopt(fwd)
         self.tlog(f"forward {'after the fast routes' if late else 'first'} (resting state: {kind}): " +
                   ("not adopted" if closed is None else "every direction closed"))
         if closed is None:
@@ -421,7 +463,7 @@ class Reconstruction:
         return False
 
     def homotopy(self, interp):
-        """`interp` with its open directions closed along parameter lines through the base point."""
+        """`interp` with the open directions closed along parameter lines through the base point."""
         an, run = self.an, self.an.run
         open_ = [i for i, e in enumerate(interp) if not e.get("closed_form")]
         why = ("switched off (reconst_control(homotopy=False))" if not self.ctrl.get("homotopy", True) else
@@ -612,7 +654,7 @@ class Reconstruction:
             needs.append(0 if "over" in degs else
                          dense_need(m["rel_by_entry"], self.ctrl,
                                     [d if isinstance(d, int) else None for d in degs])["max_need"])
-        # where the log-coordinate gauge closes a direction of large need, its fit is the cheaper one
+        # where the log-coordinate gauge closes a direction of large need, the gauge fit is the cheaper one
         early = [None] * len(self.residual)
         if any(nd > _LOG_FIRST for nd in needs) and not expired(self.ctrl):
             lg = logcoord_gauge(self.residual, an.scal_rows, PRIMES[0], an.nz, sc, self.zvals0)
@@ -646,7 +688,7 @@ class Reconstruction:
             self.tlog(f"dense dir {ii + 1}/{len(self.residual)} done (closed={bool(r.get('closed_form'))})")
             interp.append(r)
         if run.ss_constraint and an.joint and an.recast and not all(e.get("closed_form") for e in interp):
-            closed = fwd_adopt(self._forward_multi() or [], len(self.residual))
+            closed = self._forward_adopt(self._forward_retrying(self._forward_multi))
             if closed is not None:
                 interp = self._forward_checked(self._forward_entries(closed))
                 self.tlog(f"forward-multi closed {sum(bool(e.get('closed_form')) for e in interp)} "
@@ -743,7 +785,7 @@ class Reconstruction:
                 self.tlog("relevance probe done (free-column gauge)")
         if interp is None:
             interp = self.homotopy(self.dense(ms))
-            # an open direction keeps its kernel vector, so that the kernel fill does not repeat it
+            # an open direction keeps the kernel vector found for it, so that the kernel fill does not repeat it
             interp = [e if e.get("closed_form") else dict(e, kernel_residue=self.residues(fc).tolist())
                       for e, fc in zip(interp, self.residual)]
         self.tlog(f"reconstruction done: {sum(bool(e.get('closed_form')) for e in interp)}/{len(interp)} closed")

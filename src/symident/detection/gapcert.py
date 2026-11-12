@@ -94,7 +94,7 @@ def _stationary(F, fam, W, p, rng, top):
 
 
 class _Chain:
-    """The coefficient rows of one chain over the states and parameters of its first segment."""
+    """The coefficient rows of one chain over the states and parameters of the first segment of the chain."""
 
     def __init__(self, tapes, chain, n_lie, p, rng):
         segs = [tapes[i] for i in chain]
@@ -189,7 +189,7 @@ def _gap_bound(tapes, chains, znames, n_lie, p, rng, cap):
         if rho is None:
             return {"bound": None, "why": "no stationary order within the cap"}
         # the rows at the start, the initial values a function of the coordinates; the
-        # coordinate named like a state is its initial value
+        # coordinate named like a state is the initial value of that state
         ren = {z: spy.Symbol(f"{z}__z") for z in zs}
         x1 = {x: ch.ic.get(x, x).xreplace(ren) for x in ch.S}
         at = {**{x: x1[x] for x in ch.S}, **{w: ren.get(w, w) for w in ch.params}}

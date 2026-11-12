@@ -13,6 +13,7 @@ from .charts import (
     _log_param_denominators,
     _log_param_sub,
     _log_params_only_in_atoms,
+    _split_power_bases,
     _strip_log_obs,
 )
 from .gfpoly import _linear_solution
@@ -352,7 +353,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         per_cond.append((f_c, g_c, ic_c, f_ss))
         subs_per.append(subs_map)
 
-    # a logarithmic observable holds the information of its argument; hyperbolic
+    # a logarithmic observable holds the information of the argument; hyperbolic
     # functions are exponentials
     per_cond = [([_hyp_to_exp(e) for e in f_c],
                 [_hyp_to_exp(_strip_log_obs(e)) for e in g_c],
@@ -412,6 +413,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     n_real = n_s
     power_recast = []
     inv_solve_name = {}
+    per_cond = _split_power_bases(per_cond)
     pairs = _detect_power_atoms(per_cond, S)
     if pairs is None:
         return {'ok': False, 'nonrational':
@@ -420,7 +422,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         S, per_cond, power_recast = _apply_power_recast(pairs, S, per_cond)
         n_s = len(S)
         if equilibrate:
-            # a base with a linear turnover term is solved directly; otherwise its
+            # a base with a linear turnover term is solved directly; otherwise the
             # balance is linear in E and it is "inverted": E is solved, base and L
             # stay generic
             real_set = {_s(X) for X in S[:n_real]}
@@ -550,7 +552,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     if nonrational:
         return {'ok': False, 'nonrational': nonrational}
 
-    # a state has a free initial-value leaf when its initial value still contains the
+    # a state has a free initial-value leaf when the initial value still contains the
     # state symbol (possibly under a dose); equilibrate-seeded states have none
     free_state = {_s(X): False for X in S}
     for c, (_f_c, _g_c, ic_c, _f_ss) in enumerate(per_cond):
@@ -605,8 +607,8 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     # coordinates a trafo absorbed stay coordinates
     paramset |= {local.get(_s(n), spy.Symbol(_s(n))) for n in _as_list(keep_coords)}
     params = sorted(paramset, key=spy.default_sort_key)
-    # a base seen only under a free exponent vanished into its recast atom; re-added, the
-    # recast relation ties it and its co-scaling is reported as an exact scaling
+    # a base seen only under a free exponent vanished into the recast atom; re-added, the
+    # recast relation ties it, and the co-scaling of the base is reported as an exact scaling
     if power_recast:
         known = set(_s(s) for s in S) | set(_s(s) for s in params) | set(forcings)
         for rc in power_recast:
@@ -692,7 +694,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                           else X if (_s(X) not in forcings and _s(X) not in jfs)
                           else spy.Integer(0)) for X in S}
             # t0 events act on the pre-event coordinate x_ss (seeded from val_by);
-            # the IC tape holds x0 = E(x_ss) with its chain-rule duals
+            # the IC tape holds x0 = E(x_ss) with chain-rule duals
             _compose_t0_events(ic_map, condition_t0_events[c]
                                if condition_t0_events and c < len(condition_t0_events)
                                else [], pval, subs_map)
@@ -709,7 +711,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         elif seg_eq[c]:
             # equilibrate-seeded first segment: a generically linear resting state (no
             # recast) is solved symbolically and emitted as an IC tape; otherwise it is
-            # seeded numerically per point with its IFT duals (ic_seed)
+            # seeded numerically per point with IFT duals (ic_seed)
             ss_ic = None
             if not power_recast and not _FORCE_CONSTRAINT_SEED:
                 sskey = tuple(f_ss)
@@ -748,7 +750,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                     '%s = %s' % (inv_solve_name.get(_s(S[i]), _s(S[i])),
                                  spy.sympify(f_ss[i])) for i in range(n_real)]
         else:
-            # IC tape: seed each state from its initial-value expression in the
+            # IC tape: seed each state from the initial-value expression in the
             # leaves (free initial values, z coordinates, doses, resets).
             ickey = tuple(ic_c[_s(X)] for X in S)
             ic_emitted = ic_cache.get(ickey)
@@ -767,7 +769,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             tape['jet_f'] = ['%s = %s' % (_s(S[i]), _s(f_c[i])) for i in range(n_s)]
             tape['jet_g'] = [_s(e) for e in g_c]
             tape['jet_ic'] = ['%s = %s' % (_s(X), _s(ic_c[_s(X)])) for X in S]
-            # a later segment's boundary events, and whether its start time is free of
+            # a later segment's boundary events, and whether the segment start time is free of
             # the coordinates (the jets of a moving boundary need the time shift too)
             tape['jet_ev'] = [{'var': _s(e['var']), 'method': _s(e['method']),
                                'value': _s(e['value'])} for e in ev_per[c]]
@@ -797,8 +799,8 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                     'ev_leaf_only': [not ({str(x) for x in spy.sympify(v).free_symbols} & set(idx_of_state))
                                      for v in vals],
                     'ev_method': [method_code[_s(e['method'])] for e in keep]})
-        # the segment's left boundary time as an order-0 tape: its value sets the gap
-        # lengths, its duals hold a time that depends on the coordinates
+        # the segment's left boundary time as an order-0 tape: the value sets the gap
+        # lengths, the duals hold a time that depends on the coordinates
         if tm_per[c] is not None:
             tv = tm_per[c]
             try:

@@ -5,7 +5,7 @@ import time
 import warnings
 
 from .. import session, state
-from ..errors import SYMPY_FAILS, swallow, sympy_fail
+from ..errors import SYMPY_FAILS, InputError, swallow, sympy_fail
 from ..options import reconst_control
 from ..rexpr import (
     eqn_lines,
@@ -42,6 +42,8 @@ from .conditions import (
 from .cq import check_conserved, equil_zero_branches, pivot_decomposition, substitute_cq
 from .finalize import finalize, log_arg_back
 from .gauge import gauge_suggest, gauged_detection
+from .inputs import check_arguments
+from .numbase import EXP_REFUSAL, numeric_bases, restore
 from .observability import observability_analytic_multi
 
 
@@ -196,7 +198,7 @@ def _drop_sinks(fdyn, g_exprs, trafo, events, reactions, totals, keep, zero=()):
     if totals:
         totals = {k: v for k, v in totals.items() if not drop & set(get_symbols([str(v)]))}
     # a dropped state that still multiplies a state at zero becomes a known constant, so
-    # that its rate constants stay coordinates
+    # that the rate constants of that state stay coordinates
     held = sorted(drop & set(get_symbols(list(fdyn.values()))))
     return fdyn, trafo, events, reactions, totals, held
 
@@ -250,7 +252,7 @@ def _check_steps(kw):
     for t in texts:
         hit = [n for k, n in tokens(t) if k == "fun" and n in _STEPS]
         if hit:
-            raise ValueError(f"{hit[0]}() in {t} jumps at every integer of its argument and is constant "
+            raise ValueError(f"{hit[0]}() in {t} jumps at every integer of the argument and is constant "
                              "in between; symident does not analyze it: write the steps it takes with "
                              "piecewise() on their thresholds")
 
@@ -322,7 +324,7 @@ def _check_declared(kw, known):
     ]
     for bad, why in checks:
         if bad:
-            raise ValueError(why.format(bad[0]))
+            raise InputError(why.format(bad[0]))
     pos = kw.get("positive")
     if isinstance(pos, (list, tuple)):
         bad = [str(p) for p in pos if _NAME.fullmatch(str(p)) and str(p) not in names]
@@ -486,13 +488,13 @@ def _excluded_coords(kw, hy):
 
 
 def _lost_coords(kw, kw2):
-    """Symbols of `kw` that the model `kw2` on the zero set of its states no longer reads."""
+    """Symbols of `kw` that the model `kw2` on the zero set of the states of `kw2` no longer reads."""
     return sym_sort(_model_symbols(kw) - _model_symbols(kw2) - _held(kw) - _held(kw2))
 
 
 def _with_excluded(res, names, positive, route="a coordinate of excluded regimes only",
                    proof="full rank on the coordinates of the allowed regimes"):
-    """The result with each coordinate of `names` as a direction of its own, exact: no observable depends on it."""
+    """The result with each coordinate of `names` as a separate direction, exact: no observable depends on it."""
     from .finalize import complete, display_form
     info = res.get("info") if isinstance(res, dict) else None
     if not names or not isinstance(info, dict) or info.get("coordinates") is None:
@@ -529,7 +531,31 @@ def symmetry_detection(*args, **kw):
     known = [str(u) for u in kw.pop("known_inputs", None) or []]
     kw = dict(inspect.signature(_symmetry_detection).bind(*args, **kw).arguments)
     if state.get("session") is None:
+        check_arguments(kw)
         _check_declared(kw, known)
+    try:
+        return _detect_known(dict(kw), known)
+    except ValueError as exc:
+        sub = numeric_bases(kw) if kw.get("equilibrate") and str(exc).startswith(EXP_REFUSAL) else None
+        if sub is None:
+            raise
+        try:
+            res = _detect_known(sub[0], known)
+        except ValueError:
+            raise exc from None
+    res = restore(res, sub[1], sub[2])
+    if sub[1] and isinstance(res.get("info"), dict):
+        res["info"].setdefault("limits", []).append(_numeric_base_note(sub[1]))
+    return res
+
+
+def _numeric_base_note(fixed):
+    """The limit that holding b^n of a number b as a constant leaves in the result."""
+    return ("a power b^n of the number " + ", ".join(str(b) for b in fixed.values())
+            + " is held as a generic constant, with log(b) independent of the other constants")
+
+
+def _detect_known(kw, known):
     if not known:
         return _detection(kw)
     fixed_order = int(dict(kw.get("control") or {}).get("input_jet_order") or 0)
@@ -631,7 +657,7 @@ def _checked_without_bound(res):
 
 
 def _assumptions(res):
-    """The declared domain and switch starts the result assumes, and its error probability."""
+    """The declared domain and switch starts the result assumes, and the error probability of the result."""
     info = res["info"]
     b = info.get("bound")
     levels = [s.get("level") for s in res.get("symmetries") or []]
@@ -860,9 +886,10 @@ def _scalings_without_jets(dirs, jets):
 
 
 def _resolved_scalings(fdyn, gset, g_per_cond, res, inputs, fixed, jets, multi, held, rest_zero=None):
-    """The scalings of every segment's equations with its initial values, event values and times held, on the
+    """The scalings of every segment's equations with the initial values, event values and times of the segment held,
+    on the
     coordinates of the compiled tapes `multi` (None: the free or `held` states and the parameters), with the jet
-    weights; with `rest_zero`, the inputs at rest, a start at rest also holds its resting model."""
+    weights; with `rest_zero`, the inputs at rest, a start at rest also holds the resting model."""
     import sympy as spy
     model, obs, xm, xo = [], [], [], []
     for i, subs in enumerate(res["subs"]):
@@ -1099,7 +1126,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         free_initial = [s for s in free_initial if s in states]
         if free_initial and not (equilibrate and not reduce_cq):
             warnings.warn("`free_initial` applies only with `equilibrate` and without `reduce_cq` "
-                          "(the held-variable moiety parameterisation); ignored.", stacklevel=2)
+                          "(the held-variable moiety parametrization); ignored.", stacklevel=2)
             free_initial = []
 
     cond_subs = None
@@ -1202,8 +1229,10 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         # inputs are zero at rest whatever their initial value
         told = [x for x in ic_names if x not in set(forcings)]
         if told:
-            warnings.warn("`equilibrate` solves the steady state from f = 0; the "
-                          f"initial condition(s) for {', '.join(told)} in `trafo` are ignored.", stacklevel=2)
+            msg = ("`equilibrate` solves the steady state from f = 0; the "
+                   f"initial condition(s) for {', '.join(told)} in `trafo` are ignored.")
+            warnings.warn(msg, stacklevel=2)
+            session.note("limits", msg)
         initial_box["v"] = None
         if cond_initial_box["v"] is not None:
             cond_initial_box["v"] = [None for _ in cond_initial_box["v"]]
@@ -1211,7 +1240,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         check_conserved(totals, fdyn)
     cq_totals = []
     if reduce_cq and totals:
-        # a species with an initial value stays a state where another species of its moiety can be eliminated
+        # a species with an initial value stays a state where another species of the same moiety can be eliminated
         told = [] if equilibrate else ic_names
         avoid_cq = free_exponent_bases(list(fdyn.values()) + g_char(), list(fdyn)) + told
         cq = substitute_cq(totals, fdyn, list(fdyn), parameters, avoid=avoid_cq)
@@ -1361,7 +1390,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                and p not in set(equil_zero) | set(forcings)]
         held_state_params = {p: p for p in piv}
     if equilibrate:
-        # a state whose right-hand side vanishes at rest keeps a resting value of its own
+        # a state whose right-hand side vanishes at rest keeps a separate resting value
         for x in _rest_idle_states(fdyn, forcings, equil_zero):
             held_state_params.setdefault(x, x)
     res = resolve_conditions(conditions, events, initial, symbols, states, const_states,
@@ -1443,7 +1472,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             held_state_params=held_state_params if equilibrate and held_state_params else None,
             const_states=const_states, positive=positive)
     if multi.get("ok") and jets:
-        # the k-th Lie derivative of an observable holds the input up to its k-th derivative
+        # the k-th Lie derivative of an observable holds the input and the input derivatives up to order k
         nm = jet_start.get
         _mark_nuisance(multi, {"states": [nm(x, x) for names in jets.values() for x in names],
                                "kept": [nm(w, w) for w in jets],
@@ -1453,7 +1482,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
     elif multi.get("ok") and nuisance:
         _mark_nuisance(multi, nuisance)
     if multi.get("ok") and known_order:
-        # a known input is a polynomial past its chain: the rows past that order are a specialization
+        # a known input is a polynomial past the input jet chain: the rows past that order are a specialization
         top = int(known_order["jet_order"]) - 1
         multi["nuisance_order"] = top if multi.get("nuisance_order") is None else min(int(multi["nuisance_order"]), top)
     if method == "scaling":

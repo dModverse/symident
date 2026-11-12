@@ -144,7 +144,7 @@ class _NotRationalError(Exception):
 
 
 def _is_rational_expr(e):
-    """True if e is a rational function of its symbols: no transcendental function, no non-integer power."""
+    """True if e is a rational function of the symbols it reads: no transcendental function, no non-integer power."""
     e = spy.sympify(e)
     for a in spy.preorder_traversal(e):
         if a.is_Function:

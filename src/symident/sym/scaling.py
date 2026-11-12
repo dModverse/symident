@@ -15,7 +15,7 @@ from .recast import _TRIG, _TRIG_RECIPROCAL
 
 
 def _ring_elem(x, R, gen):
-    """x as an element of the polynomial ring R, None when it is not a polynomial in its symbols."""
+    """x as an element of the polynomial ring R, None when it is not a polynomial in the symbols it reads."""
     if x.is_Symbol:
         return gen[x]
     if x.is_Rational:
@@ -35,7 +35,8 @@ def _ring_elem(x, R, gen):
 
 
 def _terms(x):
-    """The terms of the expanded polynomial x, each as its powers, by sparse arithmetic where x is a polynomial."""
+    """The terms of the expanded polynomial x, each as a tuple of powers, by sparse arithmetic where x is a
+    polynomial."""
     syms = sorted(x.free_symbols, key=spy.default_sort_key)
     if not syms:
         return ((),) if x != 0 else ()
@@ -48,7 +49,7 @@ def _terms(x):
 
 @functools.lru_cache(maxsize=4096)
 def _expanded(expr):
-    """The terms of the expanded numerator and denominator of expr, each as its powers."""
+    """The terms of the expanded numerator and denominator of expr, each as a tuple of powers."""
     return tuple(_terms(x) for x in spy.fraction(spy.together(spy.sympify(expr))))
 
 
@@ -264,7 +265,7 @@ def verify_scalings(scalings, tapes):
             checks.append((e, None if str(ev['method']) == 'multiply' else str(ev['var'])))
         if t.get('ver_time'):
             checks.append((spy.sympify(parse(t['ver_time'])), None))
-    # each distinct check once, with its symbols; one free of the support has degree 0
+    # each distinct check once, with the symbols of the check; one free of the support has degree 0
     checks = list(dict.fromkeys(checks))
     syms = [{str(x) for x in e.free_symbols} for e, _ in checks]
     out = []

@@ -246,13 +246,13 @@ def sgn_poly(pp, depth=0):
     cf = []
     for t in tm:
         c = t[1]
-        # a float coefficient enters by its exact binary value, so that no sign rests on rounding
+        # a float coefficient enters by the exact binary value, so that no sign rests on rounding
         if c.is_Float:
             c = spy.Rational(c)
         if c.is_Rational:
             cf.append(Fraction(int(c.p), int(c.q)))
             continue
-        # another number enters by its sign alone, which then has to decide
+        # another number enters by the sign alone, which then has to decide
         sc = num_sign(c)
         if sc is None:
             return 0
@@ -274,7 +274,7 @@ def sgn_poly(pp, depth=0):
         free = [g not in pos_s and not (re.match(r"^si_red_c[0-9]+$", g) and g not in real) for g in gens]
     else:
         free = [g in real for g in gens]
-    # a generator such as log(x) is positive only where its own sign is proven, else real
+    # a generator such as log(x) is positive only where the sign of the generator is proven, else real
     free = [fr if go.is_Symbol else _atom_sign(go, depth) != 1 for fr, go in zip(free, gobj)]
     for j, fr in enumerate(free):
         if fr and np.any(expts[:, j] % 2 != 0):
@@ -299,7 +299,8 @@ def sgn_poly(pp, depth=0):
 
 
 def absorb(expts, cf):
-    """Budget per term left once AM-GM absorbs each negative term by two positives averaging its exponents, or None."""
+    """Budget per term left once AM-GM absorbs each negative term by two positives averaging the exponents of that
+    term, or None."""
     return _absorb_exact(expts, cf)
 
 
@@ -345,7 +346,7 @@ def budget_spent():
 
 
 def time_up():
-    """Whether the work budget of the section search, one unit per call, or its deadline is spent."""
+    """Whether the work budget of the section search, one unit per call, or the deadline of the search is spent."""
     DOMAIN["work"] = DOMAIN.get("work", 0) + 1
     cap = DOMAIN.get("work_cap")
     if cap is not None and DOMAIN["work"] > cap:
@@ -855,7 +856,7 @@ def translates(b, v, pinned):
 
 
 def real_form(e, real_syms):
-    """`e` cancelled if rational or a real root with a denominator of certified sign over `real_syms`, else None."""
+    """`e` canceled if rational or a real root with a denominator of certified sign over `real_syms`, else None."""
     try:
         f = spy.cancel(spy.together(e))
     except SYMPY_FAILS as exc:
