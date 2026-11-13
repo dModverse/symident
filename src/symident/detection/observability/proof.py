@@ -1,6 +1,7 @@
 """Exact proofs over Q of the closed directions; d["proof"] of an unproven one lists why each attempt failed."""
 
 import math
+import re
 
 import numpy as np
 import sympy as spy
@@ -37,6 +38,10 @@ from ..fields import (
 
 # regimes beyond which no detection per regime is run for the combined lift
 EXACT_REGIMES = 8
+
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+# a resting state of condition k in a closed form: x_c<k>
+_COPY = re.compile(r"(.+)_c([0-9]+)")
 
 
 def _fail(dirs, why):
@@ -529,34 +534,36 @@ def combined_work(an, light):
 def chain_bound(an, result):
     """info["bound"] of the unproven closed directions from the degree of the kernel's rational system, or None."""
     from ...gfp import verify_prime
-    from ..bound import _vector_degree, chain_degree, drawn, identity_degree, no_degree
+    from ..bound import _vector_degree, chain_degree, drawn, identity_degree, no_degree, rest_identity_degree
     dirs = [d for d in result.get("non_identifiable") or []
             if d.get("closed_form") and not d.get("exact") and d.get("vector")]
     if not dirs:
         return None
-    if an.field_joint is not None:
-        return {"applies": False, "why": "the error bound does not cover a start at rest (equilibrate)"}
     if an.run.nuis_cols:
         return {"applies": False, "why": "the jet chains of the unknown inputs are truncated"}
     run, tapes = an.run, an.multi["tapes"]
     chains = run.chain_groups if run.has_gaps else [[i] for i in range(len(tapes))]
     order = int(an.sc["nt_used"])
     vecs = [d.get("checked") or representatives(d)[0] for d in dirs]
+    unchecked = sorted({d.get("route") or "" for d in dirs if not _checked_at_random(d.get("route"))})
+    if unchecked:
+        return {"applies": False, "why": f"a direction of the route {unchecked[0]} is not checked at random "
+                                         "points modulo the verification prime"}
+    rest = None
+    if an.field_joint is not None:
+        rest = _rest_degrees(an, verify_prime())
+        if "why" in rest:
+            return {"applies": False, "why": rest["why"]}
     degs = []
     for ch in chains:
-        t = tapes[ch[0]]
-        if any(not tapes[i].get("jet_f") for i in ch):
-            return {"applies": False, "why": "no rational form of the kernel"}
-        fs = [{k.strip(): v.strip() for k, v in (l.split("=", 1) for l in _lines(tapes[i]["jet_f"]))} for i in ch]
-        f = fs[0]
-        g = {f"_y{i}": e for i, e in enumerate(_lines(t.get("jet_g")))}
-        x0 = {k.strip(): v.strip() for k, v in (l.split("=", 1) for l in _lines(t.get("jet_ic")))}
-        events = [_evs(tapes[i].get("jet_ev")) for i in ch[1:]]
-        times = [str(tapes[i].get("ver_time") or "") for i in ch]
+        forms = _chain_forms(an, ch) if rest is not None else _jet_forms(tapes, ch)
+        if isinstance(forms, str):
+            return {"applies": False, "why": forms}
+        fs, g, x0, events, times = forms
         for v in vecs:
             try:
                 d = chain_degree(fs, g, x0, events, order, int(run.mtot), v, times) if run.has_gaps else \
-                    identity_degree(f, g, x0, order, v)
+                    identity_degree(fs[0], g, x0, order, v)
                 if d is not None and getattr(an, "transient", False):
                     # the linearized recast relations: entries of degree up to three
                     d = max(d, _vector_degree([model_sympify(str(c)) for c in v.values()]) + 3)
@@ -566,11 +573,92 @@ def chain_bound(an, result):
             if d is None:
                 why = no_degree(list(fs[0].values()) + list(g.values()) + list(x0.values()) + list(v.values()))
                 return {"applies": False, "why": why or "a term has no degree bound"}
+            if rest is not None:
+                # the identity times det(J_x), which vanishes where a check point has a singular Jacobian
+                read = _rests_read(an, v, ch[0], rest)
+                d = rest_identity_degree(d, 2 * rest[ch[0]]["jac"], read, read)
             degs.append(d)
     q, d, k = verify_prime(), max(degs), drawn(2)
     # the two passing points are a pair of the k drawn
     return {"degree": d, "points": 2, "draws": k, "prime": int(q),
             "probability": float(min(1.0, len(vecs) * math.comb(k, 2) * min(1.0, d / q) ** 2))}
+
+
+def _lines_dict(lines):
+    return {k.strip(): v.strip() for k, v in (l.split("=", 1) for l in _lines(lines))}
+
+
+def _jet_forms(tapes, ch):
+    """(fs, g, x0, events, times) of the chain `ch` from the jets of its tapes, or why there are none."""
+    if any(not tapes[i].get("jet_f") for i in ch):
+        return "no rational form of the kernel"
+    t = tapes[ch[0]]
+    return ([_lines_dict(tapes[i]["jet_f"]) for i in ch], {f"_y{i}": e for i, e in enumerate(_lines(t.get("jet_g")))},
+            _lines_dict(t.get("jet_ic")), [_evs(tapes[i].get("jet_ev")) for i in ch[1:]],
+            [str(tapes[i].get("ver_time") or "") for i in ch])
+
+
+def _chain_forms(an, ch):
+    """_jet_forms() of a chain that starts at rest: the start is the resting state itself, a coordinate, with the
+    held pivots at their parameters, inputs and states at zero at zero, and the events at the start applied."""
+    sys, tapes = an.sys, an.multi["tapes"]
+    ci = ch[0]
+    if ci not in sys.equil_conds:
+        return "a condition does not start at rest"
+    zero = set(sys.held_of(ci))
+    x0 = {x: sys.held_param_of[x] if x in sys.held_param_of else "0" if x in zero else x
+          for x in sys.real_state_names}
+    for e in _evs(tapes[ci].get("ver_t0")):
+        x, v = str(e["var"]), str(e["value"])
+        x0[x] = {"add": f"({x0.get(x, x)}) + ({v})", "replace": v,
+                 "multiply": f"({x0.get(x, x)})*({v})"}[e.get("method", "replace")]
+    t = tapes[ci]
+    return ([_lines_dict(tapes[i].get("model_lines")) for i in ch], _lines_dict(t.get("obs_lines")), x0,
+            [_evs(tapes[i].get("ver_ev")) for i in ch[1:]], [str(tapes[i].get("ver_time") or "") for i in ch])
+
+
+def _rest_degrees(an, q):
+    """{condition: {"bezout", "jac"}} of every resting condition, or {"why"} where the bound at rest does not apply."""
+    sys = an.sys
+    if an.recast or getattr(sys, "exp_rel", None):
+        return {"why": "a power or an exponential in the resting balances"}
+    if q in sys.cont_primes:
+        return {"why": "resting states continued along a line at the check points"}
+    out = {}
+    for ci in sys.equil_conds:
+        r = sys.rest_degree(ci, an.sc["point0"])
+        if "why" in r:
+            return r
+        if not sys.rest_jacobian_regular(ci, an.sc["point0"], q):
+            return {"why": f"the resting Jacobian of condition {sys.equil_conds.index(ci) + 1} is singular at "
+                           "the points tried"}
+        out[ci] = r
+    return out
+
+
+# routes whose closed forms pass the kernel check at points uniform modulo the verification prime
+_RANDOM_ROUTES = ("fit", "read-off", "narrow fit", "jets", "homotopy fit")
+
+
+def _checked_at_random(route):
+    return bool(route) and str(route).startswith(_RANDOM_ROUTES)
+
+
+def _rests_read(an, v, ci, rest):
+    """Bezout numbers of the resting systems the identity of condition `ci` with the closed form `v` reads: its own,
+    those of the states x_c<k>, and the largest for a state read by its plain name."""
+    sys = an.sys
+    states = set(sys.real_state_names)
+    toks = {t for x in v.values() for t in _IDENT.findall(str(x))}
+    read = {ci}
+    for t in toks:
+        m = _COPY.fullmatch(t)
+        if m and m.group(1) in states and 1 <= int(m.group(2)) <= sys.kc:
+            read.add(sys.equil_conds[int(m.group(2)) - 1])
+    out = [rest[c]["bezout"] for c in sorted(read)]
+    if toks & states:
+        out.append(max(r["bezout"] for r in rest.values()))
+    return out
 
 
 def prove_exact(an, result):

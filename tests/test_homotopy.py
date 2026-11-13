@@ -102,6 +102,17 @@ def test_homotopy_closes_what_the_other_routes_leave_open():
         assert syms <= {"K", "d", "kb", "v", "x_c1", "x_c2"} and {"x_c1", "x_c2"} <= syms
 
 
+def test_homotopy_directions_without_an_exact_proof_are_verified_on_the_resting_variety():
+    with si.switches(NOFIELDS=True):
+        r = symmetry_detection(**SAT, equilibrate=True, reconstruct=True)
+    on = [d for d in r["symmetries"] if d["type"] == "general"]
+    assert [d["level"] for d in on] == ["verified"] * 2
+    b = r["info"]["bound"]
+    # the identity on both conditions' resting varieties: a balance of degree 3 each
+    assert b["degree"] > 9 and 0 < b["probability"] < 1e-5
+    assert r["info"]["rank_status"]["status"] == "verified"
+
+
 def test_states_entering_a_resting_equation_linearly_are_eliminated():
     from symident.detection.observability.homstate import reduce_relations
     sat = "x = v*u*x/(K + x) + kb - d*x"

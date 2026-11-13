@@ -205,7 +205,7 @@ def test_directions_below_exact_get_the_bound():
     # the scaling of the whole model is exact without a field proof
     assert "verified" in {s.level for s in r.symmetries} <= {"exact", "verified"}
     assert {p["reason"] for p in r.info["proof"]} == {"switched off (NOFIELDS)"}
-    assert 0 < r.info["bound"]["probability"] < 1e-6 and r.info["bound"]["points"] == 2
+    assert 0 < r.info["bound"]["probability"] < 1e-5 and r.info["bound"]["points"] == 2
 
 
 def test_the_regime_detections_of_the_combined_lift_keep_to_their_budget():
@@ -251,6 +251,16 @@ def test_the_bound_holds_in_the_recast_coordinates_of_a_symbolic_exponent():
     assert r.unproven() and 0 < r.info["bound"]["probability"] < 1e-5
 
 
+def test_a_gauged_detection_keeps_the_proofs_and_bound_of_its_second_pass():
+    m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2"}, {"y": "s*x2"},
+                 trafo={"x1": "D", "x2": "0"}, conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}})
+    with si.switches(NOFIELDS=True):
+        r = si.detect(m, reconstruct=True, gauge=None)
+    ver = {tuple(s.support) for s in r.symmetries if s.type == "general" and s.level == "verified"}
+    assert ver and ver <= {tuple(p["support"]) for p in r.info["proof"]}
+    assert 0 < r.info["bound"]["probability"] < 1e-5
+
+
 def test_the_rank_status_says_how_far_the_number_of_directions_holds():
     # every direction closed at a Lie order proven sufficient: the rank rests on the verified closed forms
     f = {"A": "k1 - d1*A + kx*X", "B": "k2*A - d2*B", "X": "kp*plasmid - dx*X"}
@@ -261,7 +271,7 @@ def test_the_rank_status_says_how_far_the_number_of_directions_holds():
                  events=[{"var": "A", "time": 0, "value": "dose", "method": "add"}])
     r = si.detect(m, reconstruct=True)
     st = r.info["rank_status"]
-    assert st["status"] == "verified" and 0 < st["probability"] < 1e-6
+    assert st["status"] == "verified" and 0 < st["probability"] < 1e-5
     assert "The rank is verified, not proven" in repr(r)
     r = si.detect(si.Model({"x1": "-k*x1 + a*(x2 - x1)", "x2": "-k*x2 + a*(x1 - x2)"}, {"y": "x1"},
                            trafo={"x1": "1", "x2": "1"}), engine="symbolic")

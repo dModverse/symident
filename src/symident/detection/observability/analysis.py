@@ -411,19 +411,27 @@ class Analysis:
                 "cap": f"reconst_control(gap_order_cap={run.max_gap}) reached",
                 "failed": f"no kernel past gap order {run.mtot}"}[stop]
 
-    def _cert_segments(self, sc):
-        """The certificate inputs: chains of tapes and a seed per chain."""
+    def _cert_segments(self, sc, p=None, tries=24):
+        """The certificate inputs: chains of tapes, a seed per chain and, at rest, a start per chain. At rest and a
+        prime `p` the seeds are resting states solved modulo `p` at the first of `tries` points uniform modulo `p`,
+        random points of the resting variety, and the starts are those of the base point."""
         run, sys = self.run, self.sys
         if self.joint:
             segs = sys.chains if run.has_gaps else [[run.tapes[ci]] for ci in sys.equil_conds]
-            seeds = []
-            for ci in sys.equil_conds:
-                sc0 = sys.solve_cond(sc["point0"], PRIMES[0], ci)
-                seeds.append(None if sc0 is None else sc0["ptc"])
-            return segs, seeds
+            sols = [sys.solve_cond(sc["point0"], PRIMES[0], ci) for ci in sys.equil_conds]
+            base = [None if s0 is None else np.asarray(s0["ptc"], dtype=np.int64) % PRIMES[0] for s0 in sols]
+            if p is None:
+                return segs, base, None
+            n = len(sc["point0"])
+            for k in range(1, tries + 1):
+                pt = uniform_point(n, p, session.current().seed("certificate point", k))
+                sols = [sys.solve_direct(pt, p, ci) for ci in sys.equil_conds]
+                if all(s0 is not None for s0 in sols):
+                    return segs, [np.asarray(s0["ptc"], dtype=np.int64) % p for s0 in sols], base
+            return segs, [None] * len(sys.equil_conds), base
         segs = [run.chain_tapes(idx) for idx in run.chain_groups] if run.has_gaps else \
             [[t] for t in run.tapes]
-        return segs, [np.asarray(sc["point0"][:run.n_leaves], dtype=np.int64)] * len(segs)
+        return segs, [np.asarray(sc["point0"][:run.n_leaves], dtype=np.int64)] * len(segs), None
 
     def certify(self, sc):
         """The proven Lie order per block, then the per-chain caps lowered."""
@@ -462,11 +470,14 @@ class Analysis:
             if state.env("LIEDIAG"):
                 print(f"[liediag] joint block Lie orders: {','.join(map(str, run.nt_cap))}")
 
-    def _cert_degrees(self):
-        """(degrees, why): per certificate block the state_degrees() of each segment, None where one has none."""
-        from ..bound import no_degree, state_degrees
+    def _cert_degrees(self, sc):
+        """(degrees, why): per certificate block the total degrees of each segment and of the initial values, at rest
+        the Bezout number of the resting balances; None where a block has none."""
+        from ..bound import _vector_degree, no_degree, total_degrees
         run, tapes = self.run, self.multi["tapes"]
         groups = run.chain_groups if run.has_gaps else [[i] for i in range(len(tapes))]
+        if self.joint:
+            groups = [run.chain_groups[run.chain_idx[ci]] if run.has_gaps else [ci] for ci in self.sys.equil_conds]
         out, why = [], None
         for idx in groups:
             mds = []
@@ -475,12 +486,44 @@ class Analysis:
                 ml = strs(t.get("jet_f") or t.get("model_lines"))
                 ol = [f"_y{j} = {e}" for j, e in enumerate(strs(t["jet_g"]))] if t.get("jet_f") else \
                     strs(t.get("obs_lines"))
-                md = state_degrees(ml, ol, [l.split("=", 1)[0].strip() for l in ml])
+                md = total_degrees(ml, ol)
                 if md is None and why is None:
                     why = no_degree([l.split("=", 1)[1] for l in ml + ol]) or "SymPy found no degree"
                 mds.append(md)
-            out.append(mds)
+            # the degree of the start of each segment: the initial values, or the resting state with the
+            # events at the start, then the events; composing a value of degree dv multiplies by at most 1 + dv
+            try:
+                if self.joint:
+                    d0s = [1 + self._event_degree(tapes[idx[0]].get("ver_t0"))]
+                else:
+                    ic = [l.split("=", 1)[1] for l in strs(tapes[idx[0]].get("jet_ic"))]
+                    d0s = [max(1, _vector_degree([model_sympify(e) for e in ic])) if ic else 1]
+                for i in idx[1:]:
+                    d0s.append(d0s[-1] * (1 + self._event_degree(tapes[i].get("jet_ev") or tapes[i].get("ver_ev"))))
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
+                d0s = None
+            if self.joint and d0s is not None:
+                r = self.sys.rest_degree(idx[0], sc["point0"])
+                if "why" in r:
+                    why = why or r["why"]
+                    out.append(None)
+                    continue
+                out.append({"mds": mds, "d0s": d0s, "bezout": r["bezout"], "extra": r["bezout"]})
+                continue
+            if d0s is None:
+                why = why or "the initial values have no degree"
+                out.append(None)
+                continue
+            out.append({"mds": mds, "d0s": d0s})
         return out, why
+
+    @staticmethod
+    def _event_degree(evs):
+        """The degree of the event values `evs` in all their symbols, 0 without events."""
+        from ..bound import _vector_degree
+        vals = [model_sympify(str(e["value"])) for e in (evs or []) if isinstance(e, dict)]
+        return _vector_degree(vals) if vals else 0
 
     def _cert_start(self, sc, n):
         """Per block the saturated order plus the plateau, where the saturation knows it."""
@@ -492,8 +535,15 @@ class Analysis:
     def _certificate(self, sc):
         """The Lie order per block past which the rank provably stays."""
         run = self.run
-        segs, seeds = self._cert_segments(sc)
-        P1 = PRIMES[0]
+        P1, q = PRIMES[0], verify_prime()
+        degs, why = self._cert_degrees(sc)
+        if degs is not None and any(d is None for d in degs):
+            degs = None
+        # at rest the generic ranks are taken at a random resting point modulo q, where the draws are uniform
+        segs, seeds, starts = self._cert_segments(sc, q if self.joint and degs is not None else None)
+        if self.joint and degs is not None and any(s is None for s in seeds):
+            segs, seeds, starts = self._cert_segments(sc)
+            degs, why = None, "no resting state modulo the verification prime at the points tried"
         own_threads = not run.has_gaps and not self.joint
         threads = run.cores if own_threads else 1
         mapf = (lambda f, xs: thread_map(f, xs, run.cores)) if threads == 1 and run.cores > 1 else None
@@ -501,17 +551,17 @@ class Analysis:
         if run.nuis_order is not None:
             # past the exact orders of the input chains a row is that of a polynomial stand-in
             cap = min(cap, int(run.nuis_order) - int(sc.get("mtot_used") or 0))
-        degs, why = (None, "the resting states are solved modulo the engine prime only") if self.joint else \
-            self._cert_degrees()
         sc["order_bound_why"] = why
         orders, terms = None, []
         if all(s is not None and len(s) > 0 for s in seeds) and cap >= 1:
             try:
                 orders = lie_certificate(segs, seeds, run.n_leaves, run.n_states,
                                          self.sys.z_slots_local if self.joint else run.z_slots,
-                                         P1 if degs is None else verify_prime(), cap=cap,
+                                         P1 if degs is None else q, cap=cap,
                                          map_fn=mapf, threads=threads,
-                                         start=self._cert_start(sc, len(segs)), degs=degs, terms=terms)
+                                         start=self._cert_start(sc, len(segs)), degs=degs, terms=terms,
+                                         at_rest=self.joint, start_seeds=starts if degs is not None else None,
+                                         start_p=P1 if self.joint and degs is not None else None)
             except Exception as e:
                 swallow(e, "Lie order certificate")
                 if state.env("LIEDIAG"):

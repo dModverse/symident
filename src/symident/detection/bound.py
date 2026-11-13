@@ -94,6 +94,18 @@ def state_degrees(model_lines, obs_lines, states):
     return field_degrees(f, g, [spy.Symbol(str(x)) for x in states])
 
 
+def total_degrees(model_lines, obs_lines):
+    """field_degrees() of the right-hand sides and observables in all their symbols, None where not rational."""
+    try:
+        f = [model_sympify(str(l).split("=", 1)[1]) for l in model_lines]
+        g = [model_sympify(str(l).split("=", 1)[1]) for l in obs_lines]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    syms = sorted(set().union(*[e.free_symbols for e in f + g]), key=str)
+    return field_degrees(f, g, syms)
+
+
 def lie_row_degree(md, k):
     """Degree bound of the cleared rows of the Lie order k from (dA, dB, gd), as in identity_degree."""
     dA, dB, gd = md
@@ -159,6 +171,35 @@ def _vector_degree(exprs):
         W = spy.lcm(W, spy.fraction(spy.together(e))[1])
     dW = int(spy.Poly(W, *syms).total_degree())
     return max([dW] + [_degs(e)[0] + dW - _degs(e)[1] for e in exprs])
+
+
+def balance_degrees(polys):
+    """(prod d_i, sum (d_i - 1)) of the total degrees d_i of the polynomials `polys`, None where one is not a
+    polynomial or too large."""
+    bez, jac = 1, 0
+    try:
+        for P in polys:
+            P = spy.sympify(P)
+            if P == 0:
+                continue
+            if spy.count_ops(P) > _ROW_OPS or not _rational(P):
+                return None
+            syms = sorted(P.free_symbols, key=str)
+            if not syms:
+                return None
+            d = int(spy.Poly(P, *syms).total_degree())
+            bez, jac = bez * max(d, 1), jac + max(d - 1, 0)
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    return bez, jac
+
+
+def rest_identity_degree(identity, jac, bezout, other):
+    """Degree of the bad parameter set of an identity of degree `identity` on resting varieties: the cleared identity
+    times the Bezout numbers `bezout` of the resting systems it reads, plus the parameters `other` over which a solve
+    leaves the resting component."""
+    return int((identity + jac) * math.prod(bezout) + sum(other))
 
 
 def chain_degree(f, g, x0, events, order, gap_order, vector, times=None):

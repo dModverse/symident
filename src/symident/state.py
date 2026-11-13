@@ -42,9 +42,10 @@ def switches(**kw):
     Parameters
     ----------
     **kw
-        Switch names, listed in the API reference, with their values; a value sets the switch,
-        ``False`` or ``None`` clears it. A switch set here wins over the
-        environment variable ``SYMIDENT_<NAME>``.
+        Switch names, listed in the API reference, with their values. A value wins over the
+        environment variable ``SYMIDENT_<NAME>``: ``True`` and ``False`` switch a flag on and
+        off, and a number sets a number switch. ``None`` removes the setting, so that the
+        environment variable decides again. A path switch (``MSOLVE``, ``CACHE``) takes a path.
 
     Examples
     --------
@@ -52,7 +53,14 @@ def switches(**kw):
     >>> with si.switches(DEBUG=True, TIMING=True):  # doctest: +SKIP
     ...     si.detect(model)
     """
+    for name, v in kw.items():
+        if name in _PATHS and isinstance(v, bool):
+            raise ValueError(f"the switch {name} takes a path, not {v}")
     return _scoped(_SWITCHES, kw)
+
+
+# switches whose value is a path
+_PATHS = ("MSOLVE", "CACHE")
 
 
 # every switch, set as SYMIDENT_<NAME> or by switches(<NAME>=...): kind and meaning

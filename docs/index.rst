@@ -11,7 +11,7 @@ symident
 :doc:`quickstart`
    one model from detection to reduction.
 :doc:`guide`
-   model language, detection and reduction options, PEtab, unknown inputs, switches.
+   models and expressions, detection, reduction, PEtab, inputs, switches, settings.
 :doc:`method`
    the mathematics, the levels of a result, references.
 :doc:`api`

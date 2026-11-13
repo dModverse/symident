@@ -184,6 +184,10 @@ def gauged_detection(args, pref, fixed, reconstruct):
             s2 = symmetry_detection(**a2)
         res["symmetries"] = scal + s2["symmetries"]
         res["info"]["verification"] = s2["info"].get("verification")
+        # the second pass reconstructs the general directions: its proofs, attempts and bound
+        res["info"]["attempts"] = s2["info"].get("attempts") or []
+        res["info"]["proof"] = list(s1info.get("proof") or []) + list(s2["info"].get("proof") or [])
+        res["info"]["bound"] = _joint_bound(s1info.get("bound"), s2["info"].get("bound"))
         if not s1info.get("lie_certified") and not _settled(s1info):
             res["rank"] = int(s2["rank"])
             res["identifiable"] = res["rank"] == res["dim"]
@@ -202,3 +206,15 @@ def gauged_detection(args, pref, fixed, reconstruct):
     res["info"]["settings"] = dict(res["info"]["settings"], gauge_preference=pref)
     res["info"]["elapsed"] = time.monotonic() - t0
     return res
+
+
+def _joint_bound(b1, b2):
+    """The bound of the closed forms of both passes: the sum of the probabilities, or why one has none."""
+    if b1 is None or b2 is None:
+        return b2 if b1 is None else b1
+    for b in (b1, b2):
+        if b.get("probability") is None:
+            return b
+    return dict(b2, probability=float(min(1.0, b1["probability"] + b2["probability"])),
+                degree=max(int(b1.get("degree") or 0), int(b2.get("degree") or 0)),
+                draws=max(int(b1.get("draws") or 0), int(b2.get("draws") or 0)))

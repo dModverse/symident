@@ -1,4 +1,4 @@
-# Wheels for Linux (manylinux x86_64 and aarch64), macOS (x86_64 and arm64) and Windows,
+# Wheels for Linux (manylinux x86_64 and aarch64), macOS (arm64) and Windows,
 # the sdist, tests of the Linux wheel on Fedora and Debian, and a source build on Fedora;
 # uploaded to PyPI only when a release is published. Documentation goes to Pages from master.
 name: wheels
@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15-intel, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
       - uses: pypa/cibuildwheel@v4.3.5

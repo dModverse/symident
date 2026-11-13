@@ -5,15 +5,25 @@ import os
 import time
 
 import numpy as np
+import sympy as spy
 
-from ... import session, state
+from ... import _core, session, state
 from ...errors import SYMPY_FAILS, swallow, sympy_fail
-from ...gfp import PRIMES, random_point
+from ...gfp import PRIMES, random_point, uniform_point, verify_prime
 from ...par import process_map
 from ...sym.continuation import continue_resting_state
+from ...sym.gfpoly import _compile_linear_plan
 from ...sym.msolve import MsolveMissingError, msolve_threads
 from ...sym.restforward import solve_forward_modular
-from ...sym.steady import pin_branch, resting_kind, solve_steady_state_modular
+from ...sym.steady import (
+    _branch_key,
+    _conjugate,
+    _ss_compile,
+    pin_branch,
+    resting_kind,
+    solve_steady_state_modular,
+)
+from ..bound import balance_degrees
 from ..forward import SolveRates
 
 
@@ -175,7 +185,70 @@ class RestingStates:
             self.solve_cache[key] = {"ok": False} if sol is None or not sol.get("ok") else sol
         if sol is None or not sol.get("ok"):
             return None
+        if p == verify_prime() and not self.at_check_point(sol, p, ci):
+            return None
         return self._seed(point, p, sol, ci)
+
+    def at_check_point(self, sol, p, ci):
+        """Whether a resting state solved modulo the verification prime counts: no zero state where the balances are
+        not solved by linear elimination."""
+        if self.rest_system(ci, pinned=False)[3]:
+            return True
+        held = set(self.held_names)
+        return all(int(v) % p for k, v in sol["val_by"].items() if k not in held)
+
+    def rest_jacobian_regular(self, ci, point, q, tries=8):
+        """Whether the resting Jacobian of condition `ci` is invertible at a resting point: the base point modulo the
+        first engine prime, else the first of `tries` points uniform modulo `q` that solve."""
+        sol = self.solve_direct(point, PRIMES[0], ci)
+        p = PRIMES[0]
+        for k in range(tries + 1):
+            if sol is not None:
+                break
+            p = q
+            sol = self.solve_direct(uniform_point(len(point), q, session.current().seed("jacobian point", k)), q, ci)
+        if sol is None:
+            return False
+        jx = sol["sol"].get("df_jx") or []
+        if not len(jx):
+            return True
+        M = np.array([[int(x) % p for x in row] for row in jx], dtype=np.int64)
+        return M.shape[0] == M.shape[1] and int(_core.sym_rref_mod(M.astype(np.float64), p)["rank"]) == M.shape[0]
+
+    def rest_system(self, ci, pinned=True):
+        """(balances, states, parameters, linear) of the resting solve of condition `ci`: held pivots as parameters,
+        with `pinned` each split balance replaced by the factor the session pinned."""
+        held = tuple(sorted(self.held_names))
+        c = _ss_compile(list(self.models[ci]), list(self.real_state_names), list(self.solve_param_names),
+                        set(self.held_of(ci)), held)
+        params, states, polys, linear, plan = list(c[0]), list(c[1]), list(c[2]), c[9], c[11]
+        if plan is not None:
+            keep = [(s, P) for s, P in zip(states, polys) if str(s) not in set(held)]
+            states, polys, params, linear = [s for s, _ in keep], [P for _, P in keep], list(plan[1]), plan[4]
+        ses = state.get("session")
+        pin = None if ses is None or not pinned else ses.pins.get(_branch_key(tuple(polys), tuple(states)))
+        if pin:
+            polys = [_pinned_factor(P, pin, states) for P in polys]
+            linear = _compile_linear_plan(polys, states, params)[0]
+        return polys, states, params, linear
+
+    def rest_degree(self, ci, point):
+        """{"bezout", "jac"} of the resting balances of condition `ci` when every root the solves take lies on one
+        component over Q(theta), else {"why"}."""
+        polys, states, params, linear = self.rest_system(ci)
+        k = self.equil_conds.index(ci) + 1
+        bd = balance_degrees(polys)
+        if bd is None:
+            return {"why": f"the resting balances of condition {k} have no degree bound"}
+        if not linear:
+            pv = self.joint_pv(point, PRIMES[0])
+            vals = dict(pv["param_vals"], **(pv["held_vals"] or {}))
+            conj = _conjugate(tuple(polys), tuple(states), {s: int(vals.get(str(s), 0)) for s in params})
+            if conj is not True:
+                return {"why": f"the resting states of condition {k} have " +
+                               ("several branches over Q(theta)" if conj is False else
+                                "branches that are not decided over Q(theta)")}
+        return {"bezout": bd[0], "jac": bd[1]}
 
     def solve_cond_fwd(self, point, p, ci, solve_rates):
         """States from the point and the turnover rates solved linearly (every prime)."""
@@ -382,6 +455,7 @@ class RestingStates:
             sl = run.slot(nm)
             if sl is not None:
                 ptc[sl] = 0
+        self.cont_primes.add(p)
         return {"sol": sol, "ptc": ptc, "ser": ser, "cont": True}
 
     def in_torus(self, sol, ci):
@@ -426,3 +500,13 @@ class RestingStates:
                 print(f"[sym] redraw {','.join(redraw)} for condition(s) "
                       f"{','.join(str(c + 1) for c in dict.fromkeys(failed))}")
         return None
+
+
+def _pinned_factor(P, pin, states):
+    """The first pinned factor of the balance `P`, else `P`."""
+    try:
+        fs = [F for F, _ in spy.factor_list(P)[1] if F.free_symbols & set(states)]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return P
+    return next((F for F in fs if F in pin), P)

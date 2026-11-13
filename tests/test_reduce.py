@@ -1242,13 +1242,22 @@ def test_a_result_keeps_the_model_it_detected_and_its_reduction():
     assert r.reduce() is not red and r.reduce().trafo["s"] == "1"
 
 
-def test_a_direction_checked_at_rest_names_the_missing_bound():
+def test_a_direction_at_rest_is_verified_unless_a_resting_branch_is_undecided(monkeypatch):
+    from symident.detection.observability.joint import JointSystem
     ev = [{"var": "u", "time": 0, "value": "1", "method": "replace"}]
-    r = si.detect(si.Model({"z": "-k*u*z", "w": "-j*u*w", "u": "0"}, {"y": "z*w"}, inputs=["u"], events=ev),
-                  equilibrate=True, reconstruct=True)
-    assert "checked" in [s.level for s in r.symmetries]
-    assert r.info["bound"]["why"] == "the error bound does not cover a start at rest (equilibrate)"
-    with pytest.raises(ValueError, match="random points only, since the error bound does not cover a start"):
+    m = si.Model({"z": "-k*u*z", "w": "-j*u*w", "u": "0"}, {"y": "z*w"}, inputs=["u"], events=ev)
+    # without field routes the direction comes from a route checked at random points
+    with si.switches(NOFIELDS=True):
+        r = si.detect(m, equilibrate=True, reconstruct=True)
+    assert "verified" in [s.level for s in r.symmetries] and 0 < r.info["bound"]["probability"] < 1e-6
+    with pytest.warns(UserWarning, match="verified, not proven"):
+        r.reduce()
+    why = "the resting states of condition 1 have branches that are not decided over Q(theta)"
+    monkeypatch.setattr(JointSystem, "rest_degree", lambda self, ci, point: {"why": why})
+    with si.switches(NOFIELDS=True):
+        r = si.detect(m, equilibrate=True, reconstruct=True)
+    assert "checked" in [s.level for s in r.symmetries] and r.info["bound"]["why"] == why
+    with pytest.raises(ValueError, match="random points only, since the resting states of condition 1"):
         r.reduce()
 
 

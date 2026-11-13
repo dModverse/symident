@@ -83,6 +83,8 @@ class JointSystem(RestingStates):
         self.df_droppable = set(self.forcings) | set(run.equil_zero_states) | \
             {s for z in run.cond_zero_states for s in (z or [])} | (set(run.leaf_names) - set(znames))
         self.solve_cache = {}
+        # primes at which a solve was continued along a line instead of solved at the point
+        self.cont_primes = set()
         self.solve_secs = [0.0, 0]
         self.model_key = ["\n".join(self.models[ci] + self.zero_of(ci)) for ci in range(len(self.models))]
         if run.timing:
@@ -706,7 +708,8 @@ class JointSystem(RestingStates):
         """Leaves at `point`, resting states as X_c<k> (X in `mi_plain`); None where a condition does not solve."""
         env = {nm: int(point[i]) for i, nm in enumerate(self.run.leaf_names) if i < len(point)}
         for mi, ci in enumerate(self.equil_conds):
-            sol = self.solve_cond(point, q, ci)
+            # the resting state at the point itself, not a series continued to it
+            sol = self.solve_direct(point, q, ci)
             if sol is None:
                 return None
             for nm, v in sol["sol"]["val_by"].items():

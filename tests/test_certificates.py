@@ -124,11 +124,29 @@ def test_a_free_exponent_of_a_positive_state_keeps_the_order_bound():
     assert all(s.level == "exact" for s in r.symmetries)
 
 
-def test_a_missing_order_bound_names_its_reason():
+def test_a_start_at_rest_certifies_its_orders_modulo_the_verification_prime(monkeypatch):
+    from symident.detection.observability.joint import JointSystem
+    from symident.gfp import verify_prime
     m = si.Model({"x": "k1 - k2*x*z", "z": "k3 - k4*z"}, {"y": "s*x"})
     r = si.detect(m, equilibrate=True)
+    assert r.info["order_bound_why"] is None and 0 < r.info["order_bound"] < 1e-5
+    orig = JointSystem.solve_direct
+
+    def none_at_q(self, point, p, ci):
+        return None if p == verify_prime() else orig(self, point, p, ci)
+    monkeypatch.setattr(JointSystem, "solve_direct", none_at_q)
+    r = si.detect(m, equilibrate=True)
     assert r.info["order_bound"] is None
-    assert r.info["order_bound_why"] == "the resting states are solved modulo the engine prime only"
+    assert r.info["order_bound_why"] == "no resting state modulo the verification prime at the points tried"
+
+
+def test_the_degree_on_a_resting_variety_multiplies_by_the_bezout_numbers():
+    from symident.detection.bound import balance_degrees, rest_identity_degree
+    assert balance_degrees(["-d*x**2 + (kb - d*K + v)*x + kb*K", "k*x - c*z"]) == (6, 3)
+    assert balance_degrees([]) == (1, 0)
+    assert balance_degrees(["exp(a)*x - b"]) is None
+    # the identity with the Jacobian term on two resting systems, plus the parameters off their components
+    assert rest_identity_degree(10, 2, [3, 3], [3, 3]) == 12 * 9 + 6
 
 
 def test_a_known_input_chain_certifies_no_order_past_its_exact_jets():

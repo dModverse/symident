@@ -65,3 +65,8 @@ def test_a_retired_route_switch_is_unknown():
     assert "NOFORK" not in state.SWITCHES and "NOFWDSEED" in state.SWITCHES
     with si.switches(NOFORK=True), pytest.warns(UserWarning, match="NOFORK"):
         si.detect(si.Model({"x": "-k*x"}, {"y": "x"}))
+
+
+def test_a_path_switch_takes_a_path_only():
+    with pytest.raises(ValueError, match="takes a path"):
+        si.switches(CACHE=False)

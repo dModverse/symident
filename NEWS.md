@@ -1,3 +1,30 @@
+# symident 0.13.4
+
+* Under `equilibrate`, a closed direction without exact proof is `verified` with an error bound
+  where the roots the solves take lie on one component of each resting variety over Q(theta):
+  balances solved by linear elimination, or interior roots conjugate over Q(theta). The bound
+  takes the degree of the kernel identity on the resting variety times the Bezout numbers of the
+  resting balances it reads. Undecided branches, resting states continued along a line at the
+  check points, and a power or exponential in the balances leave the direction `checked`, with
+  the reason in `info["bound"]`.
+* The Lie order certificate takes the generic rank on a set that holds the start of every value
+  of the coordinates: the starts shifted by the subspace of states that the field keeps, at
+  random values of the coordinates, or under `equilibrate` the resting variety at a random
+  resting point. A start that reaches this rank proves the order sufficient for generic values,
+  at which the closed forms are checked, and the order bound covers the random points. Under
+  `equilibrate` the certificate has an error bound.
+* A check point at rest counts where every state is nonzero, unless linear elimination solves the
+  balances. The bound at rest needs a resting Jacobian invertible at one resting point, and it
+  covers the closed forms of the routes checked at random points; a static subsystem or a
+  forward fit without exact proof stays `checked`.
+* A gauged detection reports the general directions of its second pass in `info["proof"]`,
+  `info["attempts"]` and `info["bound"]`.
+* The homotopy route evaluates a closed form at the resting states solved at the check point.
+* `switches()` refuses `True` and `False` for the path switches `MSOLVE` and `CACHE`.
+* The user guide is split into chapters, and the method page states the stopping rule of the Lie
+  order, the error bounds, the routes of the closed forms, invariant fields, gauges, conserved
+  totals and the choice of pins.
+
 # symident 0.13.3
 
 * The exact proof of a direction expands each identity in a polynomial ring over Q with a cap on

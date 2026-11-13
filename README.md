@@ -27,7 +27,7 @@ work it builds on.
 pip install symident
 ```
 
-Wheels exist for Linux, macOS and Windows and Python 3.10 to 3.15. The
+Wheels exist for Linux, macOS on Apple silicon and Windows and Python 3.10 to 3.15. The
 [installation page](https://dmodverse.github.io/symident/install.html) covers the build
 from source, the PEtab extra, [msolve](https://msolve.lip6.fr) for coupled steady states,
 and the use from R through dMod2.
@@ -69,11 +69,13 @@ print(res.reduce())
 | | |
 |---|---|
 | `Model(odes, observables, ...)` | ODEs or a reaction network with observables, conditions, events, inputs and switches |
-| `detect(model, ...)` | rank, identifiability and the non-identifiable directions (`Symmetries`) |
+| `detect(model, ...)` | rank, identifiability and the non-identifiable directions (`Symmetries` of `Symmetry`) |
 | `reduce(result, ...)`, `result.reduce()` | reparametrization that removes the directions (`Reduction`) |
 | `read_petab(path)`, `Model.from_petab(path)` | a `Model` from a PEtab problem, format version 1 or 2 (`pip install "symident[petab]"`) |
 | `reconst_control(...)` | settings of the saturation and the reconstruction |
 | `switches(...)` | diagnostic and route switches for a `with` block |
+| `install_msolve()` | builds msolve, needed for coupled steady states and `solution_count()` |
+| `PEtabError` | raised for a PEtab problem the reader does not support |
 
 Both results print a report; `summary()` adds the computation details and
 `to_dict()` returns the raw result.
@@ -83,7 +85,7 @@ Both results print a report; `summary()` adds the computation details and
 Simon Beyer, simon.beyer@fdm.uni-freiburg.de. Requests for further functions in model
 equations, questions and bug reports are welcome by e-mail or as an
 [issue](https://github.com/dModverse/symident/issues); the supported functions are listed
-in the [user guide](https://dmodverse.github.io/symident/guide.html#expressions).
+in the [user guide](https://dmodverse.github.io/symident/guide/models.html#expressions).
 
 ## License
 

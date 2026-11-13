@@ -745,27 +745,45 @@ def event_space(V, evi, evm, fixed, n_states, p):
     return np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), n_states)
 
 
-def _sz_term(md_segs, n_cols, K):
-    """Schwartz-Zippel numerator of a block: closure stops, a maximal minor per order up to K; None without degrees."""
-    if md_segs is None or any(md is None for md in md_segs):
+def _sz_term(deg, n_cols, K):
+    """Schwartz-Zippel numerator of a block: per segment the closure stop and a maximal minor per order up to K, each
+    composed with the start of degree d0, times the Bezout number of a resting variety, plus the parameters off its
+    component; None without degrees."""
+    if deg is None:
         return None
+    if not isinstance(deg, dict):
+        deg = {"mds": deg}
+    mds = deg["mds"]
+    if mds is None or any(md is None for md in mds):
+        return None
+    d0s = list(deg.get("d0s") or [1] * len(mds))
     out = 0
-    for md in md_segs:
+    for md, d0 in zip(mds, d0s):
         n_obs = max(1, len(md[2]))
-        out += md[0] + sum(min((k + 1) * n_obs, n_cols) * lie_row_degree(md, k + 1) for k in range(K + 1))
-    return out
+        out += int(d0) * (md[0] + sum(min((k + 1) * n_obs, n_cols) * lie_row_degree(md, k + 1)
+                                      for k in range(K + 1)))
+    return int(deg.get("bezout", 1)) * out + int(deg.get("extra", 0))
 
 
 def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=None, threads=1,
-                    start=None, degs=None, terms=None):
-    """Certified Lie order per block, None where the generic rank is not reached; `terms` receives the error bounds."""
+                    start=None, degs=None, terms=None, at_rest=False, start_seeds=None, start_p=None):
+    """Certified Lie order per block, None where the start does not reach the generic rank; `terms` receives the error
+    bounds.
+
+    The generic rank is that of a set holding the start of every value of the coordinates, so a start reaching it
+    proves the order for generic values as well: the starts shifted by the smallest subspace of states that the
+    field keeps, taken at random values of the coordinates. At rest that subspace is zero, the set is the resting
+    variety, `seeds` are random points of it and `start_seeds` the starts (modulo `start_p`); else the start is at
+    `seeds`."""
     none = np.zeros((0, 0), dtype=np.int64)
     n_cols = len(z_slots) + n_states + 1
     # the generic ranks rise strictly up to their plateau, so a wrong plateau shows by order n_cols + 1
     K = int(min(n_cols + 1, cap))
+    th = np.array([] if at_rest else [int(s) for s in np.atleast_1d(z_slots) if int(s) < n_leaves], dtype=np.int64)
+    nt = len(th)
 
     def one(b):
-        seed = np.asarray(seeds[b], dtype=np.int64)
+        seed = np.asarray(seeds[b], dtype=np.int64) % p
         sb = segs[b]
         n_seg = len(sb)
         base = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, seed, p, 0, none)
@@ -774,17 +792,33 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
         Q = np.asarray(base["start"], dtype=np.int64).reshape(n_seg, n_states)
         draw = {"n": 0}
 
+        def rnd(n):
+            draw["n"] += 1
+            sd = 7919 * (b + 1) + draw["n"]
+            return random_point(n, sd) if degs is None else uniform_point(n, p, sd)
+
         def rand_in(q, V):
             y = np.array(q, dtype=np.int64)
             if V.shape[0] == 0:
                 return y
-            draw["n"] += 1
-            sd = 7919 * (b + 1) + draw["n"]
-            r = random_point(V.shape[0], sd) if degs is None else uniform_point(V.shape[0], p, sd)
+            r = rnd(V.shape[0])
             for i in range(V.shape[0]):
                 y = (y + mulmod(V[i], r[i], p)) % p
             return y
-        st_g = np.zeros((n_seg, n_states), dtype=np.int64)
+
+        def values():
+            """Leaves at random values of the coordinates and the segment starts there; None after poles."""
+            if not nt:
+                return seed, Q
+            for _ in range(8):
+                lv = seed.copy()
+                lv[th] = np.asarray(rnd(nt), dtype=np.int64) % p
+                s0 = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, lv, p, 0, none)
+                if s0.get("ok"):
+                    return lv, np.asarray(s0["start"], dtype=np.int64).reshape(n_seg, n_states)
+            return None, None
+
+        Vs = []
         V = np.zeros((0, n_states), dtype=np.int64)
         for j in range(n_seg):
             sg = sb[j]
@@ -793,23 +827,35 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
                 V = event_space(V, evi, np.atleast_1d(sg["ev_method"]).astype(np.int64),
                                 sg.get("ev_leaf_only", np.ones(len(evi), dtype=bool)), n_states, p)
             while True:
-                y = rand_in(Q[j], V)
-                Y = Q[:j + 1].copy()
+                lv, Qt = values()
+                if lv is None:
+                    return None
+                y = rand_in(Qt[j], V)
+                Y = Qt[:j + 1].copy()
                 Y[j] = y
-                fz = _core.sym_segment_ranks(sb[:j + 1], n_leaves, n_states, z_slots, seed, p, 0, Y)
+                fz = _core.sym_segment_ranks(sb[:j + 1], n_leaves, n_states, z_slots, lv, p, 0, Y)
                 if not fz.get("ok"):
                     return None
-                field = np.asarray(fz["field"], dtype=np.int64).reshape(j + 1, n_states)
-                rr = _core.sym_rref_mod(np.vstack([V, field[j]]).astype(np.float64), p)
+                field = np.asarray(fz["field"], dtype=np.int64).reshape(j + 1, n_states)[j]
+                rr = _core.sym_rref_mod(np.vstack([V, field]).astype(np.float64), p)
                 if int(rr["rank"]) == V.shape[0]:
                     break
                 V = np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), n_states)
-            st_g[j] = y
+            Vs.append(V.copy())
+        # a uniform point of the set: random coordinates, and per segment a random shift of the start
+        lv_g, Qg = values()
+        if lv_g is None:
+            return None
+        st_g = np.vstack([rand_in(Qg[j], Vs[j]) for j in range(n_seg)])
         Nt = 16 if start is None or start[b] is None else int(min(16, max(2, start[b])))
         Nt = int(min(Nt, cap))
+        if start_seeds is not None and start_seeds[b] is None:
+            return None
+        s_seed = np.asarray(seeds[b] if start_seeds is None else start_seeds[b], dtype=np.int64)
+        s_p = p if start_p is None else int(start_p)
         while True:
-            g = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, seed, p, Nt, st_g, threads)
-            q = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, seed, p, Nt, none, threads)
+            g = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, lv_g, p, Nt, st_g, threads)
+            q = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, s_seed % s_p, s_p, Nt, none, threads)
             if not g.get("ok") or not q.get("ok"):
                 return None
             gr = np.asarray(g["ranks"]).reshape(n_seg, Nt + 1)

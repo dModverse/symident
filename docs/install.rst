@@ -6,9 +6,10 @@ Installation
    pip install symident
 
 Wheels exist for Linux (x86_64, aarch64, glibc 2.28 or newer; tested on Debian and
-Fedora), macOS (x86_64, arm64) and Windows (x86_64), Python 3.10 to 3.15. Elsewhere pip
-builds from source with a C++17 compiler and CMake; with OpenMP the kernel runs on several
-threads. Development version: ``pip install git+https://github.com/dModverse/symident``.
+Fedora), macOS (arm64) and Windows (x86_64), Python 3.10 to 3.15. Elsewhere, such as on
+Intel Macs, pip builds from source with a C++17 compiler and CMake; with OpenMP the kernel
+runs on several threads. Development version:
+``pip install git+https://github.com/dModverse/symident``.
 
 PEtab support
 -------------

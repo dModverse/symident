@@ -51,8 +51,10 @@ class Model:
         ``reduce_cq`` eliminates one species per total.
     trafo : dict or list of dict, optional
         Parameter transformation; an entry named like a state sets the initial value of that state.
+        A list holds one transformation per condition.
     conditions : pandas.DataFrame or dict, optional
-        One row per condition; a numeric cell fixes a symbol, a string renames it.
+        One row per condition; a numeric cell fixes a symbol, a string replaces it by an
+        expression or another name, and a column named like a state sets its initial value.
         As a dict: ``{"rows": [...], "cols": {name: [values]}}``.
     events : list of dict, optional
         Events with keys ``var``, ``time``, ``value`` and ``method`` (``replace``,
@@ -178,7 +180,8 @@ class Symmetry(dict):
 
         * ``"exact"``: proven over Q.
         * ``"verified"``: in the kernel at random points modulo a verification prime
-          :math:`q`, with the error probability in ``info["bound"]``.
+          :math:`q`, with the error probability in ``info["bound"]``; at a start at rest
+          (``equilibrate``) on the resting variety of the parameters drawn.
         * ``"checked"``: the same test without an error bound, or on part of the entries
           only; ``info["bound"]`` says why a bound does not apply.
         * ``"open"``: no closed form; ``reason`` says why.
@@ -236,29 +239,51 @@ class Symmetries:
         The non-identifiable directions; a direction is the generator
         :math:`X = \\sum_i \\xi_i \\, \\partial_{\\theta_i}`.
     info : dict
-        The computation; the main keys:
+        The computation:
 
         * ``rank_status``: ``status`` (``"proven"``, ``"verified"`` or ``"lower bound"``),
           ``why`` and ``probability``; with a lower bound the number of directions is an
-          upper bound.
-        * ``lie_certified``, ``gap_certified``, ``series_certified``: whether the Lie order,
-          the gap order of events after the start and the series order of resting states
-          are proven sufficient (``None`` where they do not apply).
+          upper bound. ``rank_proven`` and ``rank_proof``: the number of directions that
+          prove the rank, and how; ``rank_fields`` and ``rank_fields_bound``: the directions
+          held by invariant fields at every order, and the error bound of their check.
+        * ``coordinates``: the coordinates of the analysis, parameters and free initial
+          values.
+        * ``lie_order_used``, ``lie_block_orders``, ``lie_order_driver``, ``lie_plateau``:
+          the Lie order taken, per condition or chain, the condition that needs the highest,
+          and the flat orders that ended the saturation. ``lie_certified``,
+          ``lie_uncertified``: whether the order is proven sufficient, and the conditions
+          where it is not; ``lie_certificate``: why the symbolic engine has no certificate.
+        * ``gap_order_used``, ``gap_certified``, ``gap_certificate``, ``gap_bound``: the same
+          for the gap order of events after the start; ``series_certified``,
+          ``series_certificate``: for the series order of resting states (``None`` where
+          they do not apply).
+        * ``order_bound``, ``order_bound_why``: the probability that a certified order is not
+          sufficient, or why there is none.
         * ``bound``: the probability that a wrong closed form passes the kernel check, or
-          why none applies; ``proof``: per verified or checked direction, why the exact
-          proof did not apply.
+          why none applies. ``proof``: per direction verified on every entry, why the exact
+          proof did not apply; ``attempts``: per open direction, the routes tried and why
+          they failed.
+        * ``verification``: the saturation guard, with ``ok`` and ``reason``; where ``ok`` is
+          False the rank still grows past the order used.
+        * ``projection``: the rank modulo the unknown inputs, or modulo resting states whose
+          Jacobian is singular at the base point.
+        * ``unknown_inputs``, ``known_inputs``: per input the jets and the order up to which
+          they are exact.
         * ``assumptions``: the declared ``domain`` and switch ``starts`` the result assumes,
           and the ``error_bound`` of a verified closed form or rank.
         * ``limits``: the time limits, budgets and orders that stopped part of the
           analysis; while it is not empty, a direction without closed form may have one.
-        * ``branches``: resting states with several roots modulo a prime; the result holds
-          for the first.
+          ``errors``: exceptions a route recorded.
+        * ``branches``: resting states with several roots modulo a prime, and the one taken.
         * ``switching``: the surfaces and regimes of a model with switches; where the rule of
           the switches is not proven, ``uncertified`` says why and ``candidates`` lists the
           directions it leaves open, which are not reported as symmetries.
-        * ``timing``: the seconds elapsed at each stage of the analysis, such as the
-          saturation and the reconstruction.
-        * ``attempts``, ``errors``, ``settings``.
+          ``zero_states``: states every condition keeps at zero, which the analysis drops.
+        * ``gauge_suggestion``: the coordinates a gauge would fix, in a detection without
+          gauge that has scalings and general directions.
+        * ``conditions``, ``segments``, ``engine``, ``elapsed``, ``timing``, ``settings``:
+          the number of conditions and of segments between events, the engine, the seconds
+          elapsed in total and per stage, and the settings of the detection.
     gauge : list of str or None
         The coordinates fixed by a gauged detection.
     model : Model or None
@@ -327,8 +352,18 @@ class Symmetries:
         Returns
         -------
         dict or None
-            ``{"count", "order", "prime"}``, or None where the model is not rational or msolve
-            fails.
+            ``{"count", "order", "prime"}``, or None where the model is not rational, msolve
+            fails or times out, or the solutions are not finitely many. Points where a
+            coordinate or a denominator vanishes are not counted.
+
+        Raises
+        ------
+        ValueError
+            Unless the result is identifiable and was detected without ``equilibrate`` and
+            ``reduce_cq``, on a model with one condition and no events, switches or unknown
+            inputs.
+        MsolveMissingError
+            Where msolve is not found (:func:`install_msolve`).
         """
         from .detection.conditions import Grid, at_time, initial_value_split, num_str
         from .detection.core import _input_jets
@@ -421,15 +456,19 @@ class Reduction:
     Attributes
     ----------
     trafo : dict or None
-        Parameter transformation over all coordinates; ``None`` if nothing was reduced. An
+        Parameter transformation over all coordinates; ``None`` without directions. An
         entry named in a condition grid goes into the cells of the grid; under ``equilibrate`` an entry
         named like a state pins the resting value it holds, which a model takes in ``fixed``
         when it is a number.
     blocks : list of dict
-        One entry per set of coupled directions, with ``status``, ``level``,
-        ``generator_level``, ``unproven`` (the claims of the block section not proven) and
-        ``pins``. A general block holds ``invariants`` and ``new_parameters`` (the invariant
-        each ``q_<k>`` stands for); a curved one also ``section``, ``solved_domain``,
+        One entry per set of coupled directions, with ``labels``, ``support``, ``status``
+        (``"reduced"``, ``"fixed"`` when ``fixed`` removes the scaling, ``"invariant_only"``
+        when no section is certified, ``"unresolved"``), ``stage`` (the invariant search that
+        reduced it), ``level``, ``generator_level``, ``unproven`` (the claims of the block
+        section not proven), ``pins`` and, with ``zero_limits``, ``zero_compatibility``. A
+        scaling block holds the pinned coordinates as ``transversal``. A general block holds
+        ``invariants`` and ``new_parameters`` (the invariant each ``q_<k>`` stands for); a
+        curved one also ``section``, ``solved_domain``,
         ``count``, ``injective`` (every orbit meets the section at most once; not claimed
         under partial coverage or on a face) and ``reach`` (every level set of the
         invariants is one orbit). ``coverage`` is ``"partial"`` when the section covers part
@@ -461,8 +500,10 @@ class Reduction:
     checks : dict
         ``pins`` and ``invariants``: whether every pin holds under the trafo and every
         invariant of a block maps to the new parameter of the invariant, over Q (``failed`` lists the
-        others); ``loop``: the closed loop of ``reduce(check=True)``, with the number of
-        directions the reduced model has, the number expected and the ``rank_status`` of that detection.
+        others), and ``why`` where SymPy failed; ``loop``: the closed loop of
+        ``reduce(check=True)``, with the number of directions the reduced model has, the
+        number expected, the ``rank_status`` of that detection, ``ok`` (``None`` where the
+        loop could not run) and ``reason``.
     errors : list of str
         Exceptions that the reduction turned into failed routes, such as an alternative
         section left out (see the ``DEBUG`` switch).
@@ -501,7 +542,8 @@ class Reduction:
         Parameters
         ----------
         verbose : bool
-            Also the invariants of reduced and fixed blocks.
+            Also the invariants of reduced and fixed blocks and the choices of pinned
+            coordinates.
         detailed : bool
             Explain each section.
 
