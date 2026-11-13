@@ -109,7 +109,9 @@ def test_homotopy_directions_without_an_exact_proof_are_verified_on_the_resting_
     assert [d["level"] for d in on] == ["verified"] * 2
     b = r["info"]["bound"]
     # the identity on both conditions' resting varieties: a balance of degree 3 each
-    assert b["degree"] > 9 and 0 < b["probability"] < 1e-5
+    assert b["degree"] > 9 and 0 < b["probability"] < 1e-4
+    # the resting point of the order certificate is the first with a root of several draws
+    assert r["info"]["order_draws"] > 1 and b["orders"] == r["info"]["order_bound"]
     assert r["info"]["rank_status"]["status"] == "verified"
 
 

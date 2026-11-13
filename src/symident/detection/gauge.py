@@ -179,6 +179,7 @@ def gauged_detection(args, pref, fixed, reconstruct):
                     "Mtot": int(s1info.get("gap_order_used") or 0), "certified": s1ok,
                     "order_bound": s1info.get("order_bound"),
                     "order_bound_why": s1info.get("order_bound_why"),
+                    "order_draws": s1info.get("order_draws"),
                     "gap_stop": "full" if s1info.get("gap_certified") else "plateau"}
         with state.options(order_hint=hint):
             s2 = symmetry_detection(**a2)

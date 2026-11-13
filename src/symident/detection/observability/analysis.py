@@ -412,26 +412,27 @@ class Analysis:
                 "failed": f"no kernel past gap order {run.mtot}"}[stop]
 
     def _cert_segments(self, sc, p=None, tries=24):
-        """The certificate inputs: chains of tapes, a seed per chain and, at rest, a start per chain. At rest and a
-        prime `p` the seeds are resting states solved modulo `p` at the first of `tries` points uniform modulo `p`,
-        random points of the resting variety, and the starts are those of the base point."""
+        """The certificate inputs: chains of tapes, a seed per chain, at rest a start per chain, and the points drawn
+        for the seeds. At rest and a prime `p` the seeds are resting states solved modulo `p` at the first of `tries`
+        points uniform modulo `p`, random points of the resting variety, and the starts are those of the base
+        point."""
         run, sys = self.run, self.sys
         if self.joint:
             segs = sys.chains if run.has_gaps else [[run.tapes[ci]] for ci in sys.equil_conds]
             sols = [sys.solve_cond(sc["point0"], PRIMES[0], ci) for ci in sys.equil_conds]
             base = [None if s0 is None else np.asarray(s0["ptc"], dtype=np.int64) % PRIMES[0] for s0 in sols]
             if p is None:
-                return segs, base, None
+                return segs, base, None, 1
             n = len(sc["point0"])
             for k in range(1, tries + 1):
                 pt = uniform_point(n, p, session.current().seed("certificate point", k))
                 sols = [sys.solve_direct(pt, p, ci) for ci in sys.equil_conds]
                 if all(s0 is not None for s0 in sols):
-                    return segs, [np.asarray(s0["ptc"], dtype=np.int64) % p for s0 in sols], base
-            return segs, [None] * len(sys.equil_conds), base
+                    return segs, [np.asarray(s0["ptc"], dtype=np.int64) % p for s0 in sols], base, k
+            return segs, [None] * len(sys.equil_conds), base, tries
         segs = [run.chain_tapes(idx) for idx in run.chain_groups] if run.has_gaps else \
             [[t] for t in run.tapes]
-        return segs, [np.asarray(sc["point0"][:run.n_leaves], dtype=np.int64)] * len(segs), None
+        return segs, [np.asarray(sc["point0"][:run.n_leaves], dtype=np.int64)] * len(segs), None, 1
 
     def certify(self, sc):
         """The proven Lie order per block, then the per-chain caps lowered."""
@@ -448,6 +449,7 @@ class Analysis:
             sc["cert_orders"] = True
             sc["order_bound"] = hint.get("order_bound")
             sc["order_bound_why"] = hint.get("order_bound_why")
+            sc["order_draws"] = hint.get("order_draws")
         if not sc["certified"] and not self.stacked_first and not run.nuis_cols:
             self._certificate(sc)
         nb = self.sys.kc if self.joint else (len(run.chain_groups) if run.chain_groups else -1)
@@ -540,9 +542,9 @@ class Analysis:
         if degs is not None and any(d is None for d in degs):
             degs = None
         # at rest the generic ranks are taken at a random resting point modulo q, where the draws are uniform
-        segs, seeds, starts = self._cert_segments(sc, q if self.joint and degs is not None else None)
+        segs, seeds, starts, rest_draws = self._cert_segments(sc, q if self.joint and degs is not None else None)
         if self.joint and degs is not None and any(s is None for s in seeds):
-            segs, seeds, starts = self._cert_segments(sc)
+            segs, seeds, starts, rest_draws = self._cert_segments(sc)
             degs, why = None, "no resting state modulo the verification prime at the points tried"
         own_threads = not run.has_gaps and not self.joint
         threads = run.cores if own_threads else 1
@@ -552,7 +554,7 @@ class Analysis:
             # past the exact orders of the input chains a row is that of a polynomial stand-in
             cap = min(cap, int(run.nuis_order) - int(sc.get("mtot_used") or 0))
         sc["order_bound_why"] = why
-        orders, terms = None, []
+        orders, terms, draws = None, [], []
         if all(s is not None and len(s) > 0 for s in seeds) and cap >= 1:
             try:
                 orders = lie_certificate(segs, seeds, run.n_leaves, run.n_states,
@@ -561,7 +563,8 @@ class Analysis:
                                          map_fn=mapf, threads=threads,
                                          start=self._cert_start(sc, len(segs)), degs=degs, terms=terms,
                                          at_rest=self.joint, start_seeds=starts if degs is not None else None,
-                                         start_p=P1 if self.joint and degs is not None else None)
+                                         start_p=P1 if self.joint and degs is not None else None,
+                                         rest_draws=rest_draws, draws=draws)
             except Exception as e:
                 swallow(e, "Lie order certificate")
                 if state.env("LIEDIAG"):
@@ -590,6 +593,8 @@ class Analysis:
                           uncertified=[i for i, o in enumerate(orders) if o is None], cert_orders=True,
                           order_bound=(float(sum(terms)) if cert and len(terms) == len(orders) and
                                        all(t is not None for t in terms) else None))
+                sc["order_draws"] = max(draws) if sc["order_bound"] is not None and draws and \
+                    all(d is not None for d in draws) else None
         if state.env("LIEDIAG"):
             print(f"[liediag] certified block orders: {orders}")
 
@@ -639,6 +644,7 @@ class Analysis:
                   "gap_bound": None if gap_used is None else int(gap_used["bound"]),
                   "order_bound": self._order_bound(sc, gap_used)[0],
                   "order_bound_why": self._order_bound(sc, gap_used)[1],
+                  "order_draws": sc.get("order_draws") if self._order_bound(sc, gap_used)[0] is not None else None,
                   "sat_score": rank_score(sc["ref"]), "non_identifiable": []}
         self.phys_params0 = [z for z in self.znames if z not in self.zsn]
         if self.joint:

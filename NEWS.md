@@ -1,3 +1,15 @@
+# symident 0.13.5
+
+* The order bound multiplies each term by the number of points drawn until its random point was
+  taken: the first without a pole of the starts, or under `equilibrate` the first with a resting
+  state modulo the verification prime. `info["order_draws"]` holds the largest such number.
+* The degree bounds of the order certificate and of the kernel check take the product of the
+  distinct denominators of the right-hand sides as common denominator, in place of their least
+  common multiple; on models with many denominators the detection is several times faster.
+* The method page states the conditions of the invariant fields with the brackets and event
+  images as identities over the rational functions, whose coefficients may have poles, and proves
+  the kernel at every order and gap length through the functions the fields annihilate.
+
 # symident 0.13.4
 
 * Under `equilibrate`, a closed direction without exact proof is `verified` with an error bound

@@ -1490,6 +1490,7 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
            "gap_order_used": info.get("gap_order_used"), "gap_certified": info.get("gap_certified"),
            "gap_certificate": info.get("gap_certificate"), "gap_bound": info.get("gap_bound"),
            "order_bound": info.get("order_bound"), "order_bound_why": info.get("order_bound_why"),
+           "order_draws": info.get("order_draws"),
            "conditions": len(st.conds),
            "segments": info.get("segments"),
            "projection": projection}

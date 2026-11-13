@@ -273,8 +273,11 @@ an order, both composed with the start, whose degree :math:`\deg z_0` multiplies
 on a resting variety times the Bezout number of its balances (`Error bounds`_). Since the
 generic ranks rise strictly up to their final value, orders up to the number of columns plus
 one reveal a wrong plateau. The degrees are those of the rational system the modular engine
-evaluates, with exponentials, free powers and trigonometric functions as separate states, and
-the terms add up to the order bound of `Error bounds`_.
+evaluates, with exponentials, free powers and trigonometric functions as separate states. A
+point is the first of its draws without a pole of the starts, up to 8, or on a resting variety
+the first with a root, up to 24. It is wrong only if one of the points drawn is, so each term is
+multiplied by the number of points drawn for its point, and the terms add up to the order bound
+of `Error bounds`_.
 
 **Without a stopping rule.** A direction that is an exact symmetry, i.e., a scaling under
 which every expression is homogeneous (`Scalings`_) or a field with the identities of
@@ -769,7 +772,11 @@ free initial values and extended to the initial and event values, that lies in t
 balances hold give fields that leave every such rest in place. Both are reported with these
 names as route. Where every direction of the kernel lies in the span of fields that satisfy the
 conditions of `Proofs over Q`_ at random points, the *invariant fields*, the rank holds at every
-order (``info["rank_fields"]``), with an error bound in ``info["rank_fields_bound"]``.
+order (``info["rank_fields"]``), with an error bound in ``info["rank_fields_bound"]``. (A) is
+checked as a zero and (B), (C) as membership in the span, at two random points; a wrong identity
+passes only where a polynomial vanishes there, which the bound covers. Membership at random
+points shows (B) and (C) as identities over the rational functions, the hypothesis of the
+proposition in `Proofs over Q`_, with coefficients that may have poles on the trajectory.
 
 With ``gauge``, the detection first finds the scalings and fixes one coordinate per scaling, as
 a basis of the weights in the order of preference given and, with general directions, the one
@@ -783,24 +790,60 @@ Proofs over Q
 A closed form is *proven* when it is shown to be a symmetry without random points. For a scaling
 this is the check of `Scalings`_. For a general direction, symident *lifts* the direction to a
 field :math:`Y = \xi_\theta\, \partial_\theta + \xi_x\, \partial_x` on parameters and states,
-i.e., it finds state components :math:`\xi_x`, and proves, for every regime of a condition, with
-event maps :math:`E_e` between the regimes,
+i.e., it finds state components :math:`\xi_x`, and proves the conditions below over
+:math:`\mathbb{Q}` for every regime of a condition, with event maps :math:`E_e` between the
+regimes. They are stated for fields :math:`X_1, \dots, X_m` per regime and the unit directions
+:math:`\partial_u` of parameters :math:`u` that enter no regime, whose span is
+:math:`\mathcal{D}`; :math:`X'_l` are the fields of the regime after an event, and :math:`v` is
+the direction lifted onto the start :math:`z_0`.
 
 .. math::
    :label: eq-fields
 
-   Y(h) = 0, \qquad [Y, F] \in \mathcal{D}, \qquad
-   \mathrm{D}E_e\, Y \in \mathcal{D} \circ E_e, \qquad v \in \mathcal{D}(z_0),
+   \begin{aligned}
+   &\text{(A)} \quad X_l(h) = 0 \ \text{for every output } h, \\
+   &\text{(B)} \quad [F, X_l] = \textstyle\sum_k c_{lk}\, X_k + \sum_u c_{lu}\, \partial_u, \\
+   &\text{(C)} \quad \mathrm{D}E_e\, X_l = \textstyle\sum_k c'_{lk}\, X'_k \circ E_e + \sum_u c'_{lu}\, \partial_u, \\
+   &\text{(D)} \quad v = \textstyle\sum_l a_l\, X_l(z_0) + \sum_u a_u\, \partial_u,
+   \ \text{the } X_l \text{ regular at } z_0, \text{ and } v(\tau_e) = 0 \text{ for every event time } \tau_e,
+   \end{aligned}
 
-with :math:`\mathcal{D}` the span of the fields and of the unit directions of parameters that
-enter no regime, and :math:`v` the direction lifted onto the start. By the first two conditions,
-:math:`Y(L_F^{k+1} h) = F\big(Y(L_F^k h)\big) + [Y, F](L_F^k h)` vanishes for every :math:`k` by
-induction, the flow of :math:`F` maps :math:`\mathcal{D}` into itself, and the events map it into
-the span of the next regime. The direction therefore lies in the kernel at every Lie order and
-every gap length. The identities are proven over :math:`\mathbb{Q}` per state equation,
-observable, initial value and event, by symbolic cancellation. The state components are the
-closed form read on the states, the initial-value identities solved for the parameters that set
-the initial values, or a combination of the symmetries of the model equations.
+with :math:`a` numbers and :math:`c, c'` rational functions of states and parameters, which may
+have poles. A proof over :math:`\mathbb{Q}` takes the lift as the one field of each regime, with
+:math:`[F, Y] = 0` and :math:`\mathrm{D}E_e\, Y = Y' \circ E_e`; the invariant fields of
+`Invariant fields and gauge`_ take the fields of the regimes.
+
+**Proposition.** Under (A) to (D) the direction lies in the kernel at every Lie order and every
+gap length.
+
+*Proof.* Let :math:`\mathcal{A}` be the rational functions :math:`g` of a regime with :math:`X_l(g) = 0`
+and :math:`\partial_u g = 0` for all :math:`l, u`. By (A), :math:`h \in \mathcal{A}`. By (B),
+:math:`X_l(F g) = F(X_l g) - [F, X_l](g) = 0`, and :math:`[F, \partial_u] = 0`, so :math:`F`
+maps :math:`\mathcal{A}` into itself; by (C), :math:`g \circ E_e \in \mathcal{A}` for :math:`g` in :math:`\mathcal{A}` of the
+next regime. Let :math:`\mathcal{A}_k` be the functions of segment :math:`k` built from its outputs
+and from :math:`g \circ E_e` with :math:`g \in \mathcal{A}_{k+1}` by Lie derivatives along
+:math:`F`. They lie in :math:`\mathcal{A}` and are analytic along the trajectory, as is every expression
+of the model where it is defined. With :math:`z^{(k)}` the start of segment :math:`k` and
+:math:`\varphi_t` the flow of :math:`F`, the claim is that the derivative of
+:math:`\chi(z^{(k)})` along :math:`v` vanishes for every :math:`\chi \in \mathcal{A}_k`. For
+:math:`k = 1` it is :math:`\sum_l a_l\, X_l(\chi)(z_0) + \sum_u a_u\, \partial_u \chi(z_0) = 0`
+by (D). If it holds for
+:math:`k`, the derivative of :math:`\chi(\varphi_t(z^{(k)}))` along :math:`v` is analytic
+in :math:`t` on the segment, and its derivatives at :math:`t = 0` are those of
+:math:`L_F^j \chi \in \mathcal{A}_k` at :math:`z^{(k)}`, which vanish, so it vanishes on the
+whole segment. With :math:`\chi` an output this is the kernel of every row; with
+:math:`\chi = g \circ E_e` at the event time, which :math:`v` does not move, it is the claim
+for :math:`k + 1`. :math:`\square`
+
+The proof needs (B) and (C) as identities of rational functions only. The flow need not keep
+the span :math:`\mathcal{D}`: for :math:`X = x^2\, \partial_y` and :math:`F = \partial_x`,
+:math:`[F, X] = (2/x)\, X`, yet the flow moves :math:`\partial_y` from :math:`x = -1` to
+:math:`x = 0`, where :math:`\mathcal{D} = 0`. The proof follows the functions that the fields
+annihilate instead, which a drop of rank does not affect. The identities are proven over
+:math:`\mathbb{Q}` per state equation, observable, initial value and event, by symbolic
+cancellation. The state components are the closed form read on the states, the initial-value
+identities solved for the parameters that set the initial values, or a combination of the
+symmetries of the model equations.
 
 An identity is first evaluated modulo the prime :math:`2^{61} - 1` at a random point; a nonzero
 value refutes it exactly. Otherwise its numerator is expanded in a polynomial ring over
@@ -851,8 +894,10 @@ finite subset :math:`A` of the field, with probability at most :math:`D / |A|`.
 one of the random points of `Sufficient Lie order`_ or `Conditions and events`_: the step that
 ends the subspace :math:`U`, or a minor of the rows of an order, on a resting variety with the
 degree of Equation :eq:`eq-rest-bound`. With the degrees of the rational system, the
-probabilities add up to ``info["order_bound"]``; ``info["order_bound_why"]`` names the reason for
-a missing bound.
+probabilities add up to ``info["order_bound"]``, each multiplied by the number of points drawn
+until its point was taken, since the point taken is wrong only if one of them is;
+``info["order_draws"]`` is the largest such number, and the points of the gap order are drawn
+once. ``info["order_bound_why"]`` names the reason for a missing bound.
 
 **The kernel check.** A closed form :math:`v` passes the check at a point if it lies in the
 kernel there. A point where the kernel is not defined, at a pole or without a resting state, is

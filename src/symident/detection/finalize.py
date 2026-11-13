@@ -187,6 +187,7 @@ def finalize(raw, method, settings, elapsed=None, coordinates=None):
             "gap_order_used": raw.get("gap_order_used"), "gap_certified": raw.get("gap_certified"),
             "gap_certificate": raw.get("gap_certificate"), "gap_bound": raw.get("gap_bound"),
             "order_bound": raw.get("order_bound"), "order_bound_why": raw.get("order_bound_why"),
+            "order_draws": raw.get("order_draws"),
             "projection": raw.get("projection"),
             "series_certified": raw.get("series_certified"), "series_certificate": raw.get("series_certificate"),
             "conditions": raw.get("conditions"),

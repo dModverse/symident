@@ -258,7 +258,8 @@ class Symmetries:
           ``series_certificate``: for the series order of resting states (``None`` where
           they do not apply).
         * ``order_bound``, ``order_bound_why``: the probability that a certified order is not
-          sufficient, or why there is none.
+          sufficient, or why there is none; ``order_draws``: the most points drawn for one
+          random point of the Lie order certificate, which multiplies its terms.
         * ``bound``: the probability that a wrong closed form passes the kernel check, or
           why none applies. ``proof``: per direction verified on every entry, why the exact
           proof did not apply; ``attempts``: per open direction, the routes tried and why

@@ -394,6 +394,22 @@ def test_the_field_check_bounds_its_random_points():
     assert check("y = s*x", {"x": "x", "s": f"-s + {p}*s"}, {"x": 3, "s": p - 7})["ok"] is False
 
 
+def test_the_field_check_takes_brackets_in_the_span_over_the_rational_functions():
+    from symident.sym.fields import verify_distribution
+    p, q = PRIMES[0], 1000000007
+    f = ["x = k", "y = 0"]
+    field = {"y": "x^2"}
+    lift = {"regime": 0, "point": {"x": 2, "y": 3, "k": 5}, "vectors": [{"y": 1}], "times": []}
+    # the coefficient of the bracket over the field has a pole that the trajectory crosses
+    out = verify_distribution([{"f": f, "g": ["o = x"]}], [[field]], [], [lift], p, q=q)
+    assert out["ok"] is True and 0 < out["bound"]["probability"] < 1e-12
+    # past an event an output that reads the direction refuses the fields
+    join = {"from": 0, "to": 1, "ev": [{"var": "x", "value": "1", "method": "add"}], "lift": 0}
+    out = verify_distribution([{"f": f, "g": ["o = x"]}, {"f": f, "g": ["o = y"]}], [[field], [field]], [join],
+                              [lift], p, q=q)
+    assert out == {"ok": False, "why": "regime 2: a field changes the output"}
+
+
 def test_a_kernel_check_on_part_of_the_entries_is_checked_not_verified(monkeypatch):
     from symident.detection import finalize, verify
     entry = {"vector": {"a": "1"}}

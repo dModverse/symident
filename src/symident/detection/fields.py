@@ -745,10 +745,11 @@ def event_space(V, evi, evm, fixed, n_states, p):
     return np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), n_states)
 
 
-def _sz_term(deg, n_cols, K):
+def _sz_term(deg, n_cols, K, draws=None, rest=1):
     """Schwartz-Zippel numerator of a block: per segment the closure stop and a maximal minor per order up to K, each
     composed with the start of degree d0, times the Bezout number of a resting variety, plus the parameters off its
-    component; None without degrees."""
+    component; each term times the points drawn for its random point, `draws` per segment stop and generic point,
+    `rest` for the resting point. None without degrees."""
     if deg is None:
         return None
     if not isinstance(deg, dict):
@@ -757,18 +758,23 @@ def _sz_term(deg, n_cols, K):
     if mds is None or any(md is None for md in mds):
         return None
     d0s = list(deg.get("d0s") or [1] * len(mds))
+    stops = list((draws or {}).get("stop") or [1] * len(mds))
+    if len(stops) != len(mds):
+        stops = [max(stops)] * len(mds)
+    gen = int((draws or {}).get("generic") or 1)
     out = 0
-    for md, d0 in zip(mds, d0s):
+    for md, d0, ns in zip(mds, d0s, stops):
         n_obs = max(1, len(md[2]))
-        out += int(d0) * (md[0] + sum(min((k + 1) * n_obs, n_cols) * lie_row_degree(md, k + 1)
-                                      for k in range(K + 1)))
-    return int(deg.get("bezout", 1)) * out + int(deg.get("extra", 0))
+        out += int(d0) * (int(ns) * md[0] + gen * sum(min((k + 1) * n_obs, n_cols) * lie_row_degree(md, k + 1)
+                                                      for k in range(K + 1)))
+    return int(rest) * (int(deg.get("bezout", 1)) * out + int(deg.get("extra", 0)))
 
 
 def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=None, threads=1,
-                    start=None, degs=None, terms=None, at_rest=False, start_seeds=None, start_p=None):
+                    start=None, degs=None, terms=None, at_rest=False, start_seeds=None, start_p=None,
+                    rest_draws=1, draws=None):
     """Certified Lie order per block, None where the start does not reach the generic rank; `terms` receives the error
-    bounds.
+    bounds and `draws` per block the most points drawn for one random point, `rest_draws` those of the resting point.
 
     The generic rank is that of a set holding the start of every value of the coordinates, so a start reaching it
     proves the order for generic values as well: the starts shifted by the smallest subspace of states that the
@@ -807,18 +813,19 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             return y
 
         def values():
-            """Leaves at random values of the coordinates and the segment starts there; None after poles."""
+            """Leaves at random values of the coordinates, the segment starts there and the points drawn; None after
+            poles."""
             if not nt:
-                return seed, Q
-            for _ in range(8):
+                return seed, Q, 1
+            for k in range(8):
                 lv = seed.copy()
                 lv[th] = np.asarray(rnd(nt), dtype=np.int64) % p
                 s0 = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, lv, p, 0, none)
                 if s0.get("ok"):
-                    return lv, np.asarray(s0["start"], dtype=np.int64).reshape(n_seg, n_states)
-            return None, None
+                    return lv, np.asarray(s0["start"], dtype=np.int64).reshape(n_seg, n_states), k + 1
+            return None, None, 8
 
-        Vs = []
+        Vs, stops = [], []
         V = np.zeros((0, n_states), dtype=np.int64)
         for j in range(n_seg):
             sg = sb[j]
@@ -827,7 +834,7 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
                 V = event_space(V, evi, np.atleast_1d(sg["ev_method"]).astype(np.int64),
                                 sg.get("ev_leaf_only", np.ones(len(evi), dtype=bool)), n_states, p)
             while True:
-                lv, Qt = values()
+                lv, Qt, n_drawn = values()
                 if lv is None:
                     return None
                 y = rand_in(Qt[j], V)
@@ -842,8 +849,10 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
                     break
                 V = np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), n_states)
             Vs.append(V.copy())
+            # the point that ends U is the accepted one of its draws
+            stops.append(n_drawn)
         # a uniform point of the set: random coordinates, and per segment a random shift of the start
-        lv_g, Qg = values()
+        lv_g, Qg, n_gen = values()
         if lv_g is None:
             return None
         st_g = np.vstack([rand_in(Qg[j], Vs[j]) for j in range(n_seg)])
@@ -866,17 +875,22 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             if state.env("LIEDIAG"):
                 print(f"[liediag] certificate block {b + 1} at order {Nt}")
             if all(o is not None for o in ordv):
-                return max(ordv)
+                return max(ordv), {"stop": stops, "generic": n_gen}
             if Nt >= cap or (all(x is not None for x in g_n) and Nt >= 4 * max(g_n) + 16):
                 return None
             Nt = 16 if Nt < 16 else int(min(cap, 2 * Nt))
 
     idx = list(range(len(segs)))
-    out = map_fn(one, idx) if map_fn is not None else [one(b) for b in idx]
+    res = map_fn(one, idx) if map_fn is not None else [one(b) for b in idx]
+    out = [None if r is None else r[0] for r in res]
+    nd = [None if r is None else r[1] for r in res]
     if terms is not None:
+        # the accepted point is bad only if one of the points drawn is: a union over the draws
         for b in idx:
-            t = None if degs is None else _sz_term(degs[b], n_cols, K)
+            t = None if degs is None or nd[b] is None else _sz_term(degs[b], n_cols, K, nd[b], rest_draws)
             terms.append(None if t is None else float(t) / p)
+    if draws is not None:
+        draws += [None if d is None else int(rest_draws) * max(d["stop"] + [d["generic"]]) for d in nd]
     return out
 
 

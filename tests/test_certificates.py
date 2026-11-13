@@ -140,6 +140,45 @@ def test_a_start_at_rest_certifies_its_orders_modulo_the_verification_prime(monk
     assert r.info["order_bound_why"] == "no resting state modulo the verification prime at the points tried"
 
 
+def test_the_order_bound_multiplies_by_the_resting_points_drawn(monkeypatch):
+    from symident.detection.observability.analysis import Analysis
+    from symident.detection.observability.joint import JointSystem
+    from symident.gfp import verify_prime
+    m = si.Model({"x": "k1 - k2*x*z", "z": "k3 - k4*z"}, {"y": "s*x"})
+    r0 = si.detect(m, equilibrate=True)
+    assert r0.info["order_draws"] == 1 and r0.info["order_bound"] > 0
+    seg, solve = Analysis._cert_segments, JointSystem.solve_direct
+    misses = {"left": 0}
+
+    def cert_segments(self, sc, p=None, tries=24):
+        misses["left"] = 2 if p is not None else 0
+        return seg(self, sc, p, tries)
+
+    # the first two certificate points have no resting state
+    def solve_direct(self, point, p, ci):
+        if p == verify_prime() and misses["left"]:
+            misses["left"] -= 1
+            return None
+        return solve(self, point, p, ci)
+    monkeypatch.setattr(Analysis, "_cert_segments", cert_segments)
+    monkeypatch.setattr(JointSystem, "solve_direct", solve_direct)
+    r = si.detect(m, equilibrate=True)
+    assert r.info["order_draws"] == 3
+    assert r.info["order_bound"] == pytest.approx(3 * r0.info["order_bound"])
+
+
+def test_each_term_of_the_order_bound_multiplies_by_the_points_drawn_for_it():
+    from symident.detection.fields import _sz_term
+    deg = {"mds": [(2, 1, [(1, 2)]), (1, 2, [(1, 1)])], "d0s": [1, 2]}
+    one = _sz_term(deg, 4, 5)
+    # without outputs only the closure stops remain
+    stop = _sz_term(dict(deg, mds=[(md[0], md[1], []) for md in deg["mds"]]), 4, 5)
+    assert one == _sz_term(deg, 4, 5, {"stop": [1, 1], "generic": 1})
+    assert _sz_term(deg, 4, 5, {"stop": [3, 3], "generic": 3}) == 3 * one
+    assert _sz_term(deg, 4, 5, {"stop": [2, 2], "generic": 1}) == one + stop
+    assert _sz_term(dict(deg, bezout=2, extra=2), 4, 5, rest=5) == 5 * (2 * one + 2)
+
+
 def test_the_degree_on_a_resting_variety_multiplies_by_the_bezout_numbers():
     from symident.detection.bound import balance_degrees, rest_identity_degree
     assert balance_degrees(["-d*x**2 + (kb - d*K + v)*x + kb*K", "k*x - c*z"]) == (6, 3)

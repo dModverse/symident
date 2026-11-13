@@ -23,6 +23,18 @@ def _rational(e):
         all(a.exp.is_Integer for a in e.atoms(spy.Pow))
 
 
+def _over_common_denominator(exprs, X):
+    """The numerator and denominator degrees in the symbols X of each expression, and the degree of a common
+    denominator, the product of the distinct denominators, which bounds that of their least common multiple."""
+    parts, distinct = [], {}
+    for e in exprs:
+        num, den = spy.fraction(spy.together(e))
+        parts.append((int(spy.Poly(num, *X).total_degree()), int(spy.Poly(den, *X).total_degree())))
+        if not den.is_number:
+            distinct.setdefault(spy.expand(den), den)
+    return parts, sum(int(spy.Poly(d, *X).total_degree()) for d in distinct.values())
+
+
 @functools.lru_cache(maxsize=256)
 def _model_degrees(f_items, g_items, x0_items):
     f = {k: model_sympify(v) for k, v in f_items}
@@ -30,13 +42,9 @@ def _model_degrees(f_items, g_items, x0_items):
     x0 = [model_sympify(v) for _, v in x0_items]
     if not all(_rational(e) for e in list(f.values()) + g + x0):
         return None
-    dens = [spy.fraction(spy.together(e))[1] for e in f.values()]
     syms = sorted(set().union(*[e.free_symbols for e in list(f.values()) + g + x0]) or {spy.Symbol("_")}, key=str)
-    B = spy.Integer(1)
-    for d in dens:
-        B = spy.lcm(B, d)
-    dB = int(spy.Poly(B, *syms).total_degree())
-    dA = max([_degs(e)[0] + dB - _degs(e)[1] for e in f.values()] + [0])
+    parts, dB = _over_common_denominator(list(f.values()), syms)
+    dA = max([dn + dB - dd for dn, dd in parts] + [0])
     gd = [_degs(h) for h in g]
     # the initial values enter the coordinates over their common denominator
     d0 = max(1, _vector_degree(x0)) if x0 else 1
@@ -50,16 +58,9 @@ def field_degrees(F, G, X):
         if not all(_rational(e) for e in F + G) or sum(spy.count_ops(e) for e in F + G) > _ROW_OPS:
             return None
         X = list(X) or [spy.Symbol("_")]
-
-        def degs(e):
-            num, den = spy.fraction(spy.together(e))
-            return int(spy.Poly(num, *X).total_degree()), int(spy.Poly(den, *X).total_degree())
-        B = spy.Integer(1)
-        for e in F:
-            B = spy.lcm(B, spy.fraction(spy.together(e))[1])
-        dB = int(spy.Poly(B, *X).total_degree())
-        dA = max([degs(e)[0] + dB - degs(e)[1] for e in F] + [0])
-        return dA, dB, [degs(h) for h in G]
+        parts, dB = _over_common_denominator(F, X)
+        dA = max([dn + dB - dd for dn, dd in parts] + [0])
+        return dA, dB, _over_common_denominator(G, X)[0]
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
