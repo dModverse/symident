@@ -4,12 +4,19 @@ import functools
 import random
 
 import sympy as spy
+from sympy.polys.domains import QQ
+from sympy.polys.rings import ring as _ring
 
 from ..errors import SYMPY_FAILS, sympy_fail
 from .parse import model_sympify
 
 # operations of one identity beyond which it is left undecided rather than canceled
 SIZE_CAP = 20000
+# terms of a polynomial, and products of terms in one multiplication, beyond which an expansion stops
+TERM_CAP = 5000
+MUL_CAP = 1000000
+# the prime of the evaluation that shows an identity nonzero
+_P = 2**61 - 1
 
 
 @functools.lru_cache(maxsize=4096)
@@ -17,15 +24,154 @@ def _expr(text):
     return model_sympify(text)
 
 
-def _zero(e):
-    """True or False when `e` cancels to zero or not over Q; None past SIZE_CAP."""
+def _polynomial_node(e):
+    return e.is_Add or e.is_Mul or (e.is_Pow and e.exp.is_Integer and e.exp >= 0)
+
+
+def _mod_p(e, vals, memo):
+    """`e` modulo _P at the point `vals`; None at a pole modulo _P or where `e` is not rational."""
+    if e in memo:
+        return memo[e]
+    out = None
+    if e.is_Rational:
+        out = int(e.p) % _P * pow(int(e.q), -1, _P) % _P if int(e.q) % _P else None
+    elif e.is_Symbol:
+        out = vals[e]
+    elif e.is_Add or e.is_Mul:
+        args = [_mod_p(a, vals, memo) for a in e.args]
+        if None not in args:
+            out = 0 if e.is_Add else 1
+            for a in args:
+                out = (out + a) % _P if e.is_Add else out * a % _P
+    elif e.is_Pow and e.exp.is_Integer:
+        b = _mod_p(e.base, vals, memo)
+        out = None if b is None or (b == 0 and e.exp < 0) else pow(b, int(e.exp), _P)
+    memo[e] = out
+    return out
+
+
+def _nonzero_at_a_point(e):
+    """True when `e` is nonzero modulo _P at a random point, which proves it nonzero over Q."""
+    rng = random.Random(1)
+    vals = {s: rng.randrange(2, _P) for s in sorted(e.free_symbols, key=str)}
+    v = _mod_p(e, vals, {})
+    return v is not None and v != 0
+
+
+class _TooLargeError(Exception):
+    pass
+
+
+def _generators(e, opaque):
+    """The symbols of the polynomial skeleton of `e`; every other subexpression enters `opaque` as a generator."""
+    if e.is_Symbol:
+        return {e}
+    if e.is_Rational:
+        return set()
+    if _polynomial_node(e):
+        return set().union(*(_generators(a, opaque) for a in e.args))
+    return {opaque.setdefault(e, spy.Dummy())}
+
+
+def _expanded(e, gen, opaque, memo):
+    """`e` in the polynomial ring of `gen`; _TooLargeError past TERM_CAP or MUL_CAP."""
+    if e in memo:
+        return memo[e]
+    R = next(iter(gen.values())).ring
+
+    def mul(a, b):
+        if len(a) * len(b) > MUL_CAP:
+            raise _TooLargeError
+        return a * b
+
+    if e.is_Rational:
+        out = R(QQ(int(e.p), int(e.q)))
+    elif e.is_Symbol:
+        out = gen[e]
+    elif e.is_Add:
+        out = R.zero
+        for a in e.args:
+            out += _expanded(a, gen, opaque, memo)
+            if len(out) > TERM_CAP:
+                raise _TooLargeError
+    elif e.is_Mul:
+        out = R.one
+        for a in e.args:
+            out = mul(out, _expanded(a, gen, opaque, memo))
+    elif _polynomial_node(e):
+        b, out = _expanded(e.base, gen, opaque, memo), R.one
+        if len(b) <= 1:
+            out = b ** int(e.exp)
+        else:
+            for _ in range(int(e.exp)):
+                out = mul(out, b)
+                if len(out) > TERM_CAP:
+                    raise _TooLargeError
+    else:
+        out = gen[opaque[e]]
+    if len(out) > TERM_CAP:
+        raise _TooLargeError
+    memo[e] = out
+    return out
+
+
+def _fraction(e):
+    """(numerator, denominator, opaque) of `e` as polynomials over Q; None past the caps."""
+    num, den = spy.fraction(spy.together(e))
+    opaque = {}
+    syms = sorted(_generators(num, opaque) | _generators(den, opaque), key=str)
+    if not syms:
+        return None
+    gen = dict(zip(syms, _ring(syms, QQ)[1:]))
+    memo = {}
+    try:
+        return _expanded(num, gen, opaque, memo), _expanded(den, gen, opaque, memo), opaque
+    except _TooLargeError:
+        return None
+
+
+def capped_cancel(e):
+    """`e` as one canceled fraction over Q, or None past SIZE_CAP, TERM_CAP or MUL_CAP."""
     if spy.count_ops(e) > SIZE_CAP:
         return None
+    if not e.free_symbols:
+        return spy.cancel(e)
     try:
-        return spy.cancel(spy.together(e)) == 0
+        parts = _fraction(e)
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
+    if parts is None:
+        return None
+    num, den, opaque = parts
+    num, den = num.cancel(den)
+    back = {g: x for x, g in opaque.items()}
+    return (num.as_expr() / den.as_expr()).xreplace(back)
+
+
+def _zero(e):
+    """True or False when `e` cancels to zero or not over Q; None past the caps or where it is open.
+
+    A nonzero value modulo a prime shows it nonzero; a numerator that expands to zero shows it zero."""
+    if spy.count_ops(e) > SIZE_CAP:
+        return None
+    if _nonzero_at_a_point(e):
+        return False
+    try:
+        num = spy.fraction(spy.together(e))[0]
+        opaque = {}
+        syms = sorted(_generators(num, opaque), key=str)
+        if not syms:
+            return num == 0
+        gen = dict(zip(syms, _ring(syms, QQ)[1:]))
+        v = _expanded(num, gen, opaque, {})
+    except _TooLargeError:
+        return None
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    # over generators that are not symbols a nonzero numerator may still vanish
+    return True if not v else (None if opaque else False)
 
 
 class _Field:
@@ -138,19 +284,40 @@ def initial_lift(field, ic_lines, states, f_lines=()):
     eqs = [x - e for x, e in moved.items()]
     totals = [sum((c * (x - x0.get(x, x)) for x, c in law.items()), spy.Integer(0))
               for law in _conserved(f_lines, sts)]
+    implicit = None
     try:
         sol = spy.solve([t for t in totals if t.free_symbols & set(pars)], pars, dict=True) if totals else []
         if len(sol) != 1 or set(sol[0]) != set(pars):
             sol = spy.solve(eqs, pars, dict=True)
+            implicit = _implicit_lift(Y, list(moved), sol[0]) if len(sol) == 1 else None
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
     if len(sol) != 1:
         return None
+    comps = implicit or {x: Y(e).subs(sol[0]) for x, e in moved.items()}
     out = dict(field)
-    for x, e in moved.items():
-        out[str(x)] = str(spy.cancel(Y(e).subs(sol[0])))
+    for x, c in comps.items():
+        c = capped_cancel(c)
+        if c is None:
+            return None
+        out[str(x)] = str(c)
     return out
+
+
+def _implicit_lift(Y, xs, sol):
+    """Y(x0_X) at the states, {X: component}, from the solved form p = s(x, theta) of "X = x0_X"; or None.
+
+    Y applied to p - s(x, theta) = 0 gives J Y(x0) = Y(p) - Y(s) with J = ds/dx, rational in the states
+    wherever s is, also when x0 holds radicals. None when J is not square or is singular."""
+    ps = list(sol)
+    if len(ps) != len(xs):
+        return None
+    J = spy.Matrix([[spy.diff(sol[p], x) for x in xs] for p in ps])
+    if _zero(J.det()) is not False:
+        return None
+    rhs = spy.Matrix([(Y.c.get(p, spy.Integer(0)) - Y(sol[p])).subs(sol) for p in ps])
+    return dict(zip(xs, J.LUsolve(rhs)))
 
 
 def linear_lift(field, regime, ic_lines, states):
@@ -167,7 +334,7 @@ def linear_lift(field, regime, ic_lines, states):
     G = spy.Matrix(n, n, lambda i, j: spy.Symbol(f"_g{i}_{j}"))
     try:
         M = spy.Matrix([[spy.diff(F[a], b) for b in xs] for a in xs])
-        if any(spy.cancel(F[a] - sum((M[i, j] * xs[j] for j in range(n)), spy.Integer(0))) != 0
+        if any(_zero(F[a] - sum((M[i, j] * xs[j] for j in range(n)), spy.Integer(0))) is not True
                for i, a in enumerate(xs)):
             return None
         eqs = list(spy.Matrix([[Y(M[i, j]) for j in range(n)] for i in range(n)]) + M * G - G * M)
@@ -191,7 +358,9 @@ def linear_lift(field, regime, ic_lines, states):
     G = G.xreplace({g: 0 for g in G.free_symbols if str(g).startswith("_g")})
     out = dict(field)
     for i, x in enumerate(xs):
-        comp = spy.cancel(sum((G[i, j] * xs[j] for j in range(n)), spy.Integer(0)))
+        comp = capped_cancel(sum((G[i, j] * xs[j] for j in range(n)), spy.Integer(0)))
+        if comp is None:
+            return None
         if comp != 0:
             out[str(x)] = str(comp)
     return out
@@ -206,18 +375,10 @@ _OUTPUT_ORDERS = 3
 _OUTPUT_OPS = 2000
 
 
-def _vanishes(e, rng):
-    """Whether `e` cancels to zero, False already at a nonzero value at a random rational point; None past the cap."""
+def _vanishes(e):
+    """Whether `e` cancels to zero; None past the cap of a Lie derivative."""
     if spy.count_ops(e) > _OUTPUT_OPS:
         return None
-    pt = {s: spy.Rational(rng.randint(2, 997), rng.randint(2, 997)) for s in e.free_symbols}
-    try:
-        v = e.xreplace(pt)
-        if v.is_Rational and v != 0:
-            return False
-    except SYMPY_FAILS as exc:
-        sympy_fail(exc)
-        pass
     return _zero(e)
 
 
@@ -227,9 +388,8 @@ def output_identities(regime, ic_lines, vector):
     F = _rhs(regime["f"])
     x0 = _rhs(ic_lines)
     V = _Field(vector)
-    rng = random.Random(1)
     obs = [_expr(str(l).split("=", 1)[1]) if "=" in str(l) else _expr(str(l)) for l in regime["g"]]
-    at_rest = all(_vanishes(fx.xreplace(x0), rng) is True for fx in F.values())
+    at_rest = all(_vanishes(fx.xreplace(x0)) is True for fx in F.values())
     out = []
     for h in obs:
         series = [h]
@@ -237,7 +397,7 @@ def output_identities(regime, ic_lines, vector):
             if len(series) > _OUTPUT_ORDERS:
                 return None
             nxt = _lie(F, series[-1])
-            z = _vanishes(nxt, rng)
+            z = _vanishes(nxt)
             if z is None:
                 return None
             if z:
@@ -275,9 +435,11 @@ def _triangular(nums, rest):
             break
         _, i, r = best
         c1, c0 = spy.Poly(todo[i], r).all_coeffs()
-        val = spy.cancel(-c0 / c1)
-        sub = {k: spy.cancel(v.xreplace({r: val})) for k, v in sub.items()}
-        sub[r] = val
+        val = capped_cancel(-c0 / c1)
+        nxt = {k: capped_cancel(v.xreplace({r: val})) for k, v in sub.items()} if val is not None else None
+        if nxt is None or None in nxt.values():
+            break
+        sub = {**nxt, r: val}
         left.remove(r)
         del todo[i]
     rem = [spy.numer(spy.together(n.xreplace(sub))) for n in todo]
@@ -328,7 +490,9 @@ def _rest_parametrization(eqs, rest, params):
     if len(sol) != 1 or set(sol[0]) != set(chosen):
         return None
     ps = sol[0]
-    out = {k: spy.cancel(v.xreplace(ps)) for k, v in sub.items()}
+    out = {k: capped_cancel(v.xreplace(ps)) for k, v in sub.items()}
+    if None in out.values():
+        return None
     out.update(ps)
     return {"sub": out, "params": chosen, "eqs": rem}
 
@@ -349,7 +513,7 @@ def rest_identities(conds, vector):
 
 
 def certify(identities):
-    """{"ok": True if all identities cancel, False at the first that does not, None past the cap; "why"}."""
+    """{"ok": True if all identities cancel, False at the first that does not, None where undecided; "why"}."""
     undecided = None
     for label, e in identities:
         z = _zero(e)
@@ -358,5 +522,5 @@ def certify(identities):
         if z is None and undecided is None:
             undecided = label
     if undecided is not None:
-        return {"ok": None, "why": f"{undecided} is too large to cancel", "identities": len(identities)}
+        return {"ok": None, "why": f"{undecided} is undecided over Q within the caps", "identities": len(identities)}
     return {"ok": True, "why": "", "identities": len(identities)}

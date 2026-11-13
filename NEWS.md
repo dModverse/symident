@@ -1,3 +1,13 @@
+# symident 0.13.3
+
+* The exact proof of a direction expands each identity in a polynomial ring over Q with a cap on
+  the terms of every polynomial and on the term products of one multiplication; past the cap the
+  identity is undecided and the direction keeps the level of its modular check. An identity with a
+  nonzero value modulo a prime at a random point is refuted without expansion.
+* The state components that an initial value set by parameters gives a direction are solved from
+  the parametrization of that value by those parameters, rational in the states also where the
+  initial value holds a square root.
+
 # symident 0.13.2
 
 * The directions under `equilibrate` are the same for every naming and order of the
