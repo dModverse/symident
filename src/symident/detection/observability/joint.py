@@ -329,7 +329,12 @@ class JointSystem(RestingStates):
                            np.asarray(sc0["ptc"], dtype=np.int64), p)
             if e_m is None:
                 return None
-            rel.append(np.asarray(e_m, dtype=np.int64).reshape(-1, nz_l))
+            e_m = np.asarray(e_m, dtype=np.int64).reshape(-1, nz_l)
+            # a leaf of an event value may read a resting state, whose column is scaled as above
+            for lc in self.log_cols:
+                if scl[lc] != 1:
+                    e_m[:, lc] = mulmod(e_m[:, lc], scl[lc], p)
+            rel.append(e_m)
         rel_s = []
         if cont and self.recast_rel:
             Ns = 1 if obs.get("N") is None else int(obs["N"])

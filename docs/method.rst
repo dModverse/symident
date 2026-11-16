@@ -689,6 +689,27 @@ declared positive. An observable :math:`\kappa \sum_i a_i \log \rho_i + \beta`, 
 :math:`\rho_i` and constants :math:`\kappa, a_i, \beta`, is strictly monotone in
 :math:`\prod_i \rho_i^{a_i} e^{\beta/\kappa}` and is analyzed as that product.
 
+An event after the start reads the states just before it. There the state propagated across the
+gaps is a power series in the gap lengths whose constant term :math:`\bar x` is the state at zero
+gaps, the initial state with the earlier events of the condition applied. A transcendental
+:math:`\varphi(\psi(x))` in an event value is the leaf :math:`\varphi(\bar\psi)`,
+:math:`\bar\psi = \psi(\bar x)`, times or plus a series in :math:`\psi(x) - \bar\psi`,
+
+.. math::
+
+   e^{\psi} = e^{\bar\psi}\, e^{\psi - \bar\psi}, \qquad
+   \log \psi = \log \bar\psi + \log\Bigl(1 + \frac{\psi - \bar\psi}{\bar\psi}\Bigr), \qquad
+   \psi^\alpha = e^{\alpha \log \psi}, \qquad
+   \sin \psi = \sin \bar\psi \cos(\psi - \bar\psi) + \cos \bar\psi \sin(\psi - \bar\psi),
+
+and since :math:`\psi(x) - \bar\psi` has no constant term, each series ends at the truncation
+order; :math:`\cos` and :math:`\tan` follow from the addition theorems. An event on a state
+moves the new states of the recast with it, :math:`\nu` to
+:math:`\varphi` of :math:`\psi` after the event, so a dose added to a state under a free power
+moves :math:`B` and :math:`L_b`, and in log coordinates :math:`L = \log x` becomes
+:math:`\log(e^{L} + d)`. Under ``equilibrate`` :math:`\bar x` is the resting state, a
+coordinate, and an event at the start takes the leaves at it alone.
+
 Closed forms and proofs
 -----------------------
 

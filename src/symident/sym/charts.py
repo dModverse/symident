@@ -385,7 +385,9 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
                 a, b = chart[ks]
                 at0 = {spy.Symbol(n): x for n, x in ic.items()}
                 le = tidy(spy.log((a + b * ks).xreplace(at0)))
-                if any(not at.args[0].is_number for at in le.atoms(spy.log)):
+                # a logarithm left over is a function of the coordinates, for the recasts
+                if any(not at.args[0].is_number and not positive_on(at.args[0])
+                       for at in le.atoms(spy.log)):
                     return {'why': 'the initial value %s = %s does not split into '
                             'logarithms of positive coordinates' % (k, e)}
                 try:
@@ -400,7 +402,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
                      'b': str(chart[v][1])} for v in sorted(chart, key=str)]}
 
 
-def log_arg_event(var, value, method, maps):
+def log_arg_event(var, value, method, maps, positive=True):
     """One event in the log coordinates as {'var', 'value', 'method', 'consts'}, or {'why': ...}."""
     maps = list(maps)
     lines = [str(value)] + [str(m[k]) for m in maps for k in ('v', 'L', 'a', 'b')]
@@ -414,19 +416,23 @@ def log_arg_event(var, value, method, maps):
     Lv, a, b = ent[str(var)]
     if method == 'add' and e == 0:
         return {'var': str(Lv), 'value': '0', 'method': 'add', 'consts': []}
-    if method == 'replace':
-        le = spy.log(a + b * e)
-        kind = 'replace'
-    elif method == 'multiply' and a == 0:
-        le = spy.log(e)
-        kind = 'add'
+    if method == 'multiply' and a == 0:
+        le, kind = spy.log(e), 'add'
     else:
-        return {'why': 'a %s event on %s, which is analyzed as %s, is not supported'
-                % (method, var, 'log(%s)' % (a + b * parse(str(var))))}
+        # the argument after the event, from exp(L) = a + b*v before it
+        u = {'replace': a + b * e, 'add': spy.exp(Lv) + b * e,
+             'multiply': a + (spy.exp(Lv) - a) * e}[str(method)]
+        le, kind = spy.log(u), 'replace'
+    # positive on the domain, with the argument before the event positive
+    h = spy.Dummy('h', positive=True)
+    v0 = parse(str(value))
+    u_old = {'replace': a + b * v0, 'add': h + b * v0, 'multiply': a + (h - a) * v0}[str(method)]
+    if method == 'multiply' and a == 0:
+        u_old = v0
+    if not is_positive(u_old, positive):
+        return {'why': 'the event value %s for %s, which is analyzed as log(%s), does not keep '
+                'the argument positive' % (value, var, a + b * parse(str(var)))}
     le = spy.powsimp(spy.expand_log(le, force=True))
-    if any(not at.args[0].is_number for at in le.atoms(spy.log)):
-        return {'why': 'the event value %s for %s does not split into logarithms of '
-                'positive coordinates' % (value, var)}
     consts = set()
     try:
         le = _log_numbers(le, consts)
@@ -674,8 +680,17 @@ def _split_power_bases(per_cond):
              [split(e) for e in f_ss]) for (f_c, g_c, ic_c, f_ss) in per_cond]
 
 
+def _power_exponent(ex):
+    """(c0, c, n) of an exponent c0 + c*n with c0, c rational and n a symbol, else None."""
+    c0, rest = ex.as_coeff_Add()
+    c, n = rest.as_coeff_Mul()
+    if not (c0.is_Rational and c.is_Rational and n.is_Symbol):
+        return None
+    return c0, c, n
+
+
 def _detect_power_atoms(per_cond, states=()):
-    """Sorted (base, n) of the symbolic powers base^(c*n), n not a state, or None for another power."""
+    """Sorted (base, n) of the symbolic powers base^(c0 + c*n), n not a state, or None for another power."""
     pairs = set()
     states = set(states)
     for (f_c, g_c, ic_c, f_ss) in per_cond:
@@ -683,12 +698,10 @@ def _detect_power_atoms(per_cond, states=()):
             for pw in spy.sympify(e).atoms(spy.Pow):
                 if pw.exp.is_number or _exp_atom(pw) is not None:
                     continue
-                if not pw.base.is_Symbol:
+                cn = _power_exponent(pw.exp)
+                if not pw.base.is_Symbol or cn is None or cn[2] in states:
                     return None
-                c, rest = pw.exp.as_coeff_Mul()
-                if not (rest.is_Symbol and c.is_rational) or rest in states:
-                    return None
-                pairs.add((pw.base, rest))
+                pairs.add((pw.base, cn[2]))
     return sorted(pairs, key=lambda t: (str(t[0]), str(t[1])))
 
 
@@ -705,9 +718,9 @@ def _apply_power_recast(pairs, S, per_cond):
         def repl(pw):
             if pw.exp.is_number or not pw.base.is_Symbol:
                 return pw
-            c, rest = pw.exp.as_coeff_Mul()
-            E = recast.get((pw.base, rest))
-            return E ** c if E is not None else pw
+            cn = _power_exponent(pw.exp)
+            E = None if cn is None else recast.get((pw.base, cn[2]))
+            return pw.base ** cn[0] * E ** cn[1] if E is not None else pw
         return spy.sympify(expr).replace(lambda x: x.is_Pow, repl)
 
     extra = [recast[(b, n)] for (b, n) in pairs] + \
@@ -725,7 +738,7 @@ def _apply_power_recast(pairs, S, per_cond):
         for (b, n) in pairs:
             E = recast[(b, n)]
             brhs = rhs_of.get(str(b), spy.Integer(0))
-            ic_r[str(E)] = b0[b] ** n if b in b0 else E
+            ic_r[str(E)] = spy.exp(n * spy.log(b0[b])) if b in b0 else E
             f_r.append(n * E * brhs / b if brhs != 0 else spy.Integer(0))
         for b in sorted(Lof, key=str):
             L = Lof[b]

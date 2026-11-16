@@ -56,7 +56,8 @@ inline u64 barrett_m(u64 p) { return UINT64_MAX / p; }
 
 namespace {
 
-const int OP_CONST = 0, OP_ADD = 1, OP_MUL = 2, OP_INV = 3, OP_SQRT = 4, OP_ROOT = 5;
+const int OP_CONST = 0, OP_ADD = 1, OP_MUL = 2, OP_INV = 3, OP_SQRT = 4, OP_ROOT = 5,
+          OP_EXPN = 6, OP_LOG1P = 7, OP_SINN = 8, OP_COSN = 9;
 
 inline u64 addmod(u64 a, u64 b, u64 p) { u64 s = a + b; return s >= p ? s - p : s; }
 inline u64 submod(u64 a, u64 b, u64 p) { return a >= b ? a - b : a + p - b; }
@@ -301,6 +302,35 @@ inline bool poly_inv(u64* B, const u64* A, const PolyBasis& pb, u64 p) {
     for (int c = 0; c < w; ++c) s[c] = submod(0, s[c], p);   // negate
     dual_mul_acc(B + (size_t)m * w, invA0.data(), s.data(), w, p);
   }
+  return true;
+}
+
+// B = f(A) for a series A without constant value and f = exp, log(1 + .), sin or cos (the
+// opcode): A is nilpotent, so the Taylor sum ends where A^k vanishes, past the total degree
+// plus one.
+inline bool poly_nilpotent(u64* B, const u64* A, int f, const PolyBasis& pb, u64 p) {
+  size_t blk = (size_t)pb.nMono * pb.w;
+  if (A[0] % p != 0) return false;
+  std::fill(B, B + blk, (u64)0);
+  if (f != OP_LOG1P && f != OP_SINN) B[0] = 1;
+  // pw = A^k / k! (exp, sin, cos) or A^k (log)
+  std::vector<u64> pw(A, A + blk), next(blk, 0);
+  for (int k = 1; k <= pb.Mtot + pb.Tser + 2; ++k) {
+    bool any = false;
+    for (size_t c = 0; c < blk && !any; ++c) any = pw[c] != 0;
+    if (!any) return true;
+    u64 cf = 0;
+    if (f == OP_EXPN) cf = 1;
+    else if (f == OP_LOG1P) cf = k % 2 ? invmod((u64)k % p, p) : submod(0, invmod((u64)k % p, p), p);
+    else if ((f == OP_SINN) == (k % 2 == 1)) cf = (k / 2) % 2 ? p - 1 : 1;
+    if (cf)
+      for (size_t c = 0; c < blk; ++c) B[c] = addmod(B[c], mulmod(pw[c], cf, p), p);
+    std::fill(next.begin(), next.end(), (u64)0);
+    poly_mul_acc(next.data(), pw.data(), A, pb, p);
+    u64 ik = f == OP_LOG1P ? 1 : invmod((u64)(k + 1) % p, p);
+    for (size_t c = 0; c < blk; ++c) pw[c] = mulmod(next[c], ik, p);
+  }
+  for (size_t c = 0; c < blk; ++c) if (pw[c]) return false;
   return true;
 }
 
@@ -862,6 +892,15 @@ bool eval_ic_order0(std::vector<std::vector<u64> >& icVal,
         for (int c = 1; c < w; ++c) o[c] = mulmod(pa[c], inv, p);
         break;
       }
+      case OP_EXPN: case OP_LOG1P: case OP_SINN: case OP_COSN: {
+        // a dual number without value: exp(a) = 1 + a, log(1 + a) = sin(a) = a, cos(a) = 1
+        const u64* pa = icVal[icA[i]].data();
+        if (pa[0] % p != 0) return false;
+        bool cosine = icOp[i] == OP_COSN;
+        for (int c = 1; c < w; ++c) o[c] = cosine ? 0 : pa[c] % p;
+        o[0] = icOp[i] == OP_EXPN || cosine ? 1 : 0;
+        break;
+      }
     }
   }
   return true;
@@ -1312,6 +1351,9 @@ bool eval_tape_poly(std::vector<std::vector<u64> >& V, const std::vector<int>& o
       case OP_MUL: poly_mul_acc(o, V[a[i]].data(), V[b[i]].data(), pb, p); break;
       case OP_SQRT: if (!poly_sqrt(o, V[a[i]].data(), pb, p)) return false; break;
       case OP_ROOT: if (!poly_root(o, V[a[i]].data(), (u64)b[i], pb, p)) return false; break;
+      case OP_EXPN: case OP_LOG1P: case OP_SINN: case OP_COSN:
+        if (!poly_nilpotent(o, V[a[i]].data(), op[i], pb, p)) return false;
+        break;
       default: if (!poly_inv(o, V[a[i]].data(), pb, p)) return false;
     }
   }

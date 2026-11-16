@@ -166,7 +166,7 @@ class Analysis:
                                                         run.n_leaves, run.n_states, run.z_slots, leaves(),
                                                         list(prime_vec), int(Nt), int(run.mtot), run.cores,
                                                         list(run.nt_cap))
-        if self.transient and not run.has_gaps and not run.nuis_cols and n > 0:
+        if self.transient and not self.joint and not run.has_gaps and not run.nuis_cols and n > 0:
             os_ = _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, run.z_slots, leaves(),
                                            list(prime_vec), int(Nt), run.cores)
             return [self.sys.with_relations(os_[i], point_list[i], prime_vec[i]) for i in range(n)]

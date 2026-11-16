@@ -95,8 +95,10 @@ def test_events_on_state_in_exp():
     rep = det(f_ab(), G_AB, reconstruct=True, events=[ev0, event("A", 5, "a1", "replace")])
     assert "a1" in general(rep)[0]["support"]
 
-    with pytest.raises(Exception, match="not supported"):
-        det(f_ab(), G_AB, events=[ev0, event("A", 5, "2", "multiply")])
+    # a relative dose on A breaks the shift of A that the exponential otherwise absorbs
+    for e in (event("A", 5, "2", "multiply"), event("A", 5, "2*A", "replace")):
+        mul = det(f_ab(), G_AB, reconstruct=True, events=[ev0, e])
+        assert (mul.rank, mul.dim) == (6, 7) and [sorted(d["support"]) for d in mul.symmetries] == [["B", "kB", "s"]]
     with pytest.raises(Exception, match="equilibrate"):
         det(f_ab(), G_AB, equilibrate=True)
 
@@ -195,8 +197,10 @@ def test_events_abs_log_of_sums():
     # a dose in a parameter joins the coordinate change
     r = det(gz, gg, events=[event("x", 0, "D", "replace")], reconstruct=True)
     assert set(r.symmetries[0]["generator"]) == {"D", "K", "s"}
-    with pytest.raises(Exception, match="add"):
-        det(gz, gg, events=[event("x", 3, "1", "add")])
+    # an added dose in log coordinates: a known one breaks the scaling, a free one scales with it
+    assert det(gz, gg, events=[event("x", 3, "1", "add")]).identifiable
+    r = det(gz, gg, events=[event("x", 3, "D", "add")], reconstruct=True)
+    assert (r.rank, r.dim) == (4, 5) and set(r.symmetries[0]["generator"]) == {"D", "K", "s", "x"}
 
     # abs() of a positive state resolves; max() of a state and a parameter switches
     r = det({"x": "-k*abs(x)*x"}, gg, reconstruct=True)
@@ -246,13 +250,12 @@ def test_trig_half_angle():
     r = det({"x": "-k*x"}, {"y": "cos(a + b)*x"})
     assert (r.rank, r.dim) == (2, 4)
 
-    # a state reset by a later event restarts the half angle; a shift does not
+    # a later event restarts the half angle, a reset as well as a shift
     fs = {"x": "-k*sin(x)"}
     ev = [event("x", 0, "x0", "replace"), event("x", 1, "x1", "replace")]
     assert det(fs, {"y": "c*x"}, events=ev).identifiable
     ev[1]["method"] = "add"
-    with pytest.raises(Exception, match="add"):
-        det(fs, {"y": "c*x"}, events=ev)
+    assert det(fs, {"y": "c*x"}, events=ev).identifiable
     with pytest.raises(Exception, match=r"sin\(exp"):
         det({"x": "-k*sin(exp(x))"}, {"y": "x"})
 

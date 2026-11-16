@@ -11,6 +11,182 @@ from .modp import _modp_rational
 from .parse import _as_list, _is_rational_expr, _make_local_parse
 
 
+class SeriesExp(spy.Function):
+    """exp(w) of a w that vanishes at the state of zero gaps, a series the kernel sums."""
+    nargs = 1
+
+    @classmethod
+    def eval(cls, w):
+        if w.is_zero:
+            return spy.Integer(1)
+
+    def fdiff(self, argindex=1):
+        return self
+
+
+class SeriesLog1p(spy.Function):
+    """log(1 + w) of a w that vanishes at the state of zero gaps, a series the kernel sums."""
+    nargs = 1
+
+    @classmethod
+    def eval(cls, w):
+        if w.is_zero:
+            return spy.Integer(0)
+
+    def fdiff(self, argindex=1):
+        return 1 / (1 + self.args[0])
+
+
+class SeriesSin(spy.Function):
+    """sin(w) of a w that vanishes at the state of zero gaps, a series the kernel sums."""
+    nargs = 1
+
+    @classmethod
+    def eval(cls, w):
+        if w.is_zero:
+            return spy.Integer(0)
+
+    def fdiff(self, argindex=1):
+        return SeriesCos(self.args[0])
+
+
+class SeriesCos(spy.Function):
+    """cos(w) of a w that vanishes at the state of zero gaps, a series the kernel sums."""
+    nargs = 1
+
+    @classmethod
+    def eval(cls, w):
+        if w.is_zero:
+            return spy.Integer(1)
+
+    def fdiff(self, argindex=1):
+        return -SeriesSin(self.args[0])
+
+
+_SERIES = (SeriesExp, SeriesLog1p, SeriesSin, SeriesCos)
+
+
+def _chains(K, chain_of):
+    """The tape indices of each chain, consecutive; one chain per tape without `chain_of`."""
+    if chain_of is None:
+        return [[c] for c in range(K)]
+    out = []
+    for c in range(K):
+        if c and chain_of[c] == chain_of[c - 1]:
+            out[-1].append(c)
+        else:
+            out.append([c])
+    return out
+
+
+_PRE = '_sx_'
+
+
+def pre_state(name):
+    """The symbol of state `name` just before an event in a marked event value."""
+    return spy.Symbol(_PRE + str(name))
+
+
+def pre_state_name(sym):
+    """The state a pre_state() symbol stands for, else None."""
+    nm = str(sym)
+    return nm[len(_PRE):] if nm.startswith(_PRE) else None
+
+
+def _series_events(S, ic, ev, chain_of, ln):
+    """`ev` with the states before an event as pre_state() symbols, so that plain names in a value are initial
+    values as in `ic`, and every exp, log, non-integer power, sin, cos and tan of them as its value at zero gaps
+    times or plus a series in the _SERIES functions; or {'why': ...}. The value at zero gaps composes the events
+    from the start of the chain; `ln(r)` is the logarithm of a positive number r. Values marked before stay, and
+    an event flagged `t0` takes its value at zero gaps. `plain` keeps the value as given, for the symbolic checks."""
+    states = set(S)
+    sym_of = {str(x): x for x in S}
+    out = [list(evs) for evs in ev]
+
+    def compose(cur, method, v):
+        return {'replace': v, 'add': cur + v, 'multiply': cur * v}[method]
+
+    def series_exp(psi, psi0, r):
+        # r^psi = r^psi0 * exp(log(r)*(psi - psi0)), psi0 the value at zero gaps
+        if r == spy.E:
+            return spy.exp(psi0) * SeriesExp(psi - psi0)
+        return r ** psi0 * SeriesExp(ln(r) * (psi - psi0))
+
+    def series_log(u, u0):
+        if u0 == 0:
+            raise _NotExpandableError()
+        return spy.log(u0) + SeriesLog1p(u / u0 - 1)
+
+    def rewrite(e, x0):
+        if not (e.free_symbols & states):
+            return e
+        if e in states:
+            return pre_state(e)
+        if e.is_Pow and e.exp.is_Integer:
+            return rewrite(e.base, x0) ** e.exp
+        be = _exp_atom(e)
+        if be is not None:
+            return series_exp(rewrite(be[1], x0), be[1].xreplace(x0), be[0])
+        if e.is_Pow:
+            # b^c = exp(c*log(b)) of a base that reads the states
+            b0, c0 = e.base.xreplace(x0), e.exp.xreplace(x0)
+            lg = series_log(rewrite(e.base, x0), b0)
+            return series_exp(rewrite(e.exp, x0) * lg, c0 * spy.log(b0), spy.E)
+        if isinstance(e, spy.log):
+            return series_log(rewrite(e.args[0], x0), e.args[0].xreplace(x0))
+        if isinstance(e, (spy.sin, spy.cos, spy.tan)):
+            # sin(u0 + w) and cos(u0 + w) by the addition theorems, u0 the value at zero gaps
+            u0 = e.args[0].xreplace(x0)
+            w = rewrite(e.args[0], x0) - u0
+            sn = spy.sin(u0) * SeriesCos(w) + spy.cos(u0) * SeriesSin(w)
+            cs = spy.cos(u0) * SeriesCos(w) - spy.sin(u0) * SeriesSin(w)
+            return {spy.sin: sn, spy.cos: cs, spy.tan: sn / cs}[type(e)]
+        if e.is_Add or e.is_Mul:
+            return e.func(*[rewrite(a, x0) for a in e.args])
+        raise _NotExpandableError()
+
+    for chain in _chains(len(ev), chain_of):
+        x0 = {s: spy.sympify(ic[chain[0]].get(str(s), s)) for s in S}
+        for c in chain:
+            pre = dict(x0)
+            new = []
+            for e in ev[c]:
+                v = spy.sympify(e['value'])
+                if e.get('t0'):
+                    # an event at a start at rest reads the resting coordinates themselves
+                    at_pre = v.xreplace(pre)
+                    new.append(dict(e, value=at_pre))
+                elif e.get('marked'):
+                    at_pre = v.xreplace({pre_state(s): pre[s] for s in S})
+                    new.append(e)
+                else:
+                    at_pre = v.xreplace(pre)
+                    try:
+                        new.append(dict(e, value=rewrite(v, pre), marked=True, plain=v))
+                    except _NotExpandableError:
+                        return {'why': 'the event value %s for %s is a function of the states that the '
+                                'finite-field engine does not expand' % (v, e['var'])}
+                var = sym_of.get(str(e['var']))
+                if var is not None:
+                    x0[var] = compose(x0[var], str(e['method']), at_pre)
+            out[c] = new
+    return out
+
+
+class _NotExpandableError(Exception):
+    """An event value term that _series_events() cannot write as a series."""
+
+
+def _state_events(ev, states, atoms):
+    """The first event value with an atom of `atoms(value)` that reads `states`, else None."""
+    for evs in ev:
+        for e in evs:
+            for a in atoms(spy.sympify(e['value'])):
+                if a.free_symbols & states:
+                    return e, a
+    return None
+
+
 def _canon_exp_base(b):
     """(r, k) with b = r^k, r = E or a positive rational that is no perfect power, else None."""
     if b == spy.E:
@@ -191,6 +367,10 @@ def _exp_leaf_canon(exprs, ctx, held=None):
     exprs = [ctx.numbers(e) for e in exprs]
     held = held if held is not None else [set()] * len(exprs)
     atoms, logs, log_of = [], [], {}
+    for e, hs in zip(exprs, held):
+        if any((be := _exp_atom(a)) is not None and be[1].free_symbols & hs
+               for a in e.atoms(spy.exp, spy.Pow)):
+            return {'why': 'an event value with the exponential of a state is not supported'}
     while True:
         exprs = _exponent_logs(exprs, ctx, held, logs, log_of)
         found = {}
@@ -315,7 +495,7 @@ def _exp_back(atoms, ctx, used):
     return back
 
 
-def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken):
+def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
     """The model with exponentials as auxiliary states and generic leaves, or {'why': ...} if unsupported."""
     ctx = _ExpCtx(taken)
     rpow, const = ctx.rpow, ctx.const
@@ -419,21 +599,24 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken):
                     if not vs or f[c][idx[a['X']]] == 0:
                         continue
                     vsym = vs[0]
-                    others = (phi.free_symbols & Sset) - {vsym}
                     d1 = spy.diff(phi, vsym)
-                    if cur['method'] == 'replace' and not others:
-                        new = {'var': str(a['X']), 'method': 'replace',
-                               'value': rpow(a['r'], phi.xreplace({vsym: cur['value']}))}
-                    elif (cur['method'] == 'add' and spy.diff(d1, vsym) == 0 and
-                          not (d1.free_symbols & Sset)):
-                        new = {'var': str(a['X']), 'method': 'multiply',
-                               'value': rpow(a['r'], cur['value'] * d1)}
+                    v = spy.sympify(cur['value'])
+                    if (cur['method'] == 'add' and spy.diff(d1, vsym) == 0 and
+                            not ((d1.free_symbols | v.free_symbols) & Sset)):
+                        new = {'var': str(a['X']), 'method': 'multiply', 'value': rpow(a['r'], v * d1)}
                     else:
-                        return {'why': 'an event (%s) on %s, which enters an exponent, '
-                                'is not supported' % (cur['method'], cur['var'])}
+                        # the exponent at the state after the event; values read the states before it
+                        after = {'replace': v, 'add': vsym + v, 'multiply': vsym * v}[cur['method']]
+                        new = {'var': str(a['X']), 'method': 'replace',
+                               'value': rpow(a['r'], phi.xreplace({vsym: after}))}
+                    if cur.get('t0'):
+                        new['t0'] = True
                     out.append(new)
                     queue.append(new)
         ev[c] = out
+    ev = _series_events(S, ic, ev, chain_of, lambda r: ctx.numbers(spy.log(r)))
+    if 'why' in ev:
+        return ev
 
     # ---- leaf level: generic exponential leaves W
     refs = ([('f', c, i) for c in range(K) for i in range(len(f[c]))] +
@@ -446,8 +629,9 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken):
     for kind, c, i in refs:
         vals.append(ev[c][i]['value'] if kind == 'ev' else tm[c] if kind == 'tm'
                     else store[kind][c][i])
-    # in event values a state is the state at the event; elsewhere state names left here are initial values
-    lc = _exp_leaf_canon(vals, ctx, [set(S) if kind == 'ev' else set() for kind, _, _ in refs])
+    # in event values the states at the event are pre_state() symbols; plain state names are initial values
+    held = {pre_state(s) for s in S}
+    lc = _exp_leaf_canon(vals, ctx, [held if kind == 'ev' else set() for kind, _, _ in refs])
     if 'why' in lc:
         return lc
     logleaves = lc['logs']
@@ -570,7 +754,7 @@ def _trig_den(found, keep):
     return den
 
 
-def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken):
+def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
     """The model with trigonometric functions as half-angle states and leaves, as _apply_exp_recast."""
     ctx = _ExpCtx(taken)
     pis = ctx.fresh('_pi_', positive=True)
@@ -644,8 +828,7 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken):
                 f[c][idx[a['X']]] = spy.Integer(0)
                 ic[c][str(a['X'])] = spy.Integer(0)
 
-    # a later replace event on a state inside an argument resets the auxiliary state
-    Sset = set(S)
+    # a later event on a state inside an argument resets the auxiliary state
     for c in range(K):
         out = []
         for e in ev[c]:
@@ -655,13 +838,21 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken):
                 vs = [s for s in phi.free_symbols if str(s) == str(e['var'])]
                 if not vs or f[c][idx[a['X']]] == 0:
                     continue
-                if e['method'] != 'replace' or (phi.free_symbols & Sset) - {vs[0]}:
-                    return {'why': 'an event (%s) on %s, which enters the argument of '
-                            'a trigonometric function, is not supported'
-                            % (e['method'], e['var'])}
-                out.append({'var': str(a['X']), 'method': 'replace',
-                            'value': spy.tan(phi.xreplace({vs[0]: e['value']}) / 2)})
+                # the half angle at the state after the event; values read the states before it
+                v = spy.sympify(e['value'])
+                after = {'replace': v, 'add': vs[0] + v, 'multiply': vs[0] * v}[e['method']]
+                new = {'var': str(a['X']), 'method': 'replace', 'value': spy.tan(phi.xreplace({vs[0]: after}) / 2)}
+                if e.get('t0'):
+                    new['t0'] = True
+                out.append(new)
         ev[c] = out
+    ev = _series_events(S, ic, ev, chain_of, spy.log)
+    if 'why' in ev:
+        return ev
+    hit = _state_events(ev, {pre_state(s) for s in S}, lambda e: e.atoms(*_TRIG))
+    if hit is not None:
+        return {'why': 'the event value %s for %s reads the state through %s, which is not '
+                'supported' % (hit[0]['value'], hit[0]['var'], hit[1])}
 
     # ---- leaf level: generic half-angle leaves V and the constant leaves
     refs = ([('f', c, i) for c in range(K) for i in range(len(f[c]))] +
@@ -946,7 +1137,7 @@ def _func_arg(a):
     return a.base if isinstance(a, spy.Pow) else a.args[0]
 
 
-def _apply_func_recast(S, per_cond, ev_per, tm_per, taken):
+def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
     """The model with elementary functions as auxiliary states and leaves, as _apply_exp_recast."""
     ctx = _ExpCtx(taken)
     S = list(S)
@@ -957,6 +1148,9 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken):
     fss = [list(p[3]) for p in per_cond]
     ev = [[dict(e, value=spy.sympify(e['value'])) for e in evs] for evs in ev_per]
     tm = [None if t is None else spy.sympify(t) for t in tm_per]
+    ev = _series_events(S, ic, ev, chain_of, spy.log)
+    if 'why' in ev:
+        return ev
 
     # ---- dynamics: auxiliary states, innermost function first
     aux = []
@@ -999,6 +1193,10 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken):
                             'supported' % (e['var'], next(a for a in found if str(e['var']) in
                                                           {str(s) for s in _func_arg(a).free_symbols}))}
         S += [key[a] for a in found]
+    hit = _state_events(ev, {pre_state(s) for s in S}, _func_atoms)
+    if hit is not None:
+        return {'why': 'the event value %s for %s reads the state through %s, which is not '
+                'supported' % (hit[0]['value'], hit[0]['var'], hit[1])}
 
     # ---- leaf level: transcendental functions of leaves as generic leaves
     refs = ([('f', c, i) for c in range(K) for i in range(len(f[c]))] +

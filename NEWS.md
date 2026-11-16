@@ -1,3 +1,22 @@
+# symident 0.13.6
+
+* An event value that reads the states through `exp()`, `log()`, a non-integer power, `sin()`,
+  `cos()` or `tan()` is expanded around the state at zero gaps: the function at that state is a
+  leaf, the rest a series without constant term that the kernel sums to the truncation order.
+  Such a value at a later event was evaluated at the initial values before, and a trigonometric
+  one was refused.
+* Events on a state under a free exponent move the power and its logarithm with the state, at the
+  start and later, also under `equilibrate`; before, both kept their values from before the event.
+  In log coordinates an added or multiplied dose on a state analyzed as `log(x)` is supported, as
+  is an initial value whose logarithm does not split into logarithms of coordinates, such as
+  `B*V + D`. Any event on a state inside an exponent or the argument of a trigonometric function
+  is supported.
+* Under `equilibrate` the relation rows of an exponential leaf that reads a resting state are
+  scaled like the state columns.
+* A free power takes an exponent with a rational offset, `V^(1 - n)`.
+* A leaf that only a relation of another leaf reads is one coordinate; before, it entered twice,
+  and the second copy, free of relations, failed the check of every reconstructed direction.
+
 # symident 0.13.5
 
 * The order bound multiplies each term by the number of points drawn until its random point was

@@ -1291,7 +1291,9 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         gset = [({k: to_r(v) for k, v in x.items()} or None) for x in sc["g"]]
     off = None if cq_totals and off_full is None else off_domain()
     if positive is not False and method != "scaling" and sym_engine != "symbolic":
-        ev_ic = [{e["var"]: e["value"]} for e in events if e["method"] in ("replace", "multiply")]
+        # under equilibrate a dose leaves the state to the power recast, whose resting model stays rational
+        ev_ic = [] if equilibrate else \
+            [{e["var"]: e["value"]} for e in events if e["method"] in ("replace", "multiply")]
         # condition columns and constant states without events become numbers per condition
         per_cond = set(conditions.colnames()) if conditions is not None else set()
         for cs in (cond_subs or []):
@@ -1327,7 +1329,8 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             lognum = list(lc.get("consts") or [])
             if events:
                 for e in events:
-                    ce = log_arg_event(e["var"], e["value"], e["method"], lc["map"])
+                    ce = log_arg_event(e["var"], e["value"], e["method"], lc["map"],
+                                        True if positive is True else list(positive))
                     if ce.get("why") is not None:
                         raise ValueError(f"{ce['why']}.")
                     e["var"] = ce["var"]
@@ -1470,7 +1473,8 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             keep_coords=chart_coords or None, joint_steady_state=equilibrate,
             joint_fixed_states=equil_zero if equilibrate and equil_zero else None,
             held_state_params=held_state_params if equilibrate and held_state_params else None,
-            const_states=const_states, positive=positive)
+            const_states=const_states, positive=positive,
+            condition_chain=res["chain_of"] if res["n_gaps"] > 0 else None)
     if multi.get("ok") and jets:
         # the k-th Lie derivative of an observable holds the input and the input derivatives up to order k
         nm = jet_start.get

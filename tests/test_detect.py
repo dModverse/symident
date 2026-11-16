@@ -219,6 +219,84 @@ def test_pre_equilibrated_known_dose():
     assert ident("multiply") is False
 
 
+_FREE_POWER = {"X": "k*B^n*V - k*X^n*V^(1-n)"}
+
+
+@pytest.mark.parametrize("time", [0, 2])
+def test_dose_on_a_state_under_a_free_exponent(time):
+    # an add event on a state analyzed in log coordinates jumps the logarithm and every power of the state
+    def run(value, fixed=("D",)):
+        return detect(_FREE_POWER, {"y": "X/V"}, trafo={"X": "B*V"}, events=[event("X", time, value, "add")],
+                      fixed=list(fixed), reconstruct=True)
+    r = run("D")
+    assert (r.rank, r.dim, r.identifiable) == (4, 4, True)
+    r = run("D*V")
+    assert (r.rank, r.dim) == (3, 4) and supports(r) == {"V"}
+    r = run("D", fixed=())
+    assert (r.rank, r.dim) == (4, 5)
+    (s,) = r.symmetries
+    assert s.level in ("exact", "verified") and s.generator == {"D": "D", "V": "V"}
+
+
+def test_dose_on_a_state_under_a_free_exponent_with_a_free_initial_value():
+    r = detect(_FREE_POWER, {"y": "X/V"}, events=[event("X", 2, "D*V", "add")], fixed=["D"])
+    assert (r.rank, r.dim) == (4, 5) and supports(r) == {"V", "X"}
+
+
+@pytest.mark.parametrize("time", [0, 2])
+def test_dose_at_rest_on_a_state_under_a_free_exponent(time):
+    def run(value, method="add"):
+        return detect(_FREE_POWER, {"y": "X/V"}, events=[event("X", time, value, method)], fixed=["D"],
+                      equilibrate=True)
+    r = run("D")
+    assert (r.rank, r.dim, r.identifiable) == (4, 4, True)
+    r = run("D*V")
+    assert (r.rank, r.dim) == (3, 4) and supports(r) == {"V"}
+    if time:
+        r = run("D", "multiply")
+        assert (r.rank, r.dim) == (3, 4) and supports(r) == {"V"}
+
+
+def test_dose_at_rest_under_a_hill_term_matches_the_explicit_steady_state():
+    f = {"X": "k0 - k*X", "Y": "Emax*X^h/(EC^h + X^h) - kY*Y"}
+    ss = {"X": "k0/k", "Y": "Emax*(k0/k)^h/(EC^h + (k0/k)^h)/kY"}
+    ev = [event("X", 1, "D", "add"), event("X", 3, "D", "add")]
+    rest = detect(f, {"y": "s*Y"}, events=ev, equilibrate=True)
+    given = detect(f, {"y": "s*Y"}, events=ev, trafo=ss)
+    assert (rest.rank, rest.dim) == (given.rank, given.dim) == (6, 8)
+
+
+def test_initial_value_with_an_offset_on_a_state_under_a_free_exponent():
+    r = detect(_FREE_POWER, {"y": "X/V"}, trafo={"X": "B*V + D"}, fixed=["D"])
+    assert (r.rank, r.dim, r.identifiable) == (4, 4, True)
+    # the logarithm of the offset initial value enters as one leaf, and the scaling of D and V closes
+    r = detect(_FREE_POWER, {"y": "X/V"}, trafo={"X": "B*V + D"}, reconstruct=True)
+    (s,) = r.symmetries
+    assert (r.rank, r.dim) == (4, 5) and s.level in ("exact", "verified") and s.generator == {"D": "D", "V": "V"}
+    assert len(r.info["coordinates"]) == len(set(r.info["coordinates"]))
+
+
+def test_event_value_reads_the_state_at_the_event():
+    # exp() of a state in a later event value is the exponential of the state at the event, not at the start
+    r = detect({"x": "-a*x", "z": "-b*z"}, {"y": "x"}, trafo={"x": "x0", "z": "z0"},
+               events=[event("x", 1, "exp(z)")], reconstruct=True)
+    assert (r.rank, r.dim) == (3, 4) and dirset(r) == ["b+z0"]
+
+
+@pytest.mark.parametrize("value, method", [("D", "add"), ("D", "multiply"), ("x + D", "replace")])
+def test_dose_on_a_state_inside_a_trigonometric_function(value, method):
+    # the half-angle state of the recast jumps with the state, so a dose on a phase is seen
+    r = detect({"x": "w"}, {"y": "sin(x)"}, trafo={"x": "x0"}, events=[event("x", 2, value, method)])
+    assert (r.rank, r.dim, r.identifiable) == (3, 3, True)
+
+
+@pytest.mark.parametrize("fn", ["sin", "cos"])
+def test_trigonometric_event_value_reads_the_state_at_the_event(fn):
+    r = detect({"x": "-a*x", "z": "-b*z"}, {"y": "x"}, trafo={"x": "x0", "z": "z0"},
+               events=[event("x", 1, f"{fn}(z)")], reconstruct=True)
+    assert (r.rank, r.dim) == (3, 4) and dirset(r) == ["b+z0"]
+
+
 def test_equilibrate_matches_explicit_steady_state():
     res = detect({"x": "b - a*x"}, {"y": "s*x"}, equilibrate=True, reconstruct=True)
     assert res.identifiable is False
