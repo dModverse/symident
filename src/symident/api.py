@@ -303,6 +303,7 @@ class Symmetries:
         self.info = raw.get("info", {})
         self.gauge = raw.get("gauge")
         self.method = raw.get("method")
+        self.discrete_symmetries = raw.get("discrete_symmetries")
 
     def __repr__(self):
         return "\n".join(report.result_lines(self._raw))
@@ -366,31 +367,148 @@ class Symmetries:
         MsolveMissingError
             Where msolve is not found (:func:`install_msolve`).
         """
+        from .detection.fiber import solution_count
+        if self.model is None or not self.identifiable:
+            raise ValueError("solution_count() needs a locally identifiable result of detect() on a Model")
+        n = len(self.info["coordinates"])
+        order = int(order or 2 * n)
+        prep = self._fiber_inputs(order, "solution_count()")
+        if prep is None:
+            return None
+        f, g, ic = prep
+        return solution_count(f, g, ic, list(self.info["coordinates"]), order, timeout=timeout)
+
+    def discrete(self, order=None, points=5, timeout=600, budget=300, cores=1):
+        """The discrete symmetries: other values of the coordinates in the domain with the same output.
+
+        The Taylor coefficients of the observables up to `order` are equated with their values at
+        a point. msolve counts the solutions over the algebraic closure modulo a prime, and over
+        the reals in the declared domain at `points` random rational points, where the number may
+        differ between regions. Where the other solutions are rational functions sigma of the
+        coordinates, sigma is reconstructed from the characteristic polynomials of the
+        coordinates over the solutions, checked on the output at random points (``"checked"``)
+        and, where every state has a free initial value, proven by the map of the states
+        (``"exact"``). A sigma that maps no point of the domain into it is listed but not
+        relevant.
+
+        Parameters
+        ----------
+        order : int, optional
+            The highest Taylor coefficient; twice the number of coordinates by default.
+        points : int or list of dict
+            The number of random points of the count in the domain, or the points themselves
+            as ``{coordinate: value}``.
+        timeout : float
+            Seconds one call of msolve may take.
+        budget : float
+            Seconds the reconstruction of the maps may take; past it, the counts are reported
+            without closed forms.
+        cores : int
+            Threads of msolve.
+
+        Returns
+        -------
+        dict
+            ``symmetries``: per sigma the ``map`` of the coordinates it changes, ``changes``,
+            ``level``, ``preserves_domain`` (True, False, or None with the
+            ``domain_conditions`` under which sigma(theta) lies in the domain) and
+            ``fixed_set``, the factors on which sigma fixes theta. ``info``: ``order``,
+            ``count`` (solutions over the algebraic closure at a random point modulo a prime),
+            ``counts`` per point (``complex``, ``real``, ``in_domain``, ``undecided``),
+            ``closed_forms``, ``count_final`` (every solution is the image of a proven sigma),
+            ``fundamental_domain`` (inequalities that keep one point of each orbit) and
+            ``limits``.
+
+        Raises
+        ------
+        ValueError
+            Unless the result is identifiable and was detected without ``equilibrate`` and
+            ``reduce_cq``, on a model with one condition and no events, switches or unknown
+            inputs.
+        MsolveMissingError
+            Where msolve is not found (:func:`install_msolve`).
+        """
+        from .detection.discrete import analyze
+        if self.model is None or self.identifiable is None:
+            raise ValueError("discrete() needs a result of detect() on a Model")
+        if not self.identifiable:
+            # the continuous symmetries first: the reduced model has a finite fiber
+            red = self._reduced_detection()
+            out = red.discrete(order=order, points=points, timeout=timeout, budget=budget, cores=cores)
+            out["info"]["reduced"] = {"trafo": red.model.trafo, "fixed": list(red.model.fixed or []),
+                                      "coordinates": list(red.info["coordinates"])}
+            self.info["discrete"] = out["info"]
+            self.discrete_symmetries = self._raw["discrete_symmetries"] = out["symmetries"]
+            # a reduction computed before holds no discrete symmetries
+            self.__dict__.pop("_reductions", None)
+            return out
+        coords = list(self.info["coordinates"])
+        # the jets of known inputs reach past the highest order the count may take
+        prep = self._fiber_inputs(int(order or 2 * len(coords)), "discrete()")
+        if prep is None:
+            raise ValueError("discrete() needs a model rational in the states and coordinates")
+        f, g, ic = prep
+        st = self.info.get("settings") or {}
+        from .sym.msolve import msolve_threads
+        with msolve_threads(cores):
+            out = analyze(f, g, ic, coords, st.get("positive", True), list(self.model.odes), order=order,
+                          start=self.info.get("lie_order_used"), points=points, timeout=timeout, budget=budget)
+        out["info"]["limits"] = ["the counts are at random points: the count over the algebraic closure modulo "
+                                 "a prime, the real count at rational points"] + out["info"]["limits"]
+        self.info["discrete"] = out["info"]
+        self.discrete_symmetries = self._raw["discrete_symmetries"] = out["symmetries"]
+        self.__dict__.pop("_reductions", None)
+        return out
+
+    def _reduced_detection(self):
+        """The detection on the model reduced by :meth:`reduce`, which must be locally identifiable."""
+        st = self.info.get("settings") or {}
+        res = self
+        if any(d.get("level") == "open" for d in self.symmetries):
+            res = detect(self.model, positive=st.get("positive", True), engine=st.get("sym_engine", "modular"),
+                         reconstruct=True)
+        red = res.reduce().to_dict()
+        if red.get("remaining"):
+            raise ValueError("discrete() needs a reduction that removes every direction; directions remain: "
+                             + ", ".join(str(d) for d in red["remaining"]))
+        m = copy.copy(self.model)
+        rm = reduced_model(m.odes, m.observables, m.trafo, m.conditions, m.events, red["trafo"],
+                           bool(st.get("equilibrate")))
+        if rm["why"] is not None:
+            raise ValueError("discrete(): " + rm["why"])
+        m.trafo, m.conditions = rm["trafo"], rm["conditions"]
+        m.fixed = list(dict.fromkeys(list(m.fixed or []) + list(res.gauge or []) + list(red.get("fixed") or []) +
+                                     rm["fixed"]))
+        r = detect(m, positive=st.get("positive", True), engine=st.get("sym_engine", "modular"))
+        if not r.identifiable:
+            raise ValueError("discrete(): the reduced model is not locally identifiable")
+        return r
+
+    def _fiber_inputs(self, order, what):
+        """(f, g, ic) of the one condition of the model, with the trafo, the grid cell, the clock and the jets of
+        the known inputs up to `order`; None where the model is not rational."""
         from .detection.conditions import Grid, at_time, initial_value_split, num_str
         from .detection.core import _input_jets
-        from .detection.fiber import solution_count
         from .errors import SYMPY_FAILS
         from .rexpr import get_symbols, replace_symbols
         from .sym.parse import _is_rational_expr, model_sympify
         from .sym.switching import _SWITCHY
         m = self.model
-        if m is None or not self.identifiable:
-            raise ValueError("solution_count() needs a locally identifiable result of detect() on a Model")
 
         def one(x):
             if isinstance(x, (list, tuple)) and len(x) != 1:
-                raise ValueError("solution_count() handles one condition without events or unknown inputs")
+                raise ValueError(f"{what} handles one condition without events or unknown inputs")
             return x[0] if isinstance(x, (list, tuple)) else x
         grid = Grid.from_any(m.conditions)
         if m.events or m.unknown_inputs or (grid is not None and grid.nrow != 1):
-            raise ValueError("solution_count() handles one condition without events or unknown inputs")
+            raise ValueError(f"{what} handles one condition without events or unknown inputs")
         st = self.info.get("settings") or {}
         if st.get("equilibrate") or st.get("reduce_cq"):
-            raise ValueError("solution_count() needs a result of detect() without equilibrate and reduce_cq")
+            raise ValueError(f"{what} needs a result of detect() without equilibrate and reduce_cq")
         f = dict(m.odes)
         g = {str(k): str(v) for k, v in dict(one(m.observables)).items()}
         if self.info.get("switching") or any(_SWITCHY.search(v) for v in list(f.values()) + list(g.values())):
-            raise ValueError("solution_count() handles models without switches")
+            raise ValueError(f"{what} handles models without switches")
         # one simultaneous substitution as in the detection: the trafo, then the cells of the grid
         tr = {str(k): num_str(v) for k, v in dict(one(m.trafo) or {}).items()}
         tr = initial_value_split([tr], list(f), taken=list(g))["trafos"][0]
@@ -413,8 +531,6 @@ class Symmetries:
                 return None
         except SYMPY_FAILS:
             return None
-        n = len(self.info["coordinates"])
-        order = int(order or 2 * n)
         known = [str(u) for u in getattr(m, "known_inputs", None) or []]
         if known:
             # a known input is a chain of jets whose values are known symbols
@@ -423,7 +539,7 @@ class Symmetries:
             ic.update({x: x for names in jets.values() for x in names})
         # the clock advances at rate one from zero
         f["time"], ic["time"] = "1", "0"
-        return solution_count(f, g, ic, list(self.info["coordinates"]), order, timeout=timeout)
+        return f, g, ic
 
     def reduce(self, **kwargs):
         """Shortcut for :func:`reduce` with this result; `kwargs` are passed on.
@@ -515,6 +631,14 @@ class Reduction:
     fixed : list of str
         The coordinates held fixed: the ``fixed`` argument of :func:`reduce`, else the gauge
         of the detection.
+    discrete : dict or None
+        With a detection that searched discrete symmetries (``detect(discrete=True)``): the
+        ``symmetries`` that can map a point of the domain into it, the ``fundamental_domain``,
+        inequalities that keep one point of each of their orbits, and the ``coordinates`` they
+        are stated in (the reduced model's for a model with directions). ``injective`` and
+        ``reach`` of a section refer to the orbits of the directions: a discrete symmetry maps
+        a point of the section to another point with the same output, which the fundamental
+        domain excludes.
     """
 
     def __init__(self, raw):
@@ -533,6 +657,7 @@ class Reduction:
         self.coordinates = raw.get("coordinates")
         self.fixed = raw.get("fixed")
         self.assumptions = raw.get("assumptions") or {}
+        self.discrete = raw.get("discrete")
 
     def __repr__(self):
         return "\n".join(report.reduction_lines(self._raw))
@@ -590,7 +715,7 @@ def _check_detect(model, *, cores, engine, trace, control, gauge):
 
 def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free_initial=None,
            reconstruct=False, positive=None, verify=True, gauge=False, cores=1, control=None,
-           engine="modular", trace=False):
+           engine="modular", trace=False, discrete=False):
     """Structural non-identifiabilities of a model.
 
     Parameters
@@ -628,6 +753,10 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
         ``"modular"`` (finite fields) or ``"symbolic"`` (sympy, small models).
     trace : bool or str
         Print stage timings; ``"full"`` adds the Lie-order diagnostics.
+    discrete : bool or dict
+        Also search discrete symmetries with :meth:`Symmetries.discrete` (needs msolve); a dict
+        passes its arguments. The result holds them in ``discrete_symmetries`` and
+        ``info["discrete"]``.
 
     Returns
     -------
@@ -667,6 +796,8 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
         res.info["limits"] = list(res.info.get("limits") or []) + [
             "a direction without a closed form moves the resting value of a conserved total; "
             "reduce_cq=True reconstructs it in the total"]
+    if discrete:
+        res.discrete(**{"cores": cores, **(discrete if isinstance(discrete, dict) else {})})
     return res
 
 
@@ -754,6 +885,12 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
     if check and isinstance(result, Symmetries) and isinstance(red, dict) and red.get("trafo"):
         red.setdefault("checks", {})["loop"] = _closed_loop(result, red)
     finish_reduction(raw, red)
+    if isinstance(red, dict) and raw.get("discrete_symmetries") is not None:
+        d = raw["info"]["discrete"]
+        red["discrete"] = {
+            "symmetries": [e for e in raw["discrete_symmetries"] if e.get("preserves_domain") is not False],
+            "fundamental_domain": d.get("fundamental_domain") or [],
+            "coordinates": (d.get("reduced") or {}).get("coordinates") or raw["info"].get("coordinates")}
     return Reduction(red)
 
 

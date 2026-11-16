@@ -10,7 +10,8 @@ Structural identifiability of ODE models by Lie symmetries over finite fields.
 
 symident finds the non-identifiable directions of an ODE model with observables,
 conditions, events and inputs, returns them as exact generators where possible, and
-reduces the model to identifiable parameters. The rank of the OIM is computed over F<sub>p</sub> in
+reduces the model to identifiable parameters. On request it counts the other parameter values
+in the domain with the same output, the discrete symmetries, and returns them as rational maps. The rank of the OIM is computed over F<sub>p</sub> in
 a C++ kernel; closed forms are reconstructed by sparse interpolation and proven over ℚ, or
 checked at random points modulo a large prime, with an error bound where one applies.
 
@@ -29,8 +30,8 @@ pip install symident
 
 Wheels exist for Linux, macOS on Apple silicon and Windows and Python 3.10 to 3.15. The
 [installation page](https://dmodverse.github.io/symident/install.html) covers the build
-from source, the PEtab extra, [msolve](https://msolve.lip6.fr) for coupled steady states,
-and the use from R through dMod2.
+from source, the PEtab extra, [msolve](https://msolve.lip6.fr) for coupled steady states and
+discrete symmetries, and the use from R through [dMod2](https://dmodverse.github.io/dMod2/).
 
 ## Example
 
@@ -69,12 +70,12 @@ print(res.reduce())
 | | |
 |---|---|
 | `Model(odes, observables, ...)` | ODEs or a reaction network with observables, conditions, events, inputs and switches |
-| `detect(model, ...)` | rank, identifiability and the non-identifiable directions (`Symmetries` of `Symmetry`) |
+| `detect(model, ...)` | rank, identifiability and the non-identifiable directions (`Symmetries` of `Symmetry`); with `discrete=True` also the discrete symmetries |
 | `reduce(result, ...)`, `result.reduce()` | reparametrization that removes the directions (`Reduction`) |
 | `read_petab(path)`, `Model.from_petab(path)` | a `Model` from a PEtab problem, format version 1 or 2 (`pip install "symident[petab]"`) |
 | `reconst_control(...)` | settings of the saturation and the reconstruction |
 | `switches(...)` | diagnostic and route switches for a `with` block |
-| `install_msolve()` | builds msolve, needed for coupled steady states and `solution_count()` |
+| `install_msolve()` | builds msolve, needed for coupled steady states and discrete symmetries |
 | `PEtabError` | raised for a PEtab problem the reader does not support |
 
 Both results print a report; `summary()` adds the computation details and

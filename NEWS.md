@@ -1,3 +1,31 @@
+# symident 0.14.0
+
+## Discrete symmetries
+
+* `detect(discrete=True)` and `Symmetries.discrete()` search discrete symmetries: other points of
+  the domain with the output of a given one. A model with directions is reduced first, and the
+  reduced model is analyzed. The search needs msolve, whose threads `cores` sets, and
+  reports the counts without closed forms past `budget` seconds.
+* The count holds the points over the algebraic closure modulo a prime and, at rational sample
+  points, the real points and those in the declared domain, per point: the number in the domain
+  may differ between regions. The order of the Taylor coefficients rises from the Lie order of
+  the rank until the count is stable. The model is prolonged as in SIAN, with the derivatives
+  of the states at the start as unknowns, an order per observable from the rank of its Taylor
+  coefficients, the series of known inputs as numbers, the variables a linear equation fixes
+  substituted, and the system split into blocks without a shared variable, whose fibers
+  multiply.
+* Where the other points are rational functions sigma of the coordinates, sigma is
+  reconstructed from the characteristic polynomials of the coordinates over the fiber, factored
+  over Q(theta), and the other coordinates on each branch. A sigma is `checked` on the output
+  at random points and `exact` with a map of the states over Q(x, theta). Each lists whether it
+  maps the domain into itself, never, or under listed conditions, and the factors on which it
+  fixes theta. `count_final` holds when exact maps account for every point.
+* `Symmetries.solution_count()` no longer counts points where a coordinate or a denominator
+  vanishes: msolve reads no brackets, and the saturation was passed as a bracketed product.
+* `info["discrete"]["fundamental_domain"]` gives inequalities that keep one point of each
+  orbit, such as `k01 < k12`, and `Reduction.discrete` repeats it for a reduction of the same
+  result.
+
 # symident 0.13.6
 
 * An event value that reads the states through `exp()`, `log()`, a non-integer power, `sin()`,

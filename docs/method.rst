@@ -1028,12 +1028,58 @@ Discrete symmetries
 -------------------
 
 Local identifiability leaves finitely many coordinate values with the prediction of a generic
-one; more than one such value is a *discrete symmetry*, which no generator shows.
-:meth:`~symident.Symmetries.solution_count` equates the Taylor coefficients of the observables up
-to an order with their values at a random point modulo a prime and counts the solutions with
-msolve [Berthomieu2021]_, over the algebraic closure, away from zeros of coordinates and
-denominators, as in the global identifiability test of [Hong2020]_. The count holds at that point
-and is no proof.
+one; more than one such value in :math:`\Theta` is a *discrete symmetry*, which no generator
+shows. A *discrete symmetry* is a map :math:`\sigma` with :math:`\Psi_N(\sigma(\theta)) =
+\Psi_N(\theta)` and :math:`\sigma(\theta) \ne \theta`. It matters for estimation only where
+:math:`\sigma(\theta) \in \Theta`: :math:`\theta \mapsto -\theta` of a positive coordinate that
+enters as :math:`\theta^2` is no symmetry of the model on :math:`\Theta`. Counts over the
+algebraic closure, as in [Hong2020]_ and [ReyBarreiro2023]_, include such values;
+:meth:`~symident.Symmetries.discrete` counts in :math:`\Theta`.
+
+A model with directions is reduced first (:func:`~symident.reduce`); the reduced model is
+locally identifiable, so its *fiber* :math:`\Psi_N^{-1}(\Psi_N(\theta^\ast))` is finite. The
+fiber at a point :math:`\theta^\ast` is the solution set of the polynomial system that equates the
+Taylor coefficients of the observables up to order :math:`N` with their values at
+:math:`\theta^\ast`, away from zeros of coordinates and denominators. msolve
+[Berthomieu2021]_ counts its points over the algebraic closure modulo a prime, an upper bound
+for the size of the fiber of the model, which more equations can only lower. As in SIAN
+[Hong2020]_, the derivatives of the states at the start are unknowns of the system, tied by the
+Taylor coefficients of :math:`D(x)\,\dot x = N(x)` and :math:`E(x)\, y = M(x)`, and each
+observable takes the least order whose next coefficient adds no rank to the Jacobian in the
+coordinates; these orders rise together until the count is the same at two successive steps.
+The series of a known input is a number, a variable that a linear equation fixes to a number is
+substituted, and the rest splits into blocks without a shared variable, whose fibers multiply.
+Over :math:`\mathbb{Q}`, msolve isolates the real points in boxes, refined until each box decides
+the sign of every coordinate declared positive; the count in :math:`\Theta` follows at rational
+sample points. The number of points in :math:`\Theta` is constant only between the hypersurfaces
+on which two points meet or a point crosses the boundary of :math:`\Theta`, so the count is
+reported per point and never taken as a global verdict.
+
+Where the other points are rational functions :math:`\sigma_j(\theta)`, they are reconstructed
+without matching points across samples. For a coordinate :math:`\theta_i`, the characteristic
+polynomial :math:`\prod_j (Z - \sigma_{j,i}(\theta))` over the fiber is invariant under
+permutations of the points, so its coefficients are rational functions of :math:`\theta`; msolve
+gives them modulo a prime from the rational univariate representation, and they are
+interpolated as the generators are. A linear factor over :math:`\mathbb{Q}(\theta)` is a rational
+:math:`\sigma_{j,i}`. Coordinates with the fewest arguments come first, until their rational
+roots separate the points of the fiber; each other coordinate is then interpolated on each
+point, labeled by those roots. A map is ``checked`` when the coefficients agree at random
+rational points, and ``exact`` with a map :math:`\varphi` of the states such that
+
+.. math::
+
+   F(\varphi(x), \sigma(\theta)) = D\varphi(x)\, F(x, \theta), \qquad
+   h(\varphi(x), \sigma(\theta)) = h(x, \theta), \qquad
+   \varphi(x_0(\theta)) = x_0(\sigma(\theta))
+
+over :math:`\mathbb{Q}(x, \theta)`: :math:`\varphi` is :math:`\sigma` on a state whose initial value
+is a coordinate of its own and the identity on the others. When every point of the fiber but
+:math:`\theta` is the image of an ``exact`` map, the count is final (``count_final``): the exact
+maps give a lower bound equal to the upper one. A map with a positivity certificate for each
+image coordinate preserves :math:`\Theta`; a map with an image coordinate negative on
+:math:`\Theta` never meets it; otherwise the conditions on :math:`\theta` are listed. Ordering the
+coordinates and keeping in each orbit the point that is least in the first coordinate a map
+moves gives a *fundamental domain*, a set of inequalities such as :math:`k_{01} < k_{12}`.
 
 Reduction and sections
 ----------------------
@@ -1164,6 +1210,9 @@ References
    locally identifiable reparameterisations of unidentifiable systems. *Mathematical
    Biosciences* 168(2), 137-159, 2000.
 
+.. [Godfrey1983] K. Godfrey. *Compartmental Models and Their Application*. Academic Press,
+   London, 1983.
+
 .. [Goriely2001] A. Goriely. *Integrability and Nonintegrability of Dynamical Systems*.
    Advanced Series in Nonlinear Dynamics 19, World Scientific, 2001.
 
@@ -1209,6 +1258,9 @@ References
 
 .. [Prelle1983] M. J. Prelle and M. F. Singer. Elementary first integrals of differential
    equations. *Transactions of the American Mathematical Society* 279(1), 215-229, 1983.
+
+.. [ReyBarreiro2023] X. Rey Barreiro and A. F. Villaverde. Benchmarking tools for a priori
+   identifiability analysis. *Bioinformatics* 39(2), btad065, 2023.
 
 .. [Savageau1987] M. A. Savageau and E. O. Voit. Recasting nonlinear differential equations
    as S-systems: a canonical nonlinear form. *Mathematical Biosciences* 87(1), 83-115, 1987.

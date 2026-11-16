@@ -132,10 +132,43 @@ Discrete symmetries
 -------------------
 
 A discrete symmetry, such as two rate constants entering only through their sum and product,
-survives local identifiability. ``res.solution_count()`` counts, over the algebraic closure,
-the coordinate values that give the output of a random point modulo a prime, also outside
-the declared domain (``-k`` where only ``k^2`` enters). A count above one is a candidate at
-that point, not a proof. The count needs msolve (:doc:`../install`), an identifiable result,
-and one condition without events, switches or unknown inputs, detected without
-``equilibrate`` and ``reduce_cq``. It returns None for a non-rational model, and where msolve
-finds no finite count.
+survives local identifiability: another point of the domain gives the same output.
+``detect(model, discrete=True)``, or ``res.discrete()`` on a result, counts these points in the
+domain and reconstructs the maps between them where they are rational. The two-compartment
+model of [Godfrey1983]_ with an input :math:`u` into the first compartment, observed in the
+second, is the classical case:
+
+.. code-block:: python
+
+   import symident as si
+
+   m = si.Model({"x1": "-(k21 + k01)*x1 + k12*x2 + u", "x2": "k21*x1 - k12*x2"},
+                {"y": "x2"}, known_inputs=["u"])
+   r = si.detect(m, discrete=True)
+   s, = r.discrete_symmetries
+   s["map"], s["level"], s["fixed_set"]
+   r.info["discrete"]["fundamental_domain"]
+
+.. code-block:: text
+
+   ({'k01': 'k12', 'x1': '(k01*x2 - k12*x2 + k21*x1)/k21', 'k12': 'k01'}, 'exact', ['k01 - k12'])
+   ['k01 < k12']
+
+The map exchanges the elimination rate :math:`k_{01}` and the return rate :math:`k_{12}` and
+moves the initial value of :math:`x_1`, so the model is locally but not globally identifiable.
+It is ``exact``: proven by a map of the states. Its image lies in the domain where
+``domain_conditions`` hold, here where the image of :math:`x_1(0)` is positive, so
+``info["discrete"]["counts"]`` gives at each sample point the solutions over the complex
+numbers, over the reals and in the domain, which can differ between regions of the domain. A
+map that never meets the domain, such as :math:`\theta \mapsto -\theta` where only
+:math:`\theta^2` enters, has ``preserves_domain`` False and is not a symmetry of the model on the
+domain. The fundamental domain keeps one point of each orbit; ``reduce()`` lists it in
+``Reduction.discrete``.
+
+A model with directions is reduced first and analyzed in the coordinates of the reduced model
+(``info["discrete"]["reduced"]``). The analysis needs msolve (:doc:`../install`) and one
+condition without events, switches or unknown inputs, detected without ``equilibrate`` and
+``reduce_cq``. The counts hold at the sample points, and the order of the Taylor coefficients is
+raised until the count is stable; ``count_final`` is True when exact maps account for every
+solution. Where the maps are not found within ``budget`` seconds, the counts are reported
+alone. ``res.solution_count()`` gives the count over the algebraic closure at one random point.

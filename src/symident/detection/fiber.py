@@ -96,6 +96,7 @@ def _fiber_equations(f, g, ic, coords, order, p):
     # points where a denominator or a coordinate vanishes do not count
     w = "si_w"
     sat = spy.expand(spy.Mul(*dens, *[spy.Symbol(n) for n in names]))
-    eqs.append(f"{w}*({str(sat).replace('**', '^')})-1")
+    # msolve reads no brackets: the saturation as an expanded polynomial
+    eqs.append(str(spy.expand(spy.Symbol(w) * sat - 1)).replace("**", "^").replace(" ", ""))
     return eqs, names + [w]
 
