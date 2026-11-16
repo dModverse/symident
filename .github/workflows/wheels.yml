@@ -1,6 +1,7 @@
 # Wheels for Linux (manylinux x86_64 and aarch64), macOS (arm64) and Windows,
-# the sdist, tests of the Linux wheel on Fedora and Debian, and a source build on Fedora;
-# uploaded to PyPI only when a release is published. Documentation goes to Pages from master.
+# the sdist, tests of the Linux wheel on Fedora and Debian, and a source build on Fedora.
+# Documentation goes to Pages from master. A published release builds nothing: it uploads to
+# PyPI the wheels and the sdist of the successful push run on the released commit.
 name: wheels
 
 on:
@@ -14,6 +15,7 @@ on:
 jobs:
   wheels:
     name: wheels ${{ matrix.os }}
+    if: github.event_name != 'release'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,6 +30,7 @@ jobs:
           path: wheelhouse/*.whl
 
   sdist:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -42,7 +45,7 @@ jobs:
   distro:
     needs: wheels
     # runs when another platform's wheels failed; it needs only the ubuntu-latest wheel
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'release' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -77,6 +80,7 @@ jobs:
   # a source install on Fedora's own Python and compilers, as dMod2's CI installs it
   fedora:
     name: fedora
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
@@ -93,6 +97,7 @@ jobs:
 
   # the documentation as HTML, built on every run and deployed to Pages from master
   docs:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -121,20 +126,36 @@ jobs:
 
   publish:
     if: github.event_name == 'release' && github.event.action == 'published'
-    needs: [wheels, sdist, distro]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
+      actions: read
     steps:
+      # the successful push run on the released commit, built and tested on every platform
+      - id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh run list -R "$GITHUB_REPOSITORY" -w wheels.yml -e push -c "$GITHUB_SHA" -s success -L 1 \
+               --json databaseId -q '.[0].databaseId')
+          if [ -z "$id" ]; then
+            echo "::error::no successful push run of wheels.yml on $GITHUB_SHA; rerun it, then this run"
+            exit 1
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
       # the wheels and the sdist only, not the documentation for Pages
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
           path: dist
           merge-multiple: true
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: sdist
           path: dist
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
       - uses: pypa/gh-action-pypi-publish@release/v1
