@@ -102,6 +102,11 @@ class Run:
         self.nuis_cols = [i for i, z in enumerate(self.znames) if z in nuis]
         self.nuis_drop = [i for i in self.nuis_cols if self.znames[i] not in kept]
         self.nuis_order = multi.get("nuisance_order")
+        # the states in the order of the tape, which the model lines follow
+        lines = strs(multi["tapes"][0].get("model_lines")) if multi.get("tapes") else []
+        names = [ln.split("=", 1)[0].strip() for ln in lines]
+        names = names if len(names) == self.n_states else []
+        self.known_states = [names.index(x) for x in strs(multi.get("known_jet_states")) if x in names]
 
     def exact_nt(self, Nt, Mtot=0):
         """The Lie order `Nt` held to the orders at which the jet chains are exact after gap order `Mtot`."""

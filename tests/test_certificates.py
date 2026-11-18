@@ -197,6 +197,14 @@ def test_a_known_input_chain_certifies_no_order_past_its_exact_jets():
     assert (r.rank, r.dim) == (r2.rank, r2.dim) == (3, 4)
 
 
+def test_a_known_input_leaves_its_jets_out_of_the_certificate():
+    # the ranks on the states and coordinates stop rising at order 1; the start x = 0 reaches them at order 4
+    r = si.detect(si.Model({"x": "-k*x + b*u"}, {"y": "s*x"}, known_inputs=["u"]))
+    assert r.info["lie_certified"] and r.info["lie_order_used"] == 2 and (r.rank, r.dim) == (3, 4)
+    r = si.detect(si.Model({"x": "-(a + b)*x + u"}, {"y": "x^3"}, trafo={"x": "0"}, known_inputs=["u"]))
+    assert r.info["lie_certified"] and r.info["lie_order_used"] == 4 and (r.rank, r.dim) == (1, 2)
+
+
 def test_verification_points_are_uniform_modulo_q():
     from symident import session
     from symident.gfp import uniform_point

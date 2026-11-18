@@ -895,8 +895,9 @@ def test_the_reduction_reads_the_level_of_the_directions():
     support = si.detect(si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"y": "s*A"}))
     assert "open" in [s.level for s in support.symmetries]
     with pytest.raises(ValueError, match="no closed form"):
-        support.reduce()
-    part = support.reduce(allow_open=True)
+        support.reduce(allow_open=False)
+    with pytest.warns(UserWarning, match="no closed form"):
+        part = support.reduce()
     assert part.removed == ["X₁"] and part.remaining == ["X₂"]
 
 
@@ -1146,14 +1147,21 @@ def test_an_undecided_zero_limit_is_unknown_not_no():
     assert {r["verdict"] for r in zero_compat(b)} == {"unknown"}
 
 
-def test_a_checked_direction_or_a_failed_saturation_is_not_reduced():
+def test_a_checked_direction_or_a_failed_saturation_warns_and_is_an_error_only_on_request():
     from symident.reduction.core import check_levels
+    failed = {"symmetries": [{"level": "exact"}], "info": {"verification": {"ok": False, "reason": "r"}}}
     with pytest.raises(ValueError, match="allow_checked"):
-        check_levels({"symmetries": [{"level": "checked"}]})
+        check_levels({"symmetries": [{"level": "checked"}]}, allow_checked=False)
     with pytest.raises(ValueError, match="still grows"):
-        check_levels({"symmetries": [{"level": "exact"}], "info": {"verification": {"ok": False, "reason": "r"}}})
+        check_levels(failed, allow_checked=False)
+    with pytest.raises(ValueError, match="allow_open"):
+        check_levels({"symmetries": [{"level": "open"}]}, allow_open=False)
     with pytest.warns(UserWarning, match="without an error bound"):
-        check_levels({"symmetries": [{"level": "checked"}]}, allow_checked=True)
+        check_levels({"symmetries": [{"level": "checked"}]})
+    with pytest.warns(UserWarning, match="still grows"):
+        check_levels(failed)
+    with pytest.warns(UserWarning, match="stays in the reduced model"):
+        check_levels({"symmetries": [{"level": "open"}]})
 
 
 def test_the_closed_loop_fails_on_an_idle_trafo_and_is_not_run_on_a_refusal():
@@ -1257,8 +1265,10 @@ def test_a_direction_at_rest_is_verified_unless_a_resting_branch_is_undecided(mo
     with si.switches(NOFIELDS=True):
         r = si.detect(m, equilibrate=True, reconstruct=True)
     assert "checked" in [s.level for s in r.symmetries] and r.info["bound"]["why"] == why
-    with pytest.raises(ValueError, match="random points only, since the resting states of condition 1"):
+    with pytest.warns(UserWarning, match="random points only, since the resting states of condition 1"):
         r.reduce()
+    with pytest.raises(ValueError, match="random points only, since the resting states of condition 1"):
+        r.reduce(allow_checked=False)
 
 
 def test_atoms_count_positive_only_where_proven():
@@ -1363,5 +1373,6 @@ def test_a_system_of_invariants_past_the_degree_cap_is_a_limit_not_a_hang():
                  events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
     with pytest.warns(UserWarning, match="verified, not proven"):
         red = si.detect(m, reconstruct=True).reduce(check=False)
-    assert red.remaining == ["X₁"] and [b["status"] for b in red.blocks] == ["invariant_only"]
     assert any("above 32" in lim for lim in red.limits)
+    # another gauge coordinate gives a system within the cap
+    assert red.remaining == [] and red.blocks[0]["pins"]["alpha"] == "1" and red.blocks[0]["injective"]

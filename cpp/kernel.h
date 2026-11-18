@@ -21,7 +21,7 @@ List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots
                      IntegerVector NtChain, SEXP pointSer, int serOrder);
 List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
                      IntegerVector point, double pIn, int Nt, IntegerMatrix stateVals,
-                     int threads);
+                     int threads, IntegerVector dropStates);
 List symObsNullChainSeedBatch(List chains, IntegerVector evalChain, IntegerMatrix seeds,
                               NumericVector primes, int nLeaves, int nStates,
                               IntegerVector zSlots, int Nt, int Mtot, int cores,

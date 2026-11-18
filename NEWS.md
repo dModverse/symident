@@ -1,3 +1,136 @@
+# symident 0.15.0
+
+## Global analysis
+
+* `detect(mode="global")` analyzes local identifiability, reduces the directions found and counts
+  the values of the coordinates with the output of a generic one, with the rational maps between
+  them; `global_options` passes the settings of `Symmetries.discrete()`. A setting the global
+  analysis does not handle warns and leaves the reason in `info["discrete"]["unsupported"]`.
+  `mode="local"` is the default; `discrete=` is deprecated. The JSON interface takes `"mode"` and
+  `"global_options"`, and the printout of a result shows the global analysis.
+* `discrete()` handles several conditions, which share the coordinates, and events at given or
+  estimated times: after an event the gaps are eps times the given gaps, as in the local analysis,
+  and the coefficients are power series in eps up to a gap order that rises with the order. A map
+  of the states proves a symmetry through the events. A map of the fiber that changes the
+  coefficients four orders further up raises the orders.
+* Under `equilibrate`, `discrete()` starts each condition at the resting state where the balances
+  have one rational closed form in the coordinates. States that no observable depends on are left
+  out of the fiber.
+* `discrete()` starts one order above the rank criterion and ends at a count of one, which a higher
+  order cannot change; a derivative in one equation only leaves the system with it; msolve runs with
+  its probabilistic linear algebra over GF(p) and with the separating form only where it fails
+  without; where the maps account for every point counted, the real count at a sample point is
+  read from them. The counts do not change.
+* `discrete()` handles switches on the states, the inputs or the clock: each condition from its
+  start, and each allowed regime as a copy starting on a switching surface to an allowed
+  neighbor, as in the local analysis. A map is proven with a map of the states in every regime
+  that takes each switching surface to itself.
+
+## Directions and reduction
+
+* Each direction has a `kind` by the geometry of its orbits: `"scaling"` (a line in logarithmic
+  coordinates), `"translation"` (a constant generator, a line in linear coordinates) or `"curved"`,
+  also in `to_dict()` and the JSON interface. The printout groups the directions by it, and the
+  labels X1, X2, ... of the report and of the reduction count scalings, translations and curved
+  directions in this order.
+* The documentation of the reduction calls the invariants, as coordinates on the orbit space, a
+  chart; `alternatives` and `partial` are described in these terms.
+* `reduce()` gives a chart per branch of a discrete symmetry, each side `s q > 0` of its fixed set
+  `q = 0`: free values in the positive orthant map one to one onto the side, chained with the
+  section, with `injective` and `reach` proven or listed under `unproven`, and the fixed set as the
+  boundary. `reduce(branch="k01 > k12")` takes one as the trafo; without it the branches are
+  alternatives. The choice of the solved coordinate and the names of the branches do not depend on
+  the names or the order of the parameters. The JSON interface takes `"branch"`.
+* `reduce(timeout=)` limits the wall time of the section search of each block to 600 seconds by
+  default; `timeout=math.inf` lets it run to its end. A block that reaches the limit is named in
+  `Reduction.limits`.
+
+## Proofs, sections and fixes
+
+* A free exponent of a parameter, b^n with b and n parameters, keeps n as a coordinate; before, n
+  vanished into the recast atom and a scaling of b alone was reported. A parameter in an exponent is
+  analyzed as base^theta only for a numeric base.
+* A trafo writes Euler's number as `exp(1)`: the model reads `E` as a symbol, so a section that pins
+  a logarithm at one failed the check over Q and the closed loop.
+* A section under sign conditions is searched over every gauge coordinate, not only the one the
+  first matching of carriers leaves, and the section without a square root, with `injective`
+  proven and with the fewest sign conditions is kept. A system of invariants past the degree cap
+  for one gauge coordinate may be solved for another.
+* `injective` is proven for a section that covers part of the domain as well.
+* The detailed summary of a section under sign conditions names the conditions.
+* `discrete()` handles initial values that are rational functions of the coordinates, also those
+  that a section sets in the reduced model.
+* `discrete()` raises the order past a fiber without a finite count, where one count may take a
+  quarter of `budget`, and returns without the counts in the domain where no order gives a
+  finite count.
+* `discrete()` on a model whose reduced model is not rational names the section that makes it so.
+* The Lie order of a model with known inputs is proven sufficient: the order certificate takes
+  the ranks on the states and coordinates, without the columns of the input jets, whose ranks rose
+  by one per order and never reached a ceiling (docs/method.rst, "Unknown and known inputs").
+  Models with events at several times and steady states are not covered yet. A certificate that
+  ends at the jet chains of the inputs is a note in `info["limits"]`.
+* The degree bounds of a model with known inputs are computed over the symbols each expression
+  holds, which shortens the detection of models with long input jet chains.
+* The narrow route tries every minimal support of the kernel while a direction stays open, not
+  only the one the column order picks, so the levels and the rank no longer depend on the names
+  of the parameters.
+* A direction whose field Y the flow keeps up to a factor, [Y, F] = lam Y, or up to directions
+  proven before, is proven exact, also without a field that commutes with F, such as a
+  translation of two initial values. Through an event the derivative of the event map has to take
+  the field into the span after it.
+* Directions of models with unknown inputs are proven exact: the jets of the input, the input
+  included, are the prolongation of the input component.
+* The components of a field are written in the recast states of free powers (b**(c n) as E**c)
+  and the logarithm of a recast enters the identities with its field; a zero test splits
+  powers with symbolic exponents into powers of independent atoms.
+* `reduce()` warns for a direction of level `"open"` or `"checked"` and for a failed saturation
+  check, and reduces on the closed forms (an open direction stays in place); `allow_open=False`
+  and `allow_checked=False` make them errors as before.
+* The rank modulo unknown inputs is proven where an input cancels in the first Lie derivatives:
+  the order at which an input first enters an observable is proven over Q, and jet j of the input
+  enters from that order plus j on, so a jet column that cannot enter no longer counts against full
+  rank.
+* A state under a logarithm, a fractional power or a free exponent that starts at zero or below
+  raises a ValueError; before, the start log(0) became a coordinate named `zoo`.
+* `discrete()` proves a map of a model with given initial values where the states have to move:
+  the state map is solved from the observables and their Lie derivatives where these are linear in
+  it.
+* The section search factors over Q with the roots of earlier branches as symbols, not over an
+  algebraic number field, and the triangular elimination stops at the work budget.
+* Under `equilibrate`, the states that hold the free resting values of the conserved totals are
+  chosen by the structure of the model (not at zero, a coefficient without parameters, in the
+  fewest totals, observed), not by their names or order. Where several choices tie, up to six are
+  analyzed and the result with the best rank status, rank, levels and kinds is kept, so the result
+  does not depend on the names or the order of the states and totals.
+  `info["settings"]["free_initial"]` holds the states taken.
+* `free_initial` takes every set of one state per total with independent coefficients, also for
+  totals that share a species and in every order of `totals`. A state given twice, a state in no
+  total or not a state, an input, the base of a free power, a set the totals do not leave
+  independent and a state at zero at every resting state raise an `InputError`; before, some
+  were ignored and others raised a singular resting Jacobian.
+* A state of a total that rests at zero on one branch of the resting set, where a factor of other
+  states vanishes on the other, is named in `info["branches"]`; `free_initial` naming it takes the
+  branch away from zero.
+* `reduce_cq` applies an event on a species of a total: the total changes by the coefficient of the
+  species times the change of the species, read before the event, and an event on an eliminated
+  species changes only the totals. `reduce_cq` keeps the states at zero of the model before the
+  elimination, eliminates unobserved species first, solves the eliminated species jointly from the
+  totals and names them in `info["settings"]["eliminated"]`. Rank and span of the directions are
+  those without `reduce_cq`.
+* The kernel checks of closed forms at random points read the resting states solved there, so a
+  closed form with a component on a resting state is verified, not checked.
+* A field of the invariant-field route is taken only where it leaves the resting value of a pivot
+  in place; the parameter part of such a field alone is not a direction.
+* Without an error bound of the invariant fields, verified closed forms with an error bound
+  verify the rank.
+* Under `equilibrate`, the exact scalings bound the rank in every case, so a rank at that bound
+  proves the Lie order sufficient without random points, with and without `reduce_cq`.
+* The totals read from a network or from the ODEs are nonnegative combinations where these span
+  the conservation laws, the same for every order of the species. Under `reduce_cq`, a total with
+  coefficients of both signs is named in `info["limits"]`.
+* docs/method.rst, "Steady states", states the tangency rows of the reduced resting Jacobian, the
+  choice of the pivots, `reduce_cq` with events, and the rank at the declared resting start.
+
 # symident 0.14.0
 
 ## Discrete symmetries

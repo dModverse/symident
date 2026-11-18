@@ -230,11 +230,17 @@ def module_reduce(preps, labels):
 
 
 def roots_in(e, v, info=None):
-    """Roots in `v` of the linear and quadratic numerator factors of `e`; else `info["complete"]` is False."""
+    """Roots in `v` of the linear and quadratic numerator factors of `e`; else `info["complete"]` is False.
+
+    Roots free of `v` (from an earlier quadratic) are factored as symbols of their own: over Q with them as
+    generators, not over an algebraic number field, which SymPy builds very slowly. A factor that would split
+    only over the field stays of degree above 2 and marks the branches incomplete."""
     sv = spy.Symbol(v)
     try:
         num = spy.fraction(spy.together(e))[0]
-        fl = spy.factor_list(num, sv)
+        rad = {a: spy.Dummy() for a in num.atoms(spy.Pow) if not a.exp.is_Integer and not a.has(sv)}
+        fl = spy.factor_list(num.xreplace(rad), sv)
+        back = {d: a for a, d in rad.items()}
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         if info is not None:
@@ -248,7 +254,7 @@ def roots_in(e, v, info=None):
             if dg > 2:
                 raise ValueError("degree above 2")
             if dg >= 1:
-                out += list(spy.solve(f, sv))
+                out += [r.xreplace(back) for r in spy.solve(f, sv)]
         except SYMPY_FAILS + (ValueError,) as exc:
             if not isinstance(exc, ValueError):
                 sympy_fail(exc)
@@ -281,9 +287,16 @@ def first_subsets(n, k, m):
 
 
 def tri_solve(sys_, vars_, info=None):
-    """Triangular elimination of the equations; `info["complete"]` is False when a branch may be missing."""
+    """Triangular elimination of the equations; `info["complete"]` is False when a branch may be missing.
+
+    Stops, with the branches incomplete, once the work budget or the deadline of the section search is spent."""
+    from .sign import budget_spent
     if not vars_:
         return [{}]
+    if budget_spent():
+        if info is not None:
+            info["complete"] = False
+        return []
     for i, eq in enumerate(sys_):
         fs = set(free_syms(eq))
         for v in vars_:

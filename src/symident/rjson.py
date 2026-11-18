@@ -8,7 +8,7 @@ import warnings
 
 import numpy as np
 
-from .detection import symmetry_detection
+from .detection import pivot_choice, symmetry_detection
 from .options import reconst_control
 from .reduction import symmetry_reduction
 from .reduction.core import check_levels, detection_positive, finish_reduction
@@ -78,16 +78,41 @@ def _messages(rec):
 
 
 def detect_json(spec, env=None):
-    """Detection from a JSON specification; the result as JSON with the warnings and the spec."""
+    """Detection from a JSON specification; the result as JSON with the warnings and the spec. With ``"mode":
+    "global"`` the global analysis follows (``"global_options"`` as in :func:`symident.detect`)."""
+    sp = json.loads(spec)
+    mode = sp.get("mode") or "local"
+    if mode not in ("local", "global"):
+        raise ValueError(f"`mode` must be 'local' or 'global', not {mode!r}")
+    kw = kwargs_of(sp)
+    if mode == "global":
+        kw["reconstruct"] = True
     with _context(env), warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
-        res = symmetry_detection(**kwargs_of(json.loads(spec)))
+        res = pivot_choice(lambda pivots, cq_pivots: symmetry_detection(**dict(kw, free_initial=pivots,
+                                                                                 cq_pivots=cq_pivots)),
+                           kw.get("free_initial"), bool(kw.get("reduce_cq")))
+        if mode == "global":
+            res = _global(res, kw, sp.get("global_options"))
     if res.get("info") and res["info"].get("kernel") is not None:
         res["info"]["kernel"] = None
     res["warnings"] = list(dict.fromkeys(_messages(rec)))
     # the closed loop of reduce_json runs the detection again from it
     res["spec"] = json.loads(spec)
     return _dumps(res)
+
+
+def _global(res, kw, options):
+    """The result `res` of the detection with `kw` after the global analysis on the model of `kw`."""
+    from .api import Model, Symmetries, global_step
+    model = Model(kw["f"], kw["g"], trafo=kw.get("trafo"), conditions=kw.get("conditions"), events=kw.get("events"),
+                  inputs=kw.get("forcings") or (), unknown_inputs=kw.get("unknown_inputs") or (),
+                  known_inputs=kw.get("known_inputs") or (), fixed=kw.get("fixed") or (),
+                  parameters=kw.get("parameters") or (), reactions=kw.get("reactions"), totals=kw.get("totals"),
+                  regimes=kw.get("regimes"))
+    sym = Symmetries(res, model)
+    global_step(sym, options, int(kw.get("cores") or 1))
+    return sym._raw
 
 
 def reduce_json(obj, args, env=None):
@@ -101,14 +126,17 @@ def reduce_json(obj, args, env=None):
         kw["separable_" if k == "separable" else k] = v
     if kw.get("positive") is None:
         kw["positive"] = detection_positive(o)
-    allow_open = bool(kw.pop("allow_open", False))
-    allow_checked = bool(kw.pop("allow_checked", False))
+    branch = kw.pop("branch", None)
+    allow_open = bool(kw.pop("allow_open", True))
+    allow_checked = bool(kw.pop("allow_checked", True))
     check = bool(kw.pop("check", True))
     with _context(env), warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         check_levels(o, allow_open, allow_checked)
         res = symmetry_reduction(o, **kw)
         finish_reduction(o, res)
+        from .api import attach_discrete
+        attach_discrete(o, res, kw.get("positive"), branch)
     if check and isinstance(o.get("spec"), dict) and res.get("trafo") and o.get("method") == "observability":
         with _context(env), warnings.catch_warnings():
             warnings.simplefilter("ignore")

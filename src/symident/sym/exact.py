@@ -149,14 +149,66 @@ def capped_cancel(e):
     return (num.as_expr() / den.as_expr()).xreplace(back)
 
 
+def _split_powers(e, atoms):
+    """`e` with b**(c m + ...) as atom(b, m)**c ... and exp(c m + ...) as atom(exp, m)**c ..., for rational c.
+
+    The atoms are new symbols, one per base and monomial m. Where the result cancels as a polynomial in
+    independent symbols, `e` vanishes on the positive domain, the atoms being specializations."""
+    if e.is_Atom:
+        return e
+
+    def atom(key):
+        return atoms.setdefault(key, spy.Dummy())
+
+    def parts(x):
+        out, k = [], spy.Integer(0)
+        for t in spy.Add.make_args(spy.expand(x)):
+            c, m = t.as_coeff_Mul()
+            if m == 1:
+                k += c
+            else:
+                out.append((c, m))
+        return out, k
+
+    if isinstance(e, spy.exp):
+        terms, k = parts(_split_powers(e.args[0], atoms))
+        if k != 0 or any(not c.is_Rational for c, _ in terms):
+            return e
+        return spy.Mul(*[atom(("exp", m)) ** c for c, m in terms])
+    if e.is_Pow and not e.exp.is_Integer:
+        b = _split_powers(e.base, atoms)
+        terms, k = parts(e.exp)
+        if not k.is_Integer or any(not c.is_Rational for c, _ in terms):
+            return e
+        return spy.Mul(*[atom((b, m)) ** c for c, m in terms]) * b ** k
+    return e.func(*[_split_powers(a, atoms) for a in e.args])
+
+
 def _zero(e):
     """True or False when `e` cancels to zero or not over Q; None past the caps or where it is open.
 
-    A nonzero value modulo a prime shows it nonzero; a numerator that expands to zero shows it zero."""
+    A nonzero value modulo a prime shows it nonzero; a numerator that expands to zero shows it zero.
+    Powers with symbolic exponents and exponentials are split into powers of independent atoms first,
+    so that x**(2*n) and x**n meet as a square."""
     if spy.count_ops(e) > SIZE_CAP:
         return None
     if _nonzero_at_a_point(e):
         return False
+    if e.has(spy.exp) or any(not p.exp.is_Integer for p in e.atoms(spy.Pow)):
+        try:
+            split = _split_powers(e, {})
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            split = None
+        if split is not None and split != e:
+            z = _zero_split(split)
+            if z is True:
+                return True
+    return _zero_split(e)
+
+
+def _zero_split(e):
+    """The algebraic part of _zero: the numerator expanded over Q."""
     try:
         num = spy.fraction(spy.together(e))[0]
         opaque = {}
@@ -217,6 +269,96 @@ def regime_identities(regime, field, skip=()):
     for line in regime["g"]:
         h = _expr(str(line).split("=", 1)[1]) if "=" in str(line) else _expr(str(line))
         out.append((f"Y({h})", Y(h)))
+    return out
+
+
+def _in_span(target, fields, coords, label):
+    """(coefficients, identities) of target = sum c_i fields_i over the coordinates `coords`; None where no
+    coordinates fix the coefficients. The coefficients are solved from coordinates chosen at a random point, the
+    identities are the other coordinates; fields[0] must take part."""
+    import random
+    A = spy.Matrix([[W.at(c) for W in fields] for c in coords])
+    rng = random.Random(len(coords))
+    pt = {x: spy.Rational(rng.randint(2, 997), rng.randint(2, 997)) for x in sorted(A.free_symbols, key=str)}
+    try:
+        An = A.xreplace(pt)
+        if not all(x.is_Rational for x in An) or An[:, 0].is_zero_matrix:
+            return None
+        keep = list(An.rref()[1])
+        if 0 not in keep:
+            return None
+        A, An = A[:, keep], An[:, keep]
+        rows = list(An.T.rref()[1])
+        coef = A.extract(rows, list(range(A.shape[1]))).LUsolve(spy.Matrix([target[coords[i]] for i in rows]))
+        coef = [capped_cancel(x) for x in coef]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    if None in coef:
+        return None
+    used = [fields[j] for j in keep]
+    out = [(f"{label} on {c}", target[c] - sum((m * W.at(c) for m, W in zip(coef, used)), spy.Integer(0)))
+           for i, c in enumerate(coords) if i not in rows]
+    return coef, out
+
+
+def line_identities(regime, field, others=(), skip=()):
+    """(label, expression) of [Y, F] = lam Y + sum mu_j Z_j per coordinate and Y(h) per observable; or None.
+
+    The Z_j are `others`, fields proven to annihilate every Lie derivative of h. Where the identities
+    hold, Y(F(phi)) = F(Y(phi)) + lam Y(phi) + sum mu_j Z_j(phi), so Y annihilates every Lie derivative
+    of h as well, as under [Y, F] = 0. The jets of unknown inputs `skip` have no identity: their
+    components are the prolongation xi_{j+1} = F(xi_j) + lam xi_j + sum mu_j Z_j, which makes the
+    identity hold there."""
+    Y = _Field(field)
+    Zs = [_Field(z) for z in others]
+    F = _rhs(regime["f"])
+    skip = {spy.Symbol(str(x)) for x in skip}
+    coords = [c for c in dict.fromkeys(list(F) + [c for W in [Y] + Zs for c in W.c]) if c not in skip]
+    br = {}
+    for c in coords:
+        xi = Y.at(c)
+        br[c] = (Y(F[c]) if c in F else spy.Integer(0)) - \
+            sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F), spy.Integer(0))
+    got = _in_span(br, [Y] + Zs, coords, "[Y, F] - lam Y - mu Z")
+    if got is None:
+        return None
+    out = got[1]
+    for line in regime["g"]:
+        h = _expr(str(line).split("=", 1)[1]) if "=" in str(line) else _expr(str(line))
+        out.append((f"Y({h})", Y(h)))
+    return out
+
+
+def line_event_identities(events, field_from, field_to, states, others=(), skip=()):
+    """(label, expression) of DE Y_from = nu Y_to + sum nu_j Z_j at E(x), E the event group; or None.
+
+    Under [Y, F] = lam Y + ..., the flow moves the start along Y up to a factor and the fields `others`,
+    so an event keeps the argument where its derivative maps Y into the span after it."""
+    Yf, Yt = _Field(field_from), _Field(field_to)
+    Zs = [_Field(z) for z in others]
+    E = {}
+    for ev in events:
+        s, v = spy.Symbol(str(ev["var"])), _expr(str(ev["value"]))
+        E[s] = {"add": s + v, "replace": v, "multiply": s * v}[ev["method"]]
+    skip = {spy.Symbol(str(x)) for x in skip}
+    sts = [spy.Symbol(str(x)) for x in states if spy.Symbol(str(x)) not in skip]
+    coords = list(dict.fromkeys(sts + [c for W in [Yf, Yt] + Zs for c in W.c if c not in skip]))
+    target = {c: Yf(E.get(c, c)) if c in sts else Yf.at(c) for c in coords}
+
+    class _At:
+        def __init__(self, W):
+            self.W = W
+
+        def at(self, c):
+            return self.W.at(c).xreplace(E)
+    got = _in_span(target, [_At(Yt)] + [_At(Z) for Z in Zs], coords, "event: DE Y - nu Y - nu Z")
+    if got is None:
+        return None
+    out = got[1]
+    for ev in events:
+        if "time" in ev and ev["time"] is not None:
+            out.append((f"event time {ev['time']}", Yf(_expr(str(ev["time"])))))
     return out
 
 

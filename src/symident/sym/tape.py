@@ -698,6 +698,10 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             if rc['base'] not in known:
                 params.append(spy.Symbol(rc['base']))
                 known.add(rc['base'])
+            # so does an exponent seen only there, which the relation E = base^n ties as well
+            if rc['exp'] not in known and rc['exp'] not in fixed_names:
+                params.append(spy.Symbol(rc['exp']))
+                known.add(rc['exp'])
         params = sorted(params, key=spy.default_sort_key)
 
     free_states = [X for X in S if free_state[_s(X)]]

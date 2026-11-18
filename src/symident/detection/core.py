@@ -39,7 +39,7 @@ from .conditions import (
     scaling_component,
     start_time,
 )
-from .cq import check_conserved, equil_zero_branches, pivot_decomposition, substitute_cq
+from .cq import check_conserved, cq_events, equil_zero_branches, pivot_decomposition, substitute_cq
 from .finalize import finalize, log_arg_back
 from .gauge import gauge_suggest, gauged_detection
 from .inputs import check_arguments
@@ -114,8 +114,9 @@ def _rest_idle_states(fdyn, forcings, zero=()):
     return out
 
 
-def _ode_zeros(fdyn, forcings, known=()):
-    """(forced, open): states a linear right-hand side holds at zero, those whose coefficient vanishes with others."""
+def _ode_zeros(fdyn, forcings, known=(), nonzero=()):
+    """(forced, open): states a linear right-hand side holds at zero, those whose coefficient vanishes with others;
+    none of `nonzero`."""
     import sympy as spy
 
     from ..sym.parse import _make_local_parse
@@ -130,7 +131,7 @@ def _ode_zeros(fdyn, forcings, known=()):
     while True:
         cand = {}
         for k, e in rhs.items():
-            if k in found or k in forcings or k in known:
+            if k in found or k in forcings or k in known or k in nonzero:
                 continue
             x = spy.Symbol(k)
             e0 = spy.expand(e.xreplace(zero))
@@ -151,16 +152,19 @@ def _ode_zeros(fdyn, forcings, known=()):
         zero.update({spy.Symbol(k): 0 for k in new})
 
 
-def _rest_zeros(fdyn, reactions, forcings):
-    """The states at zero at rest: those the network and the right-hand sides force, then one per branch, noted."""
+def _rest_zeros(fdyn, reactions, forcings, nonzero=()):
+    """The states at zero at rest: those the network and the right-hand sides force, then one per branch, noted;
+    none of `nonzero` (``free_initial``), whose resting value is free."""
     zero = []
+    nonzero = [x for x in nonzero if x in fdyn]
     if reactions is not None:
         zero, notes = equil_zero_branches(reactions["smatrix"], reactions["species"], reactions["rates"],
                                           forcings)
         for n in notes:
             session.note("branches", n)
+        zero = [z for z in zero if z not in set(nonzero)]
     while True:
-        forced, open_ = _ode_zeros(fdyn, forcings, zero)
+        forced, open_ = _ode_zeros(fdyn, forcings, zero, nonzero)
         zero = list(dict.fromkeys(zero + forced))
         if not open_:
             return zero
@@ -168,6 +172,71 @@ def _rest_zeros(fdyn, reactions, forcings):
                                  f"vanishes at {open_[0]} = 0 and where another of them is zero; the result holds "
                                  f"for {open_[0]} = 0")
         zero.append(open_[0])
+
+
+def _note_signed_totals(totals, cq, positive):
+    """A limit for each total of `reduce_cq` with coefficients of both signs, a coordinate taken positive."""
+    dec = cq.get("decomposition")
+    if dec is None or positive is False:
+        return
+    for ci in cq["cq_info"]:
+        name = ci["total_name"]
+        if positive is not True and name not in set(map(str, positive)):
+            continue
+        row = dec["C"][list(totals).index(name)]
+        if (row > 1e-12).any() and (row < -1e-12).any():
+            session.note("limits", f"the total {name} = {totals[name]} has coefficients of both signs; as a "
+                                   "coordinate it is taken positive")
+
+
+def _zero_factor(fdyn, x, zero, forcings):
+    """(a, states of a): the right-hand side of the state `x` at rest is x times a, the other states of `zero` and
+    the inputs at zero; None where it is not."""
+    import sympy as spy
+
+    from ..sym.parse import _make_local_parse
+    _, parse = _make_local_parse([f"{k} = {v}" for k, v in fdyn.items()])
+    at0 = {spy.Symbol(u): 0 for u in list(forcings) + list(zero) if u != x}
+    try:
+        a = spy.cancel(parse(str(fdyn[x]).replace("^", "**")).xreplace(at0) / spy.Symbol(x))
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    if spy.Symbol(x) in a.free_symbols or spy.fraction(a)[1].has(spy.Symbol(x)):
+        return None
+    return a, {str(v) for v in a.free_symbols} & (set(fdyn) - set(zero) - set(forcings))
+
+
+def _note_zero_branches(fdyn, zero, totals, forcings, free_initial):
+    """A branch note for each state of a total at zero at rest whose right-hand side is the state times a factor
+    of other states: where that factor vanishes, the state rests away from zero."""
+    if not totals or not zero:
+        return
+    inside = set(get_symbols([str(v) for v in totals.values()]))
+    for x in zero:
+        if x not in inside or x in set(free_initial):
+            continue
+        za = _zero_factor(fdyn, x, zero, forcings)
+        if za is not None and za[1]:
+            session.note("branches", f"{x} rests at zero; the resting set also has a branch with {x} away from "
+                                     f"zero, where {str(za[0]).replace('**', '^')} = 0, which free_initial=['{x}'] "
+                                     "takes without reduce_cq")
+
+
+def _free_zero_states(fdyn, reactions, forcings, free_initial):
+    """The states at zero at rest with the states of `free_initial` away from zero; InputError for such a state
+    that rests at zero on every branch."""
+    zero = _rest_zeros(fdyn, reactions, forcings)
+    hit = [x for x in free_initial if x in set(zero)]
+    for x in hit:
+        za = _zero_factor(fdyn, x, zero, forcings)
+        if za is None or not za[1]:
+            raise InputError(f"`free_initial` names {x}, which rests at zero at every resting state")
+    if hit:
+        session.note("branches", f"free_initial: {', '.join(hit)} {'rests' if len(hit) == 1 else 'rest'} away from "
+                                 "zero; the result holds on that branch of the resting set")
+        zero = _rest_zeros(fdyn, reactions, forcings, free_initial)
+    return zero
 
 
 def _drop_sinks(fdyn, g_exprs, trafo, events, reactions, totals, keep, zero=()):
@@ -432,7 +501,8 @@ def _with_known_inputs(kw, known, order):
     """The arguments with each known input a chain of `order` jets whose initial values are fixed symbols."""
     taken = set(get_symbols(_model_texts(kw))) | set(dict(kw.get("f") or {}))
     f, jets = _input_jets(dict(kw["f"]), known, int(order), taken)
-    kw = dict(kw, known_order={"names": list(known), "jet_order": int(order)})
+    kw = dict(kw, known_order={"names": list(known), "jet_order": int(order),
+                               "states": [x for names in jets.values() for x in names]})
     start = {x: f"{x}_0" for names in jets.values() for x in names}
     clash = [v for v in start.values() if v in taken]
     if clash:
@@ -534,7 +604,7 @@ def symmetry_detection(*args, **kw):
         check_arguments(kw)
         _check_declared(kw, known)
     try:
-        return _detect_known(dict(kw), known)
+        return _with_kinds(_detect_known(dict(kw), known))
     except ValueError as exc:
         sub = numeric_bases(kw) if kw.get("equilibrate") and str(exc).startswith(EXP_REFUSAL) else None
         if sub is None:
@@ -546,6 +616,67 @@ def symmetry_detection(*args, **kw):
     res = restore(res, sub[1], sub[2])
     if sub[1] and isinstance(res.get("info"), dict):
         res["info"].setdefault("limits", []).append(_numeric_base_note(sub[1]))
+    return _with_kinds(res)
+
+
+_STATUS = {"proven": 2, "verified": 1}
+
+
+def _quality(raw):
+    """The order of results of several pivot sets: rank status, rank, levels, then kinds of the directions."""
+    syms = raw.get("symmetries") or []
+    lv = [s.get("level") for s in syms]
+    kinds = [s.get("kind") for s in syms]
+    status = ((raw.get("info") or {}).get("rank_status") or {}).get("status")
+    return (_STATUS.get(status, 0), raw.get("rank") or 0, lv.count("exact"), lv.count("exact") + lv.count("verified"),
+            sum(x != "open" for x in lv), kinds.count("scaling"), kinds.count("scaling") + kinds.count("translation"))
+
+
+def _settled(raw):
+    """Whether no pivot set gives a better result: a proven rank and exact scalings only."""
+    return ((raw.get("info") or {}).get("rank_status") or {}).get("status") == "proven" and \
+        all(s.get("level") == "exact" and s.get("kind") == "scaling" for s in raw.get("symmetries") or [])
+
+
+def _n_open(raw):
+    return sum(s.get("level") == "open" for s in raw.get("symmetries") or [])
+
+
+def pivot_choice(run, free_initial=None, reduce_cq=False):
+    """The result of ``run(free_initial, cq_pivots)`` over the pivot sets of the conserved totals that tie by
+    structure, the best by _quality(), so that it does not depend on the names or the order of the states and
+    totals; then, while directions stay open, over further pivot sets without ``reduce_cq``."""
+    raw = run(free_initial, None)
+    sets = (raw.get("info") or {}).pop("pivot_sets", None) or {}
+    if free_initial is not None or not sets:
+        return raw
+
+    def alt(pivots):
+        r = run(None, pivots) if reduce_cq else run(pivots, None)
+        (r.get("info") or {}).pop("pivot_sets", None)
+        return r
+    for pivots in sets.get("ties") or []:
+        if _settled(raw):
+            break
+        r = alt(pivots)
+        if _quality(r) > _quality(raw):
+            raw = r
+    if not reduce_cq:
+        # the state that holds the free resting value of a moiety decides which coordinates the directions use
+        for pivots in sets.get("valid") or []:
+            if not _n_open(raw):
+                break
+            r = alt(pivots)
+            if (-_n_open(r), _quality(r)) > (-_n_open(raw), _quality(raw)):
+                raw = r
+    return raw
+
+
+def _with_kinds(res):
+    """The result with the orbit geometry of each direction under "kind": scaling, translation or curved."""
+    from .classify import orbit_kind
+    for d in res.get("symmetries") or []:
+        d["kind"] = orbit_kind(d)
     return res
 
 
@@ -714,15 +845,17 @@ def _rank_status_plain(res):
     if sw:
         return {"status": "lower bound", "probability": None,
                 "why": "the rule of the switches is not proven for every direction"}
+    fields = None
     if info.get("rank_fields") is not None:
         b = info.get("rank_fields_bound") or {}
         if b.get("probability") is not None:
             return {"status": "verified", "probability": b["probability"],
                     "why": "invariant fields hold the kernel at every order, checked at random points "
                            "modulo a prime"}
-        return {"status": "lower bound", "probability": None,
-                "why": "invariant fields hold the kernel at every order, checked at random points modulo "
-                       f"a prime without an error bound ({b.get('why') or 'not taken'})"}
+        # without a bound of the fields, verified closed forms with a bound still verify the rank
+        fields = {"status": "lower bound", "probability": None,
+                  "why": "invariant fields hold the kernel at every order, checked at random points modulo "
+                         f"a prime without an error bound ({b.get('why') or 'not taken'})"}
     syms = res.get("symmetries") or []
     if info.get("engine") == "symbolic" and not info.get("lie_certified"):
         why = "the Lie order of the symbolic engine is not proven sufficient" + \
@@ -747,7 +880,7 @@ def _rank_status_plain(res):
         return {"status": "verified", "probability": info["bound"]["probability"],
                 "why": "every direction is closed and lies in the kernel; the rank holds unless a "
                        "verified closed form is wrong"}
-    return {"status": "lower bound", "why": why, "probability": None}
+    return fields or {"status": "lower bound", "why": why, "probability": None}
 
 
 def _gap_settled(info):
@@ -764,8 +897,10 @@ def _gap_settled(info):
 def _bound_needs_orders(info):
     """info["bound"] plus the chance of a wrong certified order, dropped where an unproven order leaves it open."""
     b = info.get("bound")
+    fields = info.get("rank_fields") is not None and \
+        (info.get("rank_fields_bound") or {}).get("probability") is not None
     if not isinstance(b, dict) or b.get("probability") is None or info.get("engine") == "symbolic" or \
-            info.get("rank_proven") is not None or info.get("rank_fields") is not None:
+            info.get("rank_proven") is not None or fields:
         return
     if not info.get("lie_certified"):
         why = "the Lie order is not proven sufficient"
@@ -993,8 +1128,10 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                        equilibrate=False, reduce_cq=False, free_initial=None, reconstruct=False,
                        positive=True, verify=True, cores=1, control=None, scalings_only=False,
                        sym_engine="modular", reactions=None, totals=None,
-                       regimes=None, unknown_inputs=None, jet_order=None, nuisance=None, known_order=None):
-    """The result dictionary of the detection on plain inputs."""
+                       regimes=None, unknown_inputs=None, jet_order=None, nuisance=None, known_order=None,
+                       cq_pivots=None):
+    """The result dictionary of the detection on plain inputs; `cq_pivots` are the species that `reduce_cq`
+    eliminates, chosen by structure when None."""
     control = {**reconst_control(), **dict(control or {})}
     equilibrate = bool(equilibrate)
     method = "scaling" if scalings_only else "observability"
@@ -1013,9 +1150,14 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
     events = as_events(events)
     model_exprs_box = {}
 
+    pivot_box = {}
+
     def deliver(raw, method):
         raw = rename_result(log_arg_back(raw, log_arg), ic_from, ic_to)
         res = finalize(raw, method, settings, elapsed=time.monotonic() - t0clock)
+        if pivot_box:
+            # pivot sets of the same structure, and further ones, for detect() to compare
+            res["info"]["pivot_sets"] = dict(pivot_box)
         res["info"]["model_exprs"] = model_exprs_box["v"]
         res["info"]["model_rhs"] = model_exprs_box["rhs"]
         res["info"]["model_inputs"] = list(forcings)
@@ -1091,8 +1233,11 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
     def g_lines(k=0):
         return eqn_lines(gset[k])
     trafo_list = isinstance(trafo, (list, tuple))
+    zero = []
     if equilibrate:
-        zero = _rest_zeros(fdyn, reactions, forcings)
+        held_free = [] if reduce_cq else [str(x) for x in free_initial or []]
+        zero = _free_zero_states(fdyn, reactions, forcings, held_free)
+        _note_zero_branches(fdyn, zero, totals, forcings, held_free)
         fdyn, trafo, events, reactions, totals, held = _drop_sinks(
             fdyn, g_char(), trafo, events, reactions, totals, forcings + list(free_initial or []), zero)
         fixed = list(dict.fromkeys(fixed + held))
@@ -1117,13 +1262,11 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         raise ValueError(f"observable(s) {', '.join(clash)} in `observables` have the "
                          f"name of a state in `odes`. Rename the observable(s) (e.g. {clash[0]}_obs).")
     parameters = list(parameters or [])
-    free_initial = list(free_initial or [])
+    free_initial = [str(x) for x in free_initial or []]
     if free_initial:
         bad = [s for s in free_initial if s not in states]
         if bad:
-            warnings.warn(f"`free_initial` names non-state(s) {', '.join(bad)}; ignored.",
-                          stacklevel=2)
-        free_initial = [s for s in free_initial if s in states]
+            raise InputError(f"`free_initial` names {bad[0]}, which is not a state of `odes`")
         if free_initial and not (equilibrate and not reduce_cq):
             warnings.warn("`free_initial` applies only with `equilibrate` and without `reduce_cq` "
                           "(the held-variable moiety parametrization); ignored.", stacklevel=2)
@@ -1240,10 +1383,14 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         check_conserved(totals, fdyn)
     cq_totals = []
     if reduce_cq and totals:
-        # a species with an initial value stays a state where another species of the same moiety can be eliminated
+        # a species with an initial value stays a state where another species of the same moiety can be
+        # eliminated, and a species at zero at rest stays a state held there
         told = [] if equilibrate else ic_names
-        avoid_cq = free_exponent_bases(list(fdyn.values()) + g_char(), list(fdyn)) + told
-        cq = substitute_cq(totals, fdyn, list(fdyn), parameters, avoid=avoid_cq)
+        avoid_cq = free_exponent_bases(list(fdyn.values()) + g_char(), list(fdyn)) + told + list(zero) + forcings
+        # an observed species stays a state
+        seen = set(get_symbols(g_char()))
+        cq = substitute_cq(totals, fdyn, list(fdyn), parameters, avoid=avoid_cq, prefer=cq_pivots or (),
+                           extra={x: int(x in seen) for x in fdyn})
         clash_cq = [s for s in cq["elim_states"] if s in set(told)]
         if clash_cq:
             warnings.warn("a `trafo` initial condition was supplied for "
@@ -1258,14 +1405,25 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         return _off_domain(list(fdyn.values()) + g_char() + ic_texts + [str(e["value"]) for e in events],
                            positive, generic=list(fixed) + list(forcings))
     off_full = off_domain() if reduce_cq and totals else None
+    cq_moved = []
     if reduce_cq and totals:
         fdyn = {k: v for k, v in cq["f"].items() if k not in set(cq["elim_states"])}
         parameters = cq["parameters"]
-        states = list(fdyn)
         if cq["cq_info"]:
             cq_totals = [ci["total_name"] for ci in cq["cq_info"]]
             subst_model(subst([ci["elim_state"] for ci in cq["cq_info"]],
                              [ci["recon_expr"] for ci in cq["cq_info"]]))
+            # an event on a species of a total changes the total: the total is a state without dynamics
+            events, cq_moved = cq_events(events, totals, cq["cq_info"])
+            for t in cq_moved:
+                fdyn[t] = "0"
+            parameters = [p for p in parameters if p not in set(cq_moved)]
+            _note_signed_totals(totals, cq, positive)
+            dec = cq["decomposition"]
+            settings["eliminated"] = list(cq["elim_states"])
+            if cq_pivots is None and dec is not None:
+                pivot_box.update(ties=list(dec["ties"]), valid=list(dec["valid"]))
+        states = list(fdyn)
     if trafo_subs and cq_totals:
         hit_cq = [k for k in trafo_subs if k in cq_totals]
         if hit_cq:
@@ -1382,20 +1540,38 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
     has_net = reactions is not None
     equil_zero = []
     if equilibrate:
-        # a signed net rate such as -k*(x - u) rests at zero without a dead producer
-        equil_zero = [s for s in _rest_zeros(fdyn, reactions if has_net else None, forcings) if s in states]
+        # a signed net rate such as -k*(x - u) rests at zero without a dead producer; the states at zero in the
+        # model before reduce_cq stay there
+        equil_zero = [s for s in list(zero) + _rest_zeros(fdyn, reactions if has_net else None, forcings,
+                                                          free_initial) if s in states]
+        equil_zero = list(dict.fromkeys(equil_zero))
     held_state_params = {}
     if equilibrate and not reduce_cq and totals:
-        avoid_fv = list(dict.fromkeys(equil_zero + forcings +
-                                      free_exponent_bases(list(fdyn.values()) + g_char(), list(fdyn))))
-        dec = pivot_decomposition(totals, states, parameters, avoid=avoid_fv, prefer=free_initial)
-        piv = [p for p in dec["pivots"] if p is not None and p in states
-               and p not in set(equil_zero) | set(forcings)]
+        bases = free_exponent_bases(list(fdyn.values()) + g_char(), list(fdyn))
+        for x in free_initial:
+            if x in set(forcings):
+                raise InputError(f"`free_initial` names {x}, an input, which rests at zero")
+            if x in set(bases):
+                raise InputError(f"`free_initial` names {x}, the base of a free exponent, whose resting value "
+                                 "the steady state solves; give another state of the total")
+        avoid_fv = list(dict.fromkeys(equil_zero + forcings + bases))
+        # an observed species holds the free resting value first
+        seen = set(get_symbols(g_char()))
+        dec = pivot_decomposition(totals, states, parameters, avoid=avoid_fv, prefer=free_initial,
+                                  extra={x: int(x not in seen) for x in states})
+        piv = [p for p in dec["basis"] if p in states and p not in set(equil_zero) | set(forcings)]
         held_state_params = {p: p for p in piv}
+        settings["free_initial"] = list(piv)
+        if not free_initial:
+            pivot_box.update(ties=list(dec["ties"]), valid=list(dec["valid"]))
     if equilibrate:
         # a state whose right-hand side vanishes at rest keeps a separate resting value
         for x in _rest_idle_states(fdyn, forcings, equil_zero):
             held_state_params.setdefault(x, x)
+        # a total that events change by an amount that reads the states rests at the value of the total
+        for t in cq_moved:
+            if t not in set(const_states):
+                held_state_params.setdefault(t, t)
     res = resolve_conditions(conditions, events, initial, symbols, states, const_states,
                              forcings, equilibrate=equilibrate, cond_subs=cond_subs,
                              cond_initial=cond_initial, n_cond_obs=n_cond_obs, renamed=list(jets))
@@ -1489,6 +1665,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         # a known input is a polynomial past the input jet chain: the rows past that order are a specialization
         top = int(known_order["jet_order"]) - 1
         multi["nuisance_order"] = top if multi.get("nuisance_order") is None else min(int(multi["nuisance_order"]), top)
+        multi["known_jet_states"] = list(known_order.get("states") or [])
     if method == "scaling":
         r = _resolved_scalings(fdyn, gset, g_per_cond, res, [u for u in forcings if u not in jet_start], fixed, jets,
                                multi if multi.get("ok") else None, held_state_params if equilibrate else None,

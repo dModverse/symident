@@ -1184,6 +1184,13 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
                 W = key[a]
                 f[c].append(a.exp * W * du / u if dphi is None else dphi * du)
                 ic_sub = {s: ic[c][str(s)] for s in _func_arg(a).free_symbols & states}
+                u0 = _func_arg(a).xreplace(ic_sub)
+                if isinstance(a, (spy.Pow, spy.log)) and u0.is_number and u0.is_positive is not True:
+                    # the auxiliary state of a power or logarithm divides by its argument, which must not
+                    # start at zero or below
+                    return {'why': 'the argument of %s starts at %s, but a logarithm, fractional power or '
+                            'base of a free exponent must be positive; give that initial value as a positive '
+                            'parameter' % (str(a).replace('**', '^'), u0)}
                 ic[c][str(W)] = a.xreplace(ic_sub)
                 fss[c].append(spy.Integer(0))
         for c in range(K):

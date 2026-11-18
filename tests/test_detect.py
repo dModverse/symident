@@ -810,7 +810,8 @@ def test_transient_channel_parameter_identified():
     r30 = detect(f, {"y": "s*x"}, equilibrate=True, events=ev, conditions=grid(["c1"]),
                  inputs=["inh", "stim"])
     assert r30.info["segments"] == 2
-    assert r30.info["gap_order_used"] >= 1
+    # the exact scaling bounds the rank, which the gap order 0 already reaches
+    assert r30.info["rank_status"]["status"] == "proven" and r30.info["order_bound"] == 0.0
     assert "kinh" not in supports(r30)
 
 
@@ -1059,11 +1060,18 @@ def test_sum_of_leaves_translation_group():
     wide = next(d for d in res.symmetries if "ksec" in (d["generator"] or {}))
     assert expr_equal(f"({wide['generator']['Km']})/({wide['generator']['ksec']})",
                       "(Km + R1 + R2 + R3)**2/kdg")
+    # without the groups the narrow route may close another basis vector of the same span
     with state.switches(NOGROUP=True):
         res0 = detect(**args)
-    w0 = next(d for d in res0.symmetries if "ksec" in (d["generator"] or {}))
-    for v in wide["generator"]:
-        assert expr_equal(wide["generator"][v], w0["generator"][v])
+    import sympy as sp
+    gens = [d["generator"] for d in res.symmetries]
+    names = sorted({v for gen in gens + [d["generator"] for d in res0.symmetries] for v in gen})
+    pt = {sp.Symbol(v): sp.Rational(7 + 3 * i, 5 + i) for i, v in enumerate(
+        sorted({str(x) for gen in gens for e in gen.values() for x in sp.sympify(e).free_symbols} | set(names)))}
+    def mat(gs):
+        return sp.Matrix([[sp.sympify(gen.get(v, "0")).xreplace(pt) for v in names] for gen in gs])
+    for d in res0.symmetries:
+        assert mat(gens + [d["generator"]]).rank() == mat(gens).rank() == len(gens)
 
 
 def test_translation_groups_test_only_pairs_alike_under_single_moves():
@@ -1984,19 +1992,20 @@ def supports_of(r, kind=None):
 
 
 def test_an_event_at_the_start_sets_a_constant_state_on_top_of_its_resting_value():
+    # the observed B holds the free resting value of the total A + B
     r = _ligand(reconstruct=True)
-    assert (r.rank, r.dim) == (5, 9) and "L" in r.info["coordinates"]
+    assert (r.rank, r.dim) == (5, 9) and "L" in r.info["coordinates"] and r.info["settings"]["free_initial"] == ["B"]
     assert r.info["rank_status"]["status"] == "proven" and all(s.level == "exact" for s in r.symmetries)
-    assert supports_of(r) == [["A", "s"], ["L", "dose", "u"], ["dose", "k1", "kb"], ["k1", "u"]]
+    assert supports_of(r) == [["B", "s"], ["L", "dose", "u"], ["dose", "k1", "kb"], ["k1", "u"]]
     # an input rests at zero
     r = _ligand(inputs=["L"])
     assert (r.rank, r.dim) == (5, 8)
-    assert supports_of(r) == [["A", "s"], ["dose", "u"], ["k1", "u"]]
+    assert supports_of(r) == [["B", "s"], ["dose", "u"], ["k1", "u"]]
 
 
 @pytest.mark.parametrize("method, scalings", [
-    ("replace", [["A", "s"], ["L", "dose", "u"], ["k1", "u"]]),
-    ("multiply", [["A", "s"], ["L", "u"], ["k1", "u"]]),
+    ("replace", [["B", "s"], ["L", "dose", "u"], ["k1", "u"]]),
+    ("multiply", [["B", "s"], ["L", "u"], ["k1", "u"]]),
 ])
 def test_an_exact_scaling_leaves_the_resting_model_invariant(method, scalings):
     assert supports_of(_ligand(method), "scaling") == scalings
@@ -2072,3 +2081,36 @@ def test_a_free_moiety_is_held_by_the_state_that_closes_the_directions():
         assert [s.level for s in r.symmetries] == ["exact"] * 3 and r.info["rank_status"]["status"] == "proven"
     three = {"A": "-k1*A + k2*B", "B": "k1*A - k2*B - k3*B + k4*C", "C": "k3*B - k4*C"}
     assert {s.level for s in detect(three, {"y": "s*B"}, equilibrate=True, reconstruct=True).symmetries} == {"exact"}
+
+
+@pytest.mark.parametrize("names", [("a1", "a2", "b11", "b12", "b21", "b22"),
+                                   ("p35", "p30", "p17", "p58", "p21", "p81")])
+def test_the_levels_do_not_depend_on_the_names(names):
+    # the narrow route closes the third direction on another minimal support than the column order picks
+    a1, a2, b11, b12, b21, b22 = names
+    r = detect(odes={"x1": f"x1*({a1} - {b11}*log(x1) - {b12}*log(x2))",
+                     "x2": f"x2*({a2} - {b21}*log(x1) - {b22}*log(x2))"},
+               observables={"y1": "x1"}, reconstruct=True)
+    assert r.rank == 5 and r.info["rank_status"]["status"] == "proven"
+    assert [s.level for s in r.symmetries] == ["exact"] * 3
+
+
+def test_each_direction_has_the_kind_of_its_orbits():
+    import json
+
+    from symident import rjson
+    m = si.Model({"x": "-(k1 + k2)*x*s", "z": "x"}, {"y": "z"})
+    r = si.detect(m, reconstruct=True)
+    kinds = {s.kind: s for s in r.symmetries}
+    assert set(kinds) == {"scaling", "translation"}
+    assert kinds["translation"].type == "general" and kinds["translation"].level == "exact"
+    assert "Translations:" in repr(r) and all("kind" in d for d in r.to_dict()["symmetries"])
+    # a curved direction: the outflow k1 + kl is kept while k1 moves in proportion to itself
+    curved = si.detect(si.Model({"x1": "kb - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2"}, {"y": "x2"}),
+                       reconstruct=True)
+    assert [s.kind for s in curved.symmetries] == ["curved"] and "Curved:" in repr(curved)
+    # the labels of the reduction follow the same order: scalings, then translations
+    red = r.reduce().to_dict()
+    assert [b["labels"] for b in red["blocks"]][0] == ["X₁"]
+    out = json.loads(rjson.detect_json(json.dumps({"f": m.odes, "g": m.observables, "reconstruct": True})))
+    assert sorted(d["kind"] for d in out["symmetries"]) == ["scaling", "translation"]

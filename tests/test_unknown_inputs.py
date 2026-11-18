@@ -35,9 +35,9 @@ def test_a_time_varying_rate_as_an_unknown_input():
     m = si.Model({"TU": "lam - rho*TU - eta*TU*V", "TI": "eta*TU*V - delta*TI", "V": "N*delta*TI - c*V"},
                  {"y1": "V", "y2": "TU + TI"}, unknown_inputs=["eta"])
     r = si.detect(m, reconstruct=True)
-    # an input that cancels in a derivative leaves the input jet columns short of full rank
-    st = r.info["rank_status"]
-    assert (r.rank, r.dim) == (7, 8) and st["status"] == "verified" and 0 < st["probability"] < 1e-6
+    # eta cancels in the derivative of y2, so it enters from order 2 on: the jet columns that can enter the
+    # rows have full rank, which proves the rank modulo the input
+    assert (r.rank, r.dim) == (7, 8) and r.info["rank_status"]["status"] == "proven"
     (s,) = r.symmetries
     assert s.level == "exact" and {"N", "delta"} <= set(s.support) and not {"lam", "rho", "c"} & set(s.support)
 

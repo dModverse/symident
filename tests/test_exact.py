@@ -247,8 +247,11 @@ def test_the_bound_covers_events_after_the_start():
 
 def test_the_bound_holds_in_the_recast_coordinates_of_a_symbolic_exponent():
     m = si.Model({"x": "v*u^n/(K^n + u^n) - d*x", "u": "-e*u"}, {"y": "x"})
-    r = si.detect(m, reconstruct=True)
+    with si.switches(NOFIELDS=True):
+        r = si.detect(m, reconstruct=True)
     assert r.unproven() and 0 < r.info["bound"]["probability"] < 1e-5
+    # the lift in the recast states E = u**n, L = log(u) proves it: n*log(u/K) and n*e stay
+    assert [s.level for s in si.detect(m, reconstruct=True).symmetries] == ["exact", "exact"]
 
 
 def test_a_gauged_detection_keeps_the_proofs_and_bound_of_its_second_pass():
@@ -487,3 +490,37 @@ def test_resting_variety_directions_are_exact_with_events_on_a_driven_state(name
     r = _rest_with_events(names, ev)
     assert [d["level"] for d in r.symmetries].count("exact") == len(r.symmetries) >= 3
     assert not r.info["proof"]
+
+
+def test_a_field_whose_lines_the_flow_keeps_and_one_whose_bracket_holds_it_are_exact():
+    # p1 + p12 is closed, so moving p1(0) against p12(0) keeps the output: [Y, F] = -(d + m) Y; the
+    # bracket of m*d/dm with F is m*p1 times that direction
+    import symident as si
+    r = si.detect(si.Model({"z": "-k*z", "p1": "k*z - (d + m)*p1", "p12": "m*p1 - d*p12"},
+                           {"y": "p1 + p12", "w": "z"}), reconstruct=True)
+    assert r.rank == 4 and sorted(s.level for s in r.symmetries) == ["exact", "exact"]
+
+
+@pytest.mark.parametrize("ev, proven", [({"var": "z", "time": 1, "value": "D", "method": "add"}, True),
+                                        ({"var": "p1", "time": 1, "value": "D", "method": "add"}, True),
+                                        ({"var": "p1", "time": 1, "value": "0", "method": "replace"}, False)])
+def test_an_event_keeps_a_field_whose_lines_the_flow_keeps_where_it_maps_the_field_into_their_span(ev, proven):
+    # a reset of p1 ends the split of p1(0) against p12(0), so nothing is proven there
+    r = si.detect(si.Model({"z": "-k*z", "p1": "k*z - (d + m)*p1", "p12": "m*p1 - d*p12"},
+                           {"y": "p1 + p12", "w": "z"}, events=[ev]), reconstruct=True)
+    assert ("exact" in [s.level for s in r.symmetries]) is proven
+
+
+def test_directions_with_an_unknown_input_are_exact_through_their_lines():
+    # the input absorbs every change but x1(0): the input component is prolonged along the jets
+    r = si.detect(si.Model({"x1": "-(k12 + k1e)*x1 + k21*x2 + b*u", "x2": "k12*x1 - k21*x2"}, {"y1": "x1"},
+                           unknown_inputs=["u"]), reconstruct=True)
+    assert (r.rank, r.dim) == (1, 6) and r.info["rank_status"]["status"] == "proven"
+    assert [s.level for s in r.symmetries] == ["exact"] * 5
+
+
+def test_an_unknown_input_under_a_log_chart_and_free_powers_is_exact():
+    r = si.detect(si.Model({"x1": "k01 + k1/(1 + (x2/(1 + w1))^ntetr) - x1",
+                            "x2": "k02 + k2/(1 + (x1/(1 + w2))^nlaci) - x2"}, {"y1": "x1", "y2": "x2"},
+                           unknown_inputs=["w1", "w2"]), reconstruct=True)
+    assert r.info["rank_status"]["status"] == "proven" and [s.level for s in r.symmetries] == ["exact"] * 6

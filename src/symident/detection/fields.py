@@ -16,6 +16,8 @@ from ..sym.exact import (
     event_identities,
     initial_identities,
     initial_lift,
+    line_event_identities,
+    line_identities,
     linear_lift,
     regime_identities,
 )
@@ -363,6 +365,9 @@ def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chai
         syms = {m for v in th.values() for m in _IDENT.findall(str(v))}
         if syms & stset:
             continue
+        # a field that reads a symbol off the coordinates, such as a fixed one, has no value at the point
+        if not set(get_symbols([str(v) for v in th.values()])) <= set(p_names):
+            continue
         try:
             ev = eval_rational_mod_batch([str(v) for v in th.values()], p_names, [vals], P)
             ev = [int(x) for x in np.asarray(ev).ravel()]
@@ -411,6 +416,15 @@ def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chai
         for k, ck in enumerate(np.atleast_1d(cc)):
             acc = (acc + mulmod(N[:, k], int(ck), P)) % P
         Vw[:, j] = acc
+    # a coordinate named like a state (the held resting value of a total) has no component in the parameter form
+    held = [i for i, z in enumerate(znames) if not _CSUFFIX.search(z) and z in stset]
+    if held and np.any(Vw[held, :] % P):
+        keep = [j for j in range(len(chosen)) if not np.any(Vw[held, j] % P)]
+        if not keep:
+            raise RouteError("a field moves the resting value of a state that is a coordinate")
+        chosen, Vw = [chosen[j] for j in keep], Vw[:, keep]
+        if len(chosen) < n_res and not partial:
+            raise RouteError(f"the regime fields give {len(chosen)} of {n_res} directions")
     chk = field_check(setup, Vw, znames, leaf_names, point, chains, joint)
     if not chk.get("ok"):
         raise RouteError(f"the fields are not proven: {chk.get('why')}")
@@ -523,8 +537,11 @@ def restricted_setup(setup, chains, joint):
                 states=[x for x in states if x in union])
 
 
-def exact_direction(setup, field, chains, joint, init=()):
-    """Whether `field` is, proven over Q, a symmetry of every regime, join, initial value and start event."""
+def exact_direction(setup, field, chains, joint, init=(), known=()):
+    """Whether `field` is, proven over Q, a symmetry of every regime, join, initial value and start event.
+
+    `known` holds the regime fields of directions proven before ("fields" of the result), which the
+    bracket of `field` with a regime may contain."""
     regimes, states = setup["regimes"], setup["states"]
     used = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
     extra = {k: v for k, v in dict(field).items() if k.endswith(INIT)}
@@ -536,23 +553,38 @@ def exact_direction(setup, field, chains, joint, init=()):
         return set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", str(v)))
     if tops and any(tops & names(v) for v in dict(field).values()):
         return {"ok": None, "why": "a component holds the last jet of an unknown input"}
-    # a parameter component is constant in time, which no identity checks once it holds an input
-    if jets and any(set(jets) & names(v) for k, v in theta.items() if k in set(setup.get("params") or ())):
+    # a parameter component is constant in time, which no identity checks once it holds an input; the
+    # lines below allow it, since they show only that the field annihilates every Lie derivative
+    param_input = bool(jets) and any(set(jets) & names(v) for k, v in theta.items()
+                                     if k in set(setup.get("params") or ()))
+    # a field whose lines the flow keeps is a symmetry as well, unless a switch moves the joins
+    lines_ok = not joint and all(e["ev"] for e in setup["joins"])
+    if param_input and not lines_ok:
         return {"ok": None, "why": "a parameter component holds an unknown input"}
+    by_line = set()
+
+    def holds(r, f):
+        if not param_input and certify(regime_identities(regimes[r], f, jets))["ok"] is True:
+            return True
+        ids = line_identities(regimes[r], f, [k[r] for k in known if r in k], jets) if lines_ok else None
+        if ids is not None and certify(ids)["ok"] is True:
+            by_line.add(r)
+            return True
+        return False
+
     of = {}
     for r in used:
-        res = certify(regime_identities(regimes[r], field, jets))
-        if res["ok"] is True:
+        if holds(r, field):
             of[r] = field
             continue
+        res = certify(regime_identities(regimes[r], field, jets))
         own = [ch for ch in chains if setup["regime_of"][ch[0]] - 1 == r]
         # initial values set by other parameters: the state components from their identities
-        if own and not jets and not joint:
+        if own and not joint:
             ics = [f"{x.strip()} = {_rename_init(e.strip(), init)}" for x, e in
                    (line.split("=", 1) for line in _lines(setup["tapes"][own[0][0]].get("ver_ic")))]
             lifts = (initial_lift(field, ics, states, regimes[r]["f"]), linear_lift(field, regimes[r], ics, states))
-            lift = next((x for x in lifts if x is not None and
-                         certify(regime_identities(regimes[r], x, jets))["ok"] is True), None)
+            lift = next((x for x in lifts if x is not None and holds(r, x)), None)
             if lift is not None:
                 of[r] = lift
                 continue
@@ -566,7 +598,15 @@ def exact_direction(setup, field, chains, joint, init=()):
     ids = []
     for e in setup["joins"]:
         if e["from"] in of and e["to"] in of:
-            ids += event_identities(e["ev"], of[e["from"]], of[e["to"]], states)
+            if e["from"] in by_line or e["to"] in by_line:
+                part = line_event_identities(e["ev"], of[e["from"]], of[e["to"]], states,
+                                             [k[e["to"]] for k in known if e["to"] in k], jets)
+                if part is None:
+                    at = e["ev"][0].get("time")
+                    return {"ok": None, "why": f"no factor maps the field through the event at {at}"}
+                ids += part
+            else:
+                ids += event_identities(e["ev"], of[e["from"]], of[e["to"]], states)
     for ch in chains:
         t1, r0 = setup["tapes"][ch[0]], setup["regime_of"][ch[0]] - 1
         if not joint:
@@ -582,6 +622,7 @@ def exact_direction(setup, field, chains, joint, init=()):
             ids += event_identities(t0, of[r0], of[r0], states)
     res = certify(ids)
     if res["ok"] is True and used:
+        res["fields"] = of
         f0 = of[used[0]]
         res["states"] = {k: str(v) for k, v in f0.items() if k in set(states) and str(v) != "0"}
     return res
@@ -772,7 +813,7 @@ def _sz_term(deg, n_cols, K, draws=None, rest=1):
 
 def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=None, threads=1,
                     start=None, degs=None, terms=None, at_rest=False, start_seeds=None, start_p=None,
-                    rest_draws=1, draws=None):
+                    rest_draws=1, draws=None, drop_states=()):
     """Certified Lie order per block, None where the start does not reach the generic rank; `terms` receives the error
     bounds and `draws` per block the most points drawn for one random point, `rest_draws` those of the resting point.
 
@@ -780,9 +821,14 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
     proves the order for generic values as well: the starts shifted by the smallest subspace of states that the
     field keeps, taken at random values of the coordinates. At rest that subspace is zero, the set is the resting
     variety, `seeds` are random points of it and `start_seeds` the starts (modulo `start_p`); else the start is at
-    `seeds`."""
+    `seeds`.
+
+    The ranks leave out the columns of `drop_states`, the jets of known inputs: their field does not depend on
+    the states and coordinates, so the rows on the other columns form a filtration of their own, which stops
+    within as many orders as it has columns; the jets are free in the set."""
     none = np.zeros((0, 0), dtype=np.int64)
-    n_cols = len(z_slots) + n_states + 1
+    drop = np.array(sorted(int(i) for i in drop_states), dtype=np.int64)
+    n_cols = len(z_slots) + n_states - len(drop) + 1
     # the generic ranks rise strictly up to their plateau, so a wrong plateau shows by order n_cols + 1
     K = int(min(n_cols + 1, cap))
     th = np.array([] if at_rest else [int(s) for s in np.atleast_1d(z_slots) if int(s) < n_leaves], dtype=np.int64)
@@ -826,7 +872,7 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             return None, None, 8
 
         Vs, stops = [], []
-        V = np.zeros((0, n_states), dtype=np.int64)
+        V = np.eye(n_states, dtype=np.int64)[drop]
         for j in range(n_seg):
             sg = sb[j]
             if j > 0 and sg.get("ev_var_idx") is not None and len(np.atleast_1d(sg["ev_var_idx"])):
@@ -863,8 +909,9 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
         s_seed = np.asarray(seeds[b] if start_seeds is None else start_seeds[b], dtype=np.int64)
         s_p = p if start_p is None else int(start_p)
         while True:
-            g = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, lv_g, p, Nt, st_g, threads)
-            q = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, s_seed % s_p, s_p, Nt, none, threads)
+            g = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, lv_g, p, Nt, st_g, threads, drop)
+            q = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, s_seed % s_p, s_p, Nt, none, threads,
+                                        drop)
             if not g.get("ok") or not q.get("ok"):
                 return None
             gr = np.asarray(g["ranks"]).reshape(n_seg, Nt + 1)

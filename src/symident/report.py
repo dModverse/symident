@@ -72,26 +72,29 @@ def format_generator(gen, indent, width):
 
 
 def _labels(syms):
+    from .detection.classify import direction_order
     sub = "₀₁₂₃₄₅₆₇₈₉"
-    rank = {"scaling": 0, "general": 1}
-    order = sorted(range(len(syms)), key=lambda i: (rank.get(syms[i]["type"], 2), i))
+    order = direction_order(syms)
     return [syms[i] for i in order], ["X" + "".join(sub[int(c)] for c in str(k + 1))
                                       for k in range(len(syms))]
 
 
 def generators_lines(res, verbose=False, width=None):
-    """Report lines of the generators, grouped by type."""
+    """Report lines of the generators, grouped by orbit geometry."""
     width = _width(width)
     syms, labels = _labels(res["symmetries"])
     if not syms:
         return []
     out = ["Generators  X = Σᵢ ξ(i) ∂ᵢ", ""]
     lw = max(len(l) for l in labels)
+    from .detection.classify import orbit_kind
     cur = ""
     for d, lab in zip(syms, labels):
-        if d["type"] != cur:
-            cur = d["type"]
-            out.append({"scaling": "Scalings", "general": "General"}.get(cur, cur.capitalize()) + ":")
+        kind = d.get("kind") or orbit_kind(d) or "none"
+        if kind != cur:
+            cur = kind
+            out.append({"scaling": "Scalings", "translation": "Translations", "curved": "Curved",
+                        "none": "Open"}[cur] + ":")
         lead = f"  {lab.ljust(lw)}  "
         ind = " " * len(lead)
         if d.get("generator") is None:
@@ -203,6 +206,35 @@ def result_lines(res, verbose=False, width=None, fixing=False):
         out.append(_wrap(f"Open: {unc}.", "", width))
     if fixing:
         out += reduction_hint_lines(res, width)
+    return out
+
+
+def global_lines(res, width=None):
+    """The global analysis of detect(mode="global"): the count of the values with the same output and the maps. Not
+    part of result_lines, whose callers in host languages print the discrete symmetries themselves."""
+    info = (res.get("info") or {}).get("discrete")
+    if not info:
+        return []
+    width = _width(width)
+    if info.get("unsupported"):
+        return ["", _wrap(f"Global: not analyzed, {info['unsupported']}", "", width)]
+    k = info.get("count")
+    dom = sorted({c["in_domain"] for c in info.get("counts") or [] if c.get("in_domain") is not None})
+    head = (f"{k} over the algebraic closure" if k is not None else "no finite count") + \
+        (f", {' or '.join(map(str, dom))} in the domain" if dom else "") + \
+        f" (order {info.get('order')}" + (f", gap order {info['gap_order']}" if info.get("gap_order") else "") + \
+        (", stable)" if info.get("order_stable") else ")")
+    where = " of the reduced model" if info.get("reduced") else ""
+    out = ["", f"Global: values{where} with the output of a generic one, counted at random points",
+           _wrap(head, "  ", width)]
+    for i, s in enumerate(res.get("discrete_symmetries") or [], 1):
+        pd = s.get("preserves_domain")
+        side = "maps the domain into itself" if pd is True else "leaves the domain" if pd is False else \
+            "in the domain where " + ", ".join(s.get("domain_conditions") or [])
+        m = ", ".join(f"{a} -> {b}" for a, b in s["map"].items())
+        out.append(_wrap(f"sigma{i} ({s['level']}): {m}; {side}", "  ", width))
+    if info.get("fundamental_domain"):
+        out.append(_wrap("fundamental domain: " + ", ".join(info["fundamental_domain"]), "  ", width))
     return out
 
 
@@ -434,10 +466,17 @@ def _section_reason(b, what, domain):
         indep = f"{labs} vanishes nowhere" if len(b["labels"]) == 1 else f"{labs} are independent at every point"
         out.append("The points with given invariants are one orbit: they are the graph of these values "
                    f"over a connected set of {', '.join(b.get('transversal') or [])}, and {indep}.")
-    if b.get("coverage") == "partial":
+    if b.get("coverage") == "partial" and b.get("sign_conditions"):
+        out.append(f"These values are positive where {', '.join(b['sign_conditions'])}; an orbit on which "
+                   f"they are not may not reach {what} inside the {domain}, and the trafo does not "
+                   f"represent it.")
+    elif b.get("coverage") == "partial" and real:
         out.append(f"These values are certified positive where {', '.join(real)} > 0; an orbit with other "
                    f"values of {', '.join(real)} may not reach {what} inside the {domain}, and the trafo "
                    f"does not represent it.")
+    elif b.get("coverage") == "partial":
+        out.append(f"These values are not certified positive for all values of the invariants; an orbit "
+                   f"may not reach {what} inside the {domain}, and the trafo does not represent it.")
     elif b.get("unproven"):
         out.append(f"The invariants determine these values uniquely, and they are positive for all "
                    f"values of the invariants. That every orbit in the {domain} has exactly one such "
@@ -547,9 +586,9 @@ def reduction_lines(x, width=None, detail_call=DETAIL_CALL):
     """Report lines of the reduction result."""
     width = _width(width)
     if not x["removed"] and not x["remaining"]:
-        return ["Nothing to reduce."]
+        return ["Nothing to reduce."] + branch_lines(x, width)
     out = [red_verdict(x)] + _level_lines(x, width) + red_chart_lines(x, width) + \
-        red_section_lines(x, width, detail_call=detail_call) + red_zero_lines(x, width)
+        red_section_lines(x, width, detail_call=detail_call) + red_zero_lines(x, width) + branch_lines(x, width)
     for b in x["blocks"]:
         if b["status"] in ("reduced", "fixed"):
             continue
@@ -562,6 +601,26 @@ def reduction_lines(x, width=None, detail_call=DETAIL_CALL):
             sp = b["split"]
             out.append(f"  split orbits: {', '.join(sp['positive'])} where {sp['invariant']} > 0, "
                        f"{', '.join(sp['negative'])} where it is < 0")
+    return out
+
+
+def branch_lines(x, width=None):
+    """The branches of a discrete symmetry: per side of its fixed set the coordinate it solves, the chosen one
+    marked; the boundary once."""
+    d = x.get("discrete") or {}
+    bs = d.get("branches") or []
+    if not bs:
+        return [_wrap(f"Branches: none, {d['why']}.", "", width)] if d.get("why") and d.get("symmetries") else []
+    chosen = (d.get("branch") or {}).get("branch")
+    out = ["", "Branches (sides of the fixed set of the discrete symmetry):"]
+    for b in bs:
+        (dl, dv), = b["new_parameters"].items()
+        (xk, xv), = b["solved"].items()
+        mark = "  [trafo]" if b["branch"] == chosen else ""
+        claims = "" if not b["unproven"] else "; unproven: " + ", ".join(u.split(":")[0] for u in b["unproven"])
+        out.append(_wrap(f"{b['branch']}: {xk} = {xv}, {dl} = {dv} > 0{claims}{mark}", "  ", width))
+    out.append(_wrap("boundary: " + ", ".join(bs[0]["boundary"]) +
+                     ("" if chosen else "; reduce(branch=...) takes one as the trafo"), "  ", width))
     return out
 
 

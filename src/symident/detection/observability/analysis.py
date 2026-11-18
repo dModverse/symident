@@ -284,9 +284,9 @@ class Analysis:
         return None
 
     def _scaling_cap(self):
-        """With continued conditions the exact scalings bound the rank from above."""
+        """Under a steady state the exact scalings bound the rank from above."""
         run, sys = self.run, self.sys
-        if not (self.joint and any(sys.cont_eligible(ci) for ci in sys.equil_conds)):
+        if not self.joint:
             return
         not_fixed = {z for z in self.znames if z not in self.zsn} | set(sys.state_base)
         self.scal_ws = self.exact_scalings([l for l in run.leaf_names if l not in not_fixed])
@@ -550,9 +550,11 @@ class Analysis:
         threads = run.cores if own_threads else 1
         mapf = (lambda f, xs: thread_map(f, xs, run.cores)) if threads == 1 and run.cores > 1 else None
         cap = max(64, 4 * (len(self.z_slots) + run.n_states))
+        chain_end = None
         if run.nuis_order is not None:
             # past the exact orders of the input chains a row is that of a polynomial stand-in
-            cap = min(cap, int(run.nuis_order) - int(sc.get("mtot_used") or 0))
+            chain_end = int(run.nuis_order) - int(sc.get("mtot_used") or 0)
+            cap = min(cap, chain_end)
         sc["order_bound_why"] = why
         orders, terms, draws = None, [], []
         if all(s is not None and len(s) > 0 for s in seeds) and cap >= 1:
@@ -564,7 +566,8 @@ class Analysis:
                                          start=self._cert_start(sc, len(segs)), degs=degs, terms=terms,
                                          at_rest=self.joint, start_seeds=starts if degs is not None else None,
                                          start_p=P1 if self.joint and degs is not None else None,
-                                         rest_draws=rest_draws, draws=draws)
+                                         rest_draws=rest_draws, draws=draws,
+                                         drop_states=run.known_states if not (self.joint or run.has_gaps) else ())
             except Exception as e:
                 swallow(e, "Lie order certificate")
                 if state.env("LIEDIAG"):
@@ -595,6 +598,9 @@ class Analysis:
                                        all(t is not None for t in terms) else None))
                 sc["order_draws"] = max(draws) if sc["order_bound"] is not None and draws and \
                     all(d is not None for d in draws) else None
+        if cap == chain_end and (orders is None or any(o is None for o in orders)):
+            session.note("limits", f"Lie order certificate: no start reached the generic rank up to order {cap}, "
+                                   "the end of the jet chains of the inputs; the order is not proven sufficient")
         if state.env("LIEDIAG"):
             print(f"[liediag] certified block orders: {orders}")
 
@@ -1244,15 +1250,62 @@ class Analysis:
                 return False
         return True
 
+    def _entry_orders(self, names, top):
+        """Per jet of an unknown input the first Lie order at which it can enter an observable, proven over Q.
+
+        If no L^k h with k < k0 holds a jet of the input u, jet j of u enters from order k0 + j on: the
+        derivative along the flow raises the jets of u by one and brings in u only through the right-hand
+        sides. k0 is the first order at which the derivative by u of some observable of some condition does
+        not cancel to zero. Under events the rows come from several times, so there every jet stays a column."""
+        if self.joint or self.run.has_gaps or self.multi.get("nuisance_starts"):
+            return {}
+        import sympy as spy
+
+        from ...sym.exact import SIZE_CAP, _zero
+        try:
+            tapes = []
+            for t in self.multi["tapes"]:
+                rhs = {}
+                for line in strs(t.get("model_lines")):
+                    lhs, e = line.split("=", 1)
+                    rhs[spy.Symbol(lhs.strip())] = model_sympify(e)
+                tapes.append((rhs, [model_sympify(line.split("=", 1)[1]) for line in strs(t.get("obs_lines"))]))
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return {}
+        nxt = {str(x): str(e) for rhs, _ in tapes for x, e in rhs.items()
+               if str(x) in names and e.is_Symbol and str(e) in names}
+        out = {}
+        for u in [nm for nm in names if nm not in set(nxt.values())]:
+            k0 = top + 1
+            for rhs, obs in tapes:
+                es, k = list(obs), 0
+                try:
+                    while k < k0 and all(spy.count_ops(e) <= SIZE_CAP for e in es) \
+                            and all(_zero(spy.diff(e, spy.Symbol(u))) is True for e in es):
+                        es = [sum((spy.diff(e, x) * f for x, f in rhs.items()), spy.S.Zero) for e in es]
+                        k += 1
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
+                k0 = min(k0, k)
+            nm, j = u, 0
+            while nm in names and nm not in out:
+                out[nm] = k0 + j
+                nm, j = nxt.get(nm), j + 1
+        return out
+
     def _projection(self, sc):
         """{"status", ...} of the rank modulo the nuisance coordinates, which a point where they drop rank can raise."""
         run = self.run
         top = int(sc["nt_used"]) + int(run.mtot)
         names = [self.znames[c] for c in run.nuis_cols]
         dist, starts = self._distances(), self.multi.get("nuisance_starts") or {}
-        # a jet that k steps of the dependencies separate from an observable enters the rows from order k on
+        entry = self._entry_orders(names, top)
+        # a jet that k steps of the dependencies separate from an observable enters the rows from order k on;
+        # jet j of an input that the Lie derivatives below order k0 do not hold enters from order k0 + j on
         can = [j for j, nm in enumerate(names)
-               if dist.get(starts.get(nm, nm), dist.get(re.sub(r"_0$", "", nm), 0)) <= top]
+               if dist.get(starts.get(nm, nm), dist.get(re.sub(r"_0$", "", nm), 0)) <= top
+               and entry.get(nm, 0) <= top]
 
         def full(r):
             B = np.asarray(r.get("nuisance_block"), dtype=np.int64).reshape(-1, len(names))

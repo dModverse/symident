@@ -31,11 +31,12 @@ def test_generator_rows_wrap_at_the_width():
     assert lines[1].startswith(" " * 8 + "+ a")
 
 
-def test_generators_grouped_scalings_first():
+def test_generators_grouped_by_orbit_geometry_scalings_first():
     out = report.generators_lines(res([SUPP, GEN, SCAL]), verbose=True, width=80)
     assert out[:4] == ["Generators  X = Σᵢ ξ(i) ∂ᵢ", "", "Scalings:", "  X₁"]
-    assert "General:" in out
-    assert "  X₂  support only" in out and "      a, b" in out and "      reason: too large" in out
+    # the curved direction before the one without closed form
+    assert out.index("Curved:") < out.index("Open:")
+    assert "  X₃  support only" in out and "      a, b" in out and "      reason: too large" in out
     assert not any("closed form" in line for line in out)
     assert report.generators_lines(res([])) == []
 

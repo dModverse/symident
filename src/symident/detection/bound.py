@@ -23,16 +23,22 @@ def _rational(e):
         all(a.exp.is_Integer for a in e.atoms(spy.Pow))
 
 
+def _total_degree(p, X):
+    """The total degree of the polynomial p in the symbols X, taken over those of X that p holds."""
+    gens = [x for x in X if x in p.free_symbols]
+    return int(spy.Poly(p, *gens).total_degree()) if gens else 0
+
+
 def _over_common_denominator(exprs, X):
     """The numerator and denominator degrees in the symbols X of each expression, and the degree of a common
     denominator, the product of the distinct denominators, which bounds that of their least common multiple."""
     parts, distinct = [], {}
     for e in exprs:
         num, den = spy.fraction(spy.together(e))
-        parts.append((int(spy.Poly(num, *X).total_degree()), int(spy.Poly(den, *X).total_degree())))
+        parts.append((_total_degree(num, X), _total_degree(den, X)))
         if not den.is_number:
             distinct.setdefault(spy.expand(den), den)
-    return parts, sum(int(spy.Poly(d, *X).total_degree()) for d in distinct.values())
+    return parts, sum(_total_degree(d, X) for d in distinct.values())
 
 
 @functools.lru_cache(maxsize=256)

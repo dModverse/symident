@@ -126,9 +126,9 @@ def test_hodgkin_huxley():
 
 def test_translation_gauge_real_coordinates():
     obs = det(f_ab(), G_AB, reconstruct=True)
-    # with every coordinate positive the orbit leaves the domain: the reduction covers the orbits a sign condition names
+    # with every coordinate positive the orbit leaves the domain: the section covers part of the orbits
     b = next(b for b in si.reduce(obs).blocks if b["type"] == "curved")
-    assert b["coverage"] == "partial" and b["sign_conditions"] == ["kd - q_1 > 0"]
+    assert b["coverage"] == "partial" and b["pins"]["kA"] == "1" and b["injective"]
     red = si.reduce(obs, positive=["B", "kB", "kd", "kE", "s"])
     assert red.remaining == []
     assert det(f_ab(), G_AB, trafo=red.trafo).identifiable
@@ -315,6 +315,16 @@ def test_a_free_exponent_of_a_condition_value_and_of_zero():
     assert (r.rank, r.dim) == (6, 7)
 
 
+def test_a_state_under_a_free_exponent_that_starts_at_zero_is_refused():
+    # x^a is not analytic at x = 0, so the Lie derivatives at t = 0 do not exist; the recast once gave the
+    # start log(0) a coordinate of its own ("zoo")
+    odes = {"x": "-k*x + u0", "z": "x^a/(g^a + x^a) - m*z"}
+    with pytest.raises(ValueError, match="positive, also at the start"):
+        si.detect(si.Model(odes, {"y": "z"}, trafo={"x": "0", "z": "0"}), cores=1)
+    r = si.detect(si.Model(odes, {"y": "z"}, trafo={"x": "x0", "z": "0"}), reconstruct=True, cores=1)
+    assert "zoo" not in r.info["coordinates"]
+
+
 def test_a_declared_positive_expression_charts_its_logarithm():
     m = si.Model({"x": "s*x^a*(1-x) - (1-s)*x*(1-x)^a"}, {"y": "x"})
     r = si.detect(m, positive=["s", "a", "x", "1-x"], cores=1)
@@ -340,3 +350,14 @@ def test_a_high_power_of_a_state_beside_a_free_scale():
     r = si.detect(si.Model(base, {"y": "a + b*h + g*I"}, trafo={"T": "1/3", "kT": "2/7", "I": "0"}, fixed=["kT"]),
                   reconstruct=True, cores=1)
     assert (r.rank, r.dim) == (7, 9) and {s.level for s in r.symmetries} == {"exact"}
+
+
+def test_a_free_exponent_of_a_parameter_keeps_the_exponent_as_a_coordinate():
+    # c^p enters as one value: (c, p) -> (c^l, p/l) is the direction; p once vanished from the coordinates
+    m = si.Model({"x": "-k*x"}, {"y": "c^p*x*s"}, trafo={"x": "1"})
+    r = si.detect(m, reconstruct=True, cores=1)
+    assert sorted(r.info["coordinates"]) == ["c", "k", "p", "s"] and (r.rank, r.dim) == (2, 4)
+    assert all(s.level == "exact" for s in r.symmetries)
+    # a pin of log(c) at one is c = exp(1), which the model reads as Euler's number, not as a symbol E
+    red = r.reduce()
+    assert red.trafo["c"] == "exp(1)" and red.checks["invariants"] and red.checks["loop"]["ok"]

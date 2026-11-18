@@ -445,7 +445,11 @@ def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20
 
     found, sel = [], np.zeros((nz, 0), dtype=np.int64)
     base = scal_rows.T.copy()
-    for _, supp, v in sorted(cands.values(), key=lambda t: (t[0], t[1])):
+    ranked = sorted(cands.values(), key=lambda t: (t[0], t[1]))
+    # every minimal support outside the scalings: which of them the greedy pick below takes
+    # depends on the column order, so the narrow route tries the others too
+    circuits = [(v, supp[0]) for _, supp, v in ranked if not in_span(base, v, nz, P)]
+    for _, supp, v in ranked:
         if len(found) >= k:
             break
         if in_span(base, v, nz, P):
@@ -454,7 +458,7 @@ def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20
         sel = np.concatenate([sel, v.reshape(nz, 1)], axis=1)
         base = np.concatenate([base, v.reshape(nz, 1)], axis=1)
     if not found:
-        return raw
+        return dict(raw, circuits=circuits)
 
     def make(fc):
         S, anchor = fc["S"], fc["anchor"]
@@ -481,7 +485,7 @@ def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20
         fn.pinned_support = True
         return fn
     return {"anchors": [fc["anchor"] for fc in found], "residue_fns": [make(fc) for fc in found],
-            "vectors": sel}
+            "vectors": sel, "circuits": circuits}
 
 
 def sqrt_mod(a, p):

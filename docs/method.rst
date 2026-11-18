@@ -345,16 +345,25 @@ state* :math:`x^\ast(\theta)` with :math:`f(x^\ast, 0, \eta) = 0`, inputs at zer
 states, or by msolve [Berthomieu2021]_. Only msolve excludes states at zero, by a Rabinowitsch
 variable :math:`\tau` with :math:`\tau \prod_i x_i = 1`, and a resting state solved modulo one
 prime is not resampled at another. The kernel is taken in coordinates and resting states
-jointly, with the tangency of a direction :math:`(\xi_\theta, \xi_x)` to :math:`W`,
+jointly, with the tangency of a direction :math:`(\xi_\theta, \xi_x)` to :math:`W` as extra
+rows rather than through the implicit function theorem. Let :math:`N` be the states that are
+neither the pivot of a conserved total (below), nor an input, nor at zero at rest, and
+:math:`f_N` their balances. The tangency rows are
 
 .. math::
 
-   J_x\, \xi_x + J_\theta\, \xi_\theta = 0, \qquad J_x = \partial_x f, \quad J_\theta =
-   \partial_\theta f,
+   J_x\, \xi_{x_N} + J_\theta\, \xi_\theta = 0, \qquad J_x = \partial_{x_N} f_N, \quad
+   J_\theta = \partial_\theta f_N,
 
-as extra rows rather than through the implicit function theorem; :math:`J_x` is the *resting
-Jacobian*. The rank holds where the resting Jacobian of every condition solved at the point
-itself is invertible at the base point; otherwise it is a lower bound.
+where the columns of :math:`\partial_x f` at the pivots are columns of :math:`J_\theta`, since
+the resting value of a pivot is a coordinate; inputs and states at zero enter as rows that hold
+them at zero. One balance per total is dropped, that of the pivot. This is exact: each total
+:math:`\sum_i a_i x_i` gives :math:`\sum_i a_i f_i = 0`, and the coefficient matrix
+:math:`C_P` of the totals at the pivots is invertible, so :math:`f_P = -C_P^{-1} C_N f_N`
+vanishes wherever :math:`f_N` does. The full :math:`\partial_x f` is singular with a total, the
+reduced :math:`J_x` is square; it is the *resting Jacobian*. A proven rank also needs the
+resting Jacobian of every condition solved at the point itself invertible at the base point;
+otherwise the rank is a lower bound.
 
 **Branches.** A *branch* is an irreducible component of :math:`W` over :math:`\mathbb{Q}`. By
 default the first condition draws the resting states and solves the balances for the
@@ -377,17 +386,52 @@ that lowers a weight no reaction raises (a *sink*; a weight assigns each species
 :math:`[0, 1]`). Of several such reactants, as in :math:`A + B \to 0`, the first is set to zero
 (``info["branches"]``). A state with right-hand side zero at rest, and the pivot of a conserved
 total (below), has a free resting value, its initial value. Rates are read at generic values,
-so a catalyst at rest is nonzero.
+so a catalyst at rest is nonzero. Where the coefficient of a state of a total at zero holds
+other states, as for :math:`\dot B = B\,(k_1 A - k_2)`, the resting set has a second branch
+with the state away from zero, where the coefficient vanishes; ``info["branches"]`` names it,
+and ``free_initial`` naming the state takes it. ``free_initial`` naming a state at zero on every
+resting state is an error.
 
-**Conserved totals.** A linear combination :math:`\sum_i a_i x_i` of states that the right-hand
-sides conserve is a *total*; totals are read from the stoichiometry of a reaction network or
-from the integer linear laws of the ODEs, unless given. Under ``equilibrate`` each total leaves
-one resting value free, which one species of the total, its *pivot*, holds as its initial value;
-the pivots are chosen per total, preferring ``free_initial`` and avoiding states at zero, inputs
-and bases of free powers. Where directions stay open, other choices of pivots are tried, up to
-six. With ``reduce_cq`` the pivot :math:`x_{i_0}` is eliminated instead,
-:math:`x_{i_0} = (T - \sum_{i \ne i_0} a_i x_i)/a_{i_0}`, and the value :math:`T` of the total
-becomes a parameter.
+**Conserved totals.** A linear combination :math:`T = \sum_i a_i x_i` of states that the
+right-hand sides conserve is a *total*; the coefficients may hold parameters, such as volumes.
+Totals are read from the stoichiometry of a reaction network or from the linear laws of the
+ODEs, unless given. The basis read off consists of nonnegative laws where these span the laws,
+the extreme rays of the cone of nonnegative laws with the fewest species first, so that it does
+not depend on the order of the species and each total is positive on the parameter space; a
+total with coefficients of both signs is named in ``info["limits"]`` under ``reduce_cq``, which
+takes it positive.
+
+Under ``equilibrate`` each total leaves one resting value free, which one species of the total,
+the *pivot*, holds as initial value. The pivots form a set :math:`P` of species, one per
+independent total, with an invertible coefficient matrix :math:`C_P`. ``free_initial`` names
+them; otherwise they are chosen by the structure of the model, in this order: not at zero at
+rest, not an input and not the base of a free power, a coefficient without parameters, in the
+fewest totals, observed. Where several sets tie by these criteria, up to six are analyzed and the
+result with the best rank status, rank, levels and kinds is kept, so that the result does not
+depend on the names or the order of the states and totals. With another pivot the resting
+value of another state is the coordinate, so the generators differ, but their spans agree after
+the map to the parameters and all resting states at a common resting point. Where directions
+stay open, other valid sets are tried as well. ``info["settings"]["free_initial"]`` holds the
+pivots of the result.
+
+With ``reduce_cq`` the pivots are eliminated instead, :math:`x_P = C_P^{-1} (T - C_N x_N)`, and
+the values :math:`T` of the totals become coordinates (``info["settings"]["eliminated"]``); the
+pivots are chosen as above, except that unobserved species are eliminated first. An event that changes
+a species :math:`x_i` of a total changes the total by :math:`a_i\,(E(x_i) - x_i)`, with
+:math:`E(x_i)` the value after the event; like every event value it reads the states before the
+events. The total is then a state without dynamics, so the segments after the event see the new
+total, and an event on an eliminated species changes only the totals. Both parametrizations
+describe the same resting variety, so ``reduce_cq`` gives the same rank and the same span of the
+directions, mapped to the same space, as the pivots.
+
+**Rank at the resting start.** Under ``equilibrate`` the rank is that at the declared resting
+start, whose coordinates fix the level set of each total. The ceiling of the order certificate
+(`Sufficient Lie order`_) is the generic rank on the whole resting variety, so the computed rank
+cannot exceed the rank along the trajectories from the declared start; it can only fall short of
+it, and is then reported as a lower bound (a singular resting Jacobian, an order not proven
+sufficient) or covered by the error bound (a random point). The exact scalings bound the rank
+from above, so a rank at that bound proves the order sufficient without random points, with
+``info["order_bound"]`` zero.
 
 **Diagonal start.** Conditions sharing :math:`\theta` have coupled resting states. Rank and
 kernel are generic on the joint variety of the conditions,
@@ -477,6 +521,19 @@ chain is a polynomial, i.e., a specialization of the input, so the Lie order and
 certificate are held to :math:`K - 1 - M`, and the chain is doubled, up to three times, while
 the order reaches past it (``info["known_inputs"]``).
 
+The order certificate (`Sufficient Lie order`_) takes the ranks of a known input's model on the
+columns of the states and coordinates only. The jets would add a column per order, so the ranks
+with them never stop rising. Without them the lemma holds as stated: the field of the jets,
+:math:`w_j \mapsto w_{j+1}`, depends on neither the states nor the coordinates, so
+:math:`\partial_z F(\varphi) = (\partial_z \varphi)\, \partial_z f + F(\partial_z \varphi)` for
+every :math:`\varphi` with :math:`z = (x, \theta)`, and the restricted rows form a filtration over
+the rational functions in :math:`z` and all jets. Its ranks rise strictly up to the ceiling, which
+is therefore reached within :math:`\dim z` orders. The OIM needs no jet column, since the start
+jets do not depend on :math:`\theta`. The jets are free in :math:`S`, and the proposition holds
+for every input: a start whose jets are special (a step) can only miss the ceiling, which leaves
+the order not proven sufficient. Models with events at several times and steady states keep the
+ranks with the jet columns.
+
 Switching models
 ~~~~~~~~~~~~~~~~
 
@@ -506,9 +563,11 @@ symmetry from every point of the surface. A state that starts at zero in every c
 every allowed regime keeps at zero with finite derivatives in such states, and that no later
 event moves, is zero along every trajectory. It is dropped (``info["zero_states"]``), and a
 coordinate that only such states read is a separate direction :math:`\partial_{\theta_i}`;
-``info["limits"]`` names a condition with further such states. Other invariant sets of the
-start, such as the level set of a conserved total, are not used, so the rank can exceed the
-rank along the trajectories from the declared start.
+``info["limits"]`` names a condition with further such states. For a copy switched into a
+regime, other invariant sets of the start, such as the level set of a conserved total, are not
+used, so the rank of a model with switches can exceed the rank along the trajectories from the
+declared start. This concerns switches only; under ``equilibrate`` without switches the rank
+cannot exceed it (`Steady states`_).
 
 **Visibility.** Two regimes :math:`\sigma, \sigma'` are *neighbors* at :math:`\Gamma_j` when
 they differ only in the sign of :math:`\gamma_j`. The switch is *visible* when for some
@@ -783,6 +842,27 @@ entry is checked at a prime outside those of the fit, and the direction against 
 two points uniform modulo the verification prime. ``reconst_control(homotopy=False)`` turns
 this route off.
 
+Orbit geometry
+~~~~~~~~~~~~~~
+
+Each direction with a closed form is classified by the geometry of its orbits,
+``Symmetry.kind``, up to a common factor :math:`c(\theta)` of the components:
+
+- a *scaling*, :math:`\xi_i = c\, w_i \theta_i` with numbers :math:`w_i`, has lines in
+  logarithmic coordinates as orbits and monomial invariants; a pin
+  :math:`\theta_i = 1` meets every orbit once;
+- a *translation*, :math:`\xi_i = c\, v_i` with numbers :math:`v_i`, has lines in linear
+  coordinates as orbits and linear invariants. It is proven like a scaling, from the linear
+  structure of the model: the right-hand sides, observables, initial values and events do not
+  change along :math:`v`, checked over :math:`\mathbb{Q}`, with the field on the states where
+  :math:`v` moves initial values. In the positive orthant an orbit ends on the boundary, so the
+  section lies on a face, :math:`\theta_i = 0`, reached in the limit;
+- every other direction is *curved*.
+
+Translations and curved directions are general directions (``Symmetry.type``). The labels
+:math:`X_1, X_2, \dots` of the report and of the reduction count the scalings first, then the
+translations and the curved directions.
+
 Invariant fields and gauge
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -832,7 +912,16 @@ the direction lifted onto the start :math:`z_0`.
 with :math:`a` numbers and :math:`c, c'` rational functions of states and parameters, which may
 have poles. A proof over :math:`\mathbb{Q}` takes the lift as the one field of each regime, with
 :math:`[F, Y] = 0` and :math:`\mathrm{D}E_e\, Y = Y' \circ E_e`; the invariant fields of
-`Invariant fields and gauge`_ take the fields of the regimes.
+`Invariant fields and gauge`_ take the fields of the regimes. Where :math:`[F, Y] \neq 0`, the
+proof takes as :math:`X_l` the lift together with the lifts proven before, and (B) and (C) with
+coefficients solved at a random point and checked over :math:`\mathbb{Q}` on the other
+coordinates: :math:`[F, Y] = \lambda Y + \sum_j \mu_j Z_j` holds, e.g., for a translation of
+two initial values whose sum the dynamics keeps, where the flow scales :math:`Y`. With unknown
+inputs the jets of an input, the input included, take no identity: their components are the
+prolongation :math:`\xi_{w_{j+1}} = F(\xi_{w_j}) + \lambda \xi_{w_j} + \sum_j \mu_j \xi^{Z_j}_{w_j}`,
+which makes (B) hold there, so a field whose parameter components hold the input is allowed.
+Components are tried as found, canonical, over a common denominator and divided by each of their
+first four components.
 
 **Proposition.** Under (A) to (D) the direction lies in the kernel at every Lie order and every
 gap length.
@@ -1029,7 +1118,7 @@ Discrete symmetries
 
 Local identifiability leaves finitely many coordinate values with the prediction of a generic
 one; more than one such value in :math:`\Theta` is a *discrete symmetry*, which no generator
-shows. A *discrete symmetry* is a map :math:`\sigma` with :math:`\Psi_N(\sigma(\theta)) =
+shows. ``detect(mode="global")`` searches them after the local analysis. A *discrete symmetry* is a map :math:`\sigma` with :math:`\Psi_N(\sigma(\theta)) =
 \Psi_N(\theta)` and :math:`\sigma(\theta) \ne \theta`. It matters for estimation only where
 :math:`\sigma(\theta) \in \Theta`: :math:`\theta \mapsto -\theta` of a positive coordinate that
 enters as :math:`\theta^2` is no symmetry of the model on :math:`\Theta`. Counts over the
@@ -1044,14 +1133,43 @@ Taylor coefficients of the observables up to order :math:`N` with their values a
 [Berthomieu2021]_ counts its points over the algebraic closure modulo a prime, an upper bound
 for the size of the fiber of the model, which more equations can only lower. As in SIAN
 [Hong2020]_, the derivatives of the states at the start are unknowns of the system, tied by the
-Taylor coefficients of :math:`D(x)\,\dot x = N(x)` and :math:`E(x)\, y = M(x)`, and each
-observable takes the least order whose next coefficient adds no rank to the Jacobian in the
-coordinates; these orders rise together until the count is the same at two successive steps.
-The series of a known input is a number, a variable that a linear equation fixes to a number is
-substituted, and the rest splits into blocks without a shared variable, whose fibers multiply.
+Taylor coefficients of :math:`D(x)\,\dot x = N(x)` and :math:`E(x)\, y = M(x)`. Each observable
+starts one order above the least order whose next coefficient adds no rank to the Jacobian in the
+coordinates, where the system is square and has extra solutions; these orders rise together until
+the count is the same at two successive steps or is one, which no higher order changes, since more
+equations give a fiber within the one before. The series of a known input is a number, a variable
+that a linear equation fixes to a number is substituted, a derivative that enters one equation
+only, there linearly with a numeric coefficient, leaves with that equation, and the rest splits
+into blocks without a shared variable, whose fibers multiply. msolve runs over :math:`\mathbb{F}_p`
+with its probabilistic sparse linear algebra.
+The conditions are stacked as in the local analysis: each has derivatives of its own, the
+coordinates are shared. After an event the gaps are :math:`\varepsilon\, \Delta t_i^0` as in
+`Conditions and events`_: the state at the end of a gap is the series of the segment before
+evaluated at :math:`\varepsilon\, \Delta t_i^0`, the event maps it to the start of the next
+segment, and every coefficient after the event is a power series in :math:`\varepsilon`, kept up
+to the *gap order*, which rises with the order. A segment whose start holds coordinates, an event
+at an estimated time, is expanded at the start of the condition on the flow continued backward,
+so that its coefficients depend on the time of the event. Under ``equilibrate`` the start of a
+condition is the solution of the balances over :math:`\mathbb{Q}(\theta)`, with the inputs at zero,
+the states that are coordinates at their free resting value and the states without dynamics at
+their initial value; where the balances have more than one rational solution, the one with the
+most states away from zero, and none without one rational solution. States that no observable
+depends on are left out. With switches, as in `Switching models`_, each condition enters from its
+start in the regime of the start, decided at a random point, and each allowed regime as a copy
+whose start is free on a switching surface :math:`\gamma_j = 0` to an allowed neighbor: at the point
+the surface is solved for a state in which it is linear, and in the fiber
+:math:`\gamma_j(z', \theta') = 0` is an equation; the clock and the jets of known inputs of a copy
+start at known values. A map is ``exact`` with a map of the states in every regime that takes each
+surface to itself, :math:`\gamma_j(\varphi(x), \sigma(\theta)) = c\, \gamma_j(x, \theta)` with
+:math:`c` free of the states and positive on :math:`\Theta`. A switch on the parameters alone puts
+the model in one regime and is not handled. A map reconstructed from the fiber is
+checked on the coefficients four orders further up, in :math:`t` and in :math:`\varepsilon`; a
+map that fails shows a fiber too large at that order, and the orders rise.
 Over :math:`\mathbb{Q}`, msolve isolates the real points in boxes, refined until each box decides
 the sign of every coordinate declared positive; the count in :math:`\Theta` follows at rational
-sample points. The number of points in :math:`\Theta` is constant only between the hypersurfaces
+sample points. Where the rational maps of the next paragraph account for every point counted at a
+sample point, and the images give its coefficients exactly, the point and its images are the
+fiber, and the count needs no isolation. The number of points in :math:`\Theta` is constant only between the hypersurfaces
 on which two points meet or a point crosses the boundary of :math:`\Theta`, so the count is
 reported per point and never taken as a global verdict.
 
@@ -1073,13 +1191,31 @@ rational points, and ``exact`` with a map :math:`\varphi` of the states such tha
    \varphi(x_0(\theta)) = x_0(\sigma(\theta))
 
 over :math:`\mathbb{Q}(x, \theta)`: :math:`\varphi` is :math:`\sigma` on a state whose initial value
-is a coordinate of its own and the identity on the others. When every point of the fiber but
+is a coordinate of its own and the identity on the others, or, where the identity fails, the
+solution of :math:`h(\varphi(x), \sigma(\theta)) = h(x, \theta)` and the Lie derivatives of these
+equations where they are linear in :math:`\varphi`. With events, each segment has such a map, and
+at each event :math:`\varphi_{\text{after}}(E(x, \theta)) = E(\varphi_{\text{before}}(x),
+\sigma(\theta))`, in every condition. When every point of the fiber but
 :math:`\theta` is the image of an ``exact`` map, the count is final (``count_final``): the exact
 maps give a lower bound equal to the upper one. A map with a positivity certificate for each
 image coordinate preserves :math:`\Theta`; a map with an image coordinate negative on
 :math:`\Theta` never meets it; otherwise the conditions on :math:`\theta` are listed. Ordering the
 coordinates and keeping in each orbit the point that is least in the first coordinate a map
 moves gives a *fundamental domain*, a set of inequalities such as :math:`k_{01} < k_{12}`.
+
+For a reduction, each image of the fundamental domain under the maps is a *branch*. Where a map
+:math:`\sigma` has one hypersurface :math:`q = 0` as fixed set and exchanges its sides,
+:math:`q(\sigma(\theta)) = -c\, q(\theta)` with :math:`c > 0` on :math:`\Theta`, the branches are
+the sides :math:`s\, q > 0`, :math:`s = \pm 1`, named by the inequality, and :math:`q = 0` is their
+boundary. On a side, :math:`\delta = s\, q(\theta) > 0` replaces a coordinate :math:`x` in which
+:math:`q` is linear; :math:`x` is chosen by structure, a solution :math:`x(\delta, \theta')` with a
+positivity certificate first, then the smaller expression, so that neither the chart nor the name of
+the branch depends on the names or the order of the parameters. The chart maps free values in the
+positive orthant into the side and is chained with the section of the continuous symmetries. It is
+``injective`` where the coefficient of :math:`x` in :math:`q` has a sign certificate, since
+:math:`\delta = s\, q(\theta)` inverts it, and it ``reach``-es the whole side where
+:math:`x(\delta, \theta')` has a positivity certificate; a claim without certificate is listed
+under ``unproven``. A fiber of more than two points has no branch charts.
 
 Reduction and sections
 ----------------------
@@ -1094,7 +1230,12 @@ denominator in one coordinate), Darboux polynomials and exponential factors [Pre
 multiplies by a polynomial, and invariants by separable quadrature, i.e., by integrating
 :math:`\mathrm{d}\theta_i / \xi_i = \mathrm{d}\theta_j / \xi_j` where it separates, and by an
 integrating factor. The invariants become new parameters, :math:`I_l(\theta) = q_l`, and the
-remaining coordinates are expressed through them.
+remaining coordinates are expressed through them. The invariants are coordinates on the orbit
+space :math:`\Theta / G`, a *chart*, and the trafo is the section in these coordinates. A chart is
+returned only where it is valid on the declared domain, the positive orthant by default;
+``Reduction.partial`` names the directions whose chart covers the domain only in part, and
+``alternatives=True`` also returns the charts of the other valid choices of the fixed
+coordinates.
 
 A scaling is removed by fixing one of its coordinates at one, such as an initial value or a
 scale, a *pin*. Every orbit of a scaling meets the hypersurface :math:`\theta_i = 1` of a moved

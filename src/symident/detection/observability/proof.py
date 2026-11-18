@@ -35,6 +35,7 @@ from ..fields import (
     rescaled_lift,
     restricted_setup,
 )
+from .context import strs
 
 # regimes beyond which no detection per regime is run for the combined lift
 EXACT_REGIMES = 8
@@ -82,13 +83,34 @@ def recast_extended(vec, recast):
     if any(r.get("inverted") for r in recast):
         return None
     out = dict(vec)
+    names = {}
     for r in recast:
         b, E, L, n = (spy.Symbol(str(r[k])) for k in ("base", "E", "L", "exp"))
         xb = model_sympify(vec.get(str(b), "0"))
         vn = model_sympify(vec.get(str(n), "0"))
         out[str(E)] = str(spy.cancel(n * E * xb / b + E * L * vn))
         out[str(L)] = str(spy.cancel(xb / b))
+        names[(b, n)], names[spy.log(b)] = E, L
+
+    def powers(p):
+        # b**(c*n + k) = E**c * b**k for rational c and integer k
+        for (b, n), E in ((k, v) for k, v in names.items() if isinstance(k, tuple)):
+            if p.base == b and p.exp.is_polynomial(n) and spy.degree(p.exp, n) == 1:
+                c, k = spy.Poly(p.exp, n).all_coeffs()
+                if c.is_Rational and k.is_Integer:
+                    return E ** c * b ** k
+        return p
+
+    # the components in the recast states as well, as the right-hand sides are
+    if names:
+        logs = {k: v for k, v in names.items() if not isinstance(k, tuple)}
+        out = {k: str(model_sympify(v).replace(lambda e: e.is_Pow and not e.exp.is_Integer, powers).xreplace(logs))
+               for k, v in out.items()}
     return {k: v for k, v in out.items() if v != "0"}
+
+
+# components by which a representative is divided
+_NORMED = 4
 
 
 def representatives(d):
@@ -105,6 +127,10 @@ def representatives(d):
         for e in ex.values():
             den = spy.lcm(den, spy.fraction(spy.together(e))[1])
         out.append({k: str(spy.cancel(e * den)) for k, e in ex.items()})
+        # divided by each component that is not a number, so that it is 1
+        for e in list(ex.values())[:_NORMED]:
+            if e != 0 and not e.is_number:
+                out.append({j: str(spy.cancel(v / e)) for j, v in ex.items()})
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         pass
@@ -158,19 +184,31 @@ def _output_proof(light, chains, vec):
 
 
 def light_proofs(light, chains, dirs, joint, plain, forms):
-    """Each of `dirs` proven by the lift of one form of the direction, else, with `plain`, by the output identities."""
+    """Each of `dirs` proven by the lift of one form of the direction, else, with `plain`, by the output identities.
+
+    A direction proven makes the others a new try, since their brackets may contain its field."""
+    known, todo = [], list(dirs)
+    while todo:
+        left = []
+        for d in todo:
+            first = None
+            for vec in forms(d):
+                ex = exact_direction(light, vec, chains, joint, known=known)
+                if ex["ok"] is True:
+                    d["exact"], d["state_components"] = True, lift_of(d, vec, ex.get("states"))
+                    d.pop("proof", None)
+                    known.append(ex["fields"])
+                    break
+                first = first or ex
+            else:
+                d["proof"] = ("no lift through an inverted power recast" if first is None else
+                              f"lift of the closed form: {first.get('why') or 'undecided'}")
+                left.append(d)
+        if len(left) == len(todo):
+            break
+        todo = left
     for d in dirs:
-        first = None
         fs = forms(d)
-        for vec in fs:
-            ex = exact_direction(light, vec, chains, joint)
-            if ex["ok"] is True:
-                d["exact"], d["state_components"] = True, lift_of(d, vec, ex.get("states"))
-                break
-            first = first or ex
-        else:
-            d["proof"] = ("no lift through an inverted power recast" if first is None else
-                          f"lift of the closed form: {first.get('why') or 'undecided'}")
         if d.get("exact") or not plain:
             continue
         out = _output_proof(light, chains, fs[0]) if fs else None
@@ -545,7 +583,8 @@ def chain_bound(an, result):
     chains = run.chain_groups if run.has_gaps else [[i] for i in range(len(tapes))]
     order = int(an.sc["nt_used"])
     vecs = [d.get("checked") or representatives(d)[0] for d in dirs]
-    unchecked = sorted({d.get("route") or "" for d in dirs if not _checked_at_random(d.get("route"))})
+    unchecked = sorted({d.get("route") or "" for d in dirs
+                        if not (_checked_at_random(d.get("route")) or d.get("random_checked"))})
     if unchecked:
         return {"applies": False, "why": f"a direction of the route {unchecked[0]} is not checked at random "
                                          "points modulo the verification prime"}
@@ -676,12 +715,24 @@ def prove_exact(an, result):
     except Exception as exc:
         swallow(exc, "exact proof")
         return _fail(dirs, f"field setup failed: {type(exc).__name__}")
+    # L = log(b) of a recast holds no state of its own; its field F(b)/b enters the identities
+    for r in an.recast or []:
+        for rg in light["regimes"]:
+            F = dict(line.split("=", 1) for line in rg["f"])
+            F = {k.strip(): v for k, v in F.items()}
+            b, L = str(r["base"]), str(r["L"])
+            if b in F and L not in F:
+                rg["f"] = list(rg["f"]) + [f"{L} = ({F[b]})/{b}"]
     nuis = [an.znames[i] for i in an.run.nuis_cols]
     if nuis and not an.multi.get("nuisance_prolonged"):
         _exact_scalings(an, dirs)
         return _fail([d for d in dirs if not d.get("exact")], "no exact proof with these nuisance coordinates")
     if nuis:
-        light["jets"] = nuis
+        # the input itself starts the chain (log_<name> under a log chart); its component is free as well
+        starts = []
+        for w in strs(an.multi.get("nuisance_kept")):
+            starts += [x for x in light["states"] if x == w or re.fullmatch(f"log_{re.escape(w)}_*", x)]
+        light["jets"] = nuis + starts
         light["jet_tops"] = list(an.multi.get("nuisance_tops") or [])
         light["params"] = [z for z in an.znames if z not in set(light["states"]) | set(an.atom_names)]
     light_proofs(light, an.field_chains, dirs, joint, not joint and not an.run.has_gaps and not nuis,

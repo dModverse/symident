@@ -262,7 +262,8 @@ class Narrow:
                         "reason": "translation-group back-substitution failed"}
             e["route"] = f"{e['route']}, {len(groups)} exchange group" + ("s" if len(groups) > 1 else "")
         if not verify_in_nullspace(e, self.anchor, an.znames, an.leaf_names_aug, sc["point0"], sc["nt_used"],
-                                   an.kcall, rec.pool_next, an.nz, rec.dir_call):
+                                   an.kcall, rec.pool_next, an.nz, rec.dir_call,
+                                   env_fn=an.sys.rest_env if an.joint else None):
             return {"support": e["support"], "type": "general", "closed_form": False,
                     "reason": "a closed form was reconstructed but failed verification at a fresh prime"}
         eb = an.multi.get("exp_back") or {}

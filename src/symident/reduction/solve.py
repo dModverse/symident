@@ -180,10 +180,43 @@ def _solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_
     old_rc = DOMAIN["real_carriers"]
     DOMAIN["real_carriers"] = real_tmp
     try:
-        return _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_tmp, loc,
-                                       split_pair, out, gens, signed_ok)
+        if not signed_ok:
+            return _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_tmp, loc,
+                                           split_pair, out, gens, signed_ok)
+        # the constant pin under sign conditions: every gauge coordinate, the best section kept
+        found = []
+        for cs in _carrier_choices(adm, b["support"], carriers):
+            res = _solve_invariants_inner(b, pins, coords, Ies, inv_n, cs, tmp_n, real_tmp, loc,
+                                          split_pair, dict(out), gens, signed_ok)
+            if res.get("solved"):
+                found.append(res)
+                if _section_rank(res) == (False, False, 0):
+                    break
+            elif not found:
+                out = res
+        return min(found, key=_section_rank) if found else out
     finally:
         DOMAIN["real_carriers"] = old_rc
+
+
+def _carrier_choices(adm, support, first, cap=8):
+    """Carrier matchings that leave different coordinates of `support` as gauge, `first` first, at most `cap`."""
+    out = [first]
+    k = len(support) - len(first)
+    for gauge in itertools.combinations(support, k):
+        if len(out) >= cap:
+            break
+        if set(gauge) == set(support) - set(first):
+            continue
+        m = match_carriers([[c for c in a if c not in gauge] for a in adm])
+        if m is not None:
+            out.append(m)
+    return out
+
+
+def _section_rank(res):
+    """Sort key of a solved section: no square root, injective, fewest sign conditions."""
+    return (res.get("root_note") is not None, not res.get("injective"), len(res.get("sign_conditions") or []))
 
 
 def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_tmp, loc, split_pair, out,
@@ -486,7 +519,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     cand["unproven_entries"] = [f"{v} = {ent[v]}" for v in unproven]
                     cand["solved_domain"] = {inv_n[l]: ("real" if tmp_n[l] in real_br else "positive")
                                               for l in range(len(tmp_n))}
-                    cand["injective"] = not partial and section_injective(
+                    cand["injective"] = section_injective(
                         Ies, {v: br[v] for v in all_unk}, tmp_n, scal_pin_pairs,
                         [(red_sympify(pr[0], loc), red_sympify(pr[1], loc)) for pr in st])
                     cand["reach"] = reaches()
@@ -588,7 +621,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                     cand["solved_domain"] = {inv_n[l]: ("real" if tmp_n[l] in real_pin else "positive")
                                               for l in range(len(tmp_n))}
                     const = all(re.fullmatch(r"[0-9.]+", v) for v in gp.values())
-                    cand["injective"] = not partial and section_injective(
+                    cand["injective"] = section_injective(
                         Ies, dict(zip(carriers, es)), tmp_n, pin_pairs if const else
                         [(spy.Symbol(nm), red_sympify(v, pin_loc)) for nm, v in pins.items()])
                     cand["reach"] = reaches()

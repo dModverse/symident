@@ -75,7 +75,9 @@ def _detect_log_params(exprs, states):
             base, ex = be
             terms = spy.expand(ex).as_coefficients_dict()
             k = terms.pop(spy.Integer(1), spy.Integer(0))
-            ok = k == 0 or (base != spy.E and base.is_Rational and k.is_Integer)
+            # a base that holds symbols is no constant: base^theta would tie two coordinates, which the free
+            # power recast handles
+            ok = base.is_number and (k == 0 or (base != spy.E and base.is_Rational and k.is_Integer))
             for t, cf in terms.items():
                 if not (t.is_Symbol and cf.is_Rational and t not in states) or not ok:
                     bad |= ex.free_symbols
@@ -384,7 +386,13 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
             if ks in chart:
                 a, b = chart[ks]
                 at0 = {spy.Symbol(n): x for n, x in ic.items()}
-                le = tidy(spy.log((a + b * ks).xreplace(at0)))
+                u0 = (a + b * ks).xreplace(at0)
+                if u0.is_number and u0.is_positive is not True:
+                    # log(u) and u^n are not analytic at a start of 0: no Lie derivatives at t = 0
+                    return {'why': 'the initial value %s = %s makes %s start at %s, but a logarithm, '
+                            'fractional power or base of a free exponent must be positive, also at the start; '
+                            'give that initial value as a positive parameter' % (k, e, a + b * ks, u0)}
+                le = tidy(spy.log(u0))
                 # a logarithm left over is a function of the coordinates, for the recasts
                 if any(not at.args[0].is_number and not positive_on(at.args[0])
                        for at in le.atoms(spy.log)):
@@ -616,6 +624,11 @@ def exp_chart_generators(gens, coords, positive):
             'gens': out}
 
 
+def _model_str(e):
+    """`e` as a model expression: Euler's number as exp(1), since the model reads E as a symbol."""
+    return str(e.xreplace({spy.E: spy.Symbol("exp(1)")}))
+
+
 def exp_chart_back(expr, v_names, l_names, solve_for=None):
     """An expression in L = log(v) back in v; with solve_for naming an L, exp() of it, the value of v."""
     def as_list(v):
@@ -628,7 +641,7 @@ def exp_chart_back(expr, v_names, l_names, solve_for=None):
     if solve_for is not None and str(solve_for) in vp:
         e = spy.exp(e)
     e = spy.powsimp(spy.expand_log(e, force=True))
-    return str(e.subs({v: spy.Symbol(str(v)) for v in vp.values()}))
+    return _model_str(e.subs({v: spy.Symbol(str(v)) for v in vp.values()}))
 
 
 def log_chart_back(expr, x_names, thetas, bases, solve_for=None):
@@ -648,7 +661,7 @@ def log_chart_back(expr, x_names, thetas, bases, solve_for=None):
     e = e.subs(subs)
     if logb is not None:
         e = spy.cancel(spy.expand_log(spy.log(e), force=True) / logb)
-    return str(e)
+    return _model_str(e)
 
 
 def log_param_backsub(expr, comp, x_names, thetas, bases):
@@ -665,7 +678,7 @@ def log_param_backsub(expr, comp, x_names, thetas, bases):
         if str(comp) == str(X):
             e = e / (Xs * spy.log(bb))
         subs[Xs] = bb ** parse(str(th))
-    return str(spy.powsimp(spy.cancel(e.subs(subs))))
+    return _model_str(spy.powsimp(spy.cancel(e.subs(subs))))
 
 
 def _split_power_bases(per_cond):

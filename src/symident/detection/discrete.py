@@ -13,6 +13,7 @@ import numpy as np
 import sympy as spy
 
 from .. import session
+from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import PRIMES, rat_recon, rref_modp
 from ..sym.domain import declared, is_positive
 from ..sym.gfpoly import _gf_roots
@@ -23,6 +24,12 @@ from ..sym.parse import model_sympify
 _DEG_CAP = 6
 # sample points of the real count in the domain
 _POINTS = 5
+# orders past the fiber at which a reconstructed map is checked on the output, and raises of the order on a failure
+_DEEPER = 4
+_RAISES = 2
+_NO_FINITE_COUNT = ("msolve found no finite count: the equations of the fiber have a component of positive dimension "
+                    "up to order {order}, which the denominators and coordinates do not exclude, or msolve ran out "
+                    "of time")
 
 
 class BudgetError(Exception):
@@ -117,122 +124,340 @@ def _ser_poly(P, xs, params, n, one, zero):
     return out
 
 
-class Series:
-    """The model in prolonged form, as in SIAN: the derivatives of the states at the start are unknowns, tied by
-    the coefficients of D(x) x' = N(x) and E(x) y = M(x) as power series in t."""
+class _Eps:
+    """A power series in the formal gap variable eps, truncated after a fixed degree, over the coefficients of any
+    ring: the gaps between events are eps times the given gaps, as in the local analysis."""
+    __slots__ = ("c",)
 
-    def __init__(self, f, g, ic, coords, states):
+    def __init__(self, c):
+        self.c = list(c)
+
+    def _lift(self, x):
+        return x if isinstance(x, _Eps) else _Eps([x] + [x * 0] * (len(self.c) - 1))
+
+    def __add__(self, x):
+        x = self._lift(x)
+        return _Eps([a + b for a, b in zip(self.c, x.c)])
+
+    __radd__ = __add__
+
+    def __neg__(self):
+        return _Eps([-a for a in self.c])
+
+    def __sub__(self, x):
+        return self + (-self._lift(x))
+
+    def __rsub__(self, x):
+        return self._lift(x) - self
+
+    def __mul__(self, x):
+        if not isinstance(x, _Eps):
+            return _Eps([a * x for a in self.c])
+        return _Eps([sum((self.c[i] * x.c[k - i] for i in range(1, k + 1)), self.c[0] * x.c[k])
+                     for k in range(len(self.c))])
+
+    __rmul__ = __mul__
+
+    def __truediv__(self, x):
+        if not isinstance(x, _Eps):
+            return _Eps([a / x for a in self.c])
+        q = []
+        for k in range(len(self.c)):
+            q.append((self.c[k] - sum((x.c[i] * q[k - i] for i in range(1, k + 1)), self.c[0] * 0)) / x.c[0])
+        return _Eps(q)
+
+    def __rtruediv__(self, x):
+        return self._lift(x) / self
+
+
+def _lead(x):
+    """The constant term in eps, which decides whether a value can be divided by."""
+    return x.c[0] if isinstance(x, _Eps) else x
+
+
+def _at_gap(xs, dt, gap, one, zero):
+    """The state at the end of a gap dt * eps from its Taylor coefficients xs: sum_k xs[k] (dt eps)^k in eps."""
+    c = [zero] * (gap + 1)
+    w = one
+    for k in range(min(gap, len(xs) - 1) + 1):
+        xk = xs[k].c if isinstance(xs[k], _Eps) else [xs[k]]
+        for m in range(k, gap + 1):
+            if m - k < len(xk):
+                c[m] = c[m] + xk[m - k] * w
+        w = w * dt
+    return _Eps(c)
+
+
+def _shift(xs, d, order, gap, one, zero):
+    """The Taylor coefficients up to `order` at the point d * eps away from the point of xs: coefficient k is
+    sum_n C(n, k) xs[n] (d eps)^(n - k), exact in eps up to `gap` when xs reaches order + gap."""
+    out = []
+    for k in range(order + 1):
+        c = [zero] * (gap + 1)
+        w = one
+        for n in range(k, min(len(xs), k + gap + 1)):
+            xn = xs[n].c if isinstance(xs[n], _Eps) else [xs[n]]
+            f = math.comb(n, k)
+            for m in range(n - k, gap + 1):
+                if m - (n - k) < len(xn):
+                    c[m] = c[m] + xn[m - (n - k)] * w * f
+            w = w * d
+        out.append(_Eps(c))
+    return out
+
+
+def _coeffs(x):
+    """The coefficients in eps of a value, one for a value of the first segment."""
+    return x.c if isinstance(x, _Eps) else [x]
+
+
+def _flow(F, xs, params, order, one, zero, skip=()):
+    """The Taylor coefficients xs[i][k + 1] from coefficient k of D(x) x' = N(x), with D at the start nonzero; False
+    at a pole. `skip` holds the states whose series is known."""
+    for k in range(order):
+        for i, (N, D) in enumerate(F):
+            if i in skip:
+                continue
+            nser = _ser_poly(N, xs, params, k, one, zero)
+            dser = _ser_poly(D, xs, params, k, one, zero)
+            if _lead(dser[0]) == 0:
+                return False
+            rest = sum((dser[l] * (k + 1 - l) * xs[i][k + 1 - l] for l in range(1, k + 1)), zero)
+            xs[i][k + 1] = (nser[k] - rest) / ((k + 1) * dser[0])
+    return True
+
+
+def _value(P, xs, params, one, zero):
+    """A polynomial {exponents: coefficient} in states and parameters at the values xs of the states."""
+    return _ser_poly(P, [[x] for x in xs], params, 0, one, zero)[0]
+
+
+class Series:
+    """The model in prolonged form, as in SIAN: the derivatives of the states at the start of each segment are
+    unknowns, tied by the coefficients of D(x) x' = N(x) and E(x) y = M(x) as power series in t.
+
+    `parts` holds one entry per condition, the coordinates shared: {"segments": [...]}, the first segment
+    {"f", "g", "ic", "t", "label"}, each later one {"f", "g", "events", "t", "label"} with the events at its start
+    time t ({"var", "method", "value"}, values read the states before the events). Past an event every
+    coefficient is a power series in the formal variable eps, each gap being eps times the given gap
+    (docs/method.rst, "Conditions and events"). A segment whose start holds coordinates is expanded at the start
+    of the condition, so that its series depends on the time of the event."""
+
+    def __init__(self, parts, coords):
         self.coords = list(coords)
-        F = {k: model_sympify(v) for k, v in f.items()}
-        G = [model_sympify(v) for v in g.values()]
-        X0 = {k: model_sympify(v) for k, v in ic.items()}
-        allsyms = set().union(*[e.free_symbols for e in list(F.values()) + G + list(X0.values())])
-        self.st = [spy.Symbol(x) for x in f]
         cs = [spy.Symbol(c) for c in self.coords]
-        self.params = [c for c in cs if c not in set(self.st)]
+        self.cs = cs
+        segs = [seg for part in parts for seg in part["segments"]]
+        texts = []
+        for seg in segs:
+            texts += list(seg["f"].values()) + list(seg["g"].values()) + \
+                [v for v in (seg.get("ic") or {}).values() if v is not None] + [seg.get("on") or "0"]
+            texts += [e["value"] for e in seg.get("events") or []] + [seg.get("t") or "0"]
+        allsyms = set().union(*[model_sympify(str(e)).free_symbols for e in texts])
+        states = {spy.Symbol(x) for seg in segs for x in seg["f"]}
+        self.params = [c for c in cs if c not in states]
         rng = session.current().rng("discrete known", tuple(self.coords))
         # a symbol that is neither a state nor a coordinate is known: one value in a point and in the solutions
-        self.known = {x: spy.Integer(rng.randint(2, 9)) for x in sorted(allsyms - set(self.st) - set(cs), key=str)}
-        gens = self.st + self.params
-
-        def frac(e):
-            num, den = spy.fraction(spy.cancel(spy.together(e.xreplace(self.known))))
-            return _dict(num, gens), _dict(den, gens)
-        self.F = [frac(F[str(x)]) for x in self.st]
-        self.G = [frac(e) for e in G]
-        # the start of each state: a coordinate, a number, or a rational function of the coordinates
-        self.x0 = []
-        for x in self.st:
-            v = spy.sympify(X0.get(str(x), x)).xreplace(self.known)
-            if x not in cs and v == x:
-                v = spy.Integer(rng.randint(2, 9))
-            num, den = spy.fraction(spy.cancel(v))
-            self.x0.append((v, _dict(num, cs), _dict(den, cs)))
-        self.cs = cs
-        # a state with a numeric start whose right-hand side reads only such states (the jets of a known input,
-        # the clock) has a known series: it enters as numbers, not as unknowns
-        ns = len(self.st)
-        known = set()
-        while True:
-            more = {i for i in range(ns) if i not in known and self.x0[i][0].is_number and
-                    all(not e or j in known for P in self.F[i] for m in P for j, e in enumerate(m[:ns])) and
-                    all(not any(m[ns:]) for P in self.F[i] for m in P)}
-            if not more:
-                break
-            known |= more
-        self.known_states = known
+        self.known = {x: spy.Integer(rng.randint(2, 9)) for x in sorted(allsyms - states - set(cs), key=str)}
+        self.parts = [self._part(part, rng) for part in parts]
+        self.labels = [lab for part in self.parts for seg in part["segs"] for lab in seg["labels"]]
+        # the rows of the copies with a free start: their values at sigma(theta) need the image of the start
+        self.free_rows = {k for k, (part, seg, _) in enumerate((p, s_, y) for p in self.parts for s_ in p["segs"]
+                                                               for y in s_["labels"]) if part["segs"][0].get("free")}
+        self.has_events = any(len(part["segs"]) > 1 for part in self.parts)
         self._kser = {}
 
-    def _known_series(self, order):
-        """{state index: Taylor coefficients up to `order`} of the states with a known series, as Fractions."""
-        if order not in self._kser:
+    def _part(self, part, rng):
+        st = [spy.Symbol(x) for x in part["segments"][0]["f"]]
+        gens = st + self.params
+        cs = self.cs
+
+        def frac(e):
+            num, den = spy.fraction(spy.cancel(spy.together(model_sympify(str(e)).xreplace(self.known))))
+            return _dict(num, gens), _dict(den, gens)
+        def poly(text):
+            e = spy.cancel(model_sympify(str(text)).xreplace(self.known))
+            num, den = spy.fraction(e)
+            if not den.is_number or (num.free_symbols - set(cs)):
+                raise ValueError(f"discrete() needs event times polynomial in the coordinates, not {e}")
+            return e
+        t0 = poly(part["segments"][0].get("t", "0"))
+        # each segment is expanded at its start, or, where the start holds coordinates, at the start of the
+        # condition: there the series of a later start tells the time of the event
+        anchor = t0
+        out = {"st": st, "segs": []}
+        for j, seg in enumerate(part["segments"]):
+            if list(seg["f"]) != [str(x) for x in st]:
+                raise ValueError("discrete(): the segments of a condition have other states")
+            s = {"F": [frac(seg["f"][str(x)]) for x in st], "G": [frac(v) for v in seg["g"].values()],
+                 "labels": [f"{seg.get('label', '')}{y}" for y in seg["g"]]}
+            if j == 0:
+                # the start of each state: a coordinate, a number, or a rational function of the coordinates; without
+                # initial values (a copy switched into a regime) every state starts free, a number at the point
+                # and a variable of its own in the fiber
+                free = seg["ic"] is None or None in seg["ic"].values()
+                X0 = {k: model_sympify(str(v)) for k, v in (seg["ic"] or {}).items() if v is not None}
+                s["x0"], s["free"] = [], {}
+                for i, x in enumerate(st):
+                    if seg["ic"] is None or (str(x) in seg["ic"] and seg["ic"][str(x)] is None):
+                        s["free"][i] = spy.Integer(rng.randint(2, 9))
+                        s["x0"].append((None, None, None))
+                        continue
+                    v = spy.sympify(X0.get(str(x), x)).xreplace(self.known)
+                    if x not in cs and v == x:
+                        v = spy.Integer(rng.randint(2, 9))
+                    num, den = spy.fraction(spy.cancel(v))
+                    s["x0"].append((v, _dict(num, cs), _dict(den, cs)))
+                # a copy switched into a regime starts on the surface it crosses: q(z, theta) = 0, solved at the point
+                # for a state in which q is linear
+                s["on"] = None
+                if free and seg.get("on") is not None:
+                    N, D = frac(seg["on"])
+                    ns = len(st)
+                    lin = [i for i in range(ns) if max(m[i] for m in N) == 1 and
+                           all(not any(m[:i] + m[i + 1:ns]) or m[i] == 0 for m in N if m[i] == 1)]
+                    lin = lin or [i for i in range(ns) if max(m[i] for m in N) == 1]
+                    if not lin:
+                        raise ValueError(f"discrete() needs the switching surface {seg['on']} = 0 linear in a state")
+                    i = lin[0]
+
+                    def drop(m, i=i):
+                        return m[:i] + (0,) + m[i + 1:]
+                    s["on"] = (i, {drop(m): c for m, c in N.items() if m[i] == 1},
+                               {m: c for m, c in N.items() if m[i] == 0}, N, D)
+                # a state with a numeric start whose right-hand side reads only such states (the jets of a known
+                # input, the clock) has a known series: it enters as numbers, not as unknowns
+                ns, known = len(st), set()
+                while True:
+                    more = {i for i in range(ns) if i not in known and s["x0"][i][0] is not None and
+                            s["x0"][i][0].is_number and
+                            all(not e or j_ in known for P in s["F"][i] for m in P for j_, e in enumerate(m[:ns])) and
+                            all(not any(m[ns:]) for P in s["F"][i] for m in P)}
+                    if not more:
+                        break
+                    known |= more
+                out["known"] = known
+            else:
+                after = {}
+                for e in seg["events"]:
+                    x = spy.Symbol(e["var"])
+                    v = model_sympify(str(e["value"]))
+                    cur = after.get(x, x)
+                    after[x] = v if e["method"] == "replace" else cur + v if e["method"] == "add" else cur * v
+                s["event"] = {i: frac(after[x]) for i, x in enumerate(st) if x in after and after[x] != x}
+                tj = poly(seg["t"])
+                at = t0 if tj.free_symbols else tj
+                # the gap from the expansion point before, and the start from the own expansion point
+                s["dt"] = _dict(spy.expand(tj - anchor), cs)
+                s["off"] = _dict(spy.expand(tj - at), cs) if tj.free_symbols else None
+                anchor = at
+            out["segs"].append(s)
+        return out
+
+    def _known_series(self, pi, order):
+        """{state index: Taylor coefficients up to `order`} of the states of part `pi` with a known series."""
+        key = (pi, order)
+        if key not in self._kser:
+            part = self.parts[pi]
+            seg, known = part["segs"][0], part["known"]
             one, zero = Fraction(1), Fraction(0)
+
             def start(v):
                 v = spy.Rational(v)
                 return Fraction(int(v.p), int(v.q))
-            xs = [[start(self.x0[i][0])] + [zero] * order if i in self.known_states else [zero] * (order + 1)
-                  for i in range(len(self.st))]
+            xs = [[start(seg["x0"][i][0])] + [zero] * order if i in known else [zero] * (order + 1)
+                  for i in range(len(part["st"]))]
+            nop = [zero] * len(self.params)
             for k in range(order):
-                for i in sorted(self.known_states):
-                    N, D = self.F[i]
-                    nser = _ser_poly(N, xs, [zero] * len(self.params), k, one, zero)
-                    dser = _ser_poly(D, xs, [zero] * len(self.params), k, one, zero)
+                for i in sorted(known):
+                    N, D = seg["F"][i]
+                    nser = _ser_poly(N, xs, nop, k, one, zero)
+                    dser = _ser_poly(D, xs, nop, k, one, zero)
                     rest = sum((dser[l] * (k + 1 - l) * xs[i][k + 1 - l] for l in range(1, k + 1)), zero)
                     xs[i][k + 1] = (nser[k] - rest) / ((k + 1) * dser[0])
-            self._kser[order] = {i: xs[i] for i in self.known_states}
-        return self._kser[order]
+            self._kser[key] = {i: xs[i] for i in known}
+        return self._kser[key]
 
-    def _outputs(self, cvals, order, one, zero):
-        """The Taylor coefficients of the observables up to `order`, the coordinates at `cvals` (in the arithmetic
-        of one and zero), None at a pole."""
+    def _outputs(self, cvals, order, gap, one, zero):
+        """Per observable of each segment of each condition, the Taylor coefficients up to `order`, each as its
+        coefficients in eps up to `gap` (one for the first segment), the coordinates at `cvals` in the arithmetic
+        of one and zero; None at a pole."""
         val = dict(zip(self.cs, cvals))
         params = [val[s] for s in self.params]
-        kser = self._known_series(order)
-        xs = []
-        for i, (_, num, den) in enumerate(self.x0):
-            if i in kser:
-                xs.append([one * c for c in kser[i]])
-                continue
-            d = _eval(den, cvals, zero)
-            if d == 0:
-                return None
-            xs.append([_eval(num, cvals, zero) / d] + [zero] * order)
-        # x_{k+1} from coefficient k of D(x) x' = N(x), with D at the start nonzero
-        for k in range(order):
-            for i, (N, D) in enumerate(self.F):
-                if i in kser:
-                    continue
-                nser = _ser_poly(N, xs, params, k, one, zero)
-                dser = _ser_poly(D, xs, params, k, one, zero)
-                if dser[0] == 0:
-                    return None
-                rest = sum((dser[l] * (k + 1 - l) * xs[i][k + 1 - l] for l in range(1, k + 1)), zero)
-                xs[i][k + 1] = (nser[k] - rest) / ((k + 1) * dser[0])
         out = []
-        for M, E in self.G:
-            mser = _ser_poly(M, xs, params, order, one, zero)
-            eser = _ser_poly(E, xs, params, order, one, zero)
-            if eser[0] == 0:
-                return None
-            y = []
-            for k in range(order + 1):
-                y.append((mser[k] - sum((eser[l] * y[k - l] for l in range(1, k + 1)), zero)) / eser[0])
-            out.append(y)
+        for pi, part in enumerate(self.parts):
+            xs = None
+            for j, seg in enumerate(part["segs"]):
+                if j == 0:
+                    kser = self._known_series(pi, order)
+                    xs = []
+                    for i, (_, num, den) in enumerate(seg["x0"]):
+                        if i in kser:
+                            xs.append([one * c for c in kser[i]])
+                            continue
+                        if i in seg["free"]:
+                            v = seg["free"][i]
+                            xs.append([one * Fraction(int(v.p), int(v.q))] + [zero] * order)
+                            continue
+                        d = _eval(den, cvals, zero)
+                        if d == 0:
+                            return None
+                        xs.append([_eval(num, cvals, zero) / d] + [zero] * order)
+                    if seg["on"] is not None:
+                        i, A, B = seg["on"][:3]
+                        start = [x[0] for x in xs]
+                        a = _value(A, start, params, one, zero)
+                        if a == 0:
+                            return None
+                        xs[i][0] = -_value(B, start, params, one, zero) / a
+                    o, z = one, zero
+                else:
+                    o, z = _Eps([one] + [zero] * gap), _Eps([zero] * (gap + 1))
+                    dt = _eval(seg["dt"], cvals, zero)
+                    pre = [_at_gap(x, dt, gap, one, zero) for x in xs]
+                    w0 = list(pre)
+                    for i, (N, D) in seg["event"].items():
+                        d = _value(D, pre, params, o, z)
+                        if _lead(d) == 0:
+                            return None
+                        w0[i] = _value(N, pre, params, o, z) / d
+                    kser = {}
+                    if seg["off"] is not None:
+                        # the series at the event, one coefficient in eps longer per order, then at the anchor
+                        n = order + gap
+                        xs = [[w] + [z] * n for w in w0]
+                        if not _flow(seg["F"], xs, params, n, o, z):
+                            return None
+                        off = _eval(seg["off"], cvals, zero)
+                        xs = [_shift(x, -off, order, gap, one, zero) for x in xs]
+                    else:
+                        xs = [[w] + [z] * order for w in w0]
+                if (j == 0 or seg["off"] is None) and not _flow(seg["F"], xs, params, order, o, z, kser):
+                    return None
+                for M, E in seg["G"]:
+                    mser = _ser_poly(M, xs, params, order, o, z)
+                    eser = _ser_poly(E, xs, params, order, o, z)
+                    if _lead(eser[0]) == 0:
+                        return None
+                    y = []
+                    for k in range(order + 1):
+                        y.append((mser[k] - sum((eser[l] * y[k - l] for l in range(1, k + 1)), z)) / eser[0])
+                    out.append([_coeffs(v) for v in y])
         return out
 
-    def numeric(self, point, order, p=0):
-        """The Taylor coefficients of the observables at `point` ({symbol: Rational}) up to `order`, one list per
-        observable, as Fractions or, with p, as integers modulo p; None at a pole."""
+    def numeric(self, point, order, gap=0, p=0):
+        """The Taylor coefficients of the observables at `point` ({symbol: Rational}) up to `order` and `gap`, one
+        list per observable and segment, as Fractions or, with p, as integers modulo p; None at a pole."""
         cv = [Fraction(int(spy.Rational(point[s]).p), int(spy.Rational(point[s]).q)) for s in self.cs]
-        if not p:
-            return self._outputs(cv, order, Fraction(1), Fraction(0))
         try:
-            out = self._outputs([_Dual(0, [], p) + c for c in cv], order, _Dual(1, [], p), _Dual(0, [], p))
+            if not p:
+                return self._outputs(cv, order, gap, Fraction(1), Fraction(0))
+            out = self._outputs([_Dual(0, [], p) + c for c in cv], order, gap, _Dual(1, [], p), _Dual(0, [], p))
         except ZeroDivisionError:
             return None
-        return None if out is None else [[x.v for x in y] for y in out]
+        return None if out is None else [[[x.v for x in ym] for ym in y] for y in out]
 
-    def output_orders(self, cap, p):
+    def output_orders(self, cap, p, gap=0):
         """Per observable the least order whose next Taylor coefficient adds no rank to the Jacobian in the
         coordinates, as in SIAN, at a random point modulo p; None where the rank stays below the number of
         coordinates up to `cap`."""
@@ -241,7 +466,7 @@ class Series:
         cv = [_Dual(rng.randint(2, p - 1), [int(i == j) for j in range(m)], p) for i in range(m)]
         one, zero = _Dual(1, [0] * m, p), _Dual(0, [0] * m, p)
         try:
-            ys = self._outputs(cv, cap, one, zero)
+            ys = self._outputs(cv, cap, gap, one, zero)
         except ZeroDivisionError:
             return None
         if ys is None:
@@ -265,7 +490,7 @@ class Series:
         active = list(range(len(ys)))
         for k in range(cap + 1):
             for j in list(active):
-                if adds(ys[j][k].d):
+                if any([adds(v.d) for v in ys[j][k]]):
                     orders[j] = k
                 elif k:
                     active.remove(j)
@@ -273,65 +498,126 @@ class Series:
                 break
         return orders if len(basis) == m else None
 
-    def prolonged(self, orders):
-        """(names, equations, outputs, sat) up to the order of each observable in `orders`: the jet variables after
-        the coordinates, the equations of the model and the start as {exponents: Fraction} over coordinates and
-        jets, the series (E, M) of each observable, and the factors that must not vanish."""
+    def prolonged(self, orders, gap=0):
+        """(names, equations, outputs, sat) up to the order of each observable in `orders` and `gap`: the jet
+        variables after the coordinates, the equations of the model, the starts and the events as {exponents:
+        Fraction} over coordinates and jets, the series (E, M) of each observable as E[l][a] and M[k][m] (Taylor
+        coefficient, then coefficient in eps), and the factors that must not vanish."""
         order = max(orders)
         from sympy.polys.domains import QQ
         from sympy.polys.rings import ring
         names = [str(c) for c in self.cs]
-        kser = self._known_series(order)
         jets = {}
-        for i in range(len(self.st)):
-            if i in kser:
-                continue
-            v = self.x0[i][0]
-            lo = 0 if not (v.is_Symbol and v in self.cs) and not v.is_number else 1
-            for k in range(lo, order + 1):
-                jets[(i, k)] = f"si_j{i}_{k}"
+        for pi, part in enumerate(self.parts):
+            kser = self._known_series(pi, order)
+            for j, seg in enumerate(part["segs"]):
+                for i in range(len(part["st"])):
+                    if j == 0:
+                        if i in kser:
+                            continue
+                        v = seg["x0"][i][0]
+                        lo = 0 if v is None or (not (v.is_Symbol and v in self.cs) and not v.is_number) else 1
+                        for k in range(lo, order + 1):
+                            jets[(pi, j, i, k, 0)] = f"si_j{pi}_{j}_{i}_{k}"
+                    else:
+                        # the start after an event is a jet of its own where the event divides by the states, and
+                        # at an anchor before the event
+                        ev = seg["event"].get(i)
+                        lo = 0 if seg["off"] is not None or (ev is not None and any(any(m) for m in ev[1])) else 1
+                        for k in range(lo, order + 1):
+                            for m in range(gap + 1):
+                                jets[(pi, j, i, k, m)] = f"si_j{pi}_{j}_{i}_{k}_{m}"
         R, *gens = ring(",".join(names + list(jets.values())), QQ)
         g = dict(zip(names + list(jets.values()), gens))
         cof = {str(c): g[str(c)] for c in self.cs}
         params = [g[str(p)] for p in self.params]
-        eqs = []
-        xs = []
-        for i in range(len(self.st)):
-            v, num, den = self.x0[i]
-            if i in kser:
-                xs.append([R(spy.Rational(c.numerator, c.denominator)) for c in kser[i]])
-                continue
-            if (i, 0) in jets:
-                a0 = g[jets[(i, 0)]]
-                N0 = R.from_dict({m: c for m, c in num.items()}) if num else R.zero
-                D0 = R.from_dict({m: c for m, c in den.items()})
-                eqs.append(D0 * a0 - N0)
-            elif v.is_number:
-                a0 = R(spy.Rational(v))
-            else:
-                a0 = cof[str(v)]
-            xs.append([a0] + [g[jets[(i, k)]] for k in range(1, order + 1)])
+        pad = (0,) * len(jets)
+
+        def in_ring(P):
+            return R.from_dict({mm + pad: c for mm, c in P.items()}) if P else R.zero
+        eqs, outs = [], []
         sat = [cof[str(c)] for c in self.cs]
-        for i, (N, D) in enumerate(self.F):
-            if i in kser:
-                continue
-            nser = _ser_poly(N, xs, params, order - 1, R.one, R.zero) if order else []
-            dser = _ser_poly(D, xs, params, order - 1, R.one, R.zero) if order else []
-            for k in range(order):
-                lhs = sum((dser[l] * (k + 1 - l) * xs[i][k + 1 - l] for l in range(0, k + 1)), R.zero)
-                eqs.append(lhs - nser[k])
-            d0 = _ser_poly(D, xs, params, 0, R.one, R.zero)[0]
-            if not d0.is_ground:
-                sat.append(d0)
-        outs = []
-        for (M, E), n in zip(self.G, orders):
-            mser = _ser_poly(M, xs, params, n, R.one, R.zero)
-            eser = _ser_poly(E, xs, params, n, R.one, R.zero)
-            if not eser[0].is_ground:
-                sat.append(eser[0])
-            outs.append((eser, mser))
-        return list(jets.values()), [_rdict(e) for e in eqs if e], \
-            [([_rdict(e) for e in E], [_rdict(m) for m in M]) for E, M in outs], [_rdict(f) for f in sat]
+
+        def add_eq(e):
+            eqs.extend(_coeffs(e))
+
+        def add_sat(e):
+            e = _lead(e)
+            if not e.is_ground:
+                sat.append(e)
+        row = 0
+        for pi, part in enumerate(self.parts):
+            kser = self._known_series(pi, order)
+            xs = None
+            for j, seg in enumerate(part["segs"]):
+                if j == 0:
+                    xs = []
+                    for i in range(len(part["st"])):
+                        v, num, den = seg["x0"][i]
+                        if i in kser:
+                            xs.append([R(spy.Rational(c.numerator, c.denominator)) for c in kser[i]])
+                            continue
+                        if v is None:
+                            # a free start: a variable without an equation
+                            a0 = g[jets[(pi, 0, i, 0, 0)]]
+                        elif (pi, 0, i, 0, 0) in jets:
+                            a0 = g[jets[(pi, 0, i, 0, 0)]]
+                            # the start is a polynomial in the coordinates; the jet variables follow them in R
+                            add_eq(in_ring(den) * a0 - in_ring(num))
+                        elif v.is_number:
+                            a0 = R(spy.Rational(v))
+                        else:
+                            a0 = cof[str(v)]
+                        xs.append([a0] + [g[jets[(pi, 0, i, k, 0)]] for k in range(1, order + 1)])
+                    if seg["on"] is not None:
+                        N, D = seg["on"][3:]
+                        start = [x[0] for x in xs]
+                        add_eq(_value(N, start, params, R.one, R.zero))
+                        add_sat(_value(D, start, params, R.one, R.zero))
+                    o, z = R.one, R.zero
+                else:
+                    o, z = _Eps([R.one] + [R.zero] * gap), _Eps([R.zero] * (gap + 1))
+                    pre = [_at_gap(x, in_ring(seg["dt"]), gap, R.one, R.zero) for x in xs]
+                    xs = []
+                    for i in range(len(part["st"])):
+                        def jet(k, i=i):
+                            return _Eps([g[jets[(pi, j, i, k, m)]] for m in range(gap + 1)])
+                        ws = [jet(k) for k in range(1, order + 1)]
+                        w0 = pre[i]
+                        if (pi, j, i, 0, 0) in jets:
+                            w0 = jet(0)
+                        # the state at the event: the series at the anchor where the start holds coordinates
+                        at = _at_gap([w0] + ws, in_ring(seg["off"]), gap, R.one, R.zero) \
+                            if seg["off"] is not None else w0
+                        if i in seg["event"]:
+                            N, D = seg["event"][i]
+                            nv, dv = _value(N, pre, params, o, z), _value(D, pre, params, o, z)
+                            if (pi, j, i, 0, 0) in jets:
+                                add_eq(dv * at - nv)
+                                add_sat(dv)
+                            else:
+                                c = next(iter(D.values()))
+                                w0 = nv * R(spy.Rational(c.denominator, c.numerator))
+                        elif seg["off"] is not None:
+                            add_eq(at - pre[i])
+                        xs.append([w0] + ws)
+                for i, (N, D) in enumerate(seg["F"]):
+                    if j == 0 and i in kser:
+                        continue
+                    nser = _ser_poly(N, xs, params, order - 1, o, z) if order else []
+                    dser = _ser_poly(D, xs, params, order - 1, o, z) if order else []
+                    for k in range(order):
+                        add_eq(sum((dser[l] * (k + 1 - l) * xs[i][k + 1 - l] for l in range(0, k + 1)), z) - nser[k])
+                    add_sat(_ser_poly(D, xs, params, 0, o, z)[0])
+                for M, E in seg["G"]:
+                    n = orders[row]
+                    row += 1
+                    mser = _ser_poly(M, xs, params, n, o, z)
+                    eser = _ser_poly(E, xs, params, n, o, z)
+                    add_sat(eser[0])
+                    outs.append(([[_rdict(c) for c in _coeffs(e)] for e in eser],
+                                 [[_rdict(c) for c in _coeffs(m)] for m in mser]))
+        return list(jets.values()), [_rdict(e) for e in eqs if e], outs, [_rdict(f) for f in sat]
 
 
 def _dict(e, syms):
@@ -356,26 +642,31 @@ def _clear(P, p=0):
 class Fiber:
     """The points of the prolonged model whose observables have the Taylor coefficients of a given point."""
 
-    def __init__(self, series, orders, positive=True):
+    def __init__(self, series, orders, positive=True, gap=0):
         self.series = series
         self.coords = list(series.coords)
         self.syms = [spy.Symbol(c) for c in self.coords]
-        # one order per observable; a number is the same order for all
-        self.orders = [int(orders)] * len(series.G) if isinstance(orders, int) else [int(n) for n in orders]
+        # one order per observable of each segment; a number is the same order for all
+        self.orders = [int(orders)] * len(series.labels) if isinstance(orders, int) else [int(n) for n in orders]
         self.order = max(self.orders)
+        # the coefficients in eps after an event; the state at the end of a gap needs its jets up to `gap`
+        self.gap = min(int(gap), self.order) if series.has_events else 0
         self.positive = positive
         self.known = series.known
         self.names = [f"x{i}" for i in range(len(self.syms))]
-        jets, self.static, self.outs, sat = series.prolonged(self.orders)
+        jets, self.static, self.outs, sat = series.prolonged(self.orders, self.gap)
         self.allnames = self.names + jets
-        self.sat = [_clear(f) for f in sat]
+        self.sat = []
+        for f in (_clear(f) for f in sat):
+            if f not in self.sat:
+                self.sat.append(f)
         # per characteristic, whether msolve gets the separating form (decided at the first call)
         self.sep_mode = {}
 
     def values(self, point, p=0):
         """The Taylor coefficients of the observables at `point` ({symbol: Rational}), modulo p with p, None at a
         pole."""
-        return self.series.numeric(point, self.order, p)
+        return self.series.numeric(point, self.order, self.gap, p)
 
     def system(self, point, p=0):
         """{"blocks", "fixed"}: the msolve input of the points with the coefficients of `point`, over Q (p = 0) or
@@ -387,20 +678,38 @@ class Fiber:
         if vals is None:
             return None
         polys = [_clear(P, p) for P in self.static]
+        # coefficient k in t and m in eps of E(x) y = M(x), with y the values at the point
         for (E, M), b, n in zip(self.outs, vals, self.orders):
             for k in range(n + 1):
-                P = {mm: -c for mm, c in M[k].items()}
-                for l in range(k + 1):
-                    for mm, c in E[l].items():
-                        P[mm] = P.get(mm, 0) + c * b[k - l]
-                polys.append(_clear({mm: c for mm, c in P.items() if c}, p))
+                for m in range(len(M[k])):
+                    P = {mm: -c for mm, c in M[k][m].items()}
+                    for l in range(k + 1):
+                        for a in range(m + 1):
+                            for mm, c in E[l][a].items():
+                                P[mm] = P.get(mm, 0) + c * b[k - l][m - a]
+                    polys.append(_clear({mm: c for mm, c in P.items() if c}, p))
         polys = [P for P in polys if P]
         sat = [{m: c % p if p else c for m, c in f.items()} for f in self.sat]
         out = _fix_linear(polys, sat, len(self.allnames), p)
         if out is None:
             return None
         polys, sat, fixed = out
-        keep = [i for i in range(len(self.allnames)) if i not in fixed]
+        # a jet in one equation only, there linear with a number as coefficient and in no factor of the
+        # saturation, is fixed by that equation: the equation and the jet leave, the count stays
+        m0, gone = len(self.names), set()
+        satv = {i for f in sat for mm in f for i, e in enumerate(mm) if e}
+        while True:
+            occ = {}
+            for k, P in enumerate(polys):
+                for i in {i for mm in P for i, e in enumerate(mm) if e}:
+                    occ.setdefault(i, []).append(k)
+            hit = next(((i, ks[0]) for i, ks in occ.items() if i >= m0 and i not in satv and len(ks) == 1 and
+                        [sum(mm) for mm in polys[ks[0]] if mm[i]] == [1]), None)
+            if hit is None:
+                break
+            gone.add(hit[0])
+            polys.pop(hit[1])
+        keep = [i for i in range(len(self.allnames)) if i not in fixed and i not in gone]
         # blocks: the components of the variables joined by an equation or a factor of the saturation
         parent = {i: i for i in keep}
 
@@ -507,6 +816,9 @@ def _msolve(names, p, eqs, flags, timeout, sep=()):
     points, where si_w need not, so msolve parametrizes by it without trying other forms."""
     from ..sym import msolve
     flags = list(flags) + ["-t", str(msolve._MSOLVE_THREADS)]
+    if p:
+        # the probabilistic sparse linear algebra of msolve over GF(p): the counts are at random points anyway
+        flags += ["-l", "44"]
     names = list(names) + ["si_w"]
     eqs = list(eqs)
     if sep:
@@ -580,27 +892,46 @@ def in_domain(fib, box):
 
 
 def _solve(fib, p, block, flags, timeout):
-    """_msolve() on a block of Fiber.system(), with the separating form si_t where the first call on the block
-    found it faster: without it, msolve may try several forms when si_w does not separate the points; with it, a
-    dense form costs more."""
-    import time
+    """_msolve() on a block of Fiber.system(), with the separating form si_t only where the first call on the block
+    fails without it: msolve may then try several forms when si_w does not separate the points, and the dense form
+    costs more where it does."""
     names, eqs, sep = block["names"], block["eqs"], block["sep"]
     key = (p == 0, tuple(names))
     mode = fib.sep_mode.get(key)
     if mode is not None or not sep:
         return _msolve(names, p, eqs, flags, timeout, sep if mode else ())
-    t0 = time.monotonic()
     plain = _msolve(names, p, eqs, flags, timeout)
-    t1 = time.monotonic()
+    if plain is not None:
+        fib.sep_mode[key] = False
+        return plain
     with_sep = _msolve(names, p, eqs, flags, timeout, sep)
-    fib.sep_mode[key] = with_sep is not None and (plain is None or time.monotonic() - t1 < t1 - t0)
-    return with_sep if fib.sep_mode[key] else plain
+    fib.sep_mode[key] = with_sep is not None
+    return with_sep
 
 
 def complex_count(fib, point, p, timeout):
     """The number of points of the fiber over the algebraic closure of GF(p), None on failure."""
     rur = _rur(fib, point, p, timeout)
     return None if rur is None else rur["deg"]
+
+
+def _boxes_of_maps(fib, pt, maps):
+    """The points of the fiber at `pt` as exact boxes, the point and its images under `maps`, or None where an image
+    is not distinct or its coefficients differ from those at the point."""
+    try:
+        imgs = [dict(pt)] + [{s: spy.Rational(sig.get(s, s).xreplace(pt)) for s in fib.syms} for sig in maps]
+    except (ZeroDivisionError, TypeError):
+        return None
+    vals = [tuple(im[s] for s in fib.syms) for im in imgs]
+    if len(set(vals)) != len(vals):
+        return None
+    here = fib.values(pt)
+    for im in imgs[1:]:
+        there = fib.values(im)
+        if here is None or there is None or [r for k, r in enumerate(here) if k not in fib.series.free_rows] != \
+                [r for k, r in enumerate(there) if k not in fib.series.free_rows]:
+            return None
+    return [[(v, v) for v in t] for t in vals]
 
 
 def domain_point(fib, rng):
@@ -684,14 +1015,14 @@ def _pinv(a, f, p):
     return x
 
 
-def charpolys(rur, p):
+def charpolys(rur, p, names=None):
     """{variable: coefficients c_0..c_{K-1} of the monic characteristic polynomial} over the fiber, the product of
     the fibers of the blocks: a variable of a block of k points has its polynomial over the block to the power
     K/k; a fixed coordinate c has (Z - c)^K. None on failure."""
     K = rur["deg"]
     out = {}
     for b in rur["blocks"]:
-        cp = _charpolys_block(b, p)
+        cp = _charpolys_block(b, p, names)
         if cp is None:
             return None
         e = K // b["deg"]
@@ -713,7 +1044,7 @@ def _plain_mul(a, b, p):
     return out
 
 
-def _charpolys_block(rur, p):
+def _charpolys_block(rur, p, names=None):
     """{variable: coefficients c_0..c_{k-1} of the monic characteristic polynomial} over the points of a block."""
     f, k = rur["elim"], rur["deg"]
     dinv = _pinv(rur["den"], f, p)
@@ -735,6 +1066,9 @@ def _charpolys_block(rur, p):
     elems[vn[last]] = [a * il % p for a in acc]
     out = {}
     for nm, el in elems.items():
+        if names is not None and nm not in names:
+            # the jets: the maps need the coordinates only
+            continue
         # power sums tr(x^j) of multiplication by x, then Newton's identities
         basis = []
         e = [1] + [0] * (k - 1)
@@ -839,7 +1173,7 @@ class _Sampler:
         rur = self.rur(pt, p)
         m = self.memo[(pt, p)]
         if rur is not None and m[1] is None:
-            m[1] = charpolys(rur, p) or False
+            m[1] = charpolys(rur, p, set(self.fib.names)) or False
         return m[1] or None
 
     def points_of(self, pt, p):
@@ -1076,28 +1410,37 @@ def _on_roots(sam, roots, fp, pt, p):
     return True
 
 
-def output_preserved(fib, sig, points=3):
-    """Whether the output coefficients agree at sigma(theta) and theta at random rational points."""
+def output_preserved(fib, sig, points=3, deeper=0):
+    """Whether the output coefficients agree at sigma(theta) and theta at random rational points, up to the order of
+    the fiber plus `deeper`, in t and after an event in eps."""
     rng = session.current().rng("discrete check", tuple(fib.coords))
+    order, gap = fib.order + deeper, (fib.gap + deeper if fib.series.has_events else 0)
     for _ in range(points):
         pt = {s: spy.Rational(rng.randint(1, 97), rng.randint(1, 13)) for s in fib.syms}
         img = {s: e.xreplace(pt) for s, e in sig.items()}
-        a, b = fib.values(pt), fib.values(img)
+        a, b = fib.series.numeric(pt, order, gap), fib.series.numeric(img, order, gap)
+        if a is not None and b is not None:
+            # a copy with a free start keeps the output only from the image of its start, which is no coordinate
+            a = [r for k, r in enumerate(a) if k not in fib.series.free_rows]
+            b = [r for k, r in enumerate(b) if k not in fib.series.free_rows]
         if a is None or b is None or any(x != y for x, y in zip(a, b)):
             return False
     return True
 
 
-def state_map_proof(f, g, ic, sig, states):
-    """Whether phi maps the model at theta onto the model at sigma(theta), over Q(x, theta). A state whose initial
-    value is a coordinate of its own, the state itself or a parameter found nowhere else, takes the image of that
-    coordinate with every such coordinate read as its state; another state is mapped to itself, and sigma must
-    map its initial value."""
+def _state_map(f, g, ic, sig, states):
+    """A map phi of the states that takes the model at theta onto the model at sigma(theta), over Q(x, theta), or
+    None. With the initial values `ic`, a state whose initial value is a coordinate of its own, the state itself
+    or a parameter found nowhere else, takes the image of that coordinate with every such coordinate read as its
+    state. Another state is mapped to itself, or, where that fails, to the solution of h(phi, sigma) = h(x, theta)
+    for the output h and its Lie derivatives when these equations are linear in phi; with `ic`, phi must map the
+    initial value at theta to the initial value at sigma(theta)."""
     F = {spy.Symbol(k): model_sympify(v) for k, v in f.items()}
     X = [spy.Symbol(x) for x in states]
+    H = [model_sympify(h) for h in g.values()]
     used = set().union(*[model_sympify(v).free_symbols for v in list(f.values()) + list(g.values())])
     own = {}
-    for x in X:
+    for x in X if ic is not None else ():
         q = model_sympify(str(ic.get(str(x), x)))
         if q == x or (q.is_Symbol and q in sig and q not in used and
                       sum(model_sympify(str(ic.get(str(y), y))) == q for y in X) == 1):
@@ -1106,26 +1449,89 @@ def state_map_proof(f, g, ic, sig, states):
     for q, x in own.items():
         phi[x] = sig.get(q, q).xreplace(own)
     th = {s: e for s, e in sig.items() if s not in set(X) and s not in own}
-    both = {**th, **phi}
-    for x in X:
-        lhs = F[x].xreplace(both)
-        rhs = sum((spy.diff(phi[x], y) * F[y] for y in X), spy.Integer(0))
-        if spy.cancel(lhs - rhs) != 0:
+    x0 = {x: model_sympify(str(ic.get(str(x), x))) for x in X} if ic is not None else {}
+    given = [x for x in X if x not in own.values()]
+
+    def holds(phi):
+        both = {**th, **phi}
+        for x in X:
+            rhs = sum((spy.diff(phi[x], y) * F[y] for y in X), spy.Integer(0))
+            if spy.cancel(F[x].xreplace(both) - rhs) != 0:
+                return False
+        if any(spy.cancel(F[x].xreplace(both) - F[x]) != 0 for x in F if x not in set(X)):
             return False
-    for x in F:
-        if x not in set(X) and spy.cancel(F[x].xreplace(both) - F[x]) != 0:
+        if any(spy.cancel(h.xreplace(both) - h) != 0 for h in H):
             return False
-    for h in g.values():
-        h = model_sympify(h)
-        if spy.cancel(h.xreplace(both) - h) != 0:
-            return False
-    # phi(x0(theta)) = x0(sigma(theta)) for the given initial values
-    x0 = {x: model_sympify(str(ic.get(str(x), x))) for x in X}
-    for x in X:
-        if x in own.values():
-            continue
-        if spy.cancel(phi[x].xreplace(x0).xreplace(th) - x0[x].xreplace(th)) != 0:
-            return False
+        if ic is None:
+            return True
+        # phi at theta maps x0(theta) to x0(sigma(theta)) for the given initial values
+        at0 = {y: x0[y] for y in given}
+        return all(spy.cancel(phi[x].xreplace(at0) - x0[x].xreplace(th)) == 0 for x in given)
+    try:
+        if holds(phi):
+            return phi
+        if not given:
+            return None
+        P = {x: spy.Dummy(str(x)) for x in given}
+        img = {**th, **{x: phi[x] for x in X if x not in P}, **P}
+        eqs, rows = [], list(H)
+        for _ in range(len(given) + 1):
+            eqs += [spy.fraction(spy.together(h.xreplace(img) - h))[0] for h in rows]
+            rows = [sum((spy.diff(h, y) * F[y] for y in F), spy.Integer(0)) for h in rows]
+        eqs = [spy.expand(e) for e in eqs]
+        if any(e != 0 and spy.Poly(e, *P.values()).total_degree() > 1 for e in eqs):
+            return None
+        sol = spy.linsolve(eqs, list(P.values()))
+        if not sol or len(sol.args) != 1 or sol.args[0].free_symbols & set(P.values()):
+            return None
+        phi = {**phi, **{x: spy.cancel(e) for x, e in zip(P, sol.args[0])}}
+        return phi if holds(phi) else None
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+
+
+def state_map_proof(parts, sig, states, positive=True):
+    """Whether sigma is a symmetry of every condition, over Q(x, theta): in each segment a map phi of the states
+    (_state_map, with the initial values in the first segment), and at each event the image of the event at theta
+    equal to the event at sigma(theta) of the image before it, phi_after(E(x)) = E_sigma(phi_before(x)). With
+    switches, each regime has such a map, which takes every switching surface q = 0 to itself: q(phi(x),
+    sigma(theta)) = c q(x, theta) with c positive on the domain and free of the states. A model with root events is
+    not proven."""
+    X = [spy.Symbol(x) for x in states]
+    th = {s: e for s, e in sig.items() if s not in set(X)}
+    if any(part.get("roots") for part in parts):
+        return False
+    try:
+        for part in parts:
+            qs = [model_sympify(str(q)) for q in part.get("surfaces") or ()]
+            prev = None
+            for j, seg in enumerate(part["segments"]):
+                ic = seg["ic"] if j == 0 and None not in (seg["ic"] or {None: None}).values() else None
+                phi = _state_map(seg["f"], seg["g"], ic, sig, states)
+                if phi is None:
+                    return False
+                for q in qs:
+                    c = spy.cancel(q.xreplace({**th, **phi}) / q)
+                    if c.free_symbols & set(X) or not is_positive(c, positive):
+                        return False
+                if j:
+                    after = {}
+                    for e in seg["events"]:
+                        x = spy.Symbol(e["var"])
+                        v = model_sympify(str(e["value"]))
+                        cur = after.get(x, x)
+                        after[x] = v if e["method"] == "replace" else cur + v if e["method"] == "add" else cur * v
+                    E = {x: after.get(x, x) for x in X}
+                    for x in X:
+                        lhs = phi[x].xreplace(E)
+                        rhs = E[x].xreplace({**th, **{y: prev[y] for y in X}})
+                        if spy.cancel(lhs - rhs) != 0:
+                            return False
+                prev = phi
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return False
     return True
 
 
@@ -1180,47 +1586,101 @@ def fundamental_domain(coords, states, maps):
 
 
 def choose_order(series, positive, start, cap, timeout, budget=math.inf):
-    """(fiber, stable): the fiber at the orders of the observables that SIAN's rank criterion gives (else `start`
-    for each), raised together by one until the count over the algebraic closure equals the count one step higher,
-    at most to `cap`, or within `budget` seconds."""
+    """(fiber, stable, count): the fiber at the orders of the observables that SIAN's rank criterion gives (else
+    `start` for each), raised together by one until the count over the algebraic closure equals the count one step
+    higher, at most to `cap`. While raising, one count may take a quarter of `budget`, since a fiber with a component
+    of positive dimension costs msolve much more than the finite fiber one order higher. The search stops after
+    `budget` seconds once a finite count is found, else after three times the budget; without any finite count the
+    last fiber gets one count with the full `timeout`."""
     import time
     t0 = time.monotonic()
-    base = series.output_orders(cap, PRIMES[0]) or [max(1, start)] * len(series.G)
+    step = min(timeout, max(30.0, budget / 4))
+    crit = series.output_orders(cap, PRIMES[0])
+    # at the orders of the rank criterion the system is square and has extra solutions; one order higher it is
+    # smaller in count and faster to solve
+    base = [n + 1 for n in crit] if crit else [max(1, start)] * len(series.labels)
     rng = session.current().rng("discrete order", tuple(series.coords))
     point = {spy.Symbol(c): spy.Integer(rng.randint(2, 10 ** 6)) for c in series.coords}
-    prev = None
+    prev = found = None
     for t in range(cap + 1):
         orders = [n + t for n in base]
-        if max(orders) > cap or (prev is not None and time.monotonic() - t0 > budget):
+        spent = time.monotonic() - t0
+        if max(orders) > cap or (prev is not None and spent > (budget if found else 3 * budget)):
             break
-        fib = Fiber(series, orders, positive)
-        cc = complex_count(fib, point, PRIMES[0], timeout)
+        # the gap order rises with the Lie order, from zero gaps on
+        fib = Fiber(series, orders, positive, gap=t)
+        cc = complex_count(fib, point, PRIMES[0], step)
         if prev is not None and cc is not None and cc == prev[1]:
-            return prev[0], True
+            return prev[0], True, cc
+        if cc == 1:
+            # a higher order adds equations, so its fiber lies in this one, which holds the point: one stays one
+            return fib, True, cc
         prev = (fib, cc)
+        if cc is not None:
+            found = prev
+    if found is not None:
+        return found[0], False, found[1]
     if prev is None:
-        return Fiber(series, base, positive), False
-    return prev[0], False
+        return Fiber(series, base, positive), False, None
+    return prev[0], False, complex_count(prev[0], point, PRIMES[0], timeout)
 
 
-def analyze(f, g, ic, coords, positive, states, order=None, start=None, points=_POINTS, timeout=600,
-            budget=300):
-    """The discrete symmetries of a locally identifiable model with one condition, as a dict. Without `order`, the
-    order rises from `start` (the Lie order of the rank) until the count over the algebraic closure is stable."""
-    series = Series(f, g, ic, coords, states)
+def analyze(parts, coords, positive, states, order=None, start=None, points=_POINTS, timeout=600, budget=300):
+    """The discrete symmetries of a locally identifiable model, as a dict; `parts` as in Series, one per condition.
+    Without `order`, the order rises from `start` (the Lie order of the rank) until the count over the algebraic
+    closure is stable; after an event the gap order rises with it from zero."""
+    series = Series(parts, coords)
+    cc = None
     if order:
-        fib, stable = Fiber(series, int(order), positive), None
+        fib, stable = Fiber(series, int(order), positive, gap=int(order)), None
     else:
-        fib, stable = choose_order(series, positive, int(start or 1), 2 * len(coords), timeout, budget)
+        fib, stable, cc = choose_order(series, positive, int(start or 1), 2 * len(coords), timeout, budget)
+        if cc is None:
+            # without a finite count at any order tried, the counts in the domain and the maps have nothing to solve
+            return {"symmetries": [], "info": {
+                "order": fib.order, "orders": dict(zip(series.labels, fib.orders)), "gap_order": fib.gap,
+                "order_stable": stable, "count": None,
+                "counts": [], "limits": [_NO_FINITE_COUNT.format(order=fib.order)], "closed_forms": False,
+                "count_final": False, "fundamental_domain": []}}
+    import time
+    t0 = time.monotonic()
+    limits = []
+    # a map of the fiber that does not keep the coefficients further up shows a fiber too large at this order: the
+    # orders rise and the count is taken again
+    for _ in range(_RAISES + 1):
+        # a count of one has no maps to find
+        k, maps = (1, []) if cc == 1 else rational_maps(fib, timeout, budget)
+        false = [sig for sig in maps or [] if not output_preserved(fib, sig, deeper=_DEEPER)]
+        if not false or order or time.monotonic() - t0 > budget:
+            break
+        fib, stable, cc = Fiber(series, [n + 2 for n in fib.orders], positive, gap=fib.gap + 2), False, None
+    if false:
+        limits.append(f"{len(false)} of the maps of the fiber at order {fib.order} change the coefficients up to "
+                      f"order {fib.order + _DEEPER}: the count is that of the equations up to order {fib.order}, "
+                      "more than the values with the same output")
+        maps = [sig for sig in maps if all(sig is not f for f in false)]
     order = fib.order
     rng = session.current().rng("discrete domain", tuple(coords))
     counts = []
     pts = [domain_point(fib, rng) for _ in range(points)] if isinstance(points, int) else \
         [{spy.Symbol(str(k)): spy.Rational(str(v)) for k, v in dict(pt).items()} for pt in points]
-    for pt in pts:
-        boxes = real_points(fib, pt, timeout)
+    def count_at(pt):
         cc = complex_count(fib, {s: v for s, v in pt.items()}, PRIMES[0], timeout) \
             if all(v.q % PRIMES[0] for v in pt.values()) else None
+        # where the maps account for every point counted, the point and its images are the fiber, exactly
+        boxes = _boxes_of_maps(fib, pt, maps) if maps is not None and cc == k == len(maps) + 1 else None
+        return cc, boxes if boxes is not None else real_points(fib, pt, timeout)
+    from ..sym import msolve
+    # msolve gains little from threads: the points run as processes of one thread each
+    workers = max(1, min(int(msolve._MSOLVE_THREADS), len(pts)))
+    with msolve.msolve_threads(1):
+        if workers > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(workers) as ex:
+                done = list(ex.map(count_at, pts))
+        else:
+            done = [count_at(pt) for pt in pts]
+    for pt, (cc, boxes) in zip(pts, done):
         if boxes is None:
             counts.append({"point": {str(s): str(v) for s, v in pt.items()}, "complex": cc, "real": None,
                            "in_domain": None})
@@ -1229,35 +1689,86 @@ def analyze(f, g, ic, coords, positive, states, order=None, start=None, points=_
         counts.append({"point": {str(s): str(v) for s, v in pt.items()}, "complex": cc, "real": len(boxes),
                        "in_domain": sum(d is True for d in dom),
                        "undecided": sum(d is None for d in dom)})
-    import time
-    t0 = time.monotonic()
-    k, maps = rational_maps(fib, timeout, budget)
-    limits = []
     if maps is None and time.monotonic() - t0 > budget:
         limits.append(f"the closed forms of the maps were not found within the budget of {budget:g} s")
     if k is None:
         k = next((c["complex"] for c in counts if c.get("complex")), None)
     if k is None:
-        limits.append("msolve found no finite count: the equations of the fiber have a component of positive "
-                      f"dimension up to order {fib.order}, which the denominators and coordinates do not exclude")
+        limits.append(_NO_FINITE_COUNT.format(order=fib.order))
     syms = list(fib.syms)
     out = []
     for sig in maps or []:
         entry = {"map": {str(s): str(e) for s, e in sig.items() if e != s},
                  "changes": [str(s) for s in syms if sig[s] != s]}
-        if not output_preserved(fib, sig):
-            entry["level"] = "open"
-            out.append(entry)
-            continue
-        entry["level"] = "exact" if state_map_proof(f, g, ic, sig, [x for x in states if x in f]) else "checked"
+        entry["level"] = "exact" if state_map_proof(parts, sig, states, positive) else "checked"
         entry["preserves_domain"], entry["domain_conditions"] = domain_conditions(fib, sig)
         entry["fixed_set"] = fixed_set(sig)
         out.append(entry)
     relevant = [e for e in out if e.get("preserves_domain") is not False and e["level"] != "open"]
-    info = {"order": order, "orders": dict(zip(list(g), fib.orders)), "order_stable": stable, "count": k,
+    info = {"order": order, "orders": dict(zip(series.labels, fib.orders)), "gap_order": fib.gap,
+            "order_stable": stable, "count": k,
             "counts": counts, "limits": limits,
             "closed_forms": maps is not None,
-            "count_final": maps is not None and len(maps) + 1 == k and all(e["level"] == "exact" for e in out),
+            "count_final": maps is not None and not false and len(maps) + 1 == k and
+            all(e["level"] == "exact" for e in out),
             "fundamental_domain": fundamental_domain(coords, states, [
                 {spy.Symbol(s): model_sympify(v) for s, v in e["map"].items()} for e in relevant])}
     return {"symmetries": out, "info": info}
+
+
+def observed_states(f, g, events=()):
+    """The states the observables depend on through the right-hand sides and the event values, in the order of
+    `f`: a state outside never changes the output."""
+    from ..rexpr import get_symbols
+    reads = {x: set(get_symbols([str(e)])) for x, e in f.items()}
+    for e in events:
+        reads.setdefault(e["var"], set()).update(get_symbols([str(e["value"])]))
+    seen, todo = set(), set(get_symbols([str(v) for v in g.values()])) & set(f)
+    while todo:
+        x = todo.pop()
+        seen.add(x)
+        todo |= (reads.get(x, set()) & set(f)) - seen
+    return [x for x in f if x in seen]
+
+
+def resting_start(f, ic, inputs, coords):
+    """{state: resting value} of a condition at rest, the inputs at zero: a state that is a coordinate holds its free
+    resting value, a state without dynamics rests at its initial value, and the others solve the balances over
+    Q(theta), where they have one rational solution with the most states away from zero. A ValueError where they
+    have none."""
+    from ..sym.parse import model_sympify
+    zero = {spy.Symbol(u): spy.Integer(0) for u in inputs}
+    rhs = {x: model_sympify(str(e)).xreplace(zero) for x, e in f.items()}
+    out = {x: "0" for x in f if x in inputs}
+    for x, e in rhs.items():
+        if x in out:
+            continue
+        if x in coords:
+            out[x] = x
+        elif e == 0:
+            out[x] = str(ic.get(x, x))
+    held = {spy.Symbol(x): model_sympify(v) for x, v in out.items()}
+    U = [spy.Symbol(x) for x in f if x not in out]
+    if not U:
+        return out
+    bal = [spy.fraction(spy.together(rhs[str(x)].xreplace(held)))[0] for x in U]
+    try:
+        sols = spy.solve(bal, U, dict=True)
+    except (NotImplementedError,) + SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        sols = []
+    sols = [s for s in sols if set(s) >= set(U) and not any(v.has(spy.I) or v.free_symbols & set(U)
+                                                               for v in s.values())]
+    if sols:
+        best = max(sum(s[x] != 0 for x in U) for s in sols)
+        sols = [s for s in sols if sum(s[x] != 0 for x in U) == best]
+    if len(sols) != 1 or not all(_rational(sols[0][x]) for x in U):
+        raise ValueError("discrete() under equilibrate needs a resting state with one rational closed form in the "
+                         f"coordinates; the balances of {', '.join(map(str, U))} have {len(sols)} such solutions")
+    out.update({str(x): str(spy.cancel(sols[0][x])) for x in U})
+    return out
+
+
+def _rational(e):
+    """Whether `e` is a rational function, no root or other function."""
+    return all(p.exp.is_Integer for p in e.atoms(spy.Pow)) and not e.atoms(spy.Function)

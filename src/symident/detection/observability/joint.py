@@ -709,6 +709,23 @@ class JointSystem(RestingStates):
         self.hom_params = list(self.solve_param_names) + [nm for nm in self.l_names
                                                           if nm not in self.solve_param_names]
 
+    def rest_env(self, point, q):
+        """The resting states of each condition at `point` modulo `q` as X_c<k>, and as X with one condition, from the
+        solves of the kernel there; None where a condition does not solve."""
+        run = self.run
+        env = {}
+        for mi, ci in enumerate(self.equil_conds):
+            sc0 = self.solve_cond(point, q, ci)
+            if sc0 is None:
+                return None
+            for nm in self.state_base:
+                sl = run.slot(nm)
+                if sl is not None:
+                    env[f"{nm}_c{mi + 1}"] = int(sc0["ptc"][sl]) % q
+                    if self.kc == 1:
+                        env[nm] = env[f"{nm}_c{mi + 1}"]
+        return env
+
     def hom_env(self, point, q, mi_plain=None):
         """Leaves at `point`, resting states as X_c<k> (X in `mi_plain`); None where a condition does not solve."""
         env = {nm: int(point[i]) for i, nm in enumerate(self.run.leaf_names) if i < len(point)}

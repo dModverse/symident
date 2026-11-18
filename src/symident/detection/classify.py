@@ -11,6 +11,44 @@ from .closedform import eval_modq
 from .conditions import scaling_component
 from .rank import nullspace_basis
 
+# the orbit geometry of a direction, in the order of the report and of the labels X1, X2, ...
+KINDS = ("scaling", "translation", "curved")
+
+
+def orbit_kind(d):
+    """``"scaling"`` (xi_i = w_i theta_i up to a common factor), ``"translation"`` (xi a constant vector up to a common
+    factor), ``"curved"`` (all others) or None without a closed form: the geometry of the orbits, a line in log
+    coordinates, a line in linear coordinates, or neither."""
+    import sympy as spy
+
+    from ..sym.parse import model_sympify
+    if d.get("type") == "scaling":
+        return "scaling"
+    gen = d.get("generator")
+    if not gen:
+        return None
+    try:
+        comps = {spy.Symbol(str(k)): model_sympify(str(v)) for k, v in gen.items()}
+        comps = {k: v for k, v in comps.items() if v != 0}
+        if not comps:
+            return None
+        k0, v0 = next(iter(comps.items()))
+        if all(spy.cancel(v / v0).is_number for v in comps.values()):
+            return "translation"
+        if all(spy.cancel((v / k) / (v0 / k0)).is_number for k, v in comps.items()):
+            return "scaling"
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    return "curved"
+
+
+def direction_order(syms):
+    """The indices of the directions by orbit geometry, scalings first, then translations, curved directions and
+    those without a closed form."""
+    rank = {k: i for i, k in enumerate(KINDS)}
+    return sorted(range(len(syms)), key=lambda i: (rank.get(syms[i].get("kind") or orbit_kind(syms[i]), len(KINDS)), i))
+
 
 def _is_int(s):
     try:

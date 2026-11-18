@@ -11,13 +11,13 @@ from ..rexpr import eval_numeric, get_symbols, replace_symbols
 from ..sym.parse import _is_rational_expr, _make_local_parse
 
 
-def _coef_matrix(totals, states):
+def _coef_matrix(totals, states, shift=0.0):
     stset = set(states)
     sets = [[s for s in get_symbols(e) if s in stset] for e in totals.values()]
     species = list(dict.fromkeys(s for st in sets for s in st))
     # parameters in the coefficients, such as volumes, at a generic positive point
     others = sorted({s for e in totals.values() for s in get_symbols(e) if s not in stset})
-    at = {o: 1.0 + 0.618 * (k + 1) for k, o in enumerate(others)}
+    at = {o: 1.0 + 0.618 * (k + 1) + shift * (k + 2) for k, o in enumerate(others)}
     C = np.zeros((len(totals), len(species)))
     for i, e in enumerate(totals.values()):
         env0 = {s: 0.0 for s in species}
@@ -30,104 +30,233 @@ def _coef_matrix(totals, states):
     return C, species, sets
 
 
-def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=()):
-    """One pivot species per conserved total, chosen by partial elimination."""
+# the pivot sets that tie with the chosen one by structure, at most this many in all
+PIVOT_CHOICES = 6
+
+
+def _rank(M):
+    """The numerical rank of a small matrix of coefficients at a generic point."""
+    M = np.asarray(M, dtype=float)
+    if M.size == 0:
+        return 0
+    return int(np.linalg.matrix_rank(M, tol=1e-9 * max(1.0, float(np.abs(M).max()))))
+
+
+def _pivot_weight(C, C2, species, rows, avoid, extra):
+    """A rank of each species as a pivot by structure, lower first: avoided, a coefficient that holds a symbol (it
+    differs between the generic points of C and C2), the number of totals that hold it, then `extra`."""
+    w = {}
+    for j, s in enumerate(species):
+        held = [i for i in rows if abs(C[i, j]) > 1e-12]
+        symbolic = any(abs(C[i, j] - C2[i, j]) > 1e-9 * max(1.0, abs(C[i, j])) for i in held)
+        w[s] = 1000 * (s in avoid) + 100 * bool(symbolic) + 10 * min(len(held), 9) + min(int(extra.get(s, 0)), 9)
+    return w
+
+
+def _greedy_basis(C, rows, species, order, start=()):
+    """The columns `start`, then those of `order` that raise the rank of C[rows], until it is full."""
+    target = _rank(C[rows]) if rows else 0
+    cols = [species.index(s) for s in start]
+    for s in order:
+        if len(cols) >= target:
+            break
+        j = species.index(s)
+        if j in cols:
+            continue
+        if _rank(C[np.ix_(rows, cols + [j])]) == len(cols) + 1:
+            cols.append(j)
+    return [species[j] for j in cols]
+
+
+def _assign(C, rows, species, basis):
+    """{row: pivot}: a matching of the totals `rows` to the species `basis` along nonzero coefficients."""
+    cols = [species.index(s) for s in basis]
+    match = {}
+
+    def augment(r, seen):
+        for j in cols:
+            if abs(C[r, j]) > 1e-12 and j not in seen:
+                seen.add(j)
+                if j not in match or augment(match[j], seen):
+                    match[j] = r
+                    return True
+        return False
+    for r in rows:
+        augment(r, set())
+    return {r: species[j] for j, r in match.items()}
+
+
+def _free_initial_error(prefer, C, rows, species, totals):
+    """The InputError for states of `free_initial` whose resting values the totals do not leave independent."""
+    names = list(totals)
+    cols = [species.index(s) for s in prefer]
+    shared = [names[i] for i in rows if sum(abs(C[i, j]) > 1e-12 for j in cols) >= 2]
+    within = [names[i] for i in rows if all(abs(C[k, j]) <= 1e-12 for k in rows if k != i for j in cols)]
+    if len(shared) == 1 and shared[0] in within:
+        return InputError(f"`free_initial` names {', '.join(prefer)}, which the single total {shared[0]} = "
+                          f"{totals[shared[0]]} holds; give one state per total")
+    return InputError(f"`free_initial` names {', '.join(prefer)}, whose resting values the totals "
+                      f"{', '.join(names[i] for i in rows)} do not leave independent; give one state per total, "
+                      "with the coefficients of the chosen states linearly independent")
+
+
+def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=(), extra=None):
+    """One pivot species per independent conserved total, chosen by structure, and the pivot sets tied with it.
+
+    The pivots are a basis of the columns of the coefficient matrix of the totals, chosen by the lowest
+    _pivot_weight() (`extra` a further weight per species) in the order of `states`; `prefer` (``free_initial``)
+    are taken first and checked. "ties" are the other bases of the same weight, "valid" further bases, each at most
+    PIVOT_CHOICES - 1.
+    """
     names = list(totals)
     C, species, sets = _coef_matrix(totals, states)
-    Cr = C.copy()
-    pivots = [None] * len(names)
-    avoid, prefer, parameters = set(avoid), list(prefer), set(parameters)
-    for i in range(len(names)):
-        cand = [s for s in sets[i] if s not in set(p for p in pivots if p)]
-        if len(cand) < 2:
-            continue
-        nz = [s for s in cand if abs(Cr[i, species.index(s)]) > 1e-12]
-        if not nz:
-            continue
-        keep = [s for s in nz if s not in avoid]
-        if keep:
-            nz = keep
-        pref = [s for s in prefer if s in nz]
-        if pref:
-            e = sorted(pref)[0]
-        else:
-            future = {s for st in sets[i + 1:] for s in st}
-            safe = [s for s in nz if s not in future]
-            pool = safe if safe else nz
-            nu = [s for s in pool if s not in parameters]
-            e = sorted(nu)[0] if nu else sorted(pool)[0]
-        if i < len(names) - 1:
-            ce = species.index(e)
-            piv = Cr[i, ce]
-            for j in range(i + 1, len(names)):
-                if abs(Cr[j, ce]) > 1e-12:
-                    Cr[j] = Cr[j] - (Cr[j, ce] / piv) * Cr[i]
-        pivots[i] = e
-    return {"C": C, "species": species, "pivots": pivots, "sets": sets}
+    # a total of a single species leaves that species constant: it needs no pivot
+    rows = [i for i in range(len(names)) if sum(abs(C[i, j]) > 1e-12 for j in range(len(species))) >= 2]
+    keep = []
+    for i in rows:
+        if _rank(C[keep + [i]]) == len(keep) + 1:
+            keep.append(i)
+    rows = keep
+    avoid, parameters = set(avoid), set(parameters)
+    w = _pivot_weight(C, _coef_matrix(totals, states, shift=0.377)[0], species, rows, avoid | parameters,
+                      dict(extra or {}))
+    pos = {s: k for k, s in enumerate(states)}
+    order = sorted(species, key=lambda s: (w[s], pos.get(s, len(pos))))
+    prefer = [str(s) for s in prefer or []]
+    if prefer:
+        dup = [s for k, s in enumerate(prefer) if s in prefer[:k]]
+        if dup:
+            raise InputError(f"`free_initial` names {dup[0]} twice; give one state per total")
+        bad = [s for s in prefer if s not in species or
+               not any(abs(C[i, species.index(s)]) > 1e-12 for i in rows)]
+        if bad:
+            held = ", ".join(f"{names[i]} = {totals[names[i]]}" for i in rows)
+            raise InputError(f"`free_initial` names {bad[0]}, which is in no conserved total"
+                             + (f" ({held})" if rows else ""))
+        if _rank(C[np.ix_(rows, [species.index(s) for s in prefer])]) < len(prefer):
+            raise _free_initial_error(prefer, C, rows, species, totals)
+    basis = _greedy_basis(C, rows, species, order, prefer)
+
+    def exchanges(b):
+        """(position, species) pairs whose exchange keeps the columns `b` a basis."""
+        X = np.linalg.solve(C[np.ix_(rows, [species.index(x) for x in b])], C[rows])
+        return [(k, s) for s in order if s not in b for k in range(len(b))
+                if abs(X[k, species.index(s)]) > 1e-9]
+    ties, more = [], []
+    if not prefer and rows:
+        # bases one exchange apart, breadth first from the greedy one: those of equal weight tie with it
+        seen, queue = {frozenset(basis)}, [basis]
+        while queue and len(ties) < PIVOT_CHOICES - 1:
+            b = queue.pop(0)
+            for k, s in exchanges(b):
+                alt = sorted(b[:k] + [s] + b[k + 1:], key=lambda x: pos.get(x, len(pos)))
+                if frozenset(alt) in seen:
+                    continue
+                seen.add(frozenset(alt))
+                if w[s] == w[b[k]]:
+                    ties.append(alt)
+                    queue.append(alt)
+                elif len(more) < PIVOT_CHOICES - 1:
+                    more.append(alt)
+        more.sort(key=lambda b: sum(w[x] for x in b))
+    basis = sorted(basis, key=lambda x: pos.get(x, len(pos)))
+    ties = ties[:PIVOT_CHOICES - 1]
+    more = more[:max(0, PIVOT_CHOICES - 1 - len(ties))]
+    match = _assign(C, rows, species, basis)
+    pivots = [match.get(i) for i in range(len(names))]
+    return {"C": C, "species": species, "pivots": pivots, "sets": sets, "rows": rows, "basis": basis,
+            "ties": ties, "valid": more}
 
 
-def _coef_expr(total, species, s):
-    """The coefficient of species `s` in the linear `total`, an expression in the other symbols of `total`."""
-    rest = [x for x in species if x != s]
-    one = replace_symbols(rest + [s], ["0"] * len(rest) + ["1"], total)
-    zero = replace_symbols(rest + [s], ["0"] * (len(rest) + 1), total)
-    try:
-        _, parse = _make_local_parse([one, zero])
-        c = spy.simplify(parse(one.replace("^", "**")) - parse(zero.replace("^", "**")))
-    except SYMPY_FAILS as exc:
-        sympy_fail(exc)
-        return None
-    return None if c.free_symbols == set() else str(c).replace("**", "^")
-
-
-def _num(x):
-    x = float(x)
-    if x == int(x):
-        return str(int(x))
-    return repr(x)
-
-
-def substitute_cq(totals, f, states, parameters, avoid=()):
-    """Each conserved total eliminates one pivot species, expressed through a `total` parameter."""
+def substitute_cq(totals, f, states, parameters, avoid=(), prefer=(), extra=None):
+    """Each independent conserved total eliminates one pivot species, solved through the totals as parameters."""
     parameters = list(parameters or [])
     if not totals:
-        return {"f": f, "parameters": parameters, "cq_info": [], "elim_states": []}
-    dec = pivot_decomposition(totals, states, parameters, avoid)
+        return {"f": f, "parameters": parameters, "cq_info": [], "elim_states": [], "decomposition": None}
+    dec = pivot_decomposition(totals, states, parameters, avoid, prefer, extra)
     names = list(totals)
-    subs, cq_info, elim = {}, [], []
-    for i, nm in enumerate(names):
-        e = dec["pivots"][i]
-        if e is None:
-            continue
-        coef = dec["C"][i, dec["species"].index(e)]
-        rest = f"({replace_symbols([e], ['0'], totals[nm])})"
-        held = _coef_expr(totals[nm], dec["sets"][i], e)
-        if held is not None:
-            recon = f"(({nm} - {rest}) / ({held}))"
-        elif abs(coef - 1) < 1.5e-8:
-            recon = f"({nm} - {rest})"
-        else:
-            recon = f"(({nm} - {rest}) / ({_num(coef)}))"
-        subs[e] = recon
-        elim.append(e)
+    rows = [i for i, e in enumerate(dec["pivots"]) if e is not None]
+    if not rows:
+        return {"f": f, "parameters": parameters, "cq_info": [], "elim_states": [], "decomposition": dec}
+    elim = [dec["pivots"][i] for i in rows]
+    try:
+        _, parse = _make_local_parse([str(totals[names[i]]) for i in rows] + [names[i] for i in rows])
+        eqs = [parse(str(totals[names[i]]).replace("^", "**")) - parse(names[i]) for i in rows]
+        unknowns = [parse(e) for e in elim]
+        sol = spy.linsolve(eqs, unknowns)
+        sol = next(iter(sol)) if sol else None
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        sol = None
+    if sol is None or any(x.free_symbols & set(unknowns) for x in sol):
+        raise InputError("the conserved totals " + ", ".join(names[i] for i in rows) +
+                         " cannot be solved for the species " + ", ".join(elim))
+    recon = {e: "(" + str(spy.cancel(x)).replace("**", "^") + ")" for e, x in zip(elim, sol)}
+    cq_info = []
+    for i in rows:
+        nm, e = names[i], dec["pivots"][i]
         if nm not in parameters:
             parameters.append(nm)
-        cq_info.append({"total_name": nm, "elim_state": e, "recon_expr": recon})
-    keys, vals = list(subs), list(subs.values())
-    for _ in range(len(subs)):
-        f_new = replace_symbols(keys, vals, f)
-        if f_new == f:
-            break
-        f = f_new
-    for ci in cq_info:
-        rec = ci["recon_expr"]
-        for _ in range(len(subs)):
-            rec_new = replace_symbols(keys, vals, rec)
-            if rec_new == rec:
-                break
-            rec = rec_new
-        ci["recon_expr"] = rec
-    return {"f": f, "parameters": parameters, "cq_info": cq_info, "elim_states": elim}
+        cq_info.append({"total_name": nm, "elim_state": e, "recon_expr": recon[e]})
+    keys = list(recon)
+    f = replace_symbols(keys, [recon[k] for k in keys], f)
+    return {"f": f, "parameters": parameters, "cq_info": cq_info, "elim_states": elim, "decomposition": dec}
+
+
+def total_coefficient(total, x):
+    """The coefficient of the species `x` in the linear `total`, as an expression."""
+    _, parse = _make_local_parse([str(total), str(x)])
+    c = spy.diff(parse(str(total).replace("^", "**")), parse(str(x)))
+    return str(c).replace("**", "^")
+
+
+def cq_events(events, totals, cq_info):
+    """The events of a model whose `cq_info` eliminated species through conserved totals, and the totals they change.
+
+    An event on a species x of a total T adds a*(E(x) - x) to T, where a is the coefficient of x in T and E(x) the
+    value of x after the events at that time; like every event value it reads the states before the events. An
+    event on an eliminated species changes only the totals, and an event value reads an eliminated species
+    through the totals.
+    """
+    from .conditions import compose_event
+    recon = {ci["elim_state"]: ci["recon_expr"] for ci in cq_info}
+    names = [ci["total_name"] for ci in cq_info]
+    held = {t: set(get_symbols([str(totals[t])])) for t in names}
+    keys, vals = list(recon), list(recon.values())
+
+    def through(text):
+        return replace_symbols(keys, vals, str(text)) if keys else str(text)
+    out, changed, groups = [], [], {}
+    for e in events:
+        key = (str(e["time"]), tuple(e["cond"]) if e.get("cond") is not None else None, e.get("root"))
+        groups.setdefault(key, []).append(e)
+    for evs in groups.values():
+        delta = {}
+        for x in dict.fromkeys(e["var"] for e in evs):
+            ops = [e for e in evs if e["var"] == x]
+            old = recon.get(x, x)
+            cur = old
+            for e in ops:
+                cur = compose_event(cur, e["method"], through(e["value"]))
+            for t in names:
+                if x in held[t]:
+                    delta.setdefault(t, []).append(f"({total_coefficient(totals[t], x)})*(({cur}) - ({old}))")
+            if x not in recon:
+                out += [dict(e, value=through(e["value"]), time=through(e["time"])) for e in ops]
+        e0 = evs[0]
+        for t, parts in delta.items():
+            try:
+                _, parse = _make_local_parse(parts)
+                v = spy.cancel(spy.together(sum((parse(d.replace("^", "**")) for d in parts), spy.Integer(0))))
+            except SYMPY_FAILS as exc:
+                sympy_fail(exc)
+                v = " + ".join(parts)
+            if v == 0:
+                continue
+            out.append({k: e0[k] for k in e0 if k not in ("var", "value", "method", "time")} |
+                       {"var": t, "time": through(e0["time"]), "value": str(v).replace("**", "^"), "method": "add"})
+            changed.append(t)
+    return out, list(dict.fromkeys(changed))
 
 
 def check_conserved(totals, f):
@@ -150,6 +279,159 @@ def check_conserved(totals, f):
                          f"the right-hand sides is {str(d).replace('**', '^')}, not zero")
 
 
+# rays of the cone of nonnegative conservation laws past which the order of the species decides the basis
+_RAY_CAP = 400
+
+
+def _primitive(v):
+    """The integer vector of the direction of the rational vector `v`, coprime entries."""
+    v = [Fraction(x) for x in v]
+    scale = math.lcm(*(x.denominator for x in v)) if v else 1
+    z = [int(x * scale) for x in v]
+    g = math.gcd(*z) if any(z) else 1
+    return [x // g for x in z]
+
+
+def _rref_rows(vectors, n):
+    """The rows of the reduced row echelon form of the span of `vectors` over Q."""
+    rows = [list(map(Fraction, v)) for v in vectors]
+    out = []
+    for col in range(n):
+        piv = next((r for r in rows if r[col] != 0), None)
+        if piv is None:
+            continue
+        rows.remove(piv)
+        piv = [x / piv[col] for x in piv]
+        rows = [[a - r[col] * b for a, b in zip(r, piv)] for r in rows]
+        out = [[a - r[col] * b for a, b in zip(r, piv)] for r in out] + [piv]
+    return [r for r in out if any(r)]
+
+
+def _extreme_rays(basis, n):
+    """The extreme rays of the nonnegative vectors in the span of `basis` (independent rows), by the double
+    description method, or None past _RAY_CAP rays."""
+    k = len(basis)
+    A = [[basis[i][j] for i in range(k)] for j in range(n)]
+    A = [a for a in A if any(a)]
+    # a start from k independent constraints: the rays of a simplicial cone
+    start, M = [], []
+    for a in A:
+        if len(_rref_rows(M + [a], k)) > len(M):
+            M.append(a)
+            start.append(a)
+        if len(M) == k:
+            break
+    Minv = spy.Matrix(M).inv()
+    rays = [[Fraction(int(spy.fraction(x)[0]), int(spy.fraction(x)[1])) for x in Minv.col(i)] for i in range(k)]
+    done = list(start)
+
+    def dot(a, y):
+        return sum(x * z for x, z in zip(a, y))
+    for a in A:
+        if a in start:
+            continue
+        vals = [dot(a, r) for r in rays]
+        pos = [r for r, v in zip(rays, vals) if v > 0]
+        neg = [r for r, v in zip(rays, vals) if v < 0]
+        new = [r for r, v in zip(rays, vals) if v >= 0]
+        zero_of = [frozenset(i for i, c in enumerate(done) if dot(c, r) == 0) for r in rays]
+        zp = {id(r): z for r, z in zip(rays, zero_of)}
+        for p in pos:
+            for q in neg:
+                common = zp[id(p)] & zp[id(q)]
+                # adjacent: no third ray is zero on every constraint both are zero on
+                if any(common <= zp[id(r)] for r in rays if r is not p and r is not q):
+                    continue
+                ap, aq = dot(a, p), dot(a, q)
+                new.append([ap * y - aq * x for x, y in zip(p, q)])
+        rays = new
+        done.append(a)
+        if len(rays) > _RAY_CAP:
+            return None
+    out = []
+    for r in rays:
+        c = _primitive([sum(r[i] * basis[i][j] for i in range(k)) for j in range(n)])
+        if any(c) and c not in out:
+            out.append(c)
+    return out
+
+
+def canonical_laws(vectors, n):
+    """A basis of the span of the conservation laws `vectors` (length n): the nonnegative extreme rays where they
+    span it, few species and small coefficients first, completed by reduced rows; each primitive, of positive
+    sum. Up to ties between species of the same role, the basis does not depend on the order of the species."""
+    rows = _rref_rows(vectors, n)
+    if not rows:
+        return []
+    k = len(rows)
+    ints = [_primitive(r) for r in rows]
+    supp = [frozenset(j for j, x in enumerate(r) if x) for r in ints]
+    # the laws of species sets that no law joins are separate cones
+    block = list(range(k))
+
+    def root(i):
+        while block[i] != i:
+            block[i] = block[block[i]]
+            i = block[i]
+        return i
+    for i in range(k):
+        for j in range(i):
+            if supp[i] & supp[j]:
+                block[root(i)] = root(j)
+    rays = []
+    for b in dict.fromkeys(root(i) for i in range(k)):
+        idx = [i for i in range(k) if root(i) == b]
+        if len(idx) == 1:
+            r = ints[idx[0]]
+            if min(r) >= 0 or max(r) <= 0:
+                rays.append([abs(x) for x in r])
+            continue
+        cols = sorted(set().union(*(supp[i] for i in idx)))
+        sub = _extreme_rays([[rows[i][j] for j in cols] for i in idx], len(cols))
+        for r in sub or []:
+            full = [0] * n
+            for j, x in zip(cols, r):
+                full[j] = x
+            rays.append(full)
+    rays.sort(key=lambda r: (sum(1 for x in r if x), max(r), sum(r), [-abs(x) for x in r]))
+    chosen, ech = [], []
+
+    def independent(r):
+        """Whether `r` is outside the span of the chosen laws; the echelon rows `ech` grow with it."""
+        v = [Fraction(x) for x in r]
+        for pc, row in ech:
+            if v[pc]:
+                c = v[pc]
+                v = [a - c * b for a, b in zip(v, row)]
+        pc = next((j for j, x in enumerate(v) if x), None)
+        if pc is None:
+            return False
+        ech.append((pc, [x / v[pc] for x in v]))
+        return True
+    for r in rays:
+        if len(chosen) == k:
+            break
+        if independent(r):
+            chosen.append(r)
+    for r in ints:
+        if len(chosen) == k:
+            break
+        if independent(r):
+            chosen.append(r if sum(r) > 0 or (sum(r) == 0 and next(x for x in r if x) > 0) else [-x for x in r])
+    return sorted(chosen, key=lambda r: [j for j, x in enumerate(r) if x])
+
+
+def _total_text(species, v):
+    """The total sum_j v_j species_j with integer coefficients, as text."""
+    out = ""
+    for s, c in zip(species, v):
+        if not c:
+            continue
+        term = s if abs(c) == 1 else f"{abs(c)}*{s}"
+        out += (term if c > 0 else f"-{term}") if not out else (f" + {term}" if c > 0 else f" - {term}")
+    return out
+
+
 def conserved_totals(smatrix, species):
     """Conserved quantities of a stoichiometry (rows reactions, columns species) as totals."""
     from sympy.polys.domains import QQ
@@ -160,8 +442,8 @@ def conserved_totals(smatrix, species):
         return {}
     red, piv = DomainMatrix(rows, (len(rows), n), QQ).to_sparse().rref()
     R = red.rep
-    out = {}
-    for i, free in enumerate(c for c in range(n) if c not in set(piv)):
+    laws = []
+    for free in (c for c in range(n) if c not in set(piv)):
         # the basis of the nullspace from the reduced row echelon form, one vector per free column
         v = [Fraction(0)] * n
         v[free] = Fraction(1)
@@ -169,10 +451,8 @@ def conserved_totals(smatrix, species):
             x = R.get(r, {}).get(free)
             if x:
                 v[pc] = -Fraction(int(QQ.numer(x)), int(QQ.denom(x)))
-        v = [c * math.lcm(*(c.denominator for c in v)) for c in v]
-        terms = [s if c == 1 else f"{int(c)}*{s}" for s, c in zip(species, v) if c]
-        out[f"total{i + 1}"] = " + ".join(terms)
-    return out
+        laws.append(v)
+    return {f"total{i + 1}": _total_text(species, v) for i, v in enumerate(canonical_laws(laws, n))}
 
 
 def exact_totals(totals, odes):
@@ -195,15 +475,12 @@ def conserved_totals_of_odes(odes):
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return {}
+    states = list(odes)
+    vecs = [[Fraction(int(spy.Rational(law.get(spy.Symbol(str(k)), 0)).p),
+                      int(spy.Rational(law.get(spy.Symbol(str(k)), 0)).q)) for k in states] for law in laws]
     out = {}
-    for law in laws:
-        rats = [spy.Rational(law.get(spy.Symbol(str(k)), 0)) for k in odes]
-        coeffs = [Fraction(int(r.p), int(r.q)) for r in rats]
-        scale = math.lcm(*(c.denominator for c in coeffs))
-        v = [int(c * scale) for c in coeffs]
-        if next(c for c in v if c) < 0:
-            v = [-c for c in v]
-        total = " + ".join(s if c == 1 else f"{c}*{s}" for s, c in zip(odes, v) if c)
+    for v in canonical_laws(vecs, len(states)):
+        total = _total_text(states, v)
         try:
             check_conserved({"total": total}, odes)
         except InputError:

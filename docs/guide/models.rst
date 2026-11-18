@@ -78,10 +78,13 @@ The further arguments of :class:`~symident.Model` describe how the model is obse
 ``parameters``
    further symbols treated as parameters; the coordinates stay the same.
 ``totals``
-   conserved totals, name to expression, which the right-hand sides must conserve. When they
-   are omitted, they are computed from the linear conservation laws, from the stoichiometry of
+   conserved totals, name to expression, which the right-hand sides must conserve; a
+   coefficient may hold parameters, such as the volumes in ``V1*A + V2*B``. When they are
+   omitted, they are computed from the linear conservation laws, from the stoichiometry of
    ``reactions`` or from the right-hand sides of the ODEs, and named ``total1``, ``total2``,
-   .... ``reduce_cq`` eliminates one species per total (:doc:`detection`).
+   .... These are nonnegative combinations where such combinations span the laws, the same
+   for every order of the states. ``reduce_cq`` eliminates one species per total
+   (:doc:`detection`).
 ``equilibrate``, ``positive``, ``reduce_cq``
    defaults for :func:`~symident.detect`, which a call can override; not given, they are
    ``False``, ``True`` and ``False``.

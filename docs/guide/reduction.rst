@@ -2,10 +2,13 @@ Reduction
 =========
 
 A non-identifiable model can be reduced to identifiable parameters. :func:`symident.reduce`,
-or ``res.reduce()``, removes the directions of a detection result: a scaling by fixing one of
-its coordinates, a general direction by its invariants, i.e., the combinations that are
-constant along it, which become new parameters ``q_1, q_2, ...``. For the result of the
-running example in :doc:`detection`:
+or ``res.reduce()``, describes the model in the invariants of the directions of a detection
+result, i.e., the combinations of the coordinates that are constant along them, which become
+new parameters ``q_1, q_2, ...``. The invariants are coordinates on the quotient of the
+parameter space by the orbits, a *chart*. A scaling (``Symmetry.kind``, :doc:`detection`) is
+removed by fixing one of its coordinates to one, a translation by its linear invariants with a
+coordinate fixed to zero on a face of the positive orthant, and a curved direction by its
+invariants. For the result of the running example in :doc:`detection`:
 
 .. code-block:: python
 
@@ -37,8 +40,9 @@ running example in :doc:`detection`:
 stimulated flux into ``x2`` in units of the signal; ``k2`` stays. Each line under
 ``Sections`` is one *block* of jointly reduced directions. Along a direction, the coordinates
 move on a curve of equal prediction, its *orbit*; a *section* picks one point per orbit, here by
-fixing ``s = 1`` and ``kl = 0``, and ``red.summary(detailed=True)`` says why each section meets
-every orbit once. ``kl = 0`` lies on the boundary of the parameter
+fixing ``s = 1`` and ``kl = 0``, and the trafo is this section in the coordinates of the chart.
+``red.summary(detailed=True)`` says why each section meets every orbit once. A chart is
+returned only where it is valid on the declared domain, by default the positive orthant. ``kl = 0`` lies on the boundary of the parameter
 space, which the orbits reach only in a limit; the model is continuous there, so the limit
 gives the output of the orbit.
 
@@ -60,11 +64,12 @@ Levels and unproven directions
 direction rests on a closed form of that level, and ``open`` when a claim of a section is not
 proven (named in the printout). Unproven directions are handled as follows:
 
-- ``open``: an error unless ``allow_open=True``, which leaves the direction in place as an
-  unresolved block;
-- ``checked``, or a saturation guard that saw the rank still grow: an error unless
-  ``allow_checked=True``;
+- ``open``: a warning; the direction stays in place as an unresolved block;
+- ``checked``, or a saturation guard that saw the rank still grow: a warning; the reduction uses
+  the closed form;
 - ``verified``: a warning.
+
+``allow_open=False`` and ``allow_checked=False`` make the first two an error.
 
 Options
 -------
@@ -79,17 +84,23 @@ Options
    search for invariants by separable quadrature; ``d_exp=0`` skips the exponential factors
    and integrating factors.
 ``alternatives``
-   also builds alternative transformations and returns the best; this happens anyway when the
-   first transformation has a square root or a fractional power outside blocks with sign
-   conditions.
+   also returns, in ``red.alternatives``, the charts of the other valid choices of the
+   coordinates to fix, and returns the best; the search for them runs anyway when the first
+   chart has a square root or a fractional power outside blocks with sign conditions.
 ``zero_limits``
    checks for each block whether coordinates can be set to zero in a limit, printed under
    ``Zero limits`` and returned in ``to_dict()["zero_compatibility"]``.
 ``timeout``, ``work_cap``
-   the time and the work per block of the search for a section; reaching either is named in
-   ``red.limits``.
+   the wall time in seconds (600 by default, ``math.inf`` for none) and the work per block of the
+   search for a section; reaching either is named in ``red.limits``.
 ``check``
    runs the detection again on the reduced model (``red.checks["loop"]``).
+``branch``
+   with a discrete symmetry of a detection with ``mode="global"`` (:doc:`detection`), the side of
+   its fixed set, such as ``"k01 > k12"``, whose chart becomes the trafo: free values in the positive
+   orthant map one to one onto that side, e.g. ``k01 = delta + k12`` with ``delta > 0``, chained with
+   the section of the continuous symmetries. Without it every branch is listed in
+   ``red.alternatives`` and the trafo is the section alone.
 
 The result
 ----------
@@ -99,8 +110,9 @@ A :class:`~symident.Reduction` holds the transformation and what is known about 
 ``trafo``
    the transformation, the identity on every coordinate it leaves.
 ``remaining``, ``partial``
-   the blocks left unreduced, and the reduced blocks whose section covers part of the orbits
-   only, those on which the ``sign_conditions``, inequalities in the new parameters, hold.
+   the directions left unreduced, and the removed directions whose chart covers the domain only
+   in part, on the orbits where the ``sign_conditions``, inequalities in the new parameters,
+   hold.
 ``blocks``
    one entry per block of jointly reduced directions, with ``status`` (``reduced``,
    ``fixed``, ``invariant_only``, ``unresolved``), ``level``, the section and its
@@ -111,6 +123,10 @@ A :class:`~symident.Reduction` holds the transformation and what is known about 
    the check of the transformation over Q (``pins``, ``invariants``) and, with
    ``check=True``, the detection on the reduced model (``loop``), whose ``ok`` is None where it
    could not run.
+``discrete``
+   the discrete symmetries of the detection, the fundamental domain and, under ``branches``, per
+   side of the fixed set its name, the ``trafo``, the coordinate it ``solved``, the new parameter,
+   the ``boundary``, ``injective``, ``reach`` and ``unproven``; ``branch`` is the chosen one.
 ``alternatives``, ``limits``, ``assumptions``
-   the alternative transformations, what stopped part of the search, and the assumptions of
-   the detection with the domain of the reduction.
+   the charts of the other valid choices of the fixed coordinates, what stopped part of the
+   search, and the assumptions of the detection with the domain of the reduction.

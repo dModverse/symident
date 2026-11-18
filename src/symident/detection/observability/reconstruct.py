@@ -11,6 +11,7 @@ from ...gfp import (
     PRIMES,
     canon_gauge,
     in_span,
+    invmod,
     logcoord_gauge,
     minsupport_gauge,
     mulmod,
@@ -29,6 +30,9 @@ from ..verify import verify_direction, verify_in_nullspace
 from .context import ints, ok, strs
 from .homotopy import Homotopy
 from .narrow import _CSUFFIX, Narrow
+
+# minimal supports the narrow route tries beyond one per residual direction
+_CIRCUIT_CAP = 16
 
 _STATE_COL = re.compile(r"\|c([0-9]+)$")
 
@@ -237,13 +241,20 @@ class Reconstruction:
                 cands.append((vecs[:, gi], ms0["anchors"][gi]))
         for fc in self.residual:
             cands.append((self.residues(fc), fc))
+        # the minimal supports these leave out, so that the result does not depend on the
+        # column order (the names): tried only while a direction stays open
+        first = len(cands)
+        cands += list(ms0.get("circuits") or [])[:_CIRCUIT_CAP]
         span = an.scal_rows.T.copy() if an.scal_rows.shape[0] else np.zeros((nz, 0), dtype=np.int64)
-        out = []
-        for v, anchor in cands:
+        out, tried = [], set()
+        for i, (v, anchor) in enumerate(cands):
             if len(out) >= len(self.residual) or expired(self.ctrl):
                 break
-            if in_span(span, v, nz, P):
+            v = np.asarray(v, dtype=np.int64) % P
+            key = mulmod(v, invmod(int(v[np.nonzero(v)[0][0]]), P), P).tobytes()
+            if key in tried or in_span(span, v, nz, P):
                 continue
+            tried.add(key)
             try:
                 e = Narrow(self, v, anchor).run()
             except Exception as exc:
@@ -252,6 +263,8 @@ class Reconstruction:
                     import traceback
                     traceback.print_exc()
                 e = None
+            if i >= first and not (e is not None and e.get("closed_form")):
+                continue
             if e is None:
                 self.attempt("narrow", reason="no result (see info['errors'])", support=[an.znames[anchor]])
             else:
@@ -294,13 +307,28 @@ class Reconstruction:
         return out
 
     def _forward_entries(self, closed):
+        """The closed forms of the forward route, each checked at points uniform modulo the verification prime."""
+        an = self.an
         out = []
         for e in closed:
             e = dict(e)
-            if self.an.recast:
+            if an.recast:
                 e.setdefault("checked", dict(e["vector"]))
-                e["vector"] = recast_backsub(e["vector"], self.an.recast)
+                e["vector"] = recast_backsub(e["vector"], an.recast)
             e["route"] = "forward fit per prime"
+            vec = e.get("checked") or e.get("vector")
+            col = next((an.znames.index(k) for k in (vec or {}) if k in an.znames), None)
+            if e.get("closed_form") and col is not None and an.joint:
+                try:
+                    trial = dict(e, vector=vec)
+                    # the form states the columns off the resting states
+                    phys = [i for i, z in enumerate(an.znames) if not _CSUFFIX.search(z)]
+                    held = verify_in_nullspace(trial, col, an.znames, an.leaf_names_aug, self.sc["point0"],
+                                               self.sc["nt_used"], an.kcall, self.pool_next, an.nz,
+                                               cols=phys, env_fn=an.sys.rest_env)
+                    e["random_checked"] = held is True and not trial.get("partial_check")
+                except Exception as exc:
+                    swallow(exc, "forward form at random points")
             out.append(e)
         return out
 
@@ -557,7 +585,8 @@ class Reconstruction:
         if e.get("closed_form"):
             vargs = (e, fc, an.znames, an.leaf_names_aug, sc["point0"], sc["nt_used"], an.kcall)
             def in_null(cols=None):
-                return verify_in_nullspace(*vargs, self.pool_next, an.nz, self.dir_call, cols=cols)
+                return verify_in_nullspace(*vargs, self.pool_next, an.nz, self.dir_call, cols=cols,
+                                           env_fn=an.sys.rest_env if an.joint else None)
             if per_prime:
                 # a fit per prime states only the columns off the resting states and the anchor
                 verified = in_null(None if self.phys_cols is None else self.phys_cols + [fc])

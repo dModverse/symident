@@ -43,15 +43,16 @@ def verify_direction(entry, f, znames, leaf_names, point0, nt_used, kcall, resid
 
 
 def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, pool_next, nz,
-                        dir_call=None, tries=6, need=2, cols=None):
-    """Gauge-independent check that a direction lies in the nullspace at `need` of `tries` fresh seeded points."""
+                        dir_call=None, tries=6, need=2, cols=None, env_fn=None):
+    """Gauge-independent check that a direction lies in the nullspace at `need` of `tries` fresh seeded points;
+    `env_fn(point, q)` adds the values of names off the leaves, such as resting states."""
     if entry.get("vector") is None:
         return True
     q = verify_prime()
     passed = 0
     for k in range(tries):
         pt = uniform_point(len(point0), q, session.current().seed("verify kernel", f, pool_next, k))
-        ok_ = _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q, cols)
+        ok_ = _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q, cols, env_fn)
         if ok_ is False:
             return False
         # the error bound does not cover a check on part of the stated entries
@@ -64,13 +65,19 @@ def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, po
     return False
 
 
-def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q, cols=None):
+def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q, cols=None, env_fn=None):
     """The check of verify_in_nullspace() at one point: True, False, "partial" when only the entries it can
     evaluate pass, or None where the kernel does not exist."""
     rq = kcall(pt, q, int(nt_used))
     if not rq.get("ok"):
         return None
     env = {nm: int(pt[i]) for i, nm in enumerate(leaf_names)}
+    if env_fn is not None:
+        # the states at the point are the resting states the kernel was taken at
+        extra = env_fn(pt, q)
+        if extra is None:
+            return None
+        env.update(extra)
     v = np.zeros(nz, dtype=np.int64)
     v[f] = 1
     known = np.ones(nz, dtype=bool)

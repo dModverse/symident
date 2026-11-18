@@ -173,16 +173,17 @@ _SUB = "₀₁₂₃₄₅₆₇₈₉"
 
 # candidate sections the search of one block may try
 WORK_CAP = 4000
+# seconds the section search of one block may take by default
+REDUCE_TIMEOUT = 600
 
 
 def ordered(obj):
-    """Directions grouped by type with labels X1, X2, ..."""
+    """Directions grouped by orbit geometry with labels X1, X2, ..., as in the report of the detection."""
+    from ..detection.classify import direction_order
     syms = obj.get("symmetries") or []
     if not syms:
         return {"syms": [], "labels": []}
-    rank = {"scaling": 0, "general": 1}
-    order = sorted(range(len(syms)), key=lambda i: (rank.get(syms[i]["type"], 2), i))
-    syms = [syms[i] for i in order]
+    syms = [syms[i] for i in direction_order(syms)]
     labels = ["X" + "".join(_SUB[int(c)] for c in str(i + 1)) for i in range(len(syms))]
     return {"syms": syms, "labels": labels}
 
@@ -273,17 +274,24 @@ def finish_reduction(obj, red):
                       stacklevel=3)
 
 
-def check_levels(obj, allow_open=False, allow_checked=False):
-    """Raises for open or checked directions and a failed saturation check unless allowed; warns for verified ones."""
+def check_levels(obj, allow_open=True, allow_checked=True):
+    """Warns for open, checked and verified directions and a failed saturation check; raises for the first
+    three unless allowed."""
     levels = [d.get("level") for d in obj.get("symmetries") or []]
-    if "open" in levels and not allow_open:
-        raise ValueError("a direction has no closed form (level 'open'); detect with reconstruct=True, "
-                         "or pass allow_open=True to reduce the others")
+    if "open" in levels:
+        if not allow_open:
+            raise ValueError("a direction has no closed form (level 'open'); detect with reconstruct=True, "
+                             "or pass allow_open=True to reduce the others")
+        warnings.warn("a direction has no closed form (level 'open') and stays in the reduced model "
+                      "(Reduction.remaining)", stacklevel=3)
     ver = (obj.get("info") or {}).get("verification") or {}
-    if ver.get("ok") is False and not allow_checked:
-        raise ValueError("the rank still grows past the Lie order used, so the directions may be over-reported "
-                         f"({ver.get('reason')}); pass allow_checked=True to reduce them anyway")
-    if "checked" in levels and not allow_checked:
+    if ver.get("ok") is False:
+        why = ("the rank still grows past the Lie order used, so the directions may be over-reported "
+               f"({ver.get('reason')})")
+        if not allow_checked:
+            raise ValueError(why + "; pass allow_checked=True to reduce them anyway")
+        warnings.warn(why + "; the reduction rests on them (Reduction.level)", stacklevel=3)
+    if "checked" in levels:
         info = obj.get("info") or {}
         b = info.get("bound")
         # a direction verified on every entry is checked where the error bound does not apply
@@ -293,11 +301,11 @@ def check_levels(obj, allow_open=False, allow_checked=False):
             why = f"only, since {b.get('why') or 'no error bound applies'}"
         else:
             why = "on part of the entries only"
-        raise ValueError(f"a direction is checked at random points {why} (level 'checked'); "
-                         "pass allow_checked=True to reduce on the closed form anyway")
-    if "checked" in levels:
-        warnings.warn("a direction is checked at random points without an error bound; the reduction "
-                      "rests on the closed form (Reduction.level)", stacklevel=3)
+        if not allow_checked:
+            raise ValueError(f"a direction is checked at random points {why} (level 'checked'); "
+                             "pass allow_checked=True to reduce on the closed form anyway")
+        warnings.warn(f"a direction is checked at random points {why}, without an error bound; the "
+                      "reduction rests on the closed form (Reduction.level)", stacklevel=3)
     elif "verified" in levels:
         warnings.warn("a direction is verified, not proven; the reduction rests on the closed form "
                       "(Reduction.level)", stacklevel=3)
@@ -586,7 +594,7 @@ def _reduction_charts(obj, *args, alternatives=False, **kw):
 
 
 def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d_exp=2, separable_=True,
-                        zero_compatibility=False, timeout=math.inf, work_cap=WORK_CAP):
+                        zero_compatibility=False, timeout=REDUCE_TIMEOUT, work_cap=WORK_CAP):
     settings = {"d_poly": int(d_poly), "d_darboux": int(d_darboux), "d_exp": int(d_exp),
                 "separable": bool(separable_), "primes": list(PRIMES)}
     coords = red_coordinates(obj)

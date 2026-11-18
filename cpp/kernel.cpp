@@ -2150,10 +2150,12 @@ List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots
 // Rank of each segment's own rows at orders 0..Nt, at gap order 0, with a unit dual
 // column per state at the segment start and, where the start time depends on the
 // coordinates, a column -(k+1) y_{k+1}. `stateVals` (nSeg x nStates) replaces the start
-// states. Also returns the start states and the field at them.
+// states. Also returns the start states and the field at them. The columns of
+// `dropStates` (the jets of known inputs) are left out of the ranks.
 List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
                      IntegerVector point, double pIn, int Nt,
-                     IntegerMatrix stateVals = IntegerMatrix(0, 0), int threads = 1) {
+                     IntegerMatrix stateVals = IntegerMatrix(0, 0), int threads = 1,
+                     IntegerVector dropStates = IntegerVector(0)) {
   u64 p = (u64)pIn;
   int nz = zSlots.size(), nSeg = segs.size();
   int wA = nz + nStates + 2, nzA = wA - 1, w0 = nz + 1;
@@ -2276,6 +2278,8 @@ List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
           u64 y1 = yNext[(size_t)gi * (Nt + 1) + k];
           rows[(size_t)gi * (Nt + 1) + k][nzA - 1] = submod(0, mulmod((u64)(k + 1) % p, y1, p), p);
         }
+    for (auto& r : rows)
+      for (int i = 0; i < dropStates.size(); ++i) r[nz + dropStates[i]] = 0;
     // rows are ordered by output, then order; rank up to each order, incrementally
     int nOut = (int)seg.gOut.size();
     std::vector<std::vector<u64> > basis;

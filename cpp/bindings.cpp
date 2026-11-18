@@ -223,12 +223,13 @@ PYBIND11_MODULE(_core, m) {
 
   m.def("sym_segment_ranks", [](py::object segs, int nLeaves, int nStates, py::object zSlots,
                                 py::object point, double p, int Nt, py::object stateVals,
-                                int threads) {
+                                int threads, py::object dropStates) {
     List s = cv<List>(segs); IntegerVector z = cv<IntegerVector>(zSlots), pt = cv<IntegerVector>(point);
     IntegerMatrix sv = stateVals.is_none() ? IntegerMatrix(0, 0) : cv<IntegerMatrix>(stateVals);
-    return run([&] { return Value(symSegmentRanks(s, nLeaves, nStates, z, pt, p, Nt, sv, threads)); });
+    IntegerVector dr = dropStates.is_none() ? IntegerVector(0) : cv<IntegerVector>(dropStates);
+    return run([&] { return Value(symSegmentRanks(s, nLeaves, nStates, z, pt, p, Nt, sv, threads, dr)); });
   }, arg("segs"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
-     arg("Nt"), arg("state_vals") = py::none(), arg("threads") = 1);
+     arg("Nt"), arg("state_vals") = py::none(), arg("threads") = 1, arg("drop_states") = py::none());
 
   m.def("sym_obs_null_chain_seed_batch", [](py::object chains, py::object evalChain, py::object seeds,
                                             py::object primes, int nLeaves, int nStates,

@@ -47,6 +47,25 @@ def test_two_compartment_exchanges_the_elimination_rates():
     assert r.discrete_symmetries == out["symmetries"]
 
 
+def test_a_start_rational_in_the_coordinates():
+    def run(trafo):
+        m = two_compartment()
+        m.trafo = trafo
+        return si.detect(m, cores=1).discrete()["symmetries"]
+    (s,) = run({"x1": "1/k21", "x2": "0"})
+    assert set(s["changes"]) == {"k01", "k12"}
+    assert run({"x1": "1/(k01 + 1)", "x2": "0"}) == []
+
+
+def test_a_given_start_takes_the_state_map_solved_from_the_outputs():
+    # the swap needs x1 -> x1 + (k01 - k12)*x2/k21, which maps the start 0 to itself; the identity fails
+    m = two_compartment()
+    m.trafo = {"x1": "0", "x2": "0"}
+    out = si.detect(m, cores=1).discrete()
+    (s,) = out["symmetries"]
+    assert s["level"] == "exact" and set(s["changes"]) == {"k01", "k12"} and out["info"]["count_final"]
+
+
 def test_a_symmetry_outside_the_domain_is_not_relevant():
     r = si.detect(si.Model({"x": "-theta^2*x"}, {"y": "x"}), cores=1, discrete={"points": 2})
     (s,) = r.discrete_symmetries
@@ -116,7 +135,140 @@ def test_a_vanishing_denominator_is_no_point_of_the_fiber():
     assert info["count"] == 4 and [(c["complex"], c["real"], c["in_domain"]) for c in info["counts"]] == [(4, 2, 1)]
 
 
-def test_discrete_needs_one_condition():
+def maps_of(m):
+    out = si.detect(m, cores=1).discrete()
+    return [(s["map"], s["level"]) for s in out["symmetries"]], out["info"]
+
+
+def test_conditions_share_the_coordinates_of_the_fiber():
     m = si.Model({"x": "-k*x"}, {"y": "x"}, conditions={"rows": ["a", "b"], "cols": {"k": ["k1", "k2"]}})
-    with pytest.raises(ValueError, match="one condition"):
-        si.detect(m, cores=1).discrete()
+    maps, info = maps_of(m)
+    assert maps == [] and info["count"] == 1 and info["count_final"]
+    assert set(info["orders"]) == {"a:y", "b:y"}
+    # observing the first compartment in a second condition removes the swap of the elimination rates
+    tc = two_compartment()
+    tc.observables = [{"y": "x2"}, {"y": "x1"}]
+    maps, info = maps_of(tc)
+    assert maps == [] and info["count"] == 1
+
+
+FREE = {"x1": "-(k21 + k01)*x1 + k12*x2", "x2": "k21*x1 - k12*x2"}
+
+
+def dosed(var, time="1", value="D", method="add", start=None):
+    return si.Model(FREE, {"y": "x2"}, trafo=start or {"x1": "0", "x2": "0"}, fixed=["D"] if "D" in value else (),
+                    events=[{"var": var, "time": time, "value": value, "method": method}])
+
+
+def test_a_dose_after_rest_keeps_or_breaks_the_swap():
+    # the impulse response from the first compartment is symmetric in k01 and k12, the one from the second is not
+    maps, info = maps_of(dosed("x1"))
+    (sig, level), = maps
+    assert level == "exact" and same(sig["k01"], "k12") and info["count"] == 2 and info["count_final"]
+    maps, info = maps_of(dosed("x2"))
+    assert maps == [] and info["count"] == 1
+
+
+def test_an_estimated_event_time_is_a_coordinate_of_the_fiber():
+    # the segment after the dose is expanded at the start of the condition, so its series holds tau
+    maps, info = maps_of(dosed("x1", time="tau"))
+    (sig, level), = maps
+    assert level == "exact" and "tau" not in sig and info["count"] == 2
+
+
+def test_a_map_that_the_truncated_fiber_keeps_is_dropped_further_up():
+    # the swap keeps the equations up to eps^1 after the reset but not x1/(1 + x2) at eps^2: the orders rise
+    maps, info = maps_of(dosed("x1", value="x1/(1 + x2)", method="replace", start={"x1": "1", "x2": "0"}))
+    assert maps == [] and info["count"] == 1 and info["gap_order"] >= 2
+
+
+def test_detect_in_global_mode_counts_after_the_local_analysis():
+    r = si.detect(two_compartment(), mode="global", global_options={"points": 1})
+    (s,) = r.discrete_symmetries
+    assert s["level"] == "exact" and r.info["discrete"]["count"] == 2
+    assert "Global:" in repr(r) and "sigma1 (exact)" in repr(r)
+    # a non-identifiable model is reduced first
+    r = si.detect(si.Model({"x": "-k*s*x", "z": "x"}, {"y": "z"}), mode="global")
+    assert r.discrete_symmetries == [] and r.info["discrete"]["reduced"]
+    # a setting the global analysis does not handle warns and keeps the local result
+    with pytest.warns(UserWarning, match="global analysis not done"):
+        r = si.detect(si.Model({"x": "-k*x + w"}, {"y": "x"}, unknown_inputs=["w"]), mode="global")
+    assert r.rank is not None and "unknown inputs" in r.info["discrete"]["unsupported"]
+    with pytest.raises(ValueError, match="mode"):
+        si.detect(two_compartment(), mode="globally")
+    with pytest.warns(DeprecationWarning):
+        si.detect(two_compartment(), discrete={"points": 1})
+
+
+def test_the_json_interface_runs_the_global_mode():
+    import json
+
+    from symident import rjson
+    spec = {"f": {"x1": "-(k21 + k01)*x1 + k12*x2 + u", "x2": "k21*x1 - k12*x2"}, "g": {"y": "x2"},
+            "known_inputs": ["u"], "mode": "global", "global_options": {"points": 1}}
+    out = json.loads(rjson.detect_json(json.dumps(spec)))
+    assert out["info"]["discrete"]["count"] == 2 and len(out["discrete_symmetries"]) == 1
+
+
+def test_a_start_at_rest_takes_the_resting_state_in_closed_form():
+    # at rest with a production into the first compartment, the output k21*p/(k01*k12) keeps the swap
+    tc = {"x1": "p - (k21 + k01)*x1 + k12*x2", "x2": "k21*x1 - k12*x2"}
+    m = si.Model(tc, {"y": "x2"}, events=[{"var": "x1", "time": 1, "value": "D", "method": "add"}], fixed=["D"])
+    r = si.detect(m, equilibrate=True, mode="global")
+    (s,) = r.discrete_symmetries
+    assert s["level"] == "exact" and same(s["map"]["k01"], "k12") and r.info["discrete"]["count_final"]
+    # a state the observables do not read, which never rests, is left out
+    m = si.Model({"x": "p - d*x", "z": "k*x"}, {"y": "x"}, fixed=["D"],
+                 events=[{"var": "x", "time": 0, "value": "D", "method": "add"}])
+    r = si.detect(m, equilibrate=True, mode="global")
+    assert r.discrete_symmetries == [] and r.info["discrete"]["count"] == 1
+
+
+def test_a_switch_enters_with_copies_that_start_on_the_surface():
+    # the threshold a is fixed where a copy starts on the surface x = a
+    m = si.Model({"x": "piecewise(-k1*x, x > a, -k2*x)"}, {"y": "x"}, trafo={"x": "x0"})
+    r = si.detect(m, mode="global")
+    assert r.discrete_symmetries == [] and r.info["discrete"]["count"] == 1
+    # k -> -k keeps every regime and the surface; it leaves the domain
+    m = si.Model({"x": "piecewise(-k^2*x, x > a, -c*x)"}, {"y": "x"}, trafo={"x": "x0"})
+    r = si.detect(m, mode="global")
+    (s,) = r.discrete_symmetries
+    assert s["level"] == "exact" and same(s["map"]["k"], "-k") and s["preserves_domain"] is False
+    with pytest.warns(UserWarning, match="parameters alone"):
+        si.detect(si.Model({"x": "piecewise(-k1*x, k1 > k2, -k2*x)"}, {"y": "x"}, regimes=["k1 - k2 > 0"]),
+                  mode="global")
+
+
+def _swap_model(k01="k01", k12="k12", k21="k21"):
+    # the swap of the elimination rates, and an independent scaling c, d that the section pins
+    f = {"x1": f"-({k21} + {k01})*x1 + {k12}*x2 + u", "x2": f"{k21}*x1 - {k12}*x2", "z": "-c*d*z"}
+    return si.Model(f, {"y": "x2", "y2": "z"}, known_inputs=["u"], trafo={"z": "1"})
+
+
+def test_each_side_of_a_discrete_symmetry_is_a_branch_chart():
+    import json
+
+    from symident import rjson
+    r = si.detect(_swap_model(), mode="global", global_options={"points": 1})
+    red = r.reduce()
+    bs = {b["branch"]: b for b in red.discrete["branches"]}
+    assert set(bs) == {"k01 > k12", "k12 > k01"} and red.trafo == {**red.trafo, "c": "1"}
+    # free values in the positive orthant onto the side, chained with the section c = 1
+    b = bs["k12 > k01"]
+    assert same(b["solved"]["k12"], "k01 + delta") and b["injective"] and b["reach"] and not b["unproven"]
+    assert b["boundary"] == ["k01 - k12 = 0"] and b["trafo"]["c"] == "1"
+    # without a choice the branches are alternatives; with one, its chart is the trafo
+    assert {a["branch"] for a in red.alternatives if a.get("branch")} == set(bs)
+    chosen = r.reduce(branch="k01 < k12")
+    assert same(chosen.trafo["k12"], "k01 + delta") and chosen.checks["loop"]["ok"]
+    with pytest.raises(si.errors.InputError, match="branches are"):
+        r.reduce(branch="k21 > k01")
+    out = json.loads(rjson.reduce_json(json.dumps(r.to_dict()), json.dumps({"branch": "k12 > k01"})))
+    assert same(out["trafo"]["k12"], "k01 + delta")
+
+
+def test_the_branches_do_not_depend_on_the_names():
+    r = si.detect(_swap_model("z9", "c4", "p3"), mode="global", global_options={"points": 1})
+    bs = r.reduce().discrete["branches"]
+    assert {b["branch"] for b in bs} == {"z9 > c4", "c4 > z9"}
+    assert all(b["injective"] and b["reach"] for b in bs)
