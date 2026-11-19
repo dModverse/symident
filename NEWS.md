@@ -1,3 +1,63 @@
+# symident 0.16.0
+
+## Global analysis
+
+* `discrete()` rewrites the model into rational form before the fiber, with the same fiber: a
+  coordinate that enters only through `exp(theta)` or `b^theta` is read as that power, positive,
+  and the maps, fixed sets and fundamental domains are reported in the given coordinates, a
+  discrete scaling as a translation; an observable under `log`, `log10`, `exp` or an odd power is
+  replaced by the argument; `exp(a*time)` becomes a state `E` with `E' = a*E`, `E(0) = 1`.
+  `info["discrete"]["rewrites"]` lists each rewrite with the reason it keeps the fiber, and a term
+  that stays non-rational is named in the error.
+* `discrete()` tests candidates before the count: permutations of coordinates on which the same
+  output coefficients depend, modulo a prime at a random point, the transpositions within each
+  class and the products of two that fail alone. A candidate joins the maps of the fiber and is
+  proven like them. `info["discrete"]["candidates"]` and `info["discrete"]["timing"]` give the
+  numbers and the seconds of each stage, and each map names where it was found in `found_by`.
+* A map of the states for the proof may be affine in the states that the map of the coordinates
+  reaches, the identity elsewhere, with coefficients solved from the identities; each symmetry
+  holds the maps in `state_maps`.
+* `info["discrete"]["certificate"]` states what a result rests on: the invariance identities per
+  map, the size of the orbit of the group the exact maps generate, the count, the prime, and the
+  axiom that the count modulo the prime at a random point is the count over the complex numbers
+  at a generic point. `count_final` holds when the orbit has as many points as the count, also
+  where the reconstruction of the fiber runs out of budget; the counts in the domain then come from
+  the orbit.
+* The polynomial system of the fiber holds each monomial as pairs of variable and exponent, and
+  the substitution of the variables that a linear equation fixes and the removal of the jets that
+  one equation holds alone run in the C++ kernel modulo a prime, in Python over Q.
+* The count of the fiber is the number of distinct values of a random linear form in the
+  coordinates on the points, from the reduced Gröbner basis of msolve and the multiplication by the
+  form on the quotient, without the parametrization of the points; points that differ only in the
+  derivatives of the states count once. The parametrization is computed only to reconstruct maps.
+* Every observable starts at the highest order of the rank criterion plus one, which also covers an
+  observable whose coefficients add no rank for some orders before they do, such as a state at rest
+  at the end of a chain. The orders stop rising where the count equals the orbit of the proven
+  candidates, and the maps of the fiber are not reconstructed when the candidates account for the
+  count.
+* The counts in the domain end after the budget and one call of msolve; the points left without a
+  count are named in `limits`.
+
+## Reduction
+
+* `reduce()` reduces translations of logarithmic coordinates, those that a trafo passes only
+  through `exp(theta)` or `b^theta`, as scalings of `exp(theta)`, with the pins at zero, exactly;
+  a block of several such translations no longer goes through the section search. The detection
+  lists these coordinates in `info["log_coordinates"]`.
+
+## Lie-order certificate
+
+* Integer powers on the tape are built by squaring, about `2*log2(n)` products for `x^n`. Rates
+  with unround constants put exponentials over a large common denominator `N` of `exp(V/N)`, and
+  the powers of that leaf reach `N` (#1, reported by Mio Heinrich).
+* The degrees of the certificate past a total degree of 10000 come from the expression tree: a
+  sum has at most the largest degree of the terms, a product the sum, a power `k` times that of the
+  base. The common denominator is then the product of the distinct denominators. No dense
+  polynomial of such a degree is built (#1).
+* A Lie-order certificate whose Schwartz-Zippel bound reaches 1 reports no error bound:
+  `info["order_bound"]` is `None` and `info["order_bound_why"]` says that the bound reaches 1 at
+  the verification prime.
+
 # symident 0.15.0
 
 ## Global analysis

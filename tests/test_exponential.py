@@ -361,3 +361,41 @@ def test_a_free_exponent_of_a_parameter_keeps_the_exponent_as_a_coordinate():
     # a pin of log(c) at one is c = exp(1), which the model reads as Euler's number, not as a symbol E
     red = r.reduce()
     assert red.trafo["c"] == "exp(1)" and red.checks["invariants"] and red.checks["loop"]["ok"]
+
+
+def test_a_large_integer_power_costs_a_logarithmic_tape():
+    from symident.sym.tape import _emit_tape_shared
+    x = spy.Symbol("x")
+    n = 10 ** 13
+    op = _emit_tape_shared([x ** n], [x ** (-n)], {"x": 0}, 1)[0]
+    # square and multiply: below 2 log2(n) products per power, the inverse shared
+    assert len(op) <= 2 * n.bit_length() + 2
+
+
+def test_degrees_past_the_dense_limit_come_from_the_expression_tree():
+    from symident.detection.bound import _total_degree, _vector_degree
+    x, y = spy.symbols("x y")
+    n = 10 ** 13
+    assert _total_degree(x ** n * (1 - y) - x ** (n // 3) * y, [x, y]) == n + 1
+    assert _vector_degree([(x ** n * (1 - y) - x ** (n // 3) * y) / (1 + x ** (n // 2))]) == n + 1
+
+
+# the sodium current of Luo-Rudy 1991 with the gates h and j in the branch V >= -40, and the inward rectifier
+LR91_RATES = {
+    "am": "0.32*(V+47.13)/(1-exp(-0.1*(V+47.13)))", "bm": "0.08*exp(-V/11)",
+    "bh": "1/(0.13*(1+exp((V+10.66)/(-11.1))))", "bj": "0.3*exp(-2.535e-7*V)/(1+exp(-0.1*(V+32)))",
+    "aK": "1.02/(1+exp(0.2385*(V-EK1-59.215)))",
+    "bK": "(0.49124*exp(0.08032*(V-EK1+5.476)) + exp(0.06175*(V-EK1-594.31)))/(1+exp(-0.5143*(V-EK1+4.753)))"}
+
+
+def test_a_heart_model_with_unround_rates_keeps_to_small_degrees():
+    r = LR91_RATES
+    f = {"V": f"-(gNa*m^3*h*j*(V - ENa) + gK1*({r['aK']})/(({r['aK']}) + ({r['bK']}))*(V - EK1))/Cm",
+         "m": f"{r['am']}*(1-m) - {r['bm']}*m", "h": f"-{r['bh']}*h", "j": f"-{r['bj']}*j"}
+    res = det(f, {"y": "V"})
+    assert (res.rank, res.dim) == (6, 9)
+    gens = sorted(sorted(d["generator"]) for d in res.symmetries)
+    assert gens == [["Cm", "gK1", "gNa"], ["gNa", "h"], ["gNa", "j"]]
+    assert res.info["lie_certified"]
+    assert res.info["order_bound"] is None
+    assert res.info["order_bound_why"].startswith("the Schwartz-Zippel bound reaches 1")

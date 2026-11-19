@@ -2997,3 +2997,181 @@ List symCauchyEval(IntegerVector tnodes, IntegerVector rvals, int dN, int dD,
                       _["N"] = (double) mulmod(A1, ib0, p),
                       _["D"] = (double) mulmod(B1, ib0, p));
 }
+
+// The reduction of the polynomial system of a fiber over GF(p) before msolve. A
+// polynomial is a map from a monomial, (variable, exponent) pairs by ascending variable,
+// to a nonzero residue. (1) An equation a*v + b in one variable v fixes v = -b/a, which
+// is substituted in every equation and factor of the saturation that holds v; a nonzero
+// constant equation or a vanishing factor leaves no solution. (2) A variable from m0 on,
+// in no factor, that occurs in one equation only and there only as the monomial v, is
+// fixed by that equation for any values of the others: the equation goes. The result
+// does not depend on the order of the steps.
+namespace {
+
+typedef std::vector<std::pair<int, int> > Mono;
+typedef std::map<Mono, u64> SPoly;
+
+std::vector<SPoly> fiber_decode(const IntegerVector& start, const IntegerVector& coef,
+                                const IntegerVector& tstart, const IntegerVector& var,
+                                const IntegerVector& ex) {
+  std::vector<SPoly> out(start.size() > 0 ? start.size() - 1 : 0);
+  for (size_t j = 0; j < out.size(); ++j)
+    for (int t = start[(int)j]; t < start[(int)j + 1]; ++t) {
+      Mono m;
+      for (int k = tstart[t]; k < tstart[t + 1]; ++k) m.push_back({var[k], ex[k]});
+      if (coef[t]) out[j][m] = (u64)coef[t];
+    }
+  return out;
+}
+
+List fiber_encode(const std::vector<SPoly>& ps, const std::vector<char>& alive) {
+  std::vector<int> start{0}, coef, tstart{0}, var, ex;
+  for (size_t j = 0; j < ps.size(); ++j) {
+    if (!alive[j]) continue;
+    for (const auto& kv : ps[j]) {
+      coef.push_back((int)kv.second);
+      for (const auto& ve : kv.first) { var.push_back(ve.first); ex.push_back(ve.second); }
+      tstart.push_back((int)var.size());
+    }
+    start.push_back((int)coef.size());
+  }
+  return List::create(_["start"] = IntegerVector(start.begin(), start.end()),
+                      _["coef"] = IntegerVector(coef.begin(), coef.end()),
+                      _["tstart"] = IntegerVector(tstart.begin(), tstart.end()),
+                      _["var"] = IntegerVector(var.begin(), var.end()),
+                      _["exp"] = IntegerVector(ex.begin(), ex.end()));
+}
+
+// v = x in P; true if P changed
+bool fiber_subst(SPoly& P, int v, u64 x, u64 p) {
+  SPoly out;
+  bool hit = false;
+  for (const auto& kv : P) {
+    Mono m;
+    u64 c = kv.second;
+    for (const auto& ve : kv.first) {
+      if (ve.first == v) { c = mulmod(c, powmod(x, (u64)ve.second, p), p); hit = true; }
+      else m.push_back(ve);
+    }
+    u64& slot = out[m];
+    slot = addmod(slot, c, p);
+  }
+  if (!hit) return false;
+  for (auto it = out.begin(); it != out.end();) it = it->second ? std::next(it) : out.erase(it);
+  P.swap(out);
+  return true;
+}
+
+// the variable of an equation a*v + b with a != 0, else -1
+int fiber_linear_var(const SPoly& P) {
+  int v = -1;
+  for (const auto& kv : P) {
+    if (kv.first.empty()) continue;
+    if (kv.first.size() != 1 || kv.first[0].second != 1) return -1;
+    if (v >= 0 && kv.first[0].first != v) return -1;
+    v = kv.first[0].first;
+  }
+  return v;
+}
+
+bool fiber_constant(const SPoly& P) { return P.size() == 1 && P.begin()->first.empty(); }
+
+}  // namespace
+
+List symFiberReduce(IntegerVector ps, IntegerVector pc, IntegerVector pt, IntegerVector pv,
+                    IntegerVector pe, IntegerVector ss, IntegerVector sc, IntegerVector st,
+                    IntegerVector sv, IntegerVector se, int nv, int m0, double pIn) {
+  u64 p = (u64)pIn;
+  std::vector<SPoly> P = fiber_decode(ps, pc, pt, pv, pe), S = fiber_decode(ss, sc, st, sv, se);
+  std::vector<char> palive(P.size(), 1), salive(S.size(), 1);
+  std::vector<std::vector<int> > pocc((size_t)nv), socc((size_t)nv);
+  for (size_t j = 0; j < P.size(); ++j) {
+    if (P[j].empty()) palive[j] = 0;
+    for (const auto& kv : P[j]) for (const auto& ve : kv.first) pocc[(size_t)ve.first].push_back((int)j);
+  }
+  for (size_t j = 0; j < S.size(); ++j)
+    for (const auto& kv : S[j]) for (const auto& ve : kv.first) socc[(size_t)ve.first].push_back((int)j);
+  std::vector<int> fixedVar, fixedVal;
+  std::vector<char> isFixed((size_t)nv, 0);
+  std::vector<int> queue;
+  for (size_t j = 0; j < P.size(); ++j) if (palive[j]) queue.push_back((int)j);
+  auto none = [] { return List::create(_["ok"] = false); };
+  size_t qi = 0;
+  while (qi < queue.size()) {
+    int j = queue[qi++];
+    if (!palive[(size_t)j]) continue;
+    int v = fiber_linear_var(P[(size_t)j]);
+    if (v < 0 || isFixed[(size_t)v]) continue;
+    const SPoly& L = P[(size_t)j];
+    Mono one{{v, 1}};
+    u64 a = L.at(one), b = L.count(Mono()) ? L.at(Mono()) : 0;
+    u64 x = mulmod(submod(0, b, p), invmod(a, p), p);
+    isFixed[(size_t)v] = 1;
+    fixedVar.push_back(v);
+    fixedVal.push_back((int)x);
+    for (int k : pocc[(size_t)v]) {
+      if (!palive[(size_t)k] || !fiber_subst(P[(size_t)k], v, x, p)) continue;
+      if (P[(size_t)k].empty()) { palive[(size_t)k] = 0; continue; }
+      if (fiber_constant(P[(size_t)k])) return none();
+      queue.push_back(k);
+    }
+    for (int k : socc[(size_t)v]) {
+      if (!salive[(size_t)k] || !fiber_subst(S[(size_t)k], v, x, p)) continue;
+      if (S[(size_t)k].empty()) return none();
+      if (fiber_constant(S[(size_t)k])) salive[(size_t)k] = 0;
+    }
+  }
+  if (!fixedVar.empty()) {
+    // as after a substitution: a constant equation has no solution, a constant factor vanishes nowhere
+    for (size_t j = 0; j < P.size(); ++j) if (palive[j] && fiber_constant(P[j])) return none();
+    for (size_t j = 0; j < S.size(); ++j) {
+      if (!salive[j]) continue;
+      if (S[j].empty()) return none();
+      if (fiber_constant(S[j])) salive[j] = 0;
+    }
+  }
+  // the jets that one equation fixes
+  std::vector<char> inSat((size_t)nv, 0);
+  for (size_t j = 0; j < S.size(); ++j)
+    if (salive[j]) for (const auto& kv : S[j]) for (const auto& ve : kv.first) inSat[(size_t)ve.first] = 1;
+  std::vector<int> count((size_t)nv, 0);
+  for (size_t j = 0; j < P.size(); ++j) {
+    if (!palive[j]) continue;
+    std::vector<int> vs;
+    for (const auto& kv : P[j]) for (const auto& ve : kv.first) vs.push_back(ve.first);
+    std::sort(vs.begin(), vs.end());
+    vs.erase(std::unique(vs.begin(), vs.end()), vs.end());
+    for (int v : vs) ++count[(size_t)v];
+  }
+  std::vector<int> gone;
+  bool more = true;
+  while (more) {
+    more = false;
+    for (size_t j = 0; j < P.size() && !more; ++j) {
+      if (!palive[j]) continue;
+      for (const auto& kv : P[j]) {
+        if (kv.first.size() != 1 || kv.first[0].second != 1) continue;
+        int v = kv.first[0].first;
+        if (v < m0 || inSat[(size_t)v] || count[(size_t)v] != 1) continue;
+        bool alone = true;
+        for (const auto& kw : P[j])
+          if (&kw != &kv) for (const auto& ve : kw.first) if (ve.first == v) alone = false;
+        if (!alone) continue;
+        gone.push_back(v);
+        palive[j] = 0;
+        std::vector<int> vs;
+        for (const auto& kw : P[j]) for (const auto& ve : kw.first) vs.push_back(ve.first);
+        std::sort(vs.begin(), vs.end());
+        vs.erase(std::unique(vs.begin(), vs.end()), vs.end());
+        for (int w : vs) --count[(size_t)w];
+        more = true;
+        break;
+      }
+    }
+  }
+  return List::create(_["ok"] = true, _["polys"] = fiber_encode(P, palive),
+                      _["sat"] = fiber_encode(S, salive),
+                      _["fixed_var"] = IntegerVector(fixedVar.begin(), fixedVar.end()),
+                      _["fixed_val"] = IntegerVector(fixedVal.begin(), fixedVal.end()),
+                      _["gone"] = IntegerVector(gone.begin(), gone.end()));
+}

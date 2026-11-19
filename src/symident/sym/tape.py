@@ -44,7 +44,7 @@ from .recast import (
 from .steady import _FORCE_CONSTRAINT_SEED
 
 # Opcodes for the flat tape consumed by the C++ kernel (cpp/kernel.cpp). Integer powers
-# are expanded into multiplications; the series ops take a series without constant value.
+# are expanded into squarings and products; the series ops take a series without constant value.
 _OP_CONST, _OP_ADD, _OP_MUL, _OP_INV, _OP_SQRT, _OP_ROOT = 0, 1, 2, 3, 4, 5
 _OP_SERIES = {SeriesExp: 6, SeriesLog1p: 7, SeriesSin: 8, SeriesCos: 9}
 
@@ -63,6 +63,17 @@ def _emit_tape_shared(fexpr, gexpr, slot_of, base, allow_sqrt=False):
         cnum.append(str(num))
         cden.append(str(den))
         return base + len(op) - 1
+
+    def power(b, k):
+        # square and multiply: about 2 log2(k) products
+        s = None
+        while k:
+            if k & 1:
+                s = b if s is None else emit(_OP_MUL, s, b)
+            k >>= 1
+            if k:
+                b = emit(_OP_MUL, b, b)
+        return s
 
     def build(e):
         s = memo.get(e)
@@ -99,9 +110,7 @@ def _emit_tape_shared(fexpr, gexpr, slot_of, base, allow_sqrt=False):
             if n == 0:
                 s = emit(_OP_CONST, 0, 0, 1, 1)
             else:
-                s = base_s
-                for _ in range(abs(n) - 1):
-                    s = emit(_OP_MUL, s, base_s)
+                s = power(base_s, abs(n))
                 if n < 0:
                     s = emit(_OP_INV, s, 0)
         elif type(e) in _OP_SERIES:
@@ -114,9 +123,7 @@ def _emit_tape_shared(fexpr, gexpr, slot_of, base, allow_sqrt=False):
                 q //= 2
             if q > 1:
                 root = emit(_OP_ROOT, root, q)
-            s = root
-            for _ in range(abs(int(e.exp.p)) - 1):
-                s = emit(_OP_MUL, s, root)
+            s = power(root, abs(int(e.exp.p)))
             if e.exp.p < 0:
                 s = emit(_OP_INV, s, 0)
         else:

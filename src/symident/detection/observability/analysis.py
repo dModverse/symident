@@ -596,6 +596,10 @@ class Analysis:
                           uncertified=[i for i, o in enumerate(orders) if o is None], cert_orders=True,
                           order_bound=(float(sum(terms)) if cert and len(terms) == len(orders) and
                                        all(t is not None for t in terms) else None))
+                if sc["order_bound"] is not None and sc["order_bound"] >= 1:
+                    # a chance of one or more bounds nothing: the degrees reach the verification prime
+                    sc["order_bound"] = None
+                    sc["order_bound_why"] = f"the Schwartz-Zippel bound reaches 1 at the verification prime {q}"
                 sc["order_draws"] = max(draws) if sc["order_bound"] is not None and draws and \
                     all(d is not None for d in draws) else None
         if cap == chain_end and (orders is None or any(o is None for o in orders)):

@@ -43,7 +43,10 @@ def _msolve_degree(eqs, names, p, timeout):
                                text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
             return None
-        txt = open(fo).read() if os.path.exists(fo) else ""
+        txt = ""
+        if os.path.exists(fo):
+            with open(fo) as fh:
+                txt = fh.read()
     if r.returncode != 0 or not txt.strip():
         return None
     data = ast.literal_eval(txt.strip().rstrip(":"))

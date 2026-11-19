@@ -12,6 +12,7 @@ from .errors import InputError
 from .options import reconst_control
 from .reduction import symmetry_reduction
 from .reduction.core import check_levels, detection_positive, finish_reduction
+from .sym.domain import declared
 
 
 def _rhs_from_reactions(species, smatrix, rates):
@@ -370,9 +371,8 @@ class Symmetries:
         Raises
         ------
         ValueError
-            Unless the result is identifiable and was detected without ``equilibrate`` and
-            ``reduce_cq``, on a model with one condition and no events, switches or unknown
-            inputs.
+            For a result detected with ``reduce_cq``, a model with unknown inputs, or a model
+            that is not rational after the rewrites.
         MsolveMissingError
             Where msolve is not found (:func:`install_msolve`).
         """
@@ -389,9 +389,14 @@ class Symmetries:
                 str(e) for o in (self.model.observables if isinstance(self.model.observables, (list, tuple))
                                  else [self.model.observables]) for e in dict(o).values()]):
             raise ValueError("solution_count() handles models without switches")
-        parts = self._fiber_parts(order, "solution_count()", switches=False)
-        if parts is None:
+        from .detection.rationalize import NotRationalError
+        try:
+            got = self._fiber_parts(order, "solution_count()", switches=False)
+        except NotRationalError:
             return None
+        if got is None:
+            return None
+        parts = got[0]
         if len(parts) != 1 or len(parts[0]["segments"]) != 1:
             raise ValueError("solution_count() handles one condition without events")
         seg = parts[0]["segments"][0]
@@ -408,8 +413,11 @@ class Symmetries:
         coordinates, sigma is reconstructed from the characteristic polynomials of the
         coordinates over the solutions, checked on the output at random points (``"checked"``)
         and, where every state has a free initial value, proven by the map of the states
-        (``"exact"``). A sigma that maps no point of the domain into it is listed but not
-        relevant.
+        (``"exact"``). Permutations of coordinates with the same dependence of the output are
+        tested as candidates first. A model with logarithmic coordinates, observables under an
+        injective function or factors ``exp(a*time)`` is rewritten into rational form with the
+        same fiber, and the results are given in the coordinates of the model. A sigma that maps
+        no point of the domain into it is listed but not relevant.
 
         Parameters
         ----------
@@ -430,14 +438,17 @@ class Symmetries:
         -------
         dict
             ``symmetries``: per sigma the ``map`` of the coordinates it changes, ``changes``,
-            ``level``, ``preserves_domain`` (True, False, or None with the
-            ``domain_conditions`` under which sigma(theta) lies in the domain) and
+            ``level``, ``found_by`` (``"candidates"``, ``"fiber"``), ``state_maps`` (the maps of
+            the states that prove it, one per segment), ``preserves_domain`` (True, False, or
+            None with the ``domain_conditions`` under which sigma(theta) lies in the domain) and
             ``fixed_set``, the factors on which sigma fixes theta. ``info``: ``order``,
             ``count`` (solutions over the algebraic closure at a random point modulo a prime),
             ``counts`` per point (``complex``, ``real``, ``in_domain``, ``undecided``),
             ``closed_forms``, ``count_final`` (every solution is the image of a proven sigma),
-            ``fundamental_domain`` (inequalities that keep one point of each orbit) and
-            ``limits``.
+            ``fundamental_domain`` (inequalities that keep one point of each orbit),
+            ``rewrites``, ``candidates``, ``timing`` (seconds per stage), ``certificate`` (what
+            the result rests on: the invariance per map, the size of the orbit, the count and
+            the axiom of the count) and ``limits``.
 
         Raises
         ------
@@ -454,9 +465,6 @@ class Symmetries:
         if not self.identifiable:
             # the continuous symmetries first: the reduced model has a finite fiber
             red = self._reduced_detection()
-            if red._fiber_parts(int(order or 2 * len(red.info["coordinates"])), "discrete()") is None:
-                raise ValueError("discrete() needs a model rational in the states and coordinates; the reduced model "
-                                 "is not")
             out = red.discrete(order=order, points=points, timeout=timeout, budget=budget, cores=cores)
             out["info"]["reduced"] = {"trafo": red.model.trafo, "fixed": list(red.model.fixed or []),
                                       "coordinates": list(red.info["coordinates"]),
@@ -468,16 +476,22 @@ class Symmetries:
             return out
         coords = list(self.info["coordinates"])
         # the jets of known inputs reach past the highest order the count may take
-        parts = self._fiber_parts(int(order or 2 * len(coords)), "discrete()")
-        if parts is None:
-            raise ValueError("discrete() needs a model rational in the states and coordinates")
+        parts, rw = self._fiber_parts(int(order or 2 * len(coords)), "discrete()")
         st = self.info.get("settings") or {}
+        positive = st.get("positive", True)
+        if rw["logs"] and positive is not True:
+            # X = b^theta is positive whatever the domain of theta
+            positive = list(declared(positive)[0] or ()) + [str(x) for x in declared(positive)[1]] + list(rw["logs"])
         from .sym.msolve import msolve_threads
         with msolve_threads(cores):
-            out = analyze(parts, coords, st.get("positive", True), list(self.model.odes), order=order,
+            out = analyze(parts, coords, positive, list(self.model.odes), order=order,
                           start=self.info.get("lie_order_used"), points=points, timeout=timeout, budget=budget)
         out["info"]["limits"] = ["the counts are at random points: the count over the algebraic closure modulo "
                                  "a prime, the real count at rational points"] + out["info"]["limits"]
+        out["info"]["rewrites"] = rw["rewrites"]
+        if rw["logs"]:
+            from .detection.rationalize import report_given
+            report_given(out, rw["logs"])
         self.info["discrete"] = out["info"]
         self.discrete_symmetries = self._raw["discrete_symmetries"] = out["symmetries"]
         self.__dict__.pop("_reductions", None)
@@ -527,7 +541,6 @@ class Symmetries:
         from .detection.discrete import observed_states, resting_start
         from .errors import SYMPY_FAILS
         from .rexpr import get_symbols, replace_symbols
-        from .sym.parse import _is_rational_expr, model_sympify
         from .sym.switching import _SWITCHY
         m = self.model
         st = self.info.get("settings") or {}
@@ -594,7 +607,7 @@ class Symmetries:
         t0 = min([t for t in nums if t is not None] + [0])
         start = num_str(t0)
         known = [str(u) for u in getattr(m, "known_inputs", None) or []]
-        parts, texts = [], []
+        parts = []
         for c, (g, tr, cells, apply, ev) in enumerate(per):
             regimes = self._regimes(hy, c, apply, tr, cells, inputs, start, what) if hy is not None else None
             fc = f0
@@ -640,8 +653,6 @@ class Symmetries:
             for t in keys:
                 evs = [{k: e[k] for k in ("var", "method", "value")} for e in later if key(e) == t]
                 segs.append({"f": f, "g": g, "events": evs, "t": t, "label": f"{rows[c]}@{t}:"})
-                texts += [e["value"] for e in evs] + [t]
-            texts += [*f.values(), *g.values(), *ic.values()]
             parts.append({"segments": segs})
             n0 = len(parts) - 1
             # a copy switched into a regime across a surface to an allowed neighbor starts on that surface
@@ -662,16 +673,17 @@ class Symmetries:
                     on = apply(r["surfaces"][j])
                     parts.append({"segments": [{"f": fr, "g": gr, "ic": icr, "on": on, "t": start,
                                                 "label": f"{rows[c]}~{k + 1}|{j + 1}:"}]})
-                    texts += [*fr.values(), *gr.values(), on]
             if regimes is not None:
                 for part in parts[n0:]:
                     part["surfaces"] = [apply(q) for q in regimes[0]["surfaces"]]
+        from .detection.rationalize import NotRationalError, rationalize
         try:
-            if not all(_is_rational_expr(model_sympify(e)) for e in texts):
-                return None
-        except SYMPY_FAILS:
-            return None
-        return parts
+            parts, rewrites, logs = rationalize(parts, list(self.info.get("coordinates") or ()), list(m.odes))
+        except NotRationalError:
+            raise
+        except SYMPY_FAILS as exc:
+            raise ValueError(f"{what} needs a model rational in the states and coordinates") from exc
+        return parts, {"rewrites": rewrites, "logs": logs}
 
     def _switches(self, f, obs, events, what):
         """The model in the indicators of its undecided switches (sym.switching.Hybrid), a dict where the declared

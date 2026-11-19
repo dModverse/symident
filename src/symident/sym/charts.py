@@ -494,7 +494,25 @@ def scaling_weights(comps):
     return out
 
 
-def log_chart_generators(gens, coords):
+def log_coordinates(trafos, exprs):
+    """The outer coordinates that every trafo in `trafos` passes to the model only through b^(c*theta), c rational,
+    and that the model expressions `exprs` read under no name of their own: their domain is the real line."""
+    vals = [str(v) for t in trafos for v in t.values()]
+    if not vals:
+        return []
+    _, parse = _make_local_parse(vals + [str(e) for e in exprs])
+    tv = [spy.sympify(parse(v)) for v in vals]
+    base_of = _log_params_only_in_atoms(_detect_log_params(tv, set()), tv)
+    inner = set().union(*[spy.sympify(parse(str(e))).free_symbols for e in exprs]) if exprs else set()
+    keep = []
+    for t in base_of:
+        if t in inner and not all(str(t) in tr for tr in trafos):
+            continue
+        keep.append(str(t))
+    return sorted(keep)
+
+
+def log_chart_generators(gens, coords, translated=()):
     """Generators in X = b^theta for coordinates entering only through b^(c*theta), None unless rational."""
     exprs_of = []
     names = [str(c) for c in coords]
@@ -520,6 +538,15 @@ def log_chart_generators(gens, coords):
             if all(t not in e.free_symbols for e in all_e):
                 base_of[t] = nl.pop()
     base_of = _log_params_only_in_atoms(base_of, all_e)
+    # a log coordinate with a constant component in every generator, read by none, is moved by translations only:
+    # X = exp(theta) makes them scalings
+    free = {s for e in all_e for s in e.free_symbols}
+    moved = set()
+    for t in sorted({spy.Symbol(c) for c in translated} & coord_syms - set(base_of) - free, key=str):
+        comps = [g[str(t)] for g in exprs_of if g and str(t) in g]
+        if comps and all(c.is_Rational for c in comps):
+            base_of[t] = spy.E
+            moved.add(t)
     if not base_of:
         return None
     taken = set(names)
@@ -556,7 +583,7 @@ def log_chart_generators(gens, coords):
             if v.atoms(spy.log, spy.exp) or any(t in v.free_symbols for t in lp):
                 return None
         out.append({k: str(v) for k, v in h.items()})
-    return {'map': [{'theta': str(t), 'X': str(X), 'base': 'E' if b == spy.E else str(b)}
+    return {'map': [{'theta': str(t), 'X': str(X), 'base': 'E' if b == spy.E else str(b), 'translated': t in moved}
                     for t, (X, b) in lp.items()],
             'gens': out}
 

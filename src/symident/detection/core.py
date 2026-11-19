@@ -53,6 +53,17 @@ def _clean(e):
     return {str(k): to_r(v) for k, v in dict(e).items()}
 
 
+def _log_coordinates(trafo, exprs):
+    """The coordinates the trafo passes only through b^theta, or none where that fails."""
+    from ..sym.charts import log_coordinates
+    trafos = [dict(t) for t in trafo if t] if isinstance(trafo, (list, tuple)) else [dict(trafo or {})]
+    try:
+        return log_coordinates(trafos, [str(e) for e in exprs])
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return []
+
+
 def _sub_or_none(fn, e):
     return None if e is None else fn(e)
 
@@ -1160,6 +1171,8 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             res["info"]["pivot_sets"] = dict(pivot_box)
         res["info"]["model_exprs"] = model_exprs_box["v"]
         res["info"]["model_rhs"] = model_exprs_box["rhs"]
+        res["info"]["log_coordinates"] = [c for c in model_exprs_box.get("log") or []
+                                          if c in set(res["info"].get("coordinates") or ())]
         res["info"]["model_inputs"] = list(forcings)
         if jets:
             every = {x for names in jets.values() for x in names}
@@ -1247,6 +1260,7 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
     model_exprs_box["v"] = list(dict.fromkeys(list(fdyn.values()) + g_char() +
                                             [str(v) for v in trafo_vals]))
     model_exprs_box["rhs"] = {k: str(v) for k, v in fdyn.items()}
+    model_exprs_box["log"] = _log_coordinates(trafo, list(fdyn.values()) + g_char() + list(fdyn))
     initial_box = {"v": None}
     cond_initial_box = {"v": None}
 

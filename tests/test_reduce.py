@@ -1376,3 +1376,12 @@ def test_a_system_of_invariants_past_the_degree_cap_is_a_limit_not_a_hang():
     assert any("above 32" in lim for lim in red.limits)
     # another gauge coordinate gives a system within the cap
     assert red.remaining == [] and red.blocks[0]["pins"]["alpha"] == "1" and red.blocks[0]["injective"]
+
+
+def test_translations_of_log_coordinates_are_scalings():
+    # two translations of the log coordinates in one block: the pins are zeros of the coordinates, exactly
+    tr = {k: f"exp({k})" for k in ("a", "b", "c", "d")}
+    r = red(det({"x": "-a*b*c*x", "z": "-d*c*z"}, {"y": "x", "y2": "z"}, trafo=tr, reconstruct=True))
+    assert not r.remaining and r.level == "exact" and r.checks["pins"] and r.checks["invariants"]
+    assert sorted(v for v in r.trafo.values() if v == "0") == ["0", "0"]
+    assert all(b["type"] == "scaling" for b in r.blocks)

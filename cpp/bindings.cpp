@@ -314,6 +314,19 @@ PYBIND11_MODULE(_core, m) {
     return run([&] { return Value(symBMorder(s, p)); });
   }, arg("seq"), arg("p_in"));
 
+  m.def("sym_fiber_reduce", [](py::object polys, py::object sat, int nv, int m0, double p) {
+    auto enc = [](py::object o) {
+      py::tuple t = o.cast<py::tuple>();
+      std::vector<IntegerVector> v;
+      for (int i = 0; i < 5; ++i) v.push_back(cv<IntegerVector>(t[(size_t)i]));
+      return v;
+    };
+    std::vector<IntegerVector> a = enc(polys), b = enc(sat);
+    return run([&] {
+      return Value(symFiberReduce(a[0], a[1], a[2], a[3], a[4], b[0], b[1], b[2], b[3], b[4], nv, m0, p));
+    });
+  }, arg("polys"), arg("sat"), arg("nv"), arg("m0"), arg("p_in"));
+
   m.def("sym_cauchy_eval", [](py::object tnodes, py::object rvals, int dN, int dD, double p) {
     IntegerVector t = cv<IntegerVector>(tnodes), r = cv<IntegerVector>(rvals);
     return run([&] { return Value(symCauchyEval(t, r, dN, dD, p)); });

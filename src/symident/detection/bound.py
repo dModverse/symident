@@ -8,6 +8,35 @@ import sympy as spy
 from ..errors import SYMPY_FAILS, sympy_fail
 from ..sym.parse import model_sympify
 
+# total degree past which no dense polynomial is built: SymPy stores a Poly densely in each generator
+_DENSE = 10000
+
+
+def _tree_degree(p, X):
+    """An upper bound on the total degree of the polynomial expression p in the symbols X, read off the expression
+    tree: a sum has at most the largest degree of the terms, a product the sum, a power k times that of the base."""
+    if not p.free_symbols & X:
+        return 0
+    if p.is_Symbol:
+        return 1
+    if p.is_Add:
+        return max(_tree_degree(a, X) for a in p.args)
+    if p.is_Mul:
+        return sum(_tree_degree(a, X) for a in p.args)
+    if p.is_Pow and p.exp.is_Integer and p.exp >= 0:
+        return int(p.exp) * _tree_degree(p.base, X)
+    raise spy.PolynomialError(f"{p} is not a polynomial")
+
+
+def _total_degree(p, X):
+    """The total degree of the polynomial p in the symbols X, taken over those of X that p holds; past _DENSE the
+    bound of the expression tree."""
+    gens = [x for x in X if x in p.free_symbols]
+    if not gens:
+        return 0
+    d = _tree_degree(p, set(gens))
+    return int(spy.Poly(p, *gens).total_degree()) if d <= _DENSE else d
+
 
 def _degs(e):
     """Total degrees of the numerator and the denominator of the rational expression e."""
@@ -15,7 +44,7 @@ def _degs(e):
     syms = sorted(e.free_symbols, key=str)
     if not syms:
         return 0, 0
-    return int(spy.Poly(num, *syms).total_degree()), int(spy.Poly(den, *syms).total_degree())
+    return _total_degree(num, syms), _total_degree(den, syms)
 
 
 def _rational(e):
@@ -23,22 +52,39 @@ def _rational(e):
         all(a.exp.is_Integer for a in e.atoms(spy.Pow))
 
 
-def _total_degree(p, X):
-    """The total degree of the polynomial p in the symbols X, taken over those of X that p holds."""
-    gens = [x for x in X if x in p.free_symbols]
-    return int(spy.Poly(p, *gens).total_degree()) if gens else 0
+def _cleared(exprs, X):
+    """(numerators, dW): the degrees in the symbols X of the numerators of `exprs` over a common denominator W and
+    the degree of W. W is the least common multiple of the denominators while they are below _DENSE, else their
+    product, of degree at most the sum of the distinct ones."""
+    fr = [spy.fraction(spy.together(e)) for e in exprs]
+    if all(_total_degree(d, X) <= _DENSE for _, d in fr):
+        W = spy.Integer(1)
+        for _, d in fr:
+            W = spy.lcm(W, d)
+        dW = _total_degree(W, X)
+        return [_total_degree(n, X) + dW - _total_degree(d, X) for n, d in fr], dW
+    distinct = {}
+    for _, d in fr:
+        if not d.is_number:
+            distinct.setdefault(spy.expand(d), _total_degree(d, X))
+    dW = sum(distinct.values())
+    # W / d is the product of the other distinct denominators
+    return [_total_degree(n, X) + dW - (0 if d.is_number else distinct[spy.expand(d)]) for n, d in fr], dW
 
 
 def _over_common_denominator(exprs, X):
-    """The numerator and denominator degrees in the symbols X of each expression, and the degree of a common
-    denominator, the product of the distinct denominators, which bounds that of their least common multiple."""
-    parts, distinct = [], {}
+    """The numerator and denominator degrees in the symbols X of each expression, the degree of a common
+    denominator B, the product of the distinct denominators, and the degree of each numerator over B."""
+    parts, distinct, keys = [], {}, []
     for e in exprs:
         num, den = spy.fraction(spy.together(e))
-        parts.append((_total_degree(num, X), _total_degree(den, X)))
-        if not den.is_number:
-            distinct.setdefault(spy.expand(den), den)
-    return parts, sum(_total_degree(d, X) for d in distinct.values())
+        k = None if den.is_number else spy.expand(den)
+        if k is not None:
+            distinct.setdefault(k, _total_degree(den, X))
+        keys.append(k)
+        parts.append((_total_degree(num, X), 0 if k is None else distinct[k]))
+    dB = sum(distinct.values())
+    return parts, dB, [dn + dB - dd for dn, dd in parts]
 
 
 @functools.lru_cache(maxsize=256)
@@ -49,8 +95,8 @@ def _model_degrees(f_items, g_items, x0_items):
     if not all(_rational(e) for e in list(f.values()) + g + x0):
         return None
     syms = sorted(set().union(*[e.free_symbols for e in list(f.values()) + g + x0]) or {spy.Symbol("_")}, key=str)
-    parts, dB = _over_common_denominator(list(f.values()), syms)
-    dA = max([dn + dB - dd for dn, dd in parts] + [0])
+    _, dB, over = _over_common_denominator(list(f.values()), syms)
+    dA = max(over + [0])
     gd = [_degs(h) for h in g]
     # the initial values enter the coordinates over their common denominator
     d0 = max(1, _vector_degree(x0)) if x0 else 1
@@ -64,9 +110,8 @@ def field_degrees(F, G, X):
         if not all(_rational(e) for e in F + G) or sum(spy.count_ops(e) for e in F + G) > _ROW_OPS:
             return None
         X = list(X) or [spy.Symbol("_")]
-        parts, dB = _over_common_denominator(F, X)
-        dA = max([dn + dB - dd for dn, dd in parts] + [0])
-        return dA, dB, _over_common_denominator(G, X)[0]
+        _, dB, over = _over_common_denominator(F, X)
+        return max(over + [0]), dB, _over_common_denominator(G, X)[0]
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
@@ -150,12 +195,8 @@ def identity_degree(f, g, x0, order, vector):
         comps = [model_sympify(v) for v in vector.values()]
         if not all(_rational(e) for e in comps):
             return None
-        W = spy.Integer(1)
-        for e in comps:
-            W = spy.lcm(W, spy.fraction(spy.together(e))[1])
         syms = sorted(set().union(*[e.free_symbols for e in comps]) or {spy.Symbol("_")}, key=str)
-        dW = int(spy.Poly(W, *syms).total_degree())
-        dV = max(_degs(e)[0] + dW - _degs(e)[1] for e in comps)
+        dV = max(_cleared(comps, syms)[0])
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
@@ -173,11 +214,8 @@ def _vector_degree(exprs):
     """Max of the numerator degrees and the denominator degree of `exprs` over a common denominator."""
     exprs = list(exprs)
     syms = sorted(set().union(*[e.free_symbols for e in exprs]) or {spy.Symbol("_")}, key=str)
-    W = spy.Integer(1)
-    for e in exprs:
-        W = spy.lcm(W, spy.fraction(spy.together(e))[1])
-    dW = int(spy.Poly(W, *syms).total_degree())
-    return max([dW] + [_degs(e)[0] + dW - _degs(e)[1] for e in exprs])
+    nums, dW = _cleared(exprs, syms)
+    return max([dW] + nums)
 
 
 def balance_degrees(polys):
@@ -194,7 +232,7 @@ def balance_degrees(polys):
             syms = sorted(P.free_symbols, key=str)
             if not syms:
                 return None
-            d = int(spy.Poly(P, *syms).total_degree())
+            d = _total_degree(P, syms)
             bez, jac = bez * max(d, 1), jac + max(d - 1, 0)
     except SYMPY_FAILS as exc:
         sympy_fail(exc)

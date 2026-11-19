@@ -1125,6 +1125,20 @@ enters as :math:`\theta^2` is no symmetry of the model on :math:`\Theta`. Counts
 algebraic closure, as in [Hong2020]_ and [ReyBarreiro2023]_, include such values;
 :meth:`~symident.Symmetries.discrete` counts in :math:`\Theta`.
 
+The fiber needs a model rational in the states and coordinates. Three rewrites before the count
+keep the fiber. A coordinate :math:`\theta` that enters only through :math:`b^{c\theta}`, with
+rational :math:`c`, is read as :math:`X = b^{\theta/L}`, :math:`L` the common denominator of the
+exponents, a bijection of :math:`\mathbb{R}` onto the positive reals; a map is reported back as
+:math:`\theta' = L \log_b \sigma(X)`, so a swap stays a swap and a discrete scaling becomes a
+translation. An observable :math:`y` for which :math:`e^{c y}` is rational, :math:`c \in \{1,
+\log 10, \log 2\}`, is replaced by :math:`e^{c y}`, one of the form :math:`e^{r}` by :math:`r`,
+and an odd power :math:`r^{p/q}` by :math:`r`: these maps are injective where the observable is
+real, so two values of the coordinates have the same output before the rewrite if and only if
+they have it after. A factor :math:`e^{a t}`, with :math:`a` free of the states and the clock,
+becomes a state :math:`E` with :math:`\dot E = a E` and :math:`E(0) = 1`, whose unique solution it
+is; this needs conditions that start at :math:`t = 0`. ``info["discrete"]["rewrites"]`` lists the
+rewrites, and a term that stays non-rational is named in the error.
+
 A model with directions is reduced first (:func:`~symident.reduce`); the reduced model is
 locally identifiable, so its *fiber* :math:`\Psi_N^{-1}(\Psi_N(\theta^\ast))` is finite. The
 fiber at a point :math:`\theta^\ast` is the solution set of the polynomial system that equates the
@@ -1133,11 +1147,17 @@ Taylor coefficients of the observables up to order :math:`N` with their values a
 [Berthomieu2021]_ counts its points over the algebraic closure modulo a prime, an upper bound
 for the size of the fiber of the model, which more equations can only lower. As in SIAN
 [Hong2020]_, the derivatives of the states at the start are unknowns of the system, tied by the
-Taylor coefficients of :math:`D(x)\,\dot x = N(x)` and :math:`E(x)\, y = M(x)`. Each observable
-starts one order above the least order whose next coefficient adds no rank to the Jacobian in the
-coordinates, where the system is square and has extra solutions; these orders rise together until
-the count is the same at two successive steps or is one, which no higher order changes, since more
-equations give a fiber within the one before. The series of a known input is a number, a variable
+Taylor coefficients of :math:`D(x)\,\dot x = N(x)` and :math:`E(x)\, y = M(x)`. Every
+observable starts one order above the highest of the orders whose next coefficient adds no rank to
+the Jacobian in the coordinates: at a given start, a coefficient that adds no rank can still remove
+points. The orders rise together until the count is the same at two successive steps, or equals
+the size of the orbit of the proven candidates, one if there are none, which no higher order
+changes, since more equations give a fiber within the one before and the orbit stays in it. The
+count of a block is the number of distinct values of a random linear form in the coordinates on
+the points of the block: msolve gives the reduced Gröbner basis, the standard monomials span the
+quotient, and the number of distinct eigenvalues of the multiplication by the form is the degree of
+the square-free part of the minimal polynomial of that multiplication. Points that differ only in the derivatives of the states, or that are
+multiple, count once. The series of a known input is a number, a variable
 that a linear equation fixes to a number is substituted, a derivative that enters one equation
 only, there linearly with a numeric coefficient, leaves with that equation, and the rest splits
 into blocks without a shared variable, whose fibers multiply. msolve runs over :math:`\mathbb{F}_p`
@@ -1165,13 +1185,27 @@ surface to itself, :math:`\gamma_j(\varphi(x), \sigma(\theta)) = c\, \gamma_j(x,
 the model in one regime and is not handled. A map reconstructed from the fiber is
 checked on the coefficients four orders further up, in :math:`t` and in :math:`\varepsilon`; a
 map that fails shows a fiber too large at that order, and the orders rise.
-Over :math:`\mathbb{Q}`, msolve isolates the real points in boxes, refined until each box decides
+The counts in :math:`\Theta` at the sample points end after the budget and one call of msolve, and
+where the proven maps account for the count, the points are the orbits. Over :math:`\mathbb{Q}`,
+msolve isolates the real points in boxes, refined until each box decides
 the sign of every coordinate declared positive; the count in :math:`\Theta` follows at rational
 sample points. Where the rational maps of the next paragraph account for every point counted at a
 sample point, and the images give its coefficients exactly, the point and its images are the
 fiber, and the count needs no isolation. The number of points in :math:`\Theta` is constant only between the hypersurfaces
 on which two points meet or a point crosses the boundary of :math:`\Theta`, so the count is
 reported per point and never taken as a global verdict.
+
+Permutations of the coordinates are tested before the count. If :math:`\sigma` permutes the
+coordinates and keeps every Taylor coefficient :math:`c`, then :math:`c(\sigma(\theta)) =
+c(\theta)` gives :math:`\partial_i c(\theta) = (\partial_{\sigma(i)} c)(\sigma(\theta))`, so
+:math:`c` depends on :math:`\theta_i` if and only if it depends on :math:`\theta_{\sigma(i)}`, and
+:math:`\sigma` maps each coordinate onto one with the same set of coefficients that depend on it.
+These sets come from one evaluation of the Jacobian at a random point modulo a prime. The
+transpositions within each class of equal sets, and then the products of two transpositions that
+fail alone, are tested on the coefficients up to four orders past the rank criterion at a random
+point modulo the prime, and a candidate that passes is proven as below or kept as ``checked``.
+The candidates join the maps of the fiber; they need no count, which only decides whether the
+maps are complete.
 
 Where the other points are rational functions :math:`\sigma_j(\theta)`, they are reconstructed
 without matching points across samples. For a coordinate :math:`\theta_i`, the characteristic
@@ -1193,11 +1227,18 @@ rational points, and ``exact`` with a map :math:`\varphi` of the states such tha
 over :math:`\mathbb{Q}(x, \theta)`: :math:`\varphi` is :math:`\sigma` on a state whose initial value
 is a coordinate of its own and the identity on the others, or, where the identity fails, the
 solution of :math:`h(\varphi(x), \sigma(\theta)) = h(x, \theta)` and the Lie derivatives of these
-equations where they are linear in :math:`\varphi`. With events, each segment has such a map, and
+equations where they are linear in :math:`\varphi`, or :math:`\varphi` affine in the states of the
+block that :math:`\sigma` reaches, the states whose right-hand side or start holds a coordinate
+that :math:`\sigma` moves, closed under the states that read them, and the identity elsewhere, with
+coefficients solved from the identities where they are linear in them. With events, each segment has such a map, and
 at each event :math:`\varphi_{\text{after}}(E(x, \theta)) = E(\varphi_{\text{before}}(x),
-\sigma(\theta))`, in every condition. When every point of the fiber but
-:math:`\theta` is the image of an ``exact`` map, the count is final (``count_final``): the exact
-maps give a lower bound equal to the upper one. A map with a positivity certificate for each
+\sigma(\theta))`, in every condition. The ``exact`` maps generate a group :math:`G`; at a point
+outside the fixed sets of the elements of :math:`G` the orbit is :math:`|G|` points of the fiber. When
+:math:`|G|` equals the count, the count is final (``count_final``): the exact maps give a lower
+bound equal to the upper one. ``info["discrete"]["certificate"]`` lists the state maps, :math:`|G|`,
+the count and the prime, and names the step that is not proven: that the count modulo the prime
+at a random point is the count over :math:`\mathbb{C}` at a generic point, an axiom without an error
+bound. A map with a positivity certificate for each
 image coordinate preserves :math:`\Theta`; a map with an image coordinate negative on
 :math:`\Theta` never meets it; otherwise the conditions on :math:`\theta` are listed. Ordering the
 coordinates and keeping in each orbit the point that is least in the first coordinate a map

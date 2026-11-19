@@ -6,6 +6,7 @@ import time
 import warnings
 
 import numpy as np
+import sympy as spy
 
 from .. import session, state
 from ..errors import SYMPY_FAILS, swallow, sympy_fail
@@ -16,6 +17,7 @@ from ..sym.charts import (
     exp_chart_generators,
     log_chart_back,
     log_chart_generators,
+    scaling_weights,
 )
 from .blocks import curved, verify_blocks
 from .scaling import (
@@ -58,7 +60,7 @@ def log_chart(obj, coords):
     if not gens or all(g is None for g in gens):
         return None
     try:
-        ch = log_chart_generators(gens, list(coords))
+        ch = log_chart_generators(gens, list(coords), (obj.get("info") or {}).get("log_coordinates") or ())
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
@@ -67,6 +69,7 @@ def log_chart(obj, coords):
     th = [str(m["theta"]) for m in ch["map"]]
     X = [str(m["X"]) for m in ch["map"]]
     bs = [str(m["base"]) for m in ch["map"]]
+    moved = {str(m["X"]) for m in ch["map"] if m.get("translated")}
 
     def ren(v):
         if v is None:
@@ -81,6 +84,13 @@ def log_chart(obj, coords):
         d["generator"] = {k: str(v).replace("**", "^") for k, v in g.items()}
         d["support"] = sym_sort(ren(d.get("support")))
         d.pop("complete_generator", None)
+        w = scaling_weights({k: v for k, v in g.items() if str(v) != "0"})
+        if w and d.get("type") != "scaling" and set(w) <= moved:
+            # translations of the log coordinates: a scaling in X, with integer weights after a common factor
+            q = math.lcm(*[spy.Rational(v).q for v in w.values()])
+            d.update(type="scaling", weights={k: str(spy.Rational(v) * q) for k, v in w.items()},
+                     generator={k: str(spy.cancel(spy.sympify(str(v).replace("^", "**")) * q)).replace("**", "^")
+                                for k, v in d["generator"].items()})
     o["info"]["coordinates"] = ren(list(coords))
     o["info"]["recast_coordinates"] = True
     return {"object": o, "theta": th, "X": X, "base": bs, "ren": ren}
@@ -147,7 +157,8 @@ def _chart_back(res, names_from, names_to, back):
         if b.get("invariants"):
             b["invariants"] = [back(x) for x in b["invariants"]]
         if b.get("new_parameters"):
-            b["new_parameters"] = {unren([k])[0]: back(v) for k, v in b["new_parameters"].items()}
+            b["new_parameters"] = {unren([k])[0]: back(v, k if k in names_from else None)
+                                    for k, v in b["new_parameters"].items()}
         blocks.append(b)
     res["blocks"] = blocks
     return res

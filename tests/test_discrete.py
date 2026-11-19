@@ -272,3 +272,78 @@ def test_the_branches_do_not_depend_on_the_names():
     bs = r.reduce().discrete["branches"]
     assert {b["branch"] for b in bs} == {"z9 > c4", "c4 > z9"}
     assert all(b["injective"] and b["reach"] for b in bs)
+
+
+CHAIN = {"R1": "b*u - sh*R1", "R2": "sh*R1 - sh*R2", "R": "sh*R2 - kR*R", "A": "c*R - kA*A"}
+REST = {"R1": "0", "R2": "0", "R": "0", "A": "0"}
+
+
+def test_a_chain_swaps_the_decay_rates_of_its_last_two_members():
+    # the response of A to u is symmetric in kR and kA
+    r = si.detect(si.Model(CHAIN, {"y": "A"}, known_inputs=["u"], trafo=REST), mode="global")
+    (s,) = r.discrete_symmetries
+    assert s["level"] == "exact" and s["map"] == {"kA": "kR", "kR": "kA"} and "candidates" in s["found_by"]
+    (phi,) = s["state_maps"]
+    assert set(phi) == {"R"} and same(phi["R"], "R + (kR - kA)*A/c")
+    info = r.info["discrete"]
+    assert info["count"] == 2 and info["count_final"] and info["candidates"]["proven"] == 1
+    cert = info["certificate"]
+    assert cert["orbit"] == 2 and cert["complete"] == "axiom" and cert["invariance"][0]["proven"]
+
+
+def test_log_coordinates_and_a_bleaching_log_output_are_rewritten():
+    tr = {**REST, **{k: f"exp({k})" for k in ("b", "c", "sh", "kR", "kA", "s", "off", "tau")}}
+    m = si.Model(CHAIN, {"y": "log(s*A + off) - tau*time"}, known_inputs=["u"], trafo=tr)
+    r = si.detect(m, mode="global")
+    (s,) = r.discrete_symmetries
+    assert s["level"] == "exact" and s["map"] == {"kA": "kR", "kR": "kA"} and s["fixed_set"] == ["kA - kR"]
+    info = r.info["discrete"]
+    assert info["count_final"] and info["fundamental_domain"] == ["kA < kR"]
+    assert {w["rewrite"] for w in info["rewrites"]} == {"coordinate", "observable", "time"}
+    obs = next(w for w in info["rewrites"] if w["rewrite"] == "observable")
+    assert same(obs["to"].replace("^", "**"), "(s*A + off)*exp(-tau*time)")
+    # the section of the scaling b, c is the translation of the log coordinates to zero
+    assert info["reduced"]["section"]["b"] == "0" or info["reduced"]["section"]["c"] == "0"
+
+
+def test_a_term_that_stays_transcendental_is_named():
+    with pytest.raises(ValueError, match=r"sin\(a\)"):
+        si.detect(si.Model({"x": "-k*x + sin(a)*x^2"}, {"y": "x"}), cores=1).discrete()
+
+
+def test_maps_of_log_coordinates_go_back_as_translations():
+    from symident.detection.rationalize import map_to_given, relation_to_given
+    a, b, c = spy.symbols("a b c")
+    logs = {"a": (spy.E, 1), "b": (spy.E, 1)}
+    out = map_to_given({a: 2 * b, b: a / 2, c: c * a}, logs)
+    assert same(out[a], "b + log(2)") and same(out[b], "a - log(2)") and same(out[c], "c*exp(a)")
+    assert relation_to_given("a - 2*b", logs) in ("a - b - log(2)", "-b + a - log(2)") or \
+        same(relation_to_given("a - 2*b", logs), "a - b - log(2)")
+
+
+def test_the_reduction_of_the_fiber_is_the_same_in_cpp_and_python():
+    import random
+
+    from symident.detection import discrete
+    p = 1000003
+    rng = random.Random(7)
+    for _ in range(30):
+        nv, m0 = 12, 4
+
+        def poly():
+            P = {}
+            for _ in range(rng.randint(1, 3)):
+                mm = tuple(sorted({v: rng.randint(1, 2) for v in rng.sample(range(nv), rng.randint(0, 2))}.items()))
+                P[mm] = rng.randint(1, p - 1)
+            return P
+        # equations a*v + b that fix variables, and jets that one equation holds alone
+        polys = [poly() for _ in range(8)] + [{((v, 1),): rng.randint(1, p - 1), (): rng.randint(0, p - 1)}
+                                              for v in rng.sample(range(nv), 3)]
+        polys += [{((v, 1),): 1, **poly()} for v in rng.sample(range(m0, nv), 2)]
+        sat = [{((v, 1),): 1} for v in rng.sample(range(nv), 2)]
+        a = discrete._reduce_mod(polys, sat, nv, m0, p)
+        b = discrete._reduce_q(polys, sat, nv, m0, p)
+        assert (a is None) == (b is None)
+        if a is not None:
+            assert sorted(map(sorted, map(dict.items, a[0]))) == sorted(map(sorted, map(dict.items, b[0])))
+            assert a[1:] == b[1:]

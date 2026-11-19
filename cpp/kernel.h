@@ -46,3 +46,6 @@ List symSparsePoly(IntegerVector seq, IntegerMatrix monoTab, IntegerVector monoR
 IntegerVector symMonoResidues(IntegerMatrix expts, IntegerVector bases, double pIn);
 int symBMorder(IntegerVector seq, double pIn);
 List symCauchyEval(IntegerVector tnodes, IntegerVector rvals, int dN, int dD, double pIn);
+List symFiberReduce(IntegerVector ps, IntegerVector pc, IntegerVector pt, IntegerVector pv,
+                    IntegerVector pe, IntegerVector ss, IntegerVector sc, IntegerVector st,
+                    IntegerVector sv, IntegerVector se, int nv, int m0, double pIn);

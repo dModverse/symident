@@ -265,7 +265,7 @@ class Series:
         self.free_rows = {k for k, (part, seg, _) in enumerate((p, s_, y) for p in self.parts for s_ in p["segs"]
                                                                for y in s_["labels"]) if part["segs"][0].get("free")}
         self.has_events = any(len(part["segs"]) > 1 for part in self.parts)
-        self._kser = {}
+        self._kser, self._jac = {}, {}
 
     def _part(self, part, rng):
         st = [spy.Symbol(x) for x in part["segments"][0]["f"]]
@@ -461,14 +461,35 @@ class Series:
         """Per observable the least order whose next Taylor coefficient adds no rank to the Jacobian in the
         coordinates, as in SIAN, at a random point modulo p; None where the rank stays below the number of
         coordinates up to `cap`."""
+        # the coefficients up to an order depend on none above it: the series grows by doubling up to `cap`
+        n = min(cap, 8)
+        while True:
+            out = self._output_orders(n, p, gap)
+            if out != "short" or n >= cap:
+                return None if out == "short" else out
+            n = min(cap, 2 * n)
+
+    def jacobian(self, order, p, gap=0):
+        """The output coefficients up to `order` at the random point of output_orders modulo p, as duals with the
+        gradient over the coordinates; None at a pole."""
+        key = (p, gap)
+        have = self._jac.get(key)
+        if have is not None and have[0] >= order:
+            return None if have[1] is None else [y[:order + 1] for y in have[1]]
         rng = session.current().rng("discrete orders", tuple(self.coords))
         m = len(self.cs)
         cv = [_Dual(rng.randint(2, p - 1), [int(i == j) for j in range(m)], p) for i in range(m)]
         one, zero = _Dual(1, [0] * m, p), _Dual(0, [0] * m, p)
         try:
-            ys = self._outputs(cv, cap, gap, one, zero)
+            ys = self._outputs(cv, order, gap, one, zero)
         except ZeroDivisionError:
-            return None
+            ys = None
+        self._jac[key] = (order, ys)
+        return ys
+
+    def _output_orders(self, cap, p, gap):
+        m = len(self.cs)
+        ys = self.jacobian(cap, p, gap)
         if ys is None:
             return None
         basis, piv = [], []
@@ -496,7 +517,20 @@ class Series:
                     active.remove(j)
             if len(basis) == m or not active:
                 break
-        return orders if len(basis) == m else None
+        if len(basis) == m:
+            return orders
+        # an observable may add rank after an order that adds none (a state at rest moves later): each keeps the
+        # last order that adds rank, until the rank is full
+        basis.clear()
+        piv.clear()
+        orders = [0] * len(ys)
+        for k in range(cap + 1):
+            for j in range(len(ys)):
+                if any([adds(v.d) for v in ys[j][k]]):
+                    orders[j] = k
+            if len(basis) == m:
+                return orders
+        return "short"
 
     def prolonged(self, orders, gap=0):
         """(names, equations, outputs, sat) up to the order of each observable in `orders` and `gap`: the jet
@@ -654,10 +688,14 @@ class Fiber:
         self.positive = positive
         self.known = series.known
         self.names = [f"x{i}" for i in range(len(self.syms))]
-        jets, self.static, self.outs, sat = series.prolonged(self.orders, self.gap)
+        jets, static, outs, sat = series.prolonged(self.orders, self.gap)
         self.allnames = self.names + jets
+        # the monomials as (variable, exponent) pairs: the system has hundreds of variables and few terms
+        self.static = [_sparse(P) for P in static]
+        self.outs = [([[_sparse(c) for c in row] for row in E], [[_sparse(c) for c in row] for row in M])
+                     for E, M in outs]
         self.sat = []
-        for f in (_clear(f) for f in sat):
+        for f in (_sparse(_clear(f)) for f in sat):
             if f not in self.sat:
                 self.sat.append(f)
         # per characteristic, whether msolve gets the separating form (decided at the first call)
@@ -690,25 +728,10 @@ class Fiber:
                     polys.append(_clear({mm: c for mm, c in P.items() if c}, p))
         polys = [P for P in polys if P]
         sat = [{m: c % p if p else c for m, c in f.items()} for f in self.sat]
-        out = _fix_linear(polys, sat, len(self.allnames), p)
-        if out is None:
+        red = _reduce(polys, sat, len(self.allnames), len(self.names), p)
+        if red is None:
             return None
-        polys, sat, fixed = out
-        # a jet in one equation only, there linear with a number as coefficient and in no factor of the
-        # saturation, is fixed by that equation: the equation and the jet leave, the count stays
-        m0, gone = len(self.names), set()
-        satv = {i for f in sat for mm in f for i, e in enumerate(mm) if e}
-        while True:
-            occ = {}
-            for k, P in enumerate(polys):
-                for i in {i for mm in P for i, e in enumerate(mm) if e}:
-                    occ.setdefault(i, []).append(k)
-            hit = next(((i, ks[0]) for i, ks in occ.items() if i >= m0 and i not in satv and len(ks) == 1 and
-                        [sum(mm) for mm in polys[ks[0]] if mm[i]] == [1]), None)
-            if hit is None:
-                break
-            gone.add(hit[0])
-            polys.pop(hit[1])
+        polys, sat, fixed, gone = red
         keep = [i for i in range(len(self.allnames)) if i not in fixed and i not in gone]
         # blocks: the components of the variables joined by an equation or a factor of the saturation
         parent = {i: i for i in keep}
@@ -719,7 +742,7 @@ class Fiber:
                 i = parent[i]
             return i
         for P in polys + sat:
-            vs = sorted({i for m in P for i, e in enumerate(m) if e})
+            vs = sorted({v for mm in P for v, _ in mm})
             for a, b_ in zip(vs, vs[1:]):
                 parent[find(a)] = find(b_)
         comp = {}
@@ -728,86 +751,195 @@ class Fiber:
         m = len(self.names)
         blocks = []
         for idx in comp.values():
-            loc = {i: j for j, i in enumerate(idx)}
+            loc = set(idx)
             names = [self.allnames[i] for i in idx]
-
-            def restrict(P, idx=idx):
-                return {tuple(mm[i] for i in idx): c for mm, c in P.items()}
-            eqs = [_ms_dict(_clear(restrict(P), p), names) for P in polys
-                   if {i for mm in P for i, e in enumerate(mm) if e} & set(loc)]
-            fac = {(0,) * len(idx): 1}
+            eqs = [_ms_sparse(_clear(P, p), self.allnames) for P in polys if {v for mm in P for v, _ in mm} & loc]
+            fac = {(): 1}
             for f in sat:
-                if {i for mm in f for i, e in enumerate(mm) if e} & set(loc):
-                    fac = _pmul_dict(fac, _clear(restrict(f), p), p)
+                if {v for mm in f for v, _ in mm} & loc:
+                    fac = _smul(fac, _clear(f, p), p)
             # points where a coordinate or a denominator at the start vanishes do not count; msolve reads no
             # brackets, so si_w multiplies each term
-            eqs.append(_ms_dict({mm + (1,): c for mm, c in fac.items()}, names + ["si_w"]) + "-1")
+            eqs.append(_ms_sparse(fac, self.allnames, "si_w") + "-1")
             blocks.append({"names": names, "sep": [self.names[i] for i in idx if i < m], "eqs": eqs})
         return {"blocks": blocks, "fixed": {self.names[i]: v for i, v in fixed.items() if i < m}}
 
 
-def _pmul_dict(a, b, p):
-    """The product of two polynomials {exponents: integer}, modulo p unless p is 0."""
+def _sparse(P):
+    """A polynomial {exponents: coefficient} with each monomial as (variable, exponent) pairs."""
+    return {tuple((i, e) for i, e in enumerate(mm) if e): c for mm, c in P.items()}
+
+
+def _smul(a, b, p):
+    """The product of two sparse polynomials, modulo p unless p is 0."""
     out = {}
     for ma, ca in a.items():
         for mb, cb in b.items():
-            mm = tuple(x + y for x, y in zip(ma, mb))
+            d = dict(ma)
+            for v, e in mb:
+                d[v] = d.get(v, 0) + e
+            mm = tuple(sorted(d.items()))
             out[mm] = (out.get(mm, 0) + ca * cb) % p if p else out.get(mm, 0) + ca * cb
     return {mm: c for mm, c in out.items() if c}
 
 
-def _fix_linear(polys, sat, nv, p):
-    """(polys, sat, fixed): the variables that an equation a*v + b with numbers a, b fixes, substituted in turn in
-    the equations and the factors `sat`; None where an equation becomes a nonzero number or a factor vanishes."""
+def _ms_sparse(P, names, extra=None):
+    """A sparse polynomial as msolve input, expanded, each term times `extra` if given."""
+    out = []
+    for mm, c in P.items():
+        mono = "*".join(names[v] + (f"^{e}" if e > 1 else "") for v, e in mm)
+        if extra:
+            mono = f"{mono}*{extra}" if mono else extra
+        out.append(f"{c}*{mono}" if mono else f"{c}")
+    return "+".join(out).replace("+-", "-") or "0"
+
+
+def _reduce(polys, sat, nv, m0, p):
+    """(polys, sat, fixed, gone) of the sparse system after the fixings of symFiberReduce (cpp/kernel.cpp): the
+    variables that an equation a*v + b fixes, substituted in turn, and the jets from m0 on in no factor that one
+    equation holds only as the monomial v, which leave with it; None without a solution. Modulo p in C++, over Q
+    here."""
+    if p:
+        return _reduce_mod(polys, sat, nv, m0, p)
+    return _reduce_q(polys, sat, nv, m0)
+
+
+def _encode(polys):
+    start, coef, tstart, var, ex = [0], [], [0], [], []
+    for P in polys:
+        for mm, c in P.items():
+            coef.append(int(c))
+            for v, e in mm:
+                var.append(v)
+                ex.append(e)
+            tstart.append(len(var))
+        start.append(len(coef))
+    return tuple(np.asarray(x, dtype=np.int32) for x in (start, coef, tstart, var, ex))
+
+
+def _decode(d):
+    start, coef, tstart, var, ex = (list(map(int, d[k])) for k in ("start", "coef", "tstart", "var", "exp"))
+    out = []
+    for j in range(len(start) - 1):
+        P = {}
+        for t in range(start[j], start[j + 1]):
+            P[tuple(zip(var[tstart[t]:tstart[t + 1]], ex[tstart[t]:tstart[t + 1]]))] = coef[t]
+        out.append(P)
+    return out
+
+
+def _reduce_mod(polys, sat, nv, m0, p):
+    from .. import _core
+    out = _core.sym_fiber_reduce(_encode(polys), _encode(sat), nv, m0, float(p))
+    if not out["ok"]:
+        return None
+    fixed = dict(zip(map(int, out["fixed_var"]), map(int, out["fixed_val"])))
+    return _decode(out["polys"]), _decode(out["sat"]), fixed, set(map(int, out["gone"]))
+
+
+def _reduce_q(polys, sat, nv, m0, p=0):
+    """_reduce() in Python, over Q (p = 0) or GF(p)."""
     def div(a, b):
         return a * pow(b, -1, p) % p if p else Fraction(a) / b
 
     def subst(P, v, x):
-        out = {}
-        for m, c in P.items():
-            e = m[v]
+        out, hit = {}, False
+        for mm, c in P.items():
+            e = dict(mm).get(v)
             if e:
+                hit = True
                 c = c * pow(x, e, p) % p if p else c * Fraction(x) ** e
-                m = m[:v] + (0,) + m[v + 1:]
-            out[m] = (out.get(m, 0) + c) % p if p else out.get(m, 0) + c
-        return {m: c for m, c in out.items() if c}
-    fixed = {}
-    zero = (0,) * nv
+                mm = tuple(t for t in mm if t[0] != v)
+            out[mm] = (out.get(mm, 0) + c) % p if p else out.get(mm, 0) + c
+        return {mm: c for mm, c in out.items() if c} if hit else P
+
+    def linear_var(P):
+        vs = {mm[0][0] for mm in P if mm}
+        if len(vs) != 1 or any(mm and (len(mm) != 1 or mm[0][1] != 1) for mm in P):
+            return None
+        return vs.pop()
+    polys, sat = [dict(P) for P in polys], [dict(f) for f in sat]
+    alive = [bool(P) for P in polys]
+    salive = [True] * len(sat)
+    occ, socc = {}, {}
+    for j, P in enumerate(polys):
+        for v in {v for mm in P for v, _ in mm}:
+            occ.setdefault(v, []).append(j)
+    for j, f in enumerate(sat):
+        for v in {v for mm in f for v, _ in mm}:
+            socc.setdefault(v, []).append(j)
+    fixed, queue = {}, list(range(len(polys)))
+    while queue:
+        j = queue.pop(0)
+        if not alive[j]:
+            continue
+        v = linear_var(polys[j])
+        if v is None or v in fixed:
+            continue
+        x = div(-polys[j].get((), 0), polys[j][((v, 1),)])
+        fixed[v] = x
+        for k in occ.get(v, ()):
+            if not alive[k]:
+                continue
+            new = subst(polys[k], v, x)
+            if new is polys[k]:
+                continue
+            polys[k] = new
+            if not new:
+                alive[k] = False
+            elif list(new) == [()]:
+                return None
+            else:
+                queue.append(k)
+        for k in socc.get(v, ()):
+            if not salive[k]:
+                continue
+            new = subst(sat[k], v, x)
+            if new is sat[k]:
+                continue
+            sat[k] = new
+            if not new:
+                return None
+            if list(new) == [()]:
+                salive[k] = False
+    if fixed:
+        if any(a and list(P) == [()] for a, P in zip(alive, polys)):
+            return None
+        if any(a and not f for a, f in zip(salive, sat)):
+            return None
+        salive = [a and list(f) != [()] for a, f in zip(salive, sat)]
+    polys = [P for a, P in zip(alive, polys) if a]
+    sat = [f for a, f in zip(salive, sat) if a]
+    insat = {v for f in sat for mm in f for v, _ in mm}
+    count = {}
+    for P in polys:
+        for v in {v for mm in P for v, _ in mm}:
+            count[v] = count.get(v, 0) + 1
+    gone = set()
     while True:
         hit = None
-        for P in polys:
-            vs = {i for m in P for i, e in enumerate(m) if e}
-            if len(vs) == 1 and all(sum(m) <= 1 for m in P):
-                v = vs.pop()
-                a = P.get(zero[:v] + (1,) + zero[v + 1:], 0)
-                hit = (v, div(-P.get(zero, 0), a))
+        for j, P in enumerate(polys):
+            for mm in P:
+                if len(mm) == 1 and mm[0][1] == 1:
+                    v = mm[0][0]
+                    if v >= m0 and v not in insat and count.get(v) == 1 and \
+                            sum(1 for nn in P if any(w == v for w, _ in nn)) == 1:
+                        hit = (j, v)
+                        break
+            if hit:
                 break
         if hit is None:
-            return polys, sat, fixed
-        v, x = hit
-        fixed[v] = x
-        polys = [subst(P, v, x) for P in polys]
-        if any(list(P) == [zero] for P in polys):
-            return None
-        polys = [P for P in polys if P]
-        sat = [subst(f, v, x) for f in sat]
-        if any(not f for f in sat):
-            return None
-        # a factor that is a number vanishes nowhere
-        sat = [f for f in sat if list(f) != [zero]]
+            break
+        j, v = hit
+        gone.add(v)
+        for w in {w for mm in polys[j] for w, _ in mm}:
+            count[w] -= 1
+        polys.pop(j)
+    return polys, sat, fixed, gone
 
 
 def _eval(P, x, zero=Fraction(0)):
     return sum((c * math.prod((xi ** e for xi, e in zip(x, m) if e), start=zero + 1) for m, c in P.items()), zero)
-
-
-def _ms_dict(P, names):
-    """A polynomial {exponents: integer or Fraction} as msolve input, expanded: msolve reads no brackets."""
-    out = []
-    for m, c in P.items():
-        mono = "*".join(n + (f"^{e}" if e > 1 else "") for n, e in zip(names, m) if e)
-        out.append(f"{c}*{mono}" if mono else f"{c}")
-    return "+".join(out).replace("+-", "-") or "0"
 
 
 def _msolve(names, p, eqs, flags, timeout, sep=()):
@@ -833,7 +965,10 @@ def _msolve(names, p, eqs, flags, timeout, sep=()):
                                timeout=timeout)
         except subprocess.TimeoutExpired:
             return None
-        txt = open(fo).read() if os.path.exists(fo) else ""
+        txt = ""
+        if os.path.exists(fo):
+            with open(fo) as fh:
+                txt = fh.read()
     if r.returncode != 0 or not txt.strip():
         return None
     txt = txt.strip().rstrip(":")
@@ -910,14 +1045,204 @@ def _solve(fib, p, block, flags, timeout):
 
 
 def complex_count(fib, point, p, timeout):
-    """The number of points of the fiber over the algebraic closure of GF(p), None on failure."""
-    rur = _rur(fib, point, p, timeout)
-    return None if rur is None else rur["deg"]
+    """The number of points of the fiber over the algebraic closure of GF(p), None on failure: per block the number
+    of standard monomials of the leading ideal of a Gröbner basis, the dimension of the quotient, without the
+    parametrization of the points."""
+    try:
+        pt = {s: spy.Integer(_modp_rational(spy.Rational(v), p)) for s, v in point.items()}
+        sysd = fib.system(pt, p)
+    except ZeroDivisionError:
+        return None
+    if sysd is None:
+        return None
+    n = 1
+    for block in sysd["blocks"]:
+        k = _gb_count(block["names"], p, block["eqs"], timeout, block["sep"])
+        if not k:
+            return None
+        n *= k
+    return n
 
 
-def _boxes_of_maps(fib, pt, maps):
+def _gb_count(names, p, eqs, timeout, sep=(), cap=5000):
+    """The number of points of the ideal of `eqs` in `names` + si_w over the algebraic closure of GF(p) with
+    distinct values of the coordinates `sep`; None where it is not finite, the quotient above `cap`, or on failure.
+    From the reduced Gröbner basis of msolve: the standard monomials span the quotient, the multiplication by a
+    random linear form in `sep` acts on it, and the distinct eigenvalues of that matrix are the distinct values of
+    the form on the points. A block without coordinates counts one point where it has any."""
+    from ..sym import msolve
+    names = list(names) + ["si_w"]
+    with tempfile.TemporaryDirectory() as td:
+        fi, fo = os.path.join(td, "in.ms"), os.path.join(td, "out.ms")
+        with open(fi, "w") as fh:
+            fh.write(",".join(names) + "\n" + str(p) + "\n" + ",\n".join(eqs) + "\n")
+        try:
+            r = subprocess.run([msolve._msolve_binary(), "-f", fi, "-o", fo, "-g", "2", "-l", "44",
+                                "-t", str(msolve._MSOLVE_THREADS)], capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+        txt = ""
+        if os.path.exists(fo):
+            with open(fo) as fh:
+                txt = fh.read()
+    if r.returncode != 0:
+        return None
+    at = {n: i for i, n in enumerate(names)}
+    body = "".join(line for line in txt.splitlines() if not line.startswith("#")).strip().rstrip(":").strip("[]")
+    gb = [_gb_poly(t, at, p) for t in body.split(",") if t.strip()]
+    if any(list(P) == [()] for P in gb):
+        return 0
+    lead = [next(iter(P)) for P in gb]
+    basis = _standard_monomials([dict(m) for m in lead], len(names), cap)
+    if basis is None:
+        return None
+    if not any(n in at for n in sep):
+        return 1 if basis else 0
+    rng = session.current().rng("discrete form", tuple(names))
+    form = {((at[n], 1),): rng.randint(1, p - 1) for n in sep if n in at}
+    index = {m: k for k, m in enumerate(basis)}
+    M = []
+    for b in basis:
+        row = [0] * len(basis)
+        for m, c in _gb_normal(_smul(form, {b: 1}, p), gb, lead, p).items():
+            row[index[m]] = (row[index[m]] + c) % p
+        M.append(row)
+    return _distinct_eigenvalues(M, p, rng)
+
+
+def _gb_poly(text, at, p):
+    """A polynomial of the msolve output, leading term first, as {sparse monomial: coefficient}."""
+    out = {}
+    for term in text.strip().split("+"):
+        c, mono = 1, {}
+        for f in term.split("*"):
+            f = f.strip()
+            v, _, k = f.partition("^")
+            if v in at:
+                mono[at[v]] = mono.get(at[v], 0) + int(k or 1)
+            else:
+                c = c * int(f) % p
+        key = tuple(sorted(mono.items()))
+        out[key] = (out.get(key, 0) + c) % p
+    return {m: c for m, c in out.items() if c}
+
+
+def _divides(a, b):
+    """Whether the sparse monomial a divides b."""
+    d = dict(b)
+    return all(d.get(v, 0) >= e for v, e in a)
+
+
+def _gb_normal(P, gb, lead, p):
+    """The normal form of P by the reduced Gröbner basis `gb` with leading monomials `lead`, all monic."""
+    out = {}
+    P = dict(P)
+    while P:
+        m = max(P, key=lambda mm: (sum(e for _, e in mm), _revlex(mm)))
+        c = P.pop(m)
+        j = next((j for j, l in enumerate(lead) if _divides(l, m)), None)
+        if j is None:
+            out[m] = (out.get(m, 0) + c) % p
+            continue
+        q = dict(m)
+        for v, e in lead[j]:
+            q[v] -= e
+        q = tuple((v, e) for v, e in sorted(q.items()) if e)
+        for mm, cc in _smul({q: c}, gb[j], p).items():
+            if mm == m:
+                continue
+            P[mm] = (P.get(mm, 0) - cc) % p
+            if not P[mm]:
+                del P[mm]
+    return {m: c for m, c in out.items() if c}
+
+
+def _revlex(mm):
+    """A sort key that orders monomials of one degree by grevlex, the first variable largest."""
+    return tuple(-e for _, e in sorted(mm, key=lambda t: -t[0])) if mm else ()
+
+
+def _distinct_eigenvalues(M, p, rng):
+    """The number of distinct eigenvalues of the matrix M over the algebraic closure of GF(p): the degree of the
+    square-free part of the minimal polynomial of M on a random vector."""
+    n = len(M)
+    v = [rng.randint(0, p - 1) for _ in range(n)]
+    krylov, rows, piv = [], [], []
+    while True:
+        w = list(v)
+        coef = [0] * (len(rows) + 1)
+        coef[len(rows)] = 1
+        for r, c in zip(rows, piv):
+            if w[c]:
+                f = w[c]
+                w = [(x - f * y) % p for x, y in zip(w, r[0])]
+                coef = [(x - f * y) % p for x, y in zip(coef, r[1] + [0] * (len(coef) - len(r[1])))]
+        c = next((k for k, x in enumerate(w) if x), None)
+        if c is None:
+            minpoly = coef
+            break
+        inv = pow(w[c], -1, p)
+        rows.append(([x * inv % p for x in w], [x * inv % p for x in coef]))
+        piv.append(c)
+        krylov.append(v)
+        v = [sum(v[i] * M[i][j] for i in range(n)) % p for j in range(n)]
+    f = minpoly
+    df = [(k * f[k]) % p for k in range(1, len(f))]
+    g = _gcd_mod(f, df, p)
+    return len(f) - len(g)
+
+
+def _gcd_mod(a, b, p):
+    """The monic gcd of two polynomials mod p, coefficients from the constant term up."""
+    def trim(x):
+        while x and not x[-1]:
+            x = x[:-1]
+        return x
+    a, b = trim(list(a)), trim(list(b))
+    while b:
+        inv = pow(b[-1], -1, p)
+        while len(a) >= len(b) and a:
+            f = a[-1] * inv % p
+            off = len(a) - len(b)
+            a = trim([(x - f * (b[k - off] if k >= off else 0)) % p for k, x in enumerate(a)])
+        a, b = b, a
+    inv = pow(a[-1], -1, p)
+    return [x * inv % p for x in a]
+
+
+def _standard_monomials(lead, nv, cap):
+    """The monomials in nv variables that no monomial of `lead` ({variable: exponent}) divides, sparse; None where
+    there are infinitely many or more than `cap`."""
+    pure = {}
+    for e in lead:
+        if len(e) == 1:
+            (v, k), = e.items()
+            pure[v] = min(pure.get(v, k), k)
+    if len(pure) < nv:
+        return None
+    free = [v for v in range(nv) if pure[v] > 1]
+    lead = [e for e in lead if all(v in free for v in e)]
+    seen, todo = {()}, [()]
+    while todo:
+        m = todo.pop()
+        d = dict(m)
+        for v in free:
+            nxt = dict(d)
+            nxt[v] = nxt.get(v, 0) + 1
+            if any(all(nxt.get(u, 0) >= k for u, k in e.items()) for e in lead):
+                continue
+            key = tuple(sorted(nxt.items()))
+            if key not in seen:
+                seen.add(key)
+                todo.append(key)
+                if len(seen) > cap:
+                    return None
+    return sorted(seen)
+
+
+def _boxes_of_maps(fib, pt, maps, check=True):
     """The points of the fiber at `pt` as exact boxes, the point and its images under `maps`, or None where an image
-    is not distinct or its coefficients differ from those at the point."""
+    is not distinct or, with `check`, the coefficients there differ from those at the point."""
     try:
         imgs = [dict(pt)] + [{s: spy.Rational(sig.get(s, s).xreplace(pt)) for s in fib.syms} for sig in maps]
     except (ZeroDivisionError, TypeError):
@@ -925,6 +1250,8 @@ def _boxes_of_maps(fib, pt, maps):
     vals = [tuple(im[s] for s in fib.syms) for im in imgs]
     if len(set(vals)) != len(vals):
         return None
+    if not check:
+        return [[(v, v) for v in t] for t in vals]
     here = fib.values(pt)
     for im in imgs[1:]:
         there = fib.values(im)
@@ -1428,6 +1755,121 @@ def output_preserved(fib, sig, points=3, deeper=0):
     return True
 
 
+def patterns(series, order, gap, p):
+    """Per coordinate the output coefficients (row, order, order in eps) with a derivative in it that is not zero at
+    the random point of the Jacobian modulo p; None at a pole. A permutation of the coordinates that keeps the output
+    maps each coordinate onto one with the same set."""
+    ys = series.jacobian(order, p, gap)
+    if ys is None:
+        return None
+    out = [set() for _ in series.cs]
+    for r, y in enumerate(ys):
+        if r in series.free_rows:
+            continue
+        for k, v in enumerate(y):
+            for m, c in enumerate(v):
+                for i, d in enumerate(c.d):
+                    if d:
+                        out[i].add((r, k, m))
+    return [frozenset(x) for x in out]
+
+
+def candidates(series, order, gap, p, deadline):
+    """The permutations of the coordinates that keep the output coefficients up to `order` (and `gap` in eps) at a
+    random point modulo p: the transpositions within a class of equal patterns, then the products of two
+    transpositions that fail alone. Each as {symbol: image} over all coordinates; the search stops at `deadline`."""
+    import time
+    pats = patterns(series, order, gap, p)
+    if pats is None:
+        return []
+    groups = {}
+    for i, x in enumerate(pats):
+        if x:
+            groups.setdefault(x, []).append(i)
+    rng = session.current().rng("discrete candidates", tuple(series.coords))
+    pt = [rng.randint(2, p - 1) for _ in series.cs]
+
+    def vals(v):
+        out = series.numeric(dict(zip(series.cs, v)), order, gap, p)
+        return None if out is None else [r for k, r in enumerate(out) if k not in series.free_rows]
+
+    def swapped(pairs):
+        v = list(pt)
+        for i, j in pairs:
+            v[i], v[j] = v[j], v[i]
+        return v
+    base = vals(pt)
+    if base is None:
+        return []
+    found, failed = [], []
+    for idx in groups.values():
+        for i, j in itertools.combinations(idx, 2):
+            if time.monotonic() > deadline:
+                return found
+            (found if vals(swapped([(i, j)])) == base else failed).append([(i, j)])
+    for a, b in itertools.combinations(failed, 2):
+        if time.monotonic() > deadline:
+            break
+        if {*a[0]} & {*b[0]} or any(pats[a[0][0]] == pats[x] for x in b[0]):
+            continue
+        if vals(swapped(a + b)) == base:
+            found.append(a + b)
+    out = []
+    for pairs in found:
+        sig = {s: s for s in series.cs}
+        for i, j in pairs:
+            sig[series.cs[i]], sig[series.cs[j]] = series.cs[j], series.cs[i]
+        out.append(sig)
+    return out
+
+
+def _block_map(F, H, X, x0, th):
+    """phi affine in the states of the block that sigma reaches, the identity elsewhere: the states whose right-hand
+    side or start holds a coordinate that sigma moves, closed under the states that read them. The coefficients
+    solve the invariance of the right-hand sides, the outputs and the starts, where these are linear in them; None
+    without a solution."""
+    moved = {s for s, e in th.items() if e != s}
+    reads = {x: F[x].free_symbols & set(X) for x in X}
+    block = {x for x in X if F[x].free_symbols & moved or (x0 and x0[x].free_symbols & moved)}
+    while True:
+        more = {y for y in X if y not in block and reads[y] & block}
+        if not more:
+            break
+        block |= more
+    if not block or len(block) > 12:
+        return None
+    basis = sorted(block | {y for x in block for y in reads[x]}, key=str)
+    a = {}
+    phi = {x: x for x in X}
+    for x in sorted(block, key=str):
+        cs = [spy.Dummy(f"a_{x}_{y}") for y in basis] + [spy.Dummy(f"a_{x}")]
+        a[x] = cs
+        phi[x] = sum((c * y for c, y in zip(cs, basis)), cs[-1])
+    unknowns = [c for cs in a.values() for c in cs]
+    both = {**th, **phi}
+    eqs = []
+
+    def coeffs(e):
+        num = spy.fraction(spy.together(e))[0]
+        return spy.Poly(spy.expand(num), *X).coeffs() if num != 0 else []
+    for x in block:
+        rhs = sum((spy.diff(phi[x], y) * F[y] for y in X), spy.Integer(0))
+        eqs += coeffs(F[x].xreplace(both) - rhs)
+    eqs += [c for h in H for c in coeffs(h.xreplace(both) - h)]
+    if x0:
+        at0 = {y: x0[y] for y in X}
+        eqs += [phi[x].xreplace(at0) - x0[x].xreplace(th) for x in block]
+    eqs = [spy.expand(e) for e in eqs if e != 0]
+    if any(spy.Poly(e, *unknowns).total_degree() > 1 for e in eqs):
+        return None
+    sol = spy.linsolve(eqs, unknowns)
+    if not sol:
+        return None
+    vals = dict(zip(unknowns, next(iter(sol))))
+    free = {u: 0 for v in vals.values() for u in v.free_symbols & set(unknowns)}
+    return {x: spy.cancel(e.xreplace(vals).xreplace(free)) for x, e in phi.items()}
+
+
 def _state_map(f, g, ic, sig, states):
     """A map phi of the states that takes the model at theta onto the model at sigma(theta), over Q(x, theta), or
     None. With the initial values `ic`, a state whose initial value is a coordinate of its own, the state itself
@@ -1470,7 +1912,11 @@ def _state_map(f, g, ic, sig, states):
     try:
         if holds(phi):
             return phi
-        if not given:
+        blk = _block_map(F, H, X, x0, th)
+        if blk is not None and holds(blk):
+            return blk
+        # the solve from the outputs grows with the number of states
+        if not given or len(given) > 12:
             return None
         P = {x: spy.Dummy(str(x)) for x in given}
         img = {**th, **{x: phi[x] for x in X if x not in P}, **P}
@@ -1492,7 +1938,8 @@ def _state_map(f, g, ic, sig, states):
 
 
 def state_map_proof(parts, sig, states, positive=True):
-    """Whether sigma is a symmetry of every condition, over Q(x, theta): in each segment a map phi of the states
+    """The maps of the states, one per segment of each condition, that prove sigma a symmetry over Q(x, theta), or
+    None: in each segment a map phi of the states
     (_state_map, with the initial values in the first segment), and at each event the image of the event at theta
     equal to the event at sigma(theta) of the image before it, phi_after(E(x)) = E_sigma(phi_before(x)). With
     switches, each regime has such a map, which takes every switching surface q = 0 to itself: q(phi(x),
@@ -1501,7 +1948,8 @@ def state_map_proof(parts, sig, states, positive=True):
     X = [spy.Symbol(x) for x in states]
     th = {s: e for s, e in sig.items() if s not in set(X)}
     if any(part.get("roots") for part in parts):
-        return False
+        return None
+    maps = []
     try:
         for part in parts:
             qs = [model_sympify(str(q)) for q in part.get("surfaces") or ()]
@@ -1510,11 +1958,11 @@ def state_map_proof(parts, sig, states, positive=True):
                 ic = seg["ic"] if j == 0 and None not in (seg["ic"] or {None: None}).values() else None
                 phi = _state_map(seg["f"], seg["g"], ic, sig, states)
                 if phi is None:
-                    return False
+                    return None
                 for q in qs:
                     c = spy.cancel(q.xreplace({**th, **phi}) / q)
                     if c.free_symbols & set(X) or not is_positive(c, positive):
-                        return False
+                        return None
                 if j:
                     after = {}
                     for e in seg["events"]:
@@ -1527,12 +1975,13 @@ def state_map_proof(parts, sig, states, positive=True):
                         lhs = phi[x].xreplace(E)
                         rhs = E[x].xreplace({**th, **{y: prev[y] for y in X}})
                         if spy.cancel(lhs - rhs) != 0:
-                            return False
+                            return None
                 prev = phi
+                maps.append({str(x): str(e) for x, e in phi.items() if e != x})
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
-        return False
-    return True
+        return None
+    return maps
 
 
 def domain_conditions(fib, sig):
@@ -1585,20 +2034,23 @@ def fundamental_domain(coords, states, maps):
     return list(dict.fromkeys(out))
 
 
-def choose_order(series, positive, start, cap, timeout, budget=math.inf):
+def choose_order(series, positive, start, cap, timeout, budget=math.inf, floor=1):
     """(fiber, stable, count): the fiber at the orders of the observables that SIAN's rank criterion gives (else
     `start` for each), raised together by one until the count over the algebraic closure equals the count one step
     higher, at most to `cap`. While raising, one count may take a quarter of `budget`, since a fiber with a component
     of positive dimension costs msolve much more than the finite fiber one order higher. The search stops after
     `budget` seconds once a finite count is found, else after three times the budget; without any finite count the
-    last fiber gets one count with the full `timeout`."""
+    last fiber gets one count with the full `timeout`. A count equal to `floor`, the size of an orbit of proven
+    maps, ends the search: a higher order only removes points, and the orbit stays; the first count then gets the
+    full `timeout`."""
     import time
     t0 = time.monotonic()
     step = min(timeout, max(30.0, budget / 4))
     crit = series.output_orders(cap, PRIMES[0])
     # at the orders of the rank criterion the system is square and has extra solutions; one order higher it is
-    # smaller in count and faster to solve
-    base = [n + 1 for n in crit] if crit else [max(1, start)] * len(series.labels)
+    # smaller in count and faster to solve. Every observable starts at the highest of these orders: an observable
+    # whose next coefficient adds no rank in the coordinates can still remove points, where the start is given
+    base = [max(crit) + 1] * len(crit) if crit else [max(1, start)] * len(series.labels)
     rng = session.current().rng("discrete order", tuple(series.coords))
     point = {spy.Symbol(c): spy.Integer(rng.randint(2, 10 ** 6)) for c in series.coords}
     prev = found = None
@@ -1609,11 +2061,11 @@ def choose_order(series, positive, start, cap, timeout, budget=math.inf):
             break
         # the gap order rises with the Lie order, from zero gaps on
         fib = Fiber(series, orders, positive, gap=t)
-        cc = complex_count(fib, point, PRIMES[0], step)
+        cc = complex_count(fib, point, PRIMES[0], timeout if floor > 1 and prev is None else step)
         if prev is not None and cc is not None and cc == prev[1]:
             return prev[0], True, cc
-        if cc == 1:
-            # a higher order adds equations, so its fiber lies in this one, which holds the point: one stays one
+        if cc == floor:
+            # a higher order adds equations, so the fiber there lies in this one and holds the orbit of the point
             return fib, True, cc
         prev = (fib, cc)
         if cc is not None:
@@ -1625,51 +2077,170 @@ def choose_order(series, positive, start, cap, timeout, budget=math.inf):
     return prev[0], False, complex_count(prev[0], point, PRIMES[0], timeout)
 
 
+def _same_map(a, b):
+    return all(spy.cancel(a[s] - b.get(s, s)) == 0 for s in a)
+
+
+def group(maps, syms, cap=64):
+    """The elements of the group the maps generate under composition, the identity first; None past `cap`."""
+    ident = {s: s for s in syms}
+    group, todo = [ident], [ident]
+    while todo:
+        g = todo.pop()
+        for m in maps:
+            h = {s: spy.cancel(m[s].xreplace(g)) for s in syms}
+            if not any(_same_map(h, x) for x in group):
+                group.append(h)
+                todo.append(h)
+                if len(group) > cap:
+                    return None
+    return group
+
+
+def _candidate_stage(series, parts, states, positive, deadline):
+    """(maps, info) of the candidates: permutations of coordinates with equal patterns that keep the output modulo a
+    prime, each with the state maps that prove it or None."""
+    import time
+    t0 = time.monotonic()
+    crit = series.output_orders(2 * len(series.coords), PRIMES[0])
+    if crit is None:
+        return [], {"seconds": round(time.monotonic() - t0, 2), "tested": False}
+    order = max(crit) + 1 + _DEEPER
+    gap = _DEEPER if series.has_events else 0
+    found = candidates(series, order, gap, PRIMES[0], deadline)
+    out = [(sig, state_map_proof(parts, sig, states, positive)) for sig in found]
+    return out, {"order": order, "found": len(found), "proven": sum(pf is not None for _, pf in out),
+                 "seconds": round(time.monotonic() - t0, 2), "complete_search": time.monotonic() <= deadline}
+
+
 def analyze(parts, coords, positive, states, order=None, start=None, points=_POINTS, timeout=600, budget=300):
     """The discrete symmetries of a locally identifiable model, as a dict; `parts` as in Series, one per condition.
-    Without `order`, the order rises from `start` (the Lie order of the rank) until the count over the algebraic
-    closure is stable; after an event the gap order rises with it from zero."""
+    First the candidates: permutations of coordinates whose output coefficients have the same pattern, kept modulo a
+    prime and proven by a map of the states. Then the count: without `order`, the order rises from `start` (the Lie
+    order of the rank) until the count over the algebraic closure is stable; after an event the gap order rises with
+    it from zero. The maps of the fiber are reconstructed within `budget` seconds."""
+    import time
+    t0 = time.monotonic()
     series = Series(parts, coords)
+    syms = [spy.Symbol(c) for c in coords]
+    timing = {}
+    limits = []
+    cand, cinfo = _candidate_stage(series, parts, states, positive, t0 + budget / 3)
+    timing["candidates"] = cinfo["seconds"]
+    if cinfo.get("complete_search") is False:
+        limits.append(f"the candidates were tested for {budget / 3:g} s, not all of them")
+    t1 = time.monotonic()
+    left = max(30.0, budget - (t1 - t0))
     cc = None
+    proven = [sig for sig, pf in cand if pf is not None]
+    cgrp = group(proven, syms) if proven else None
     if order:
         fib, stable = Fiber(series, int(order), positive, gap=int(order)), None
     else:
-        fib, stable, cc = choose_order(series, positive, int(start or 1), 2 * len(coords), timeout, budget)
-        if cc is None:
-            # without a finite count at any order tried, the counts in the domain and the maps have nothing to solve
-            return {"symmetries": [], "info": {
-                "order": fib.order, "orders": dict(zip(series.labels, fib.orders)), "gap_order": fib.gap,
-                "order_stable": stable, "count": None,
-                "counts": [], "limits": [_NO_FINITE_COUNT.format(order=fib.order)], "closed_forms": False,
-                "count_final": False, "fundamental_domain": []}}
-    import time
-    t0 = time.monotonic()
-    limits = []
-    # a map of the fiber that does not keep the coefficients further up shows a fiber too large at this order: the
-    # orders rise and the count is taken again
-    for _ in range(_RAISES + 1):
-        # a count of one has no maps to find
-        k, maps = (1, []) if cc == 1 else rational_maps(fib, timeout, budget)
-        false = [sig for sig in maps or [] if not output_preserved(fib, sig, deeper=_DEEPER)]
-        if not false or order or time.monotonic() - t0 > budget:
-            break
-        fib, stable, cc = Fiber(series, [n + 2 for n in fib.orders], positive, gap=fib.gap + 2), False, None
-    if false:
-        limits.append(f"{len(false)} of the maps of the fiber at order {fib.order} change the coefficients up to "
-                      f"order {fib.order + _DEEPER}: the count is that of the equations up to order {fib.order}, "
-                      "more than the values with the same output")
-        maps = [sig for sig in maps if all(sig is not f for f in false)]
-    order = fib.order
-    rng = session.current().rng("discrete domain", tuple(coords))
+        fib, stable, cc = choose_order(series, positive, int(start or 1), 2 * len(coords), timeout, left,
+                                       floor=len(cgrp) if cgrp else 1)
+    timing["count"] = round(time.monotonic() - t1, 2)
+    k, maps, false = None, None, []
+    if cc is not None and cgrp is not None and len(cgrp) == cc and len(proven) == len(cand):
+        # the proven candidates account for every point counted: the fiber has no other map to reconstruct
+        k, maps = cc, []
+        timing["maps"] = 0.0
+    elif order or cc is not None:
+        t2 = time.monotonic()
+        # a map of the fiber that does not keep the coefficients further up shows a fiber too large at this order:
+        # the orders rise and the count is taken again
+        for _ in range(_RAISES + 1):
+            # a count of one has no maps to find
+            k, maps = (1, []) if cc == 1 else rational_maps(fib, timeout, left)
+            k = cc if k is None else k
+            false = [sig for sig in maps or [] if not output_preserved(fib, sig, deeper=_DEEPER)]
+            if not false or order or time.monotonic() - t1 > left:
+                break
+            fib, stable, cc = Fiber(series, [n + 2 for n in fib.orders], positive, gap=fib.gap + 2), False, None
+        timing["maps"] = round(time.monotonic() - t2, 2)
+        if false:
+            limits.append(f"{len(false)} of the maps of the fiber at order {fib.order} change the coefficients up "
+                          f"to order {fib.order + _DEEPER}: the count is that of the equations up to order "
+                          f"{fib.order}, more than the values with the same output")
+            maps = [sig for sig in maps if all(sig is not f for f in false)]
+        if maps is None and time.monotonic() - t1 > left:
+            limits.append(f"the closed forms of the maps were not found within the budget of {budget:g} s")
+    else:
+        limits.append(_NO_FINITE_COUNT.format(order=fib.order))
+    # the candidates join the maps of the fiber
+    proofs = {}
+    every = list(maps or [])
+    for sig, pf in cand:
+        same = next((m for m in every if _same_map(sig, m)), None)
+        if same is None:
+            every.append(sig)
+            same = sig
+        proofs[id(same)] = pf
+    out = []
+    for sig in every:
+        entry = {"map": {str(s): str(e) for s, e in sig.items() if e != s},
+                 "changes": [str(s) for s in syms if sig[s] != s]}
+        pf = proofs[id(sig)] if id(sig) in proofs else state_map_proof(parts, sig, states, positive)
+        entry["level"] = "exact" if pf is not None else "checked"
+        entry["found_by"] = [w for w, hit in (("candidates", id(sig) in proofs),
+                                               ("fiber", any(sig is m for m in maps or []))) if hit]
+        entry["state_maps"] = pf
+        entry["preserves_domain"], entry["domain_conditions"] = domain_conditions(fib, sig)
+        entry["fixed_set"] = fixed_set(sig)
+        out.append(entry)
+    exact = [sig for sig, e in zip(every, out) if e["level"] == "exact"]
+    grp = group(exact, syms)
+    orbit = None if grp is None else len(grp)
+    # the proven maps account for every point counted: the reconstruction of the fiber adds nothing
+    complete = k is not None and not false and orbit == k and all(e["level"] == "exact" for e in out)
     counts = []
+    if k is not None:
+        # the counts in the domain end with the time of the count: budget and one call of msolve
+        counts, skipped = _domain_counts(fib, maps, k, points, timeout, coords, grp[1:] if complete else None,
+                                         deadline=t0 + budget + timeout)
+        if skipped:
+            limits.append(f"the counts in the domain stopped after {budget + timeout:g} s: {skipped} of "
+                          f"{len(counts)} points without a count")
+    if k is None:
+        k = next((c["complex"] for c in counts if c.get("complex")), None)
+    relevant = [e for e in out if e.get("preserves_domain") is not False and e["level"] != "open"]
+    info = {"order": fib.order, "orders": dict(zip(series.labels, fib.orders)), "gap_order": fib.gap,
+            "order_stable": stable, "count": k,
+            "counts": counts, "limits": limits,
+            "closed_forms": maps is not None,
+            "count_final": complete,
+            "fundamental_domain": fundamental_domain(coords, states, [
+                {spy.Symbol(s): model_sympify(v) for s, v in e["map"].items()} for e in relevant]),
+            "candidates": cinfo, "timing": timing,
+            "certificate": certificate(out, orbit, k, counts, complete)}
+    return {"symmetries": out, "info": info}
+
+
+def _domain_counts(fib, maps, k, points, timeout, coords, proven=None, deadline=math.inf):
+    """(counts, skipped): per point of the domain the count over the algebraic closure and the real points in the
+    domain, and the number of points left without a count at `deadline`. With the elements `proven` of a group of
+    proven maps whose orbit has `k` points, the fiber at a point is the orbit of the point."""
+    import time
+    rng = session.current().rng("discrete domain", tuple(coords))
     pts = [domain_point(fib, rng) for _ in range(points)] if isinstance(points, int) else \
-        [{spy.Symbol(str(k)): spy.Rational(str(v)) for k, v in dict(pt).items()} for pt in points]
+        [{spy.Symbol(str(k_)): spy.Rational(str(v)) for k_, v in dict(pt).items()} for pt in points]
+
     def count_at(pt):
-        cc = complex_count(fib, {s: v for s, v in pt.items()}, PRIMES[0], timeout) \
+        if proven is not None:
+            boxes = _boxes_of_maps(fib, pt, proven, check=False)
+            if boxes is not None:
+                return None, boxes
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return "skipped", None
+        cc = complex_count(fib, {s: v for s, v in pt.items()}, PRIMES[0], min(timeout, left)) \
             if all(v.q % PRIMES[0] for v in pt.values()) else None
         # where the maps account for every point counted, the point and its images are the fiber, exactly
         boxes = _boxes_of_maps(fib, pt, maps) if maps is not None and cc == k == len(maps) + 1 else None
-        return cc, boxes if boxes is not None else real_points(fib, pt, timeout)
+        left = deadline - time.monotonic()
+        if boxes is None and left <= 0:
+            return cc, None
+        return cc, boxes if boxes is not None else real_points(fib, pt, min(timeout, left))
     from ..sym import msolve
     # msolve gains little from threads: the points run as processes of one thread each
     workers = max(1, min(int(msolve._MSOLVE_THREADS), len(pts)))
@@ -1680,6 +2251,8 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
                 done = list(ex.map(count_at, pts))
         else:
             done = [count_at(pt) for pt in pts]
+    counts, skipped = [], sum(cc == "skipped" for cc, _ in done)
+    done = [(None if cc == "skipped" else cc, boxes) for cc, boxes in done]
     for pt, (cc, boxes) in zip(pts, done):
         if boxes is None:
             counts.append({"point": {str(s): str(v) for s, v in pt.items()}, "complex": cc, "real": None,
@@ -1689,31 +2262,25 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
         counts.append({"point": {str(s): str(v) for s, v in pt.items()}, "complex": cc, "real": len(boxes),
                        "in_domain": sum(d is True for d in dom),
                        "undecided": sum(d is None for d in dom)})
-    if maps is None and time.monotonic() - t0 > budget:
-        limits.append(f"the closed forms of the maps were not found within the budget of {budget:g} s")
-    if k is None:
-        k = next((c["complex"] for c in counts if c.get("complex")), None)
-    if k is None:
-        limits.append(_NO_FINITE_COUNT.format(order=fib.order))
-    syms = list(fib.syms)
-    out = []
-    for sig in maps or []:
-        entry = {"map": {str(s): str(e) for s, e in sig.items() if e != s},
-                 "changes": [str(s) for s in syms if sig[s] != s]}
-        entry["level"] = "exact" if state_map_proof(parts, sig, states, positive) else "checked"
-        entry["preserves_domain"], entry["domain_conditions"] = domain_conditions(fib, sig)
-        entry["fixed_set"] = fixed_set(sig)
-        out.append(entry)
-    relevant = [e for e in out if e.get("preserves_domain") is not False and e["level"] != "open"]
-    info = {"order": order, "orders": dict(zip(series.labels, fib.orders)), "gap_order": fib.gap,
-            "order_stable": stable, "count": k,
-            "counts": counts, "limits": limits,
-            "closed_forms": maps is not None,
-            "count_final": maps is not None and not false and len(maps) + 1 == k and
-            all(e["level"] == "exact" for e in out),
-            "fundamental_domain": fundamental_domain(coords, states, [
-                {spy.Symbol(s): model_sympify(v) for s, v in e["map"].items()} for e in relevant])}
-    return {"symmetries": out, "info": info}
+    return counts, skipped
+
+
+def certificate(entries, orbit, k, counts, complete):
+    """What the result rests on: the invariance proven per map, the size of the orbit, and the count."""
+    # a point of the domain whose fiber is read from the orbit has no count over the algebraic closure
+    agree = [c["complex"] for c in counts if c.get("complex") is not None]
+    return {
+        "invariance": [{"map": e["map"], "proven": e["level"] == "exact", "state_maps": e.get("state_maps")}
+                       for e in entries],
+        "identities": "f(phi(x), sigma(theta)) = Dphi(x) f(x, theta), h(phi(x), sigma(theta)) = h(x, theta) and "
+                      "phi(x0(theta)) = x0(sigma(theta)), in every segment and through every event, as identities "
+                      "of rational functions over Q, checked by cancellation",
+        "orbit": orbit, "count": k, "prime": PRIMES[0], "counts_at_points": agree,
+        "proven": ["the invariance of every map at level exact",
+                   f"the orbit of a generic point under the group of the exact maps has {orbit} points"],
+        "axiom": "the number of solutions modulo the prime at a random point equals the number over the complex "
+                 "numbers at a generic point; no error bound is proven",
+        "complete": "axiom" if complete else ("no" if k is not None and orbit is not None and orbit < k else "open")}
 
 
 def observed_states(f, g, events=()):
