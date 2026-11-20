@@ -1,5 +1,6 @@
 # Wheels for Linux (manylinux x86_64 and aarch64), macOS (arm64) and Windows,
-# the sdist, tests of the Linux wheel on Fedora and Debian, and a source build on Fedora.
+# the sdist, tests of the Linux wheel on Fedora and Debian, a source build on Fedora, and the
+# msolve build on AlmaLinux 8 (glibc 2.28).
 # Documentation goes to Pages from master. A published release builds nothing: it uploads to
 # PyPI the wheels and the sdist of the successful push run on the released commit.
 name: wheels
@@ -76,6 +77,18 @@ jobs:
         run: /opt/venv/bin/python -c "import symident; symident.install_msolve(ask=False, jobs=4)"
       - name: Tests
         run: cd /tmp && /opt/venv/bin/python -m pytest -q -n auto "$GITHUB_WORKSPACE/tests"
+
+  # the msolve build script alone on glibc 2.28, where pthread is not part of libc
+  msolve-glibc228:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-latest
+    container: almalinux:8
+    steps:
+      - name: Install build tools
+        run: dnf install -y --setopt=install_weak_deps=False gcc make m4 diffutils curl xz tar
+      - uses: actions/checkout@v5
+      - name: Build msolve
+        run: SYMIDENT_LIBS_CACHE=/tmp/msolve SYMIDENT_JOBS=4 sh src/symident/tools/build-msolve.sh
 
   # a source install on Fedora's own Python and compilers, as dMod2's CI installs it
   fedora:

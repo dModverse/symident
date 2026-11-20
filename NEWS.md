@@ -1,3 +1,10 @@
+# symident 0.16.1
+
+* `install_msolve()` links msolve with `-pthread`, which the thread pool of FLINT needs. On
+  systems with glibc older than 2.34, such as RHEL 8 and its derivatives, pthread is not part of
+  libc, and the link failed with undefined references to `pthread_create`. CI builds msolve on
+  AlmaLinux 8.
+
 # symident 0.16.0
 
 ## Global analysis

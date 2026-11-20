@@ -73,7 +73,8 @@ for u in src/usolve/usolve.c src/fglm/fglm_core.c src/neogb/gb.c src/msolve/main
   $CC -O2 -DHAVE_CONFIG_H -I. -Isrc -Iompstub -I"$PREFIX/include" -w \
     -c "$u" -o "obj/$(basename "$u" .c).o"
 done
-$CC obj/main.o obj/gb.o obj/fglm_core.o obj/usolve.o -o "$PREFIX/bin/msolve" \
+# the thread pool of FLINT needs pthread, a library of its own before glibc 2.34
+$CC -pthread obj/main.o obj/gb.o obj/fglm_core.o obj/usolve.o -o "$PREFIX/bin/msolve" \
   "$PREFIX/lib/libflint.a" "$PREFIX/lib/libmpfr.a" "$PREFIX/lib/libgmp.a" -lm
 strip "$PREFIX/bin/msolve" 2>/dev/null || true
 
