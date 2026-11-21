@@ -19,9 +19,14 @@ List symObsNullBatch(List tapes, int nLeaves, int nStates, IntegerVector zSlots,
 List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots,
                      IntegerVector point, double pIn, int Nt, int Mtot, int cores,
                      IntegerVector NtChain, SEXP pointSer, int serOrder);
+List symObsChainRows(List chain, int nLeaves, int nStates, IntegerVector zSlots,
+                     IntegerVector point, double pIn, int Nt, int Mtot, int threads,
+                     bool profile);
+List symChainReduce(IntegerMatrix rowsIn, IntegerMatrix srowsIn, int nz, int N, double pIn);
+double symSetBlockBytes(double bytes);
 List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
                      IntegerVector point, double pIn, int Nt, IntegerMatrix stateVals,
-                     int threads, IntegerVector dropStates);
+                     int threads, IntegerVector dropStates, bool fromStates);
 List symObsNullChainSeedBatch(List chains, IntegerVector evalChain, IntegerMatrix seeds,
                               NumericVector primes, int nLeaves, int nStates,
                               IntegerVector zSlots, int Nt, int Mtot, int cores,

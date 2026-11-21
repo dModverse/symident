@@ -158,6 +158,35 @@ def _trace(on):
         yield
 
 
+
+_ATOMS = frozenset((str, int, float, bool, type(None)))
+
+
+def _data_copy(x):
+    """A deep copy of `x` that copies dicts, lists and tuples of strings and numbers without the memo of
+    copy.deepcopy."""
+    t = type(x)
+    if t in _ATOMS:
+        return x
+    if t is dict:
+        if all(type(v) in _ATOMS for v in x.values()):
+            return dict(x)
+        return {k: _data_copy(v) for k, v in x.items()}
+    if t is list:
+        if all(type(v) in _ATOMS for v in x):
+            return list(x)
+        return [_data_copy(v) for v in x]
+    if t is tuple:
+        return tuple(_data_copy(v) for v in x)
+    return copy.deepcopy(x)
+
+
+def _model_copy(model):
+    """A deep copy of the model whose attributes are copied by _data_copy."""
+    out = copy.copy(model)
+    out.__dict__ = {k: _data_copy(v) for k, v in vars(model).items()}
+    return out
+
 class Symmetry(dict):
     """One non-identifiable direction, a dict whose entries are also attributes.
 
@@ -1004,7 +1033,7 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
         # the reduction before the count needs the closed forms
         reconstruct = True
     # the result holds the model as detected, whatever the caller changes later
-    model = copy.deepcopy(model)
+    model = _model_copy(model)
     if equilibrate is None:
         equilibrate = bool(getattr(model, "equilibrate", None))
     if positive is None:

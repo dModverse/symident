@@ -220,7 +220,8 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
     lines = (list(fl.values()) + [v for g in gl for v in g.values()] +
              [v for ic in il for v in ic.values()] +
              [str(k) for k in fl] + [str(t) for t in taken])
-    _, parse = _make_local_parse(lines)
+    # conditions repeat the same texts: each distinct text is parsed and normalized once
+    _, parse = _make_local_parse(list(dict.fromkeys(str(x) for x in lines)))
     pos, _ = declared(positive)
 
     def is_pos(sym):
@@ -239,13 +240,22 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
         # u^c of a sum u with c not an integer is exp(c*log(u)): the base u is treated like log(u)
         return [pw.base for pw in e.atoms(spy.Pow) if pw.base.is_Add and pw.exp.is_Rational
                 and not pw.exp.is_Integer]
-    F = {k: norm(parse(str(v))) for k, v in fl.items()}
-    G = [{k: norm(parse(str(v))) for k, v in g.items()} for g in gl]
-    I = [{k: norm(parse(str(v))) for k, v in ic.items()} for ic in il]
+    normal = {}
+
+    def normal_of(v):
+        v = str(v)
+        if v not in normal:
+            normal[v] = norm(parse(v))
+        return normal[v]
+    F = {k: normal_of(v) for k, v in fl.items()}
+    G = [{k: normal_of(v) for k, v in g.items()} for g in gl]
+    I = [{k: normal_of(v) for k, v in ic.items()} for ic in il]
+    # the distinct expressions of the observables, in the order of their first occurrence
+    G_exprs = list(dict.fromkeys(e for g in G for e in g.values()))
+    g_texts = list(dict.fromkeys(str(v) for g in gl for v in g.values()))
     normed = any(spy.simplify(F[k] - parse(str(v))) != 0 for k, v in fl.items()) or \
-        any(spy.simplify(G[i][k] - parse(str(v))) != 0
-            for i, g in enumerate(gl) for k, v in g.items()) or \
-        any(sum_powers(e) for e in list(F.values()) + [e for g in G for e in g.values()])
+        any(spy.simplify(normal[v] - parse(v)) != 0 for v in g_texts) or \
+        any(sum_powers(e) for e in list(F.values()) + G_exprs)
     states = {spy.Symbol(k) for k in fl}
     one, zero = spy.Integer(1), spy.Integer(0)
 
@@ -311,32 +321,51 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
         for ps in (0, 1):
             for e in F.values():
                 scan(e, ps)
-            for g in G:
-                for e in g.values():
-                    scan(_strip_log_obs(e), ps)
-        # a free-exponent base with a given initial value has no leaf for the recast
-        given = {spy.Symbol(k) for ic in I for k in ic}
-        for e in list(F.values()) + [e for g in G for e in g.values()]:
+            for e in G_exprs:
+                scan(_strip_log_obs(e), ps)
+        # a free-exponent base with a given initial value has no leaf for the recast; a state that
+        # starts at 0 keeps the name, and the kernel expands the free powers of that state at the start;
+        # each name and each value object is tested once
+        names, zero_names, is0 = set(), set(), {}
+        for ic in I:
+            names.update(ic.keys())
+            for k in ic.keys() & fl.keys():
+                v = ic[k]
+                z = is0.get(id(v))
+                if z is None:
+                    z = is0[id(v)] = bool(v == 0)
+                if z:
+                    zero_names.add(k)
+        given = {spy.Symbol(k) for k in names}
+        at_zero = {spy.Symbol(k) for k in zero_names if spy.Symbol(k) in states}
+        for e in list(F.values()) + G_exprs:
             for pw in e.atoms(spy.Pow):
-                if pw.base in given and not pw.exp.is_number and is_pos(pw.base):
+                if pw.base in given and pw.base not in at_zero and not pw.exp.is_number and is_pos(pw.base):
                     claim(pw.base, zero, one)
+        def charted():
+            # the names whose symbol the chart holds
+            return {str(v) for v in chart if spy.Symbol(str(v)) in chart}
         # an initial value of a transformed state enters as the logarithm of the argument
         while True:
             n0 = len(chart)
+            held = charted()
             for ic in I:
                 for k, _e in ic.items():
+                    if k not in held:
+                        continue
                     ks = spy.Symbol(k)
                     if ks in chart:
                         a, b = chart[ks]
                         at0 = {spy.Symbol(n): x for n, x in ic.items()}
                         for ps in (0, 1):
                             scan(spy.log((a + b * ks).xreplace(at0)), ps)
+                        held = charted()
             if len(chart) == n0:
                 break
     except ValueError as err:
         return {'why': str(err)}
     # an affine coordinate change turns a free power of the symbol into a power of a sum
-    for e in list(F.values()) + [e for g in G for e in g.values()]:
+    for e in list(F.values()) + G_exprs:
         for pw in e.atoms(spy.Pow):
             v = pw.base
             if v in chart and not pw.exp.is_number and chart[v] != (zero, one):
@@ -361,10 +390,22 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
         sub = {v: e.xreplace(sub) for v, e in sub0.items()}
     consts = set()
 
+    tidied = {}
+
     def tidy(e):
-        e = e.xreplace(sub)
-        e = e.xreplace({at: spy.log(spy.cancel(at.args[0])) for at in e.atoms(spy.log)})
-        return _log_numbers(spy.powsimp(spy.expand_log(e, force=True)), consts)
+        # memoized: the constants it adds to `consts` are the same for the same expression
+        r = tidied.get(e)
+        if r is None:
+            x = e.xreplace(sub)
+            x = x.xreplace({at: spy.log(spy.cancel(at.args[0])) for at in x.atoms(spy.log)})
+            r = tidied[e] = _log_numbers(spy.powsimp(spy.expand_log(x, force=True)), consts)
+        return r
+    texts = {}
+
+    def tidy_text(e):
+        if e not in texts:
+            texts[e] = str(tidy(e))
+        return texts[e]
     Fn = {}
     for k, e in F.items():
         ks = spy.Symbol(k)
@@ -377,7 +418,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
             Fn[str(L[ks])] = str(spy.powsimp(spy.expand(tidy(du) * spy.exp(-L[ks]))))
         else:
             Fn[k] = str(tidy(e))
-    Gn = [{k: str(tidy(e)) for k, e in g.items()} for g in G]
+    Gn = [{k: tidy_text(e) for k, e in g.items()} for g in G]
     In = []
     for ic in I:
         d = {}
@@ -403,7 +444,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
                 except ValueError as err:
                     return {'why': str(err)}
             else:
-                d[k] = str(tidy(e))
+                d[k] = tidy_text(e)
         In.append(d)
     return {'f': Fn, 'g': Gn, 'ic': In, 'consts': sorted(consts),
             'map': [{'v': str(v), 'L': str(L[v]), 'a': str(chart[v][0]),
@@ -497,7 +538,8 @@ def scaling_weights(comps):
 def log_coordinates(trafos, exprs):
     """The outer coordinates that every trafo in `trafos` passes to the model only through b^(c*theta), c rational,
     and that the model expressions `exprs` read under no name of their own: their domain is the real line."""
-    vals = [str(v) for t in trafos for v in t.values()]
+    # the distinct values: conditions repeat the same entries
+    vals = list(dict.fromkeys(str(v) for t in trafos for v in t.values()))
     if not vals:
         return []
     _, parse = _make_local_parse(vals + [str(e) for e in exprs])

@@ -18,6 +18,7 @@
 #include <utility>
 #include <exception>
 #include <stdexcept>
+#include <atomic>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -57,7 +58,7 @@ inline u64 barrett_m(u64 p) { return UINT64_MAX / p; }
 namespace {
 
 const int OP_CONST = 0, OP_ADD = 1, OP_MUL = 2, OP_INV = 3, OP_SQRT = 4, OP_ROOT = 5,
-          OP_EXPN = 6, OP_LOG1P = 7, OP_SINN = 8, OP_COSN = 9;
+          OP_EXPN = 6, OP_LOG1P = 7, OP_SINN = 8, OP_COSN = 9, OP_SPOW = 10;
 
 inline u64 addmod(u64 a, u64 b, u64 p) { u64 s = a + b; return s >= p ? s - p : s; }
 inline u64 submod(u64 a, u64 b, u64 p) { return a >= b ? a - b : a + p - b; }
@@ -958,6 +959,8 @@ bool build_obs_rows(std::vector<std::vector<u64> >& val,
           }
           break;
         }
+        default:
+          fail = true;                      // a power of a state at 0: the polyseries path
       }
       if (fail) break;
     }
@@ -981,10 +984,138 @@ bool build_obs_rows(std::vector<std::vector<u64> >& val,
   return true;
 }
 
+// ---- Laurent series in time of polyseries blocks ----
+// An output such as a ratio of two states that both start at 0 is analytic for t > 0, but the
+// tape of the output divides by a series without constant value. Such instructions are evaluated after the
+// state recursion, one instruction at a time, as Laurent series: block j is the coefficient of
+// t^(lo + j), every coefficient below t^prec is known, and blocks past c are zero. A reciprocal
+// splits the operand a = t^v0 (U + M) with U a series whose constant block has a unit value
+// (v0 the first order with a nonzero value at the constant monomial) and M the terms below t^v0,
+// which lie in the nilpotent ideal of the dual lanes and the monomials of positive degree:
+// 1/a = t^-v0 U^-1 sum_e (-M U^-1)^e, a finite sum.
+const int LB_EXACT = 1 << 28;
+struct LBlk { int lo, prec; std::vector<u64> c; };
+
+inline int lb_len(const LBlk& a, int blk) { return (int)(a.c.size() / blk); }
+
+// drop leading zero blocks below the precision, so that lo is the valuation
+inline void lb_norm(LBlk& a, int blk) {
+  int n = lb_len(a, blk), j = 0;
+  while (j < n) {
+    bool nz = false;
+    for (int c = 0; c < blk && !nz; ++c) nz = a.c[(size_t)j * blk + c] != 0;
+    if (nz) break;
+    ++j;
+  }
+  if (j == n) { a.c.clear(); a.lo = a.prec; return; }
+  if (j > 0) { a.c.erase(a.c.begin(), a.c.begin() + (size_t)j * blk); a.lo += j; }
+  int keep = std::max(0, a.prec - a.lo);
+  if (lb_len(a, blk) > keep) a.c.resize((size_t)keep * blk);
+}
+
+inline LBlk lb_add(const LBlk& a, const LBlk& b, int blk, u64 p, bool sub = false) {
+  LBlk o;
+  o.prec = std::min(a.prec, b.prec);
+  o.lo = std::min(a.c.empty() ? b.lo : a.lo, b.c.empty() ? a.lo : b.lo);
+  int hi = std::max(a.lo + lb_len(a, blk), b.lo + lb_len(b, blk));
+  hi = std::min(hi, o.prec);
+  o.c.assign((size_t)std::max(0, hi - o.lo) * blk, 0);
+  int n = std::max(0, hi - o.lo);
+  for (int j = 0; j < lb_len(a, blk); ++j) {
+    int e = a.lo + j - o.lo;
+    if (e < 0 || e >= n) continue;
+    for (int c = 0; c < blk; ++c)
+      o.c[(size_t)e * blk + c] = addmod(o.c[(size_t)e * blk + c], a.c[(size_t)j * blk + c], p);
+  }
+  for (int j = 0; j < lb_len(b, blk); ++j) {
+    int e = b.lo + j - o.lo;
+    if (e < 0 || e >= n) continue;
+    for (int c = 0; c < blk; ++c) {
+      u64 v = b.c[(size_t)j * blk + c];
+      o.c[(size_t)e * blk + c] = sub ? submod(o.c[(size_t)e * blk + c], v, p)
+                                     : addmod(o.c[(size_t)e * blk + c], v, p);
+    }
+  }
+  lb_norm(o, blk);
+  return o;
+}
+
+inline LBlk lb_mul(const LBlk& a, const LBlk& b, const PolyBasis& pb, u64 p) {
+  int blk = pb.nMono * pb.w;
+  LBlk o;
+  o.lo = a.lo + b.lo;
+  o.prec = std::min(a.prec + b.lo, b.prec + a.lo);
+  int la = lb_len(a, blk), lbn = lb_len(b, blk);
+  int n = (la && lbn) ? std::min(o.prec - o.lo, la + lbn - 1) : 0;
+  o.c.assign((size_t)std::max(0, n) * blk, 0);
+  for (int i = 0; i < la; ++i)
+    for (int j = 0; j < lbn && i + j < n; ++j)
+      poly_mul_acc(o.c.data() + (size_t)(i + j) * blk, a.c.data() + (size_t)i * blk,
+                   b.c.data() + (size_t)j * blk, pb, p);
+  lb_norm(o, blk);
+  return o;
+}
+
+// 1/a, false where no order below the precision has a unit value (more orders are needed) or
+// the constant block cannot be inverted
+inline bool lb_inv(LBlk& out, const LBlk& a, const PolyBasis& pb, u64 p) {
+  int blk = pb.nMono * pb.w, la = lb_len(a, blk), j0 = -1;
+  for (int j = 0; j < la; ++j)
+    if (a.c[(size_t)j * blk] % p) { j0 = j; break; }
+  if (j0 < 0) return false;
+  int v0 = a.lo + j0;
+  int n = a.prec - v0;                         // relative precision of U and of U^-1
+  if (n <= 0) return false;
+  LBlk Ui;
+  Ui.lo = 0; Ui.prec = n;
+  Ui.c.assign((size_t)n * blk, 0);
+  const u64* U = a.c.data() + (size_t)j0 * blk;
+  int lu = la - j0;
+  if (!poly_inv(Ui.c.data(), U, pb, p)) return false;
+  std::vector<u64> s(blk);
+  for (int j = 1; j < n; ++j) {
+    std::fill(s.begin(), s.end(), (u64)0);
+    for (int i = 1; i <= j && i < lu; ++i)
+      poly_mul_acc(s.data(), U + (size_t)i * blk, Ui.c.data() + (size_t)(j - i) * blk, pb, p);
+    for (int c = 0; c < blk; ++c) s[c] = submod(0, s[c], p);
+    poly_mul_acc(Ui.c.data() + (size_t)j * blk, Ui.c.data(), s.data(), pb, p);
+  }
+  lb_norm(Ui, blk);
+  LBlk S = Ui;
+  if (j0 > 0) {
+    LBlk M;
+    M.lo = a.lo - v0; M.prec = LB_EXACT;
+    M.c.assign(a.c.begin(), a.c.begin() + (size_t)j0 * blk);
+    // M in the dual lanes only squares to zero; with monomials of positive degree the ideal
+    // vanishes past the total degree plus the dual lane
+    bool dualOnly = true;
+    for (int j = 0; j < j0 && dualOnly; ++j)
+      for (int mo = 0; mo < pb.nMono; ++mo)
+        if (M.c[(size_t)j * blk + (size_t)mo * pb.w] % p) { dualOnly = false; break; }
+    int E = dualOnly ? 2 : pb.Mtot + pb.Tser + 2;
+    LBlk T = lb_mul(M, Ui, pb, p);
+    for (auto& x : T.c) x = submod(0, x, p);
+    LBlk P = Ui;
+    for (int e = 1; e < E; ++e) {
+      P = lb_mul(P, T, pb, p);
+      S = lb_add(S, P, blk, p);
+    }
+  }
+  S.lo -= v0;
+  S.prec -= v0;
+  out = S;
+  return true;
+}
+
 // Polyseries version of build_obs_rows: every value is a width-(nMono*w) block (a
 // truncated power series in the gap lengths, each monomial a dual). Runs to time
 // order Nrun and emits z-gradient rows for orders 0..Ntemit and all gap monomials.
 // `val` slots are pre-sized to (Nrun+1)*blk with states seeded at order 0.
+// A reciprocal of a series without constant value outside the right-hand sides (an output
+// that is 0/0 at the start) is evaluated after the recursion as a Laurent series; where the
+// truncation needs more orders, the recursion is run again further. Rows of negative order
+// (poles of the dual lanes, e.g. along a state of the start) go to `preRows` as
+// (output, -order, monomial, lanes...); without it, a pole fails.
 bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
                          const std::vector<int>& op, const std::vector<int>& a,
                          const std::vector<int>& b, const std::vector<u64>& cval,
@@ -992,12 +1123,63 @@ bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
                          const std::vector<int>& fOut, const std::vector<int>& gOut,
                          const PolyBasis& pb, int Nrun, int Ntemit, u64 p,
                          std::vector<std::vector<u64> >& rows,
-                         const u64* dtau = nullptr) {
+                         const u64* dtau = nullptr,
+                         std::vector<std::vector<u64> >* preRows = nullptr, int depth = 0,
+                         int need = -1, int spowAxis0 = -1) {
+  if (need < 0) need = Nrun + 1;
   int nInstr = (int)op.size();
   int m = (int)stateSlots.size();
   int w = pb.w, nM = pb.nMono, blk = nM * w, nz = w - 1;
   std::vector<std::vector<u64> > invA0(nInstr);
   bool fail = false;
+  // instructions the right-hand sides read; the others may be deferred to Laurent series
+  std::vector<char> fcone(nInstr, 0), deferred(nInstr, 0);
+  {
+    int nSlot = instrBase + nInstr;
+    std::vector<char> need(nSlot, 0);
+    for (int i = 0; i < m; ++i) if (fOut[i] >= 0 && fOut[i] < nSlot) need[fOut[i]] = 1;
+    for (int i = nInstr - 1; i >= 0; --i) {
+      if (!need[instrBase + i]) continue;
+      fcone[i] = 1;
+      if (op[i] == OP_ADD || op[i] == OP_MUL) { need[a[i]] = 1; need[b[i]] = 1; }
+      else if (op[i] == OP_INV) need[a[i]] = 1;
+    }
+  }
+  bool anyDeferred = false;
+  auto isDef = [&](int slot) { return slot >= instrBase && deferred[slot - instrBase]; };
+  // P = x^a of a state x that starts at 0 (OP_SPOW). With x = c t^k (1 + ...), P = S Q where
+  // S = (c t^k)^a is a formal variable on axis `axis` of the basis and Q = (x / (c t^k))^a a
+  // series; a coefficient of t^n S^m stands for t^(n - k m + k m a). The time index n is the
+  // exponent at a = 1, so S counts k orders and P at order n reads x up to order n: Q follows
+  // from A = x / (c t^k) by n Q_n = A_0^-1 sum_{j=1..n} (a j + j - n) A_j Q_(n-j).
+  struct SPowAx {
+    int axis, kv;
+    std::vector<u64> c, cinv, ex, A0inv;
+    std::vector<std::vector<u64> > A, Q;
+  };
+  std::vector<SPowAx> sp;
+  std::vector<int> spOf(nInstr, -1);
+  for (int i = 0; i < nInstr; ++i)
+    if (op[i] == OP_SPOW) {
+      if (spowAxis0 < 0) return false;
+      SPowAx x;
+      x.axis = spowAxis0 + (int)sp.size();
+      x.kv = -1;
+      if (x.axis >= pb.K) return false;
+      spOf[i] = (int)sp.size();
+      sp.push_back(x);
+    }
+  // dual products: o (cleared) = X * s for a block X and a dual s; inverse of a dual
+  auto scaleBlock = [&](u64* o, const u64* X, const u64* sc) {
+    std::fill(o, o + blk, (u64)0);
+    for (int mo = 0; mo < nM; ++mo) dual_mul_acc(o + (size_t)mo * w, X + (size_t)mo * w, sc, w, p);
+  };
+  auto dualInv = [&](std::vector<u64>& o, const u64* x) {
+    o.assign(w, 0);
+    u64 vi = invmod(x[0] % p, p), vi2 = mulmod(vi, vi, p);
+    o[0] = vi;
+    for (int c = 1; c < w; ++c) o[c] = submod(0, mulmod(x[c], vi2, p), p);
+  };
   // Lane ranges: [lo, hi) of the nonzero dual lanes of a value at one order and
   // monomial, found when first read (a value is final once an instruction reads it).
   // Products run over these ranges only and add unreduced: each product is below
@@ -1018,8 +1200,32 @@ bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
   const u64 LIM = (((u64)1 << 63) / p) * p;
   const Barrett br(p);
   std::vector<u64> acc(blk);
+  // values constant in time: the leaves (slots below instrBase that hold no state) and the
+  // instructions formed from them alone. Their coefficients past time order 0 are zero, so a
+  // product with one takes a single term and the instruction is not formed again.
+  std::vector<char> tconst(nVal, 0);
+  {
+    std::vector<char> isState(instrBase, 0);
+    for (int i = 0; i < m; ++i)
+      if (stateSlots[i] >= 0 && stateSlots[i] < instrBase) isState[stateSlots[i]] = 1;
+    for (int v = 0; v < instrBase && v < nVal; ++v) tconst[v] = !isState[v];
+    for (int i = 0; i < nInstr && instrBase + i < nVal; ++i) {
+      int o = op[i];
+      tconst[instrBase + i] = o == OP_CONST ||
+          ((o == OP_ADD || o == OP_MUL) && tconst[a[i]] && tconst[b[i]]) ||
+          (o == OP_INV && tconst[a[i]]);
+    }
+  }
   // out += sum_{ii = j0..j1} A_ii * B_{k-ii} over the monomials, A and B tape values
   auto convAdd = [&](u64* out, int av, int bv, int j0, int j1, int k) {
+    if (tconst[av]) {
+      if (j0 > 0) return;
+      j1 = 0;
+    }
+    if (tconst[bv]) {
+      if (k < j0 || k > j1) return;
+      j0 = j1 = k;
+    }
     std::fill(acc.begin(), acc.end(), (u64)0);
     const u64* pa = val[av].data(); const u64* pbv = val[bv].data();
     for (int ii = j0; ii <= j1; ++ii) {
@@ -1047,6 +1253,14 @@ bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
   };
   for (int k = 0; k <= Nrun && !fail; ++k) {
     for (int i = 0; i < nInstr; ++i) {
+      if (k == 0 && op[i] != OP_CONST &&
+          (isDef(a[i]) || (op[i] != OP_INV && isDef(b[i])) ||
+           (op[i] == OP_INV && val[a[i]][0] % p == 0))) {
+        if (fcone[i]) { fail = true; break; }
+        deferred[i] = 1;
+        anyDeferred = true;
+      }
+      if (deferred[i] || (k > 0 && tconst[instrBase + i])) continue;
       u64* o = val[instrBase + i].data() + (size_t)k * blk;
       switch (op[i]) {
         case OP_CONST:
@@ -1075,6 +1289,64 @@ bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
           }
           break;
         }
+        case OP_SPOW: {
+          SPowAx& x = sp[spOf[i]];
+          const u64* ev = val[b[i]].data();
+          if (k == 0) x.ex.assign(ev, ev + w);
+          else
+            for (int c = 0; c < blk; ++c)
+              if (ev[(size_t)k * blk + c]) { fail = true; break; }   // the exponent is constant
+          if (fail) break;
+          const u64* xb = val[a[i]].data() + (size_t)k * blk;
+          if (x.kv < 0) {
+            if (xb[0] % p == 0) {
+              // below the first order with a value, a dual or another axis is not generic
+              for (int c = 0; c < blk; ++c) if (xb[c]) { fail = true; break; }
+              break;
+            }
+            if (k == 0) { fail = true; break; }  // a base that does not start at 0
+            x.kv = k;
+            x.c.assign(xb, xb + w);
+            dualInv(x.cinv, xb);
+          }
+          int n = k - x.kv;
+          std::vector<u64> An(blk), Qn(blk, 0), t1(blk), t2(blk);
+          scaleBlock(An.data(), xb, x.cinv.data());
+          x.A.push_back(An);
+          if (n == 0) {
+            std::vector<u64> N0 = An;
+            N0[0] = submod(N0[0], 1, p);
+            x.A0inv.assign(blk, 0);
+            if (!poly_inv(x.A0inv.data(), An.data(), pb, p) ||
+                !poly_nilpotent(t1.data(), N0.data(), OP_LOG1P, pb, p)) { fail = true; break; }
+            scaleBlock(t2.data(), t1.data(), x.ex.data());
+            if (!poly_nilpotent(Qn.data(), t2.data(), OP_EXPN, pb, p)) { fail = true; break; }
+          } else {
+            std::vector<u64> acc(blk, 0), sc(w);
+            for (int j = 1; j <= n; ++j) {
+              std::fill(t1.begin(), t1.end(), (u64)0);
+              poly_mul_acc(t1.data(), x.A[j].data(), x.Q[n - j].data(), pb, p);
+              sc[0] = addmod(mulmod(x.ex[0], (u64)j % p, p), red((long long)j - n, p), p);
+              for (int c = 1; c < w; ++c) sc[c] = mulmod(x.ex[c], (u64)j % p, p);
+              scaleBlock(t2.data(), t1.data(), sc.data());
+              for (int c = 0; c < blk; ++c) acc[c] = addmod(acc[c], t2[c], p);
+            }
+            std::fill(t1.begin(), t1.end(), (u64)0);
+            poly_mul_acc(t1.data(), x.A0inv.data(), acc.data(), pb, p);
+            u64 in = invmod((u64)n % p, p);
+            for (int c = 0; c < blk; ++c) Qn[c] = mulmod(t1[c], in, p);
+          }
+          x.Q.push_back(Qn);
+          for (int mo = 0; mo < nM; ++mo) {
+            int dst = pb.shiftSlot(mo, x.axis, 1);
+            if (dst < 0) continue;
+            for (int c = 0; c < w; ++c)
+              o[(size_t)dst * w + c] = addmod(o[(size_t)dst * w + c], Qn[(size_t)mo * w + c], p);
+          }
+          break;
+        }
+        default:
+          fail = true;
       }
       if (fail) break;
     }
@@ -1085,8 +1357,160 @@ bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
       u64* st = val[stateSlots[i]].data() + (size_t)(k + 1) * blk;
       for (int c = 0; c < blk; ++c) st[c] = mulmod(fk[c], invk, p);
     }
+    // on a monomial with powers S, d/dt t^n S^m = (n + sum k m (a - 1)) t^(n-1) S^m
+    if (!sp.empty())
+      for (int mo = 1; mo < nM && !fail; ++mo) {
+        std::vector<u64> lam(w, 0), li;
+        lam[0] = (u64)(k + 1) % p;
+        bool any = false;
+        for (const SPowAx& x : sp) {
+          int mu = pb.idx[mo][x.axis];
+          if (!mu || x.kv < 0) continue;
+          any = true;
+          u64 km = (u64)((long long)x.kv * mu % (long long)p);
+          lam[0] = addmod(lam[0], mulmod(km, submod(x.ex[0], 1, p), p), p);
+          for (int c = 1; c < w; ++c) lam[c] = addmod(lam[c], mulmod(km, x.ex[c], p), p);
+        }
+        if (!any) continue;
+        if (lam[0] == 0) { fail = true; break; }
+        dualInv(li, lam.data());
+        for (int i = 0; i < m; ++i) {
+          const u64* fk = val[fOut[i]].data() + (size_t)k * blk + (size_t)mo * w;
+          u64* st = val[stateSlots[i]].data() + (size_t)(k + 1) * blk + (size_t)mo * w;
+          std::fill(st, st + w, (u64)0);
+          dual_mul_acc(st, fk, li.data(), w, p);
+        }
+      }
   }
   if (fail) return false;
+  std::vector<std::vector<u64> > negRows;
+  if (anyDeferred) {
+    std::map<int, LBlk> L;
+    auto get = [&](int slot) -> const LBlk& {
+      auto it = L.find(slot);
+      if (it != L.end()) return it->second;
+      LBlk x;
+      x.lo = 0; x.prec = Nrun + 1;
+      x.c.assign(val[slot].begin(), val[slot].begin() + (size_t)(Nrun + 1) * blk);
+      lb_norm(x, blk);
+      return L[slot] = x;
+    };
+    bool more = false;
+    for (int i = 0; i < nInstr && !more; ++i) {
+      if (!deferred[i]) continue;
+      LBlk r;
+      if (op[i] == OP_ADD) r = lb_add(get(a[i]), get(b[i]), blk, p);
+      else if (op[i] == OP_MUL) r = lb_mul(get(a[i]), get(b[i]), pb, p);
+      else if (!lb_inv(r, get(a[i]), pb, p)) { more = true; break; }
+      L[instrBase + i] = r;
+    }
+    // every output known below the order `need` (Nrun + 1 of the first call), else the
+    // recursion runs further
+    int deficit = 0;
+    if (more) deficit = Nrun + 1;
+    else
+      for (int gi = 0; gi < (int)gOut.size(); ++gi)
+        if (isDef(gOut[gi])) deficit = std::max(deficit, need - L[gOut[gi]].prec);
+    if (deficit > 0) {
+      if (depth >= 6) return false;
+      int Nrun2 = Nrun + deficit;
+      std::vector<std::vector<u64> > val2(val.size());
+      for (size_t s = 0; s < val.size(); ++s) {
+        val2[s].assign((size_t)(Nrun2 + 1) * blk, 0);
+        if ((int)s < instrBase) std::copy(val[s].begin(), val[s].begin() + blk, val2[s].begin());
+      }
+      if (!build_obs_rows_poly(val2, op, a, b, cval, instrBase, stateSlots, fOut, gOut, pb,
+                               Nrun2, Ntemit, p, rows, dtau, preRows, depth + 1, need, spowAxis0))
+        return false;
+      for (size_t s = 0; s < val.size(); ++s)
+        std::copy(val2[s].begin(), val2[s].begin() + (size_t)(Nrun + 1) * blk, val[s].begin());
+      return true;
+    }
+    for (int gi = 0; gi < (int)gOut.size(); ++gi) {
+      if (!isDef(gOut[gi])) continue;
+      const LBlk& y = L[gOut[gi]];
+      u64* g = val[gOut[gi]].data();
+      std::fill(g, g + (size_t)(Nrun + 1) * blk, (u64)0);
+      for (int j = 0; j < lb_len(y, blk); ++j) {
+        int t = y.lo + j;
+        const u64* src = y.c.data() + (size_t)j * blk;
+        if (t > Nrun) break;
+        if (t >= 0) { std::copy(src, src + blk, g + (size_t)t * blk); continue; }
+        for (int mo = 0; mo < nM; ++mo) {
+          if (src[(size_t)mo * w] % p) return false;   // a pole of the value: no series
+          // keyed by output, order and monomial, so that column blocks can be joined
+          std::vector<u64> row(nz + 3);
+          row[0] = (u64)gi; row[1] = (u64)(-t); row[2] = (u64)mo;
+          bool nzr = false;
+          for (int c = 0; c < nz; ++c) { row[3 + c] = src[(size_t)mo * w + 1 + c]; nzr |= row[3 + c] != 0; }
+          if (!nzr) continue;
+          if (Ntemit < 0) continue;
+          if (!preRows) return false;
+          negRows.push_back(row);
+        }
+      }
+    }
+  }
+  if (preRows)
+    for (auto& r : negRows) preRows->push_back(std::move(r));
+  if (!sp.empty()) {
+    // the coefficient d of t^n S^m in the expansion of an output stands for d c^(m a)
+    // t^(n - k m + k m a), with the gradient c^(m a) (grad d + m d (a grad c / c + log c grad a))
+    // plus m k d log t grad a. Exponents with distinct (n, m) are independent functions for
+    // generic a, so the rows are the gradients with log c grad a dropped against the rows
+    // grad a of the log t terms, which the coefficients with m > 0 give. Rows run by output
+    // and monomial, then order, and each power adds one output of rows grad a.
+    int nS = (int)sp.size();
+    std::vector<int> firstK(nS, -1);
+    std::vector<std::vector<u64> > pat;
+    for (int gi = 0; gi < (int)gOut.size(); ++gi) {
+      const u64* g = val[gOut[gi]].data();
+      for (int mo = 0; mo < nM; ++mo)
+        for (int k = 0; k <= Ntemit; ++k) {
+          const u64* d = g + (size_t)k * blk + (size_t)mo * w;
+          std::vector<u64> row(nz);
+          for (int c = 0; c < nz; ++c) row[c] = d[1 + c];
+          u64 d0 = d[0] % p;
+          if (d0 && mo > 0) {
+            std::vector<u64> pv(nS, 0);
+            bool anyS = false;
+            for (int j = 0; j < nS; ++j) {
+              const SPowAx& x = sp[j];
+              int mu = pb.idx[mo][x.axis];
+              if (!mu || x.kv < 0) continue;
+              anyS = true;
+              pv[j] = (u64)((long long)mu * x.kv % (long long)p);
+              if (firstK[j] < 0 || k < firstK[j]) firstK[j] = k;
+              u64 f = mulmod(mulmod((u64)mu % p, d0, p), mulmod(x.ex[0], x.cinv[0], p), p);
+              for (int c = 0; c < nz; ++c)
+                row[c] = addmod(row[c], mulmod(f, x.c[1 + c], p), p);
+            }
+            if (anyS) pat.push_back(pv);
+          }
+          rows.push_back(row);
+        }
+    }
+    // the rows grad a stand for the log t terms only where those span every power that occurs
+    std::vector<int> occ;
+    for (int j = 0; j < nS; ++j) if (firstK[j] >= 0) occ.push_back(j);
+    if (!occ.empty()) {
+      std::vector<std::vector<u64> > P2;
+      for (auto& pv : pat) {
+        std::vector<u64> r;
+        for (int j : occ) r.push_back(pv[j]);
+        P2.push_back(r);
+      }
+      if ((int)rref_mod(P2, p).size() < (int)occ.size()) return false;
+    }
+    for (int j = 0; j < nS; ++j)
+      for (int k = 0; k <= Ntemit; ++k) {
+        std::vector<u64> row(nz, 0);
+        if (firstK[j] >= 0 && k >= firstK[j])
+          for (int c = 0; c < nz; ++c) row[c] = sp[j].ex[1 + c];
+        rows.push_back(row);
+      }
+    return true;
+  }
   for (int gi = 0; gi < (int)gOut.size(); ++gi) {
     const u64* g = val[gOut[gi]].data();
     for (int k = 0; k <= Ntemit; ++k)
@@ -1150,7 +1574,7 @@ CondRaw extract_cond_raw(List tp, int nStates, int w) {
 bool build_one_condition(const CondRaw& cd,
                          const std::vector<std::vector<u64> >& leafVal,
                          int nLeaves, int nStates, int nz, int w, int Nt, u64 p,
-                         std::vector<std::vector<u64> >& outRows) {
+                         std::vector<std::vector<u64> >& outRows, bool laurent = false) {
   int nInstr = (int)cd.op.size();
   int instrBase = nLeaves + nStates;
   int S = instrBase + nInstr;
@@ -1199,8 +1623,30 @@ bool build_one_condition(const CondRaw& cd,
     }
   }
 
-  return build_obs_rows(val, cd.op, cd.a, cd.b, cval, instrBase, cd.stateSlots,
-                        cd.fOut, cd.gOut, nz, w, Nt, p, outRows);
+  if (laurent) {
+    // one axis per power of a state at 0, within the total degree Nt (a power counts at
+    // least one order)
+    int nS = 0;
+    for (int i = 0; i < nInstr; ++i) if (cd.op[i] == OP_SPOW) ++nS;
+    PolyBasis pb(nS > 0 ? nS : 1, nS > 0 ? Nt : 0, w);
+    if (pb.nMono > 1) {
+      // the seeds at order 0 sit at monomial 0 of a wider block
+      size_t blk = (size_t)pb.nMono * w;
+      for (int sl = 0; sl < S; ++sl) {
+        std::vector<u64> wide((size_t)(Nt + 1) * blk, 0);
+        if (sl < instrBase) std::copy(val[sl].begin(), val[sl].begin() + w, wide.begin());
+        val[sl].swap(wide);
+      }
+    }
+    return build_obs_rows_poly(val, cd.op, cd.a, cd.b, cval, instrBase, cd.stateSlots,
+                               cd.fOut, cd.gOut, pb, Nt, Nt, p, outRows, nullptr, nullptr, 0,
+                               -1, nS > 0 ? 0 : -1);
+  }
+  if (build_obs_rows(val, cd.op, cd.a, cd.b, cval, instrBase, cd.stateSlots,
+                     cd.fOut, cd.gOut, nz, w, Nt, p, outRows))
+    return true;
+  // a reciprocal without constant value: the polyseries path takes it as a Laurent series
+  return build_one_condition(cd, leafVal, nLeaves, nStates, nz, w, Nt, p, outRows, true);
 }
 
 // build_one_condition over column blocks on `threads` threads: each block holds the
@@ -1371,7 +1817,8 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
                      std::vector<std::vector<u64> >& srows,
                      const std::vector<std::vector<u64> >* ser = nullptr,
                      const std::vector<int>* lane = nullptr,
-                     const std::vector<char>* movesIn = nullptr, int Tser = -1) {
+                     const std::vector<char>* movesIn = nullptr, int Tser = -1,
+                     bool keepZeroSer = false) {
   int instrBase = nLeaves + nStates;
   int nSeg = (int)segs.size();
   int K = nSeg - 1; if (K < 1) K = 1;
@@ -1485,8 +1932,9 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
                              seg.stateSlots, seg.fOut, seg.gOut, pb, Nrun, NtS, p, rows,
                              moves[sj] ? tau[sj].data() + 1 : nullptr))
       return false;
-    if (lineMode) rows_to_series_axis(rows, from, pb, nz, Ns, srows, lane != nullptr);
-    else rows_to_line(rows, from, pb, lineC, nz, Mtot + 1, p, srows, lane != nullptr);
+    bool keepZero = lane != nullptr || keepZeroSer;
+    if (lineMode) rows_to_series_axis(rows, from, pb, nz, Ns, srows, keepZero);
+    else rows_to_line(rows, from, pb, lineC, nz, Mtot + 1, p, srows, keepZero);
     // where the output is not analytic across a moving boundary, the boundary time is
     // itself read off the output: the gradient of the boundary time joins the rows
     if (sj > 0 && moves[sj]) {
@@ -1622,10 +2070,13 @@ int chain_block_size(const std::vector<SegRaw>& segs, int nLeaves, int nStates, 
   return std::max(2, std::min(nz, B));
 }
 
+// the default of chain_block_bytes(), set by symSetBlockBytes
+std::atomic<long long> g_block_bytes(256LL * 1048576LL);
+
 // Taylor values per column block, bytes; SYMIDENT_BLOCKMB overrides (MB)
 double chain_block_bytes() {
   const char* e = std::getenv("SYMIDENT_BLOCKMB");
-  return (e && *e) ? std::atof(e) * 1048576.0 : 256.0 * 1048576.0;
+  return (e && *e) ? std::atof(e) * 1048576.0 : (double)g_block_bytes.load();
 }
 
 // Threads inside one chain when `outer` chains share `cores`; nesting is enabled for it.
@@ -1647,10 +2098,10 @@ bool build_chain_blocked(const std::vector<SegRaw>& segs, int nLeaves, int nStat
                          std::vector<std::vector<u64> >& rows,
                          std::vector<std::vector<u64> >& srows,
                          const std::vector<std::vector<u64> >* ser, int B, int threads,
-                         int Tser = -1) {
+                         int Tser = -1, bool keepZeroSer = false) {
   if (B >= nz)
     return build_one_chain(segs, nLeaves, nStates, nz, nz + 1, dualCol, leafPt, Nt, Mtot,
-                           p, rows, srows, ser, nullptr, nullptr, Tser);
+                           p, rows, srows, ser, nullptr, nullptr, Tser, keepZeroSer);
   std::vector<char> moves;
   if (!chain_moves(segs, nLeaves, nz + 1, dualCol, leafPt, p, moves)) return false;
   int nb = (nz + B - 1) / B, N = (ser && Tser >= 0) ? Tser + 1 : Mtot + 1;
@@ -1693,7 +2144,7 @@ bool build_chain_blocked(const std::vector<SegRaw>& segs, int nLeaves, int nStat
           if (v) { sr[(size_t)(s0 + c) * N + d] = v; any = true; }
         }
     }
-    if (any) srows.push_back(sr);
+    if (any || keepZeroSer) srows.push_back(sr);
   }
   return true;
 }
@@ -2147,15 +2598,140 @@ List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots
   return chain_result(rows, pivots, nz, rankS, ser, N, atOne);
 }
 
+// The unreduced rows of one chain to Lie order Nt and gap order Mtot, as symObsNullChain
+// builds them for that chain alone, with the Lie order of each row and series row. Zero
+// series rows are kept, so that every series row has an order. The coefficients at an
+// order do not depend on the order the jets are taken to, so where no segment boundary
+// moves (`plain`) the rows of a lower order are those with a lower tag, in the same
+// sequence; symChainReduce then gives the kernel of that order. With `profile` (gap order
+// 0) the rank per Lie order, as symObsChainRankProfile, is returned as well.
+List symObsChainRows(List chain, int nLeaves, int nStates, IntegerVector zSlots,
+                     IntegerVector point, double pIn, int Nt, int Mtot, int threads = 1,
+                     bool profile = false) {
+  u64 p = (u64)pIn;
+  int nz = zSlots.size();
+  std::vector<int> dualCol(nLeaves, -1);
+  for (int c = 0; c < nz; ++c) dualCol[zSlots[c]] = c;
+  std::vector<int> leafPt(nLeaves);
+  for (int L = 0; L < nLeaves; ++L) leafPt[L] = point[L];
+  int nSeg = chain.size();
+  std::vector<SegRaw> segs;
+  segs.reserve(nSeg);
+  for (int sj = 0; sj < nSeg; ++sj) segs.push_back(extract_seg_raw(chain[sj], nStates, nz + 1, p));
+  std::vector<char> moves;
+  if (!chain_moves(segs, nLeaves, nz + 1, dualCol, leafPt, p, moves))
+    return List::create(_["ok"] = false);
+  bool plain = true;
+  for (int sj = 0; sj < nSeg; ++sj) {
+    if (moves[sj]) plain = false;
+    for (int o : segs[sj].op) if (o == OP_SPOW) plain = false;
+  }
+  int B = chain_block_size(segs, nLeaves, nStates, nz, Nt, Mtot, false, chain_block_bytes());
+  std::vector<std::vector<u64> > rows, srows;
+  if (!build_chain_blocked(segs, nLeaves, nStates, nz, dualCol, leafPt, Nt, Mtot, p, rows,
+                           srows, nullptr, B, threads, -1, true))
+    return List::create(_["ok"] = false);
+  int N = Mtot + 1;
+  // rows run by segment, output, order and gap monomial; series rows by segment, output, order
+  int nM = 1;
+  {
+    int K = std::max(1, nSeg - 1);
+    for (int i = 1; i <= Mtot; ++i) nM = nM * (K + i) / i;
+  }
+  std::vector<int> tag, stag;
+  for (int sj = 0; sj < nSeg; ++sj)
+    for (size_t gi = 0; gi < segs[sj].gOut.size(); ++gi)
+      for (int k = 0; k <= Nt; ++k) {
+        stag.push_back(k);
+        for (int mo = 0; mo < nM; ++mo) tag.push_back(k);
+      }
+  if (tag.size() != rows.size() || stag.size() != srows.size()) {
+    plain = false;
+    tag.assign(rows.size(), Nt);
+    stag.assign(srows.size(), Nt);
+  }
+  IntegerMatrix Rm((int)rows.size(), nz), Sm((int)srows.size(), nz * N);
+  for (size_t i = 0; i < rows.size(); ++i)
+    for (int c = 0; c < nz; ++c) Rm((int)i, c) = (int)rows[i][c];
+  for (size_t i = 0; i < srows.size(); ++i)
+    for (int c = 0; c < nz * N; ++c) Sm((int)i, c) = (int)srows[i][c];
+  IntegerVector tv(tag.begin(), tag.end()), sv(stag.begin(), stag.end());
+  List out = List::create(_["ok"] = true, _["rows"] = Rm, _["tag"] = tv, _["srows"] = Sm,
+                          _["stag"] = sv, _["N"] = N, _["Nt"] = Nt, _["plain"] = plain);
+  if (profile && plain && Mtot == 0) {
+    std::vector<std::vector<int> > byOrder(Nt + 1);
+    for (size_t i = 0; i < rows.size(); ++i) byOrder[tag[i]].push_back((int)i);
+    std::vector<std::vector<u64> > basis;
+    std::vector<int> pivCol;
+    IntegerVector ranks(Nt + 1);
+    for (int k = 0; k <= Nt; ++k) {
+      for (size_t q = 0; q < byOrder[k].size(); ++q) {
+        std::vector<u64> r = rows[byOrder[k][q]];
+        for (size_t b = 0; b < basis.size(); ++b) {
+          u64 f = r[pivCol[b]] % p;
+          if (!f) continue;
+          u64 nf = p - f;
+          const std::vector<u64>& bb = basis[b];
+          for (int c = pivCol[b]; c < nz; ++c)
+            if (bb[c]) r[c] = addmod(r[c] % p, mulmod(nf, bb[c], p), p);
+        }
+        int pc = -1;
+        for (int c = 0; c < nz; ++c) if (r[c] % p) { pc = c; break; }
+        if (pc < 0) continue;
+        u64 inv = invmod(r[pc] % p, p);
+        for (int c = pc; c < nz; ++c) r[c] = mulmod(r[c] % p, inv, p);
+        basis.push_back(std::move(r));
+        pivCol.push_back(pc);
+      }
+      ranks[k] = (int)basis.size();
+    }
+    out["ranks"] = ranks;
+  }
+  return out;
+}
+
+// Sets the bytes of Taylor values per column block when SYMIDENT_BLOCKMB is not set; returns the
+// bytes in effect.
+double symSetBlockBytes(double bytes) {
+  if (bytes >= 1048576.0) g_block_bytes.store((long long)bytes);
+  return chain_block_bytes();
+}
+
+// The kernel of one chain from the unreduced rows and series rows (symObsChainRows, the
+// rows of a Lie order selected by tag), reduced as symObsNullChain reduces them: the same
+// rows in the same sequence give the same result. Zero series rows are left out.
+List symChainReduce(IntegerMatrix rowsIn, IntegerMatrix srowsIn, int nz, int N, double pIn) {
+  u64 p = (u64)pIn;
+  std::vector<std::vector<u64> > rows(rowsIn.nrow(), std::vector<u64>(nz, 0)), ser;
+  for (int i = 0; i < rowsIn.nrow(); ++i)
+    for (int c = 0; c < nz; ++c) rows[i][c] = red(rowsIn(i, c), p);
+  for (int i = 0; i < srowsIn.nrow(); ++i) {
+    std::vector<u64> s((size_t)nz * N, 0);
+    bool any = false;
+    for (int c = 0; c < nz * N; ++c) {
+      s[c] = red(srowsIn(i, c), p);
+      any |= s[c] != 0;
+    }
+    if (any) ser.push_back(std::move(s));
+  }
+  std::vector<int> pivots = rref_mod(rows, p);
+  rows.resize(pivots.size());
+  int rankS = rref_series_mod(ser, nz, N, p, std::vector<char>(nz, 1));
+  bool atOne = false;
+  kernel_at_one_or_keep(ser, rankS, nz, N, p, rows, pivots, atOne);
+  return chain_result(rows, pivots, nz, rankS, ser, N, atOne);
+}
+
 // Rank of each segment's own rows at orders 0..Nt, at gap order 0, with a unit dual
 // column per state at the segment start and, where the start time depends on the
 // coordinates, a column -(k+1) y_{k+1}. `stateVals` (nSeg x nStates) replaces the start
 // states. Also returns the start states and the field at them. The columns of
-// `dropStates` (the jets of known inputs) are left out of the ranks.
+// `dropStates` (the jets of known inputs) are left out of the ranks. With `fromStates`,
+// the initial and event values are not evaluated: the starts are the rows of `stateVals`.
 List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
                      IntegerVector point, double pIn, int Nt,
                      IntegerMatrix stateVals = IntegerMatrix(0, 0), int threads = 1,
-                     IntegerVector dropStates = IntegerVector(0)) {
+                     IntegerVector dropStates = IntegerVector(0), bool fromStates = false) {
   u64 p = (u64)pIn;
   int nz = zSlots.size(), nSeg = segs.size();
   int wA = nz + nStates + 2, nzA = wA - 1, w0 = nz + 1;
@@ -2173,7 +2749,9 @@ List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
   for (int sj = 0; sj < nSeg; ++sj) {
     SegRaw seg = extract_seg_raw(segs[sj], nStates, 1, p);
     // start state at gap order 0
-    if (sj == 0) {
+    if (fromStates && givenStates) {
+      // the starts are those of stateVals alone, so each segment of a chain is ranked alone
+    } else if (sj == 0) {
       if (seg.hasIcSeed) {
         for (int i = 0; i < nStates; ++i) q[i] = seg.icSeed[i][0];
       } else if (seg.hasIcTape) {
@@ -2228,7 +2806,7 @@ List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
       start(sj, i) = (int)qs[i];
     }
     int nOutS = (int)seg.gOut.size();
-    std::vector<std::vector<std::vector<u64> > > rB(nb);
+    std::vector<std::vector<std::vector<u64> > > rB(nb), nB(nb);
     std::vector<u64> fVal(nStates, 0), yNext((size_t)nOutS * (Nt + 1), 0);
     std::vector<char> okB(nb, 1);
     OmpGuard guard_;
@@ -2249,7 +2827,8 @@ List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
           if (nz + i >= s0 && nz + i < s1) val[nLeaves + i][1 + nz + i - s0] = 1;
         }
         if (!build_obs_rows_poly(val, seg.op, seg.a, seg.b, seg.cval, instrBase,
-                                 seg.stateSlots, seg.fOut, seg.gOut, pb, Nt + 1, Nt, p, rB[b])) {
+                                 seg.stateSlots, seg.fOut, seg.gOut, pb, Nt + 1, Nt, p, rB[b],
+                                 nullptr, &nB[b])) {
           okB[b] = 0; continue;
         }
         if (b == 0) {
@@ -2278,15 +2857,28 @@ List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
           u64 y1 = yNext[(size_t)gi * (Nt + 1) + k];
           rows[(size_t)gi * (Nt + 1) + k][nzA - 1] = submod(0, mulmod((u64)(k + 1) % p, y1, p), p);
         }
+    // rows of negative order (an output 0/0 at the start, poles along the states) join order 0
+    std::map<std::vector<u64>, std::vector<u64> > neg;
+    for (int b = 0; b < nb; ++b)
+      for (const auto& r : nB[b]) {
+        std::vector<u64> key(r.begin(), r.begin() + 3);
+        std::vector<u64>& d = neg[key];
+        if (d.empty()) d.assign(nzA, 0);
+        std::copy(r.begin() + 3, r.end(), d.begin() + b * B);
+      }
+    std::vector<std::vector<u64> > negRows;
+    for (auto& kv : neg) negRows.push_back(kv.second);
     for (auto& r : rows)
+      for (int i = 0; i < dropStates.size(); ++i) r[nz + dropStates[i]] = 0;
+    for (auto& r : negRows)
       for (int i = 0; i < dropStates.size(); ++i) r[nz + dropStates[i]] = 0;
     // rows are ordered by output, then order; rank up to each order, incrementally
     int nOut = (int)seg.gOut.size();
     std::vector<std::vector<u64> > basis;
     std::vector<int> pivCol;
     for (int k = 0; k <= Nt; ++k) {
-      for (int gi = 0; gi < nOut; ++gi) {
-        std::vector<u64> r = rows[(size_t)gi * (Nt + 1) + k];
+      for (int gi = 0; gi < nOut + (k == 0 ? (int)negRows.size() : 0); ++gi) {
+        std::vector<u64> r = gi < nOut ? rows[(size_t)gi * (Nt + 1) + k] : negRows[gi - nOut];
         for (size_t b = 0; b < basis.size(); ++b) {
           u64 f = r[pivCol[b]] % p;
           if (!f) continue;

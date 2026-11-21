@@ -495,7 +495,7 @@ def _exp_back(atoms, ctx, used):
     return back
 
 
-def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
+def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest=False):
     """The model with exponentials as auxiliary states and generic leaves, or {'why': ...} if unsupported."""
     ctx = _ExpCtx(taken)
     rpow, const = ctx.rpow, ctx.const
@@ -623,8 +623,10 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
             [('g', c, i) for c in range(K) for i in range(len(g[c]))] +
             [('ic', c, k) for c in range(K) for k in ic[c]] +
             [('ev', c, i) for c in range(K) for i in range(len(ev[c]))] +
-            [('tm', c, None) for c in range(K) if tm[c] is not None])
-    store = {'f': f, 'g': g, 'ic': ic}
+            [('tm', c, None) for c in range(K) if tm[c] is not None] +
+            # a start at rest: the resting model in the same leaves
+            ([('fss', c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else []))
+    store = {'f': f, 'g': g, 'ic': ic, 'fss': fss}
     vals = []
     for kind, c, i in refs:
         vals.append(ev[c][i]['value'] if kind == 'ev' else tm[c] if kind == 'tm'
@@ -728,10 +730,32 @@ def _trig_value(fn, factors, k, rest):
     return spy.cancel((im if fn is spy.sin else re) / n)
 
 
+def _shared(fn):
+    """`fn` memoized on the argument, so that equal expressions give one result object, which the scans below
+    visit once."""
+    memo = {}
+
+    def g(e):
+        r = memo.get(e)
+        if r is None:
+            r = memo[e] = fn(e)
+        return r
+    return g
+
+
+def _once(exprs):
+    """The expressions with repeated objects left out, in their order."""
+    seen = set()
+    for e in exprs:
+        if id(e) not in seen:
+            seen.add(id(e))
+            yield e
+
+
 def _trig_find(exprs, in_scope, why):
     """Innermost trig atoms accepted by `in_scope` with their decomposition, or {'why': ...}."""
     found = {}
-    for e in exprs:
+    for e in _once(exprs):
         for at in e.atoms(*_TRIG):
             if at in found or not in_scope(at):
                 continue
@@ -754,18 +778,21 @@ def _trig_den(found, keep):
     return den
 
 
-def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
+def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest=False):
     """The model with trigonometric functions as half-angle states and leaves, as _apply_exp_recast."""
     ctx = _ExpCtx(taken)
     pis = ctx.fresh('_pi_', positive=True)
     S = list(S)
     K = len(per_cond)
-    f = [[_trig_basic(e) for e in p[0]] for p in per_cond]
-    g = [[_trig_basic(e) for e in p[1]] for p in per_cond]
-    ic = [{k: _trig_basic(v) for k, v in p[2].items()} for p in per_cond]
-    fss = [[_trig_basic(e).xreplace({spy.pi: pis}) for e in p[3]] for p in per_cond]
-    ev = [[dict(e, value=_trig_basic(e['value'])) for e in evs] for evs in ev_per]
-    tm = [None if t is None else _trig_basic(t) for t in tm_per]
+    basic = _shared(_trig_basic)
+    basic_pi = _shared(lambda e: basic(e).xreplace({spy.pi: pis}))
+    f = [[basic(e) for e in p[0]] for p in per_cond]
+    g = [[basic(e) for e in p[1]] for p in per_cond]
+    ic = [{k: basic(v) for k, v in p[2].items()} for p in per_cond]
+    fss = [[basic_pi(e) for e in p[3]] for p in per_cond]
+    ev = [[dict(e, value=basic(e['value'])) for e in evs] for evs in ev_per]
+    tm = [None if t is None else basic(t) for t in tm_per]
+    free = _shared(lambda e: e.free_symbols)
     unsupported = ('the argument of %s is not supported by engine="modular"; '
                    'try engine="symbolic"')
 
@@ -794,16 +821,21 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
             rest = c0 + sum((q * t for t, q in terms.items() if t not in key_x),
                             spy.Integer(0))
             repl[at] = _trig_value(type(at), factors, 2 * cp, rest)
-        f = [[e.xreplace(repl) for e in fc] for fc in f]
-        g = [[e.xreplace(repl) for e in gc] for gc in g]
+        xr = _shared(lambda e, repl=repl: e.xreplace(repl))
+        f = [[xr(e) for e in fc] for fc in f]
+        g = [[xr(e) for e in gc] for gc in g]
         new_aux = aux[len(aux) - len(key_x):]
+        dmemo = {}
         for c in range(K):
             rhs_of = dict(zip(S, f[c]))
             for a in new_aux:
                 phi = a['phi']
-                dphi = sum(spy.diff(phi, s) * rhs_of[s]
-                           for s in phi.free_symbols & states)
-                f[c].append(spy.expand((1 + a['X'] ** 2) * dphi / 2))
+                inside = sorted(phi.free_symbols & states, key=str)
+                key = (a['X'], tuple(rhs_of[s] for s in inside))
+                if key not in dmemo:
+                    dphi = sum(spy.diff(phi, s) * rhs_of[s] for s in inside)
+                    dmemo[key] = spy.expand((1 + a['X'] ** 2) * dphi / 2)
+                f[c].append(dmemo[key])
                 ic_sub = {s: ic[c][str(s)] for s in phi.free_symbols & states}
                 ic[c][str(a['X'])] = spy.tan(phi.xreplace(ic_sub) / 2)
                 fss[c].append(spy.Integer(0))
@@ -814,14 +846,14 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
     idx = {X: i for i, X in enumerate(S)}
     for c in range(K):
         used, front = set(), set()
-        for e in f[c][:n_real] + g[c]:
-            front |= e.free_symbols
+        for e in _once(f[c][:n_real] + g[c]):
+            front |= free(e)
         while front:
             nxt = set()
             for a in aux:
                 if a['X'] in front and a['X'] not in used:
                     used.add(a['X'])
-                    nxt |= f[c][idx[a['X']]].free_symbols
+                    nxt |= free(f[c][idx[a['X']]])
             front = nxt - used
         for a in aux:
             if a['X'] not in used:
@@ -859,13 +891,15 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
             [('g', c, i) for c in range(K) for i in range(len(g[c]))] +
             [('ic', c, k) for c in range(K) for k in ic[c]] +
             [('ev', c, i) for c in range(K) for i in range(len(ev[c]))] +
-            [('tm', c, None) for c in range(K) if tm[c] is not None])
-    store = {'f': f, 'g': g, 'ic': ic}
+            [('tm', c, None) for c in range(K) if tm[c] is not None] +
+            # a start at rest: the resting model in the same leaves
+            ([('fss', c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else []))
+    store = {'f': f, 'g': g, 'ic': ic, 'fss': fss}
     vals = [ev[c][i]['value'] if kind == 'ev' else tm[c] if kind == 'tm'
             else store[kind][c][i] for kind, c, i in refs]
     # rational offsets c0 as powers of e^(i/M0), M0 over all arguments
     atoms, M0 = [], 1
-    for e in vals:
+    for e in _once(vals):
         for at in e.atoms(*_TRIG):
             dec = _trig_terms(type(at), at.args[0])
             if dec is not None:
@@ -891,13 +925,15 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
                     return {'why': unsupported % at}
                 factors.append((tc, int(c0 * M0)))
             repl[at] = _trig_value(type(at), factors, 2 * cp, spy.Integer(0))
-        vals = [e.xreplace(repl) for e in vals]
+        xr = _shared(lambda e, repl=repl: e.xreplace(repl))
+        vals = [xr(e) for e in vals]
     if not _terms_independent([(spy.E, a['phi'].xreplace({spy.pi: spy.Symbol('_pi_')}))
                                for a in atoms]):
         return {'why': 'arguments of trigonometric functions that are linearly '
                 'dependent over the rationals are not supported'}
 
-    vals = [e.xreplace({spy.pi: pis}) for e in vals]
+    xr = _shared(lambda e: e.xreplace({spy.pi: pis}))
+    vals = [xr(e) for e in vals]
     for a in atoms:
         a['phi'] = a['phi'].xreplace({spy.pi: pis})
     for (kind, c, i), v in zip(refs, vals):
@@ -909,8 +945,8 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
             store[kind][c][i] = v
 
     used = set()
-    for v in vals + [a['phi'] for a in atoms] + [e for fc in fss for e in fc]:
-        used |= v.free_symbols
+    for v in _once(vals + [a['phi'] for a in atoms] + [e for fc in fss for e in fc]):
+        used |= free(v)
     consts = {pis, tc} & used
     rel = []
     for a in atoms:
@@ -1137,7 +1173,7 @@ def _func_arg(a):
     return a.base if isinstance(a, spy.Pow) else a.args[0]
 
 
-def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
+def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest=False):
     """The model with elementary functions as auxiliary states and leaves, as _apply_exp_recast."""
     ctx = _ExpCtx(taken)
     S = list(S)
@@ -1210,8 +1246,10 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None):
             [('g', c, i) for c in range(K) for i in range(len(g[c]))] +
             [('ic', c, k) for c in range(K) for k in ic[c]] +
             [('ev', c, i) for c in range(K) for i in range(len(ev[c]))] +
-            [('tm', c, None) for c in range(K) if tm[c] is not None])
-    store = {'f': f, 'g': g, 'ic': ic}
+            [('tm', c, None) for c in range(K) if tm[c] is not None] +
+            # a start at rest: the resting model in the same leaves
+            ([('fss', c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else []))
+    store = {'f': f, 'g': g, 'ic': ic, 'fss': fss}
     vals = [ev[c][i]['value'] if kind == 'ev' else tm[c] if kind == 'tm'
             else store[kind][c][i] for kind, c, i in refs]
     atoms, consts, back = [], [], {}

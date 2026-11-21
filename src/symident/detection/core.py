@@ -23,7 +23,7 @@ from ..sym.parse import model_sympify, to_r
 from ..sym.scaling import scaling_symmetries_multi
 from ..sym.switching import hybrid_model
 from ..sym.symbolic import observability_sympy_multi
-from ..sym.tape import compile_observability_tape_multi
+from ..sym.tape import _OP_SPOW, compile_observability_tape_multi
 from .classify import relabel_directions
 from .conditions import (
     Grid,
@@ -329,7 +329,10 @@ def _check_steps(kw):
     for key in ("f", "g", "trafo", "events"):
         for x in (kw.get(key) if isinstance(kw.get(key), (list, tuple)) else [kw.get(key)]):
             texts += [str(v) for v in (x.values() if isinstance(x, dict) else [x]) if v is not None]
-    for t in texts:
+    # conditions repeat the same texts; a text without the name of a step function holds no call of it
+    for t in dict.fromkeys(texts):
+        if not any(n in t for n in _STEPS):
+            continue
         hit = [n for k, n in tokens(t) if k == "fun" and n in _STEPS]
         if hit:
             raise ValueError(f"{hit[0]}() in {t} jumps at every integer of the argument and is constant "
@@ -383,7 +386,7 @@ def _check_declared(kw, known):
         [e["time"] for e in events] + [str(v) for v in totals.values()]
     if grid is not None:
         texts += [v for vals in grid.cols.values() for v in vals if isinstance(v, str)]
-    names = states | eq | {str(k) for t in trafos for k in t} | set(get_symbols(texts))
+    names = states | eq | {str(k) for t in trafos for k in t} | set(get_symbols(list(dict.fromkeys(texts))))
     if kw.get("reduce_cq"):
         names |= set(totals)
     unknown = {str(w) for w in kw.get("unknown_inputs") or []}
@@ -779,13 +782,59 @@ def _detection(kw):
         res["info"]["limits"] = list(ses.notes["limits"])
         res["info"]["errors"] = list(ses.notes["errors"])
         res["info"]["branches"] = list(ses.notes["branches"])
+        if getattr(ses, "resting", None) is not None:
+            res["info"]["resting"] = ses.resting
         st = res["info"].setdefault("settings", {})
+        if getattr(ses, "rest_leaves", None):
+            st["rest_leaves"] = ses.rest_leaves
         st.update(control={k: v for k, v in ses.control.items() if k != "deadline"},
                   switches={n: v for n, v in state.active().items()
                             if state.SWITCHES.get(n, ("",))[0] != "install"},
                   primes=ses.primes, version=__version__)
         res["info"]["assumptions"] = _assumptions(res)
     return res
+
+
+def _rest_check(multi, equil_zero, cond_zero, forcings, positive):
+    """The resting balances solved at random parameter values, once per session: an InputError without a solution
+    over the complex numbers, a warning and info["resting"] where no solution lies in the declared domain."""
+    from ..sym.restcheck import rest_check
+    ses = session.current()
+    key = tuple(tuple(t.get("constraint_model") or ()) for t in multi.get("tapes") or [])
+    if getattr(ses, "resting_key", None) == key:
+        return
+    ses.resting_key = key
+    fixed = set(equil_zero or []) | set(forcings or [])
+
+    def zero_of(ti):
+        return fixed | set(cond_zero[ti] if ti < len(cond_zero) else [])
+    rep = rest_check(multi, zero_of, positive)
+    ses.resting = rep
+    if rep and rep.get("checked") and rep["points"] and rep["in_domain"] + rep["undecided"] < rep["points"]:
+        n_out = rep["points"] - rep["in_domain"] - rep["undecided"]
+        warnings.warn(f"equilibrate: at {n_out} of {rep['points']} random parameter values the resting balances "
+                      "have no solution in the declared domain (real, positive where declared positive); "
+                      "info['resting'] has the counts, from a check at random points, not a proof", stacklevel=2)
+
+
+def _rest_leaves(multi):
+    """The resting states inside non-rational terms with their leaves, and the states whose resting value is drawn
+    and one leaf solved from the balance, for info["settings"]["rest_leaves"]."""
+    rel = multi.get("exp_relation") or {}
+    if not multi.get("rest_aux") or not rel:
+        return
+    eb = multi.get("exp_back") or {}
+    back = dict(zip([str(n) for n in eb.get("names") or []], [str(v) for v in eb.get("values") or []]))
+    real = set(str(x) for x in multi.get("real_state_names") or [])
+    inv = {str(k): str(v) for k, v in (multi.get("rest_inverted") or {}).items()}
+    real |= set(inv)
+    leaves = {}
+    for W, z in zip([str(w) for w in rel.get("W") or []], [str(z) for z in rel.get("z") or []]):
+        if z in real:
+            leaves.setdefault(z, []).append(back.get(W, W).replace("**", "^"))
+    session.current().rest_leaves = {
+        "states": {x: sorted(set(v)) for x, v in sorted(leaves.items())},
+        "drawn": {x: back.get(w, w).replace("**", "^") for x, w in sorted(inv.items())}}
 
 
 def _checked_without_bound(res):
@@ -985,6 +1034,7 @@ def _model_bound(kw, res, vecs, points, order, draws=None):
     trafos = [trafos] if not isinstance(trafos, (list, tuple)) else list(trafos)
     out = None
     inputs = {str(u) for u in kw.get("forcings") or []}
+    parsed = {}
     for tr in trafos or [None]:
         tr = {str(k): str(v) for k, v in dict(tr or {}).items()}
         sub = {k: v for k, v in tr.items() if k not in f}
@@ -993,11 +1043,13 @@ def _model_bound(kw, res, vecs, points, order, draws=None):
             x, v = str(e["var"]), str(e["value"])
             x0[x] = {"add": f"({x0.get(x, x)}) + ({v})", "replace": v,
                      "multiply": f"({x0.get(x, x)})*({v})"}[e.get("method", "replace")]
-        fs = {x: _subs(rhs, sub) for x, rhs in f.items()}
-        x0 = {x: _subs(v, sub) for x, v in x0.items()}
+        # the rules of `sub` parsed once per trafo, the texts once per call
+        memo = {"parsed": parsed}
+        fs = {x: _subs(rhs, sub, memo) for x, rhs in f.items()}
+        x0 = {x: _subs(v, sub, memo) for x, v in x0.items()}
         for g in gs:
-            gg = {str(k): _subs(str(v), sub) for k, v in dict(g or {}).items()}
-            grp = [[dict(e, value=_subs(str(e["value"]), sub)) for e in g_] for g_ in later]
+            gg = {str(k): _subs(str(v), sub, memo) for k, v in dict(g or {}).items()}
+            grp = [[dict(e, value=_subs(str(e["value"]), sub, memo)) for e in g_] for g_ in later]
             b = kernel_bound(fs, gg, x0, order, vecs, verify_prime(), points, events=grp, gap_order=gap_order,
                              draws=draws)
             if b is None:
@@ -1102,13 +1154,20 @@ def _mark_nuisance(multi, spec):
         t["lie_reach"] = r
 
 
-def _subs(text, sub):
-    """`text` with the parameter rules of `sub` applied, as a string."""
+def _subs(text, sub, memo=None):
+    """`text` with the parameter rules of `sub` applied, as a string; `memo` keeps the parsed rules and texts
+    over calls with the same `sub`."""
     if not sub:
         return str(text)
     import sympy as spy
-    e = model_sympify(text)
-    return to_r(e.xreplace({spy.Symbol(k): model_sympify(v) for k, v in sub.items()}))
+    memo = {} if memo is None else memo
+    if "rule" not in memo:
+        memo["rule"] = {spy.Symbol(k): model_sympify(v) for k, v in sub.items()}
+    parsed = memo.setdefault("parsed", {})
+    text = str(text)
+    if text not in parsed:
+        parsed[text] = model_sympify(text)
+    return to_r(parsed[text].xreplace(memo["rule"]))
 
 
 def detection_with_primes(kw):
@@ -1651,6 +1710,12 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         sr["non_identifiable"] = relabel_directions(sr["non_identifiable"])
         return deliver(sr, method)
     if off is not None:
+        # the rank is generic: a logarithm, fractional or free power needs a nonzero argument at a generic
+        # point, not a positive one; the sign matters only for the domain claims of the reduction
+        notes = session.current().notes
+        notes["limits"].append(f"{off}; the rank is taken at generic values, which needs no sign")
+        off = None
+    if off is not None:
         multi = {"ok": False, "nonrational": [off]}
     else:
         multi = compile_observability_tape_multi(
@@ -1665,6 +1730,10 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             held_state_params=held_state_params if equilibrate and held_state_params else None,
             const_states=const_states, positive=positive,
             condition_chain=res["chain_of"] if res["n_gaps"] > 0 else None)
+        if multi.get("ok") and any(_OP_SPOW in list(t["op"]) for t in multi["tapes"]):
+            session.current().notes["limits"].append(
+                "a free power of a state that starts at 0 is expanded in t and (c t^k)^n; the stopping rule "
+                "of the Lie order does not apply there, so the order is not proven sufficient")
     if multi.get("ok") and jets:
         # the k-th Lie derivative of an observable holds the input and the input derivatives up to order k
         nm = jet_start.get
@@ -1699,6 +1768,10 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
             "with a number a; anything else is not rational.\n  " +
             "\n  ".join(str(x) for x in (multi.get("nonrational") or [])) +
             "\nUse the symbolic engine for other functions.")
+
+    if equilibrate and multi.get("equilibrate"):
+        _rest_check(multi, equil_zero, cond_zero, forcings, positive)
+        _rest_leaves(multi)
 
     def oam():
         return observability_analytic_multi(

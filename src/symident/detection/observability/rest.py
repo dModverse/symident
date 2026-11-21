@@ -8,8 +8,8 @@ import numpy as np
 import sympy as spy
 
 from ... import _core, session, state
-from ...errors import SYMPY_FAILS, swallow, sympy_fail
-from ...gfp import PRIMES, random_point, uniform_point, verify_prime
+from ...errors import SYMPY_FAILS, InputError, swallow, sympy_fail
+from ...gfp import PRIMES, exp_rows, random_point, uniform_point, verify_prime
 from ...par import process_map
 from ...sym.continuation import continue_resting_state
 from ...sym.gfpoly import _compile_linear_plan
@@ -472,6 +472,48 @@ class RestingStates:
                 "df_jt": {th: [int(x[k]) for x in col] for th, col in sol["df_jt"].items()},
                 "df_state_cols": sol["df_state_cols"], "df_param_cols": sol["df_param_cols"]}
 
+    def rest_chart(self, point, p):
+        """InputError where the resting values of the states inside non-rational terms do not vary independently of
+        the parameters inside these terms at `point`, the condition for drawing the leaves at rest independently."""
+        rel = getattr(self, "exp_rel", None)
+        if rel is None or not self.run.multi.get("rest_aux") or getattr(self, "chart_checked", False):
+            return
+        self.chart_checked = True
+        z_rel = set(str(z) for z in rel["z"])
+        held = set(self.held_names)
+        H = [x for x in self.real_state_names if x in z_rel and x not in held]
+        if not H:
+            return
+        A = [z for z in z_rel if z not in set(self.real_state_names) and z in self.z_index_local]
+        cols = sorted({self.z_index_local[z] for z in A + H if z in self.z_index_local})
+        for mi, ci in enumerate(self.equil_conds):
+            sc0 = self.solve_direct(point, p, ci)
+            if sc0 is None:
+                return
+            e_m = exp_rows(rel, self.exp_rel_fn, self.znames_local, np.asarray(sc0["ptc"], dtype=np.int64), p)
+            if e_m is None:
+                return
+            zc = [self.z_index_local[z] for z in self.zero_of(ci) if z in self.z_index_local]
+            e_z = np.zeros((len(zc), self.nz_local), dtype=np.int64)
+            for i, c in enumerate(zc):
+                e_z[i, c] = 1
+            M = np.vstack([self.df_rows(sc0["sol"], p), e_z,
+                           np.asarray(e_m, dtype=np.int64).reshape(-1, self.nz_local)]) % p
+            rest = [c for c in range(self.nz_local) if c not in set(cols)]
+
+            def rank(X):
+                return int(_core.sym_rref_mod(X.astype(np.float64), p)["rank"]) if X.size else 0
+            # the tangent space of the resting set projects onto the columns `cols` exactly when deleting them keeps
+            # the rank of the rows
+            if rank(M[:, rest]) < rank(M):
+                k = f" of condition {mi + 1}" if self.kc > 1 else ""
+                raise InputError(
+                    f"equilibrate: the resting values{k} of {', '.join(H)}, which enter "
+                    f"non-rational terms, do not vary independently of the parameters inside these terms "
+                    f"({', '.join(sorted(z for z in A if z in set(self.param_names) and not z.startswith('_')))}); "
+                    f"no parameter outside these terms can be solved for them from the resting balances. "
+                    f"Give the steady state through `trafo` or start from free initial values")
+
     def sat_prep(self, point, P1=None, rounds=8):
         """A point with every resting state solved at P1; failed conditions redraw their private parameters."""
         run = self.run
@@ -487,6 +529,7 @@ class RestingStates:
                 self.warm_solves([point], [P1])
                 failed = [ci for ci in self.equil_conds[1:] if self.solve_cond(point, P1, ci) is None]
                 if not failed:
+                    self.rest_chart(point, P1)
                     return point
             run.ss_why = ("joint solve failed for condition " +
                           ", ".join(str(c + 1) for c in dict.fromkeys(failed)))

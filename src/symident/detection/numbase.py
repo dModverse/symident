@@ -7,8 +7,8 @@ import sympy as spy
 from ..errors import SYMPY_FAILS, sympy_fail
 from ..sym.parse import model_sympify
 
-# the start of the refusal of an exponential in the resting model, see sym/tape.py
-EXP_REFUSAL = "equilibrate does not support exp() or b^x of a state, or of a parameter that also enters"
+# the start of the refusal of a power of a number in the resting model, see sym/tape.py
+EXP_REFUSAL = "equilibrate does not support a power b^x of a positive rational number b"
 
 
 def _bases(e, states):

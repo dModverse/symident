@@ -7,7 +7,7 @@ import numpy as np
 
 from ... import _core, session, state
 from ...errors import SYMPY_FAILS, InapplicableError, RouteError, swallow, sympy_fail
-from ...gfp import PRIMES, in_span, null_residues, random_point, uniform_point, verify_prime
+from ...gfp import PRIMES, SpanTest, in_span, null_residues, random_point, uniform_point, verify_prime
 from ...par import thread_map
 from ...rexpr import sym_sort
 from ...sym.msolve import MsolveMissingError, msolve_timeout
@@ -56,6 +56,10 @@ def _rational_forms(exprs):
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return False
+
+
+# steps of the search that rewrites a direction from resting states into coordinates
+_REWRITE_STEPS = 64
 
 
 def _in_rational_span(w, ws):
@@ -162,6 +166,9 @@ class Analysis:
                                             list(prime_vec), int(Nt), run.cores)
         if run.has_gaps and not run.ss_constraint and not self.joint and not self.transient and \
                 not run.nuis_cols and n > 0:
+            emulated = run.stacked_chain_batch(point_list, prime_vec, int(Nt), int(run.mtot), list(run.nt_cap))
+            if emulated is not None:
+                return emulated
             return _core.sym_obs_null_chain_point_batch([run.chain_tapes(idx) for idx in run.chain_groups],
                                                         run.n_leaves, run.n_states, run.z_slots, leaves(),
                                                         list(prime_vec), int(Nt), int(run.mtot), run.cores,
@@ -269,6 +276,9 @@ class Analysis:
     def _block_map(self, block_call, block_profile):
         run = self.run
         if block_profile is not None and len(block_profile) == len(block_call) and len(block_call) > 1:
+            if run.has_gaps and not self.joint and run.cores > 1:
+                # a chain profile runs on one thread; the chains run in parallel
+                return lambda f, xs: thread_map(f, xs, run.cores)
             return lambda f, xs: [f(x) for x in xs]
         if (not run.ss_constraint or self.joint) and run.cores > 1 and len(block_call) > 1:
             return lambda f, xs: thread_map(f, xs, run.cores)
@@ -335,7 +345,8 @@ class Analysis:
                               budget=budget, block_map=block_map, nt_min=max(floor, lie_reach_max(multi["tapes"])),
                               nt_min_block=nt_min_block, prep=sys.sat_prep if self.joint else None,
                               rank_cap=self.rank_cap, block_profile=block_profile, set_caps=self._sat_caps,
-                              checks=not (self.stacked_first and (not self.stacked_quick or run.ss_constraint)))
+                              checks=not (self.stacked_first and (not self.stacked_quick or run.ss_constraint)),
+                              longest_first=run.has_gaps and not self.joint)
         if sc is None:
             if run.ss_constraint and run.ss_why is not None:
                 warnings.warn("no steady-state point over the finite field after "
@@ -450,7 +461,9 @@ class Analysis:
             sc["order_bound"] = hint.get("order_bound")
             sc["order_bound_why"] = hint.get("order_bound_why")
             sc["order_draws"] = hint.get("order_draws")
-        if not sc["certified"] and not self.stacked_first and not run.nuis_cols:
+        # a power of a state at 0 has no rows of D_k at the start (method: series at a singular start)
+        start_pow = any(10 in list(t["op"]) for t in self.multi["tapes"])
+        if not sc["certified"] and not self.stacked_first and not run.nuis_cols and not start_pow:
             self._certificate(sc)
         nb = self.sys.kc if self.joint else (len(run.chain_groups) if run.chain_groups else -1)
         if run.has_gaps and (self.joint or not run.ss_constraint) and \
@@ -481,6 +494,8 @@ class Analysis:
         if self.joint:
             groups = [run.chain_groups[run.chain_idx[ci]] if run.has_gaps else [ci] for ci in self.sys.equil_conds]
         out, why = [], None
+        # segments and conditions repeat the same lines
+        memo = {}
         for idx in groups:
             mds = []
             for i in idx:
@@ -488,7 +503,10 @@ class Analysis:
                 ml = strs(t.get("jet_f") or t.get("model_lines"))
                 ol = [f"_y{j} = {e}" for j, e in enumerate(strs(t["jet_g"]))] if t.get("jet_f") else \
                     strs(t.get("obs_lines"))
-                md = total_degrees(ml, ol)
+                key = (tuple(ml), tuple(ol))
+                if key not in memo:
+                    memo[key] = total_degrees(ml, ol)
+                md = memo[key]
                 if md is None and why is None:
                     why = no_degree([l.split("=", 1)[1] for l in ml + ol]) or "SymPy found no degree"
                 mds.append(md)
@@ -567,7 +585,8 @@ class Analysis:
                                          at_rest=self.joint, start_seeds=starts if degs is not None else None,
                                          start_p=P1 if self.joint and degs is not None else None,
                                          rest_draws=rest_draws, draws=draws,
-                                         drop_states=run.known_states if not (self.joint or run.has_gaps) else ())
+                                         drop_states=run.known_states if not (self.joint or run.has_gaps) else (),
+                                         cores=run.cores)
             except Exception as e:
                 swallow(e, "Lie order certificate")
                 if state.env("LIEDIAG"):
@@ -879,16 +898,67 @@ class Analysis:
                 if self.run.nuis_cols else None
         dirs = [{"vector": dict(w), "exact": True, "state_components": lift(w)} for w in ws] + \
             [dict(d, exact=_in_rational_span(d["vector"], ws)) for d in (res or {}).get("non_identifiable", [])]
-        if not dirs:
-            return [], np.zeros((self.nz, 0), dtype=np.int64)
         res = dict(res or {}, non_identifiable=dirs)
         if self.joint:
             sys = self.sys
             res = joint_expand_scal(res, sys.state_base, sys.kc, sys.held_param_of, sys.pinned())
+            res["non_identifiable"] = list(res["non_identifiable"]) + self._condition_scalings(
+                model_lines, obs_lines, keys, keep, [d["vector"] for d in res["non_identifiable"]])
+        if not res["non_identifiable"]:
+            return [], np.zeros((self.nz, 0), dtype=np.int64)
         peel = peel_scalings(res, self.znames, self.nz, np.asarray(self.sc["point0"])[self.z_slots],
                              PRIMES[0], self.N,
                              modulo=(self.free_cols, self.run.nuis_cols) if self.run.nuis_cols else None)
         return peel["scaling"], peel["Bmat"]
+
+    def _condition_scalings(self, model_lines, obs_lines, keys, keep, known):
+        """Exact scalings whose state weights differ between the resting conditions, each checked on every tape with
+        the state weights of the condition of the tape; those in the span of `known` are left out."""
+        from ...sym.scaling import scaling_symmetries_per_condition, verify_scalings
+        sys = self.sys
+        tapes = self.multi["tapes"]
+        rest = [strs(tapes[i].get("ver_rest")) for i in keep]
+        try:
+            found = scaling_symmetries_per_condition(
+                [model_lines[i] for i in keep], [obs_lines[i] for i in keep],
+                inputs=strs(self.multi.get("forcings")) or None, fixed=self.scal_fixed or None, extra_model=rest)
+        except Exception as exc:
+            swallow(exc, "scalings per condition")
+            return []
+        pinned = set(sys.pinned())
+        held = sys.held_param_of or {}
+        state_base = set(sys.state_base)
+        out, span = [], [dict(v) for v in known]
+        for sc in found:
+            if len({tuple(sorted(st.items())) for st in sc["states"]}) < 2:
+                continue
+            ok = True
+            # every tape, also one that shares model and observables with a kept one, with the weights of that one
+            for i in range(len(tapes)):
+                w = dict(sc["params"], **sc["states"][keep.index(keys.index(keys[i]))])
+                try:
+                    ok = bool(verify_scalings([w], [tapes[i]])[0])
+                except Exception as exc:
+                    swallow(exc, "scaling per condition check")
+                    ok = False
+                if not ok:
+                    break
+            if not ok:
+                continue
+            vec = {}
+            for nm, w in sc["params"].items():
+                vec[held.get(nm, nm)] = str(w)
+            for m_, ci in enumerate(sys.equil_conds, start=1):
+                st = sc["states"][keep.index(keys.index(keys[ci]))]
+                for x, w in st.items():
+                    wn = f"{x}|c{m_}"
+                    if x in state_base and wn not in pinned:
+                        vec[wn] = str(w)
+            if _in_rational_span(vec, span):
+                continue
+            span.append(vec)
+            out.append({"vector": vec, "support": list(vec), "type": "scaling", "exact": True})
+        return out
 
     def _residual(self, result):
         """Scalings peeled, the residual directions reconstructed, the rank proven."""
@@ -901,12 +971,16 @@ class Analysis:
         self.scaling, B = self._peel()
         scal_cols = B.shape[1]
         run.stage("scalings peeled")
+        # a free column is residual where the null vector of the column is not in the span of the scalings and
+        # the null vectors before it: the pivot columns of the reduced form of all of them side by side
         residual = []
-        for fc in self.free_cols:
-            bf = null_residues(sc["ref"], fc, P)
-            if not in_span(B, bf, nz, P):
-                residual.append(fc)
-                B = np.concatenate([B, bf.reshape(nz, 1)], axis=1)
+        bfs = [null_residues(sc["ref"], fc, P).reshape(nz, 1) for fc in self.free_cols]
+        if bfs:
+            piv = {int(x) for x in np.atleast_1d(_core.sym_rref_mod(
+                np.concatenate([B.reshape(nz, -1)] + bfs, axis=1).astype(np.float64), P)["piv"])}
+            keep = [j for j in range(len(bfs)) if scal_cols + j in piv]
+            residual = [self.free_cols[j] for j in keep]
+            B = np.concatenate([B.reshape(nz, -1)] + [bfs[j] for j in keep], axis=1)
         self.scal_tangents = B[:, :scal_cols]
         self.scal_rows = B[:, :scal_cols].T.copy() if scal_cols > 0 else np.zeros((0, nz), dtype=np.int64)
         self.field_chains = run.chain_groups if run.has_gaps else [[i] for i in range(len(self.multi["tapes"]))]
@@ -1116,18 +1190,36 @@ class Analysis:
                     and any(x in v.free_symbols for v in c.values()) and spy.degree(num, x) == 1]
             return num, sorted(cand, key=str)
 
-        def search(c, left):
+        # orders of substitution that solve the same equations for the same coordinates reach the same components and
+        # are tried once; the search stops after a fixed number of steps, and the direction then stays in the resting
+        # states, as where no rewrite exists
+        failed, steps = set(), [0]
+
+        def search(c, left, solved=frozenset()):
+            key = (frozenset(left), solved)
+            if key in failed or steps[0] >= _REWRITE_STEPS:
+                return None
+            steps[0] += 1
             done = normal(c)
             if done is not None or not left:
                 return done
+            r = _search_from(c, left, solved)
+            if r is None:
+                failed.add(key)
+            return r
+
+        def _search_from(c, left, solved):
             for i in left:
                 num, cand = solvable(eqs[i], c)
                 for x in cand:
                     sol = spy.solve(num, x)
                     if len(sol) != 1:
                         continue
-                    r = search({k: spy.cancel(v.subs(x, sol[0])) for k, v in c.items()},
-                               [j for j in left if j != i])
+                    rest = [j for j in left if j != i]
+                    # a failed node is skipped before the substitution, which is the costly part
+                    if (frozenset(rest), solved | {x}) in failed:
+                        continue
+                    r = search({k: spy.cancel(v.subs(x, sol[0])) for k, v in c.items()}, rest, solved | {x})
                     if r is not None:
                         return r
             return None
@@ -1150,7 +1242,8 @@ class Analysis:
         leaves = {nm: int(v) for nm, v in zip(self.leaf_names_aug, self.sc["point0"])}
         rest = set(self.multi.get("real_state_names") or []) - {self.znames[i] for i in phys}
         tok = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-        span, keep = np.zeros((n, 0), dtype=np.int64), []
+        # spans kept in reduced form: the tests below run once per direction and per column
+        span, keep = SpanTest(np.zeros((n, 0), dtype=np.int64), n, P), []
         for d in dirs:
             gen = public_symmetry(d)["generator"]
             # the resting-state columns of the joint system have no physical component
@@ -1166,9 +1259,9 @@ class Analysis:
                 kv = d.pop("kernel_residue", None)
                 if kv is not None:
                     v = np.asarray(kv, dtype=np.int64)[phys] % P
-                    if in_span(span, v, n, P):
+                    if v in span:
                         continue
-                    span = np.concatenate([span, v.reshape(n, 1)], axis=1)
+                    span.add(v)
                 keep.append(d)
                 continue
             if not inside:
@@ -1177,30 +1270,31 @@ class Analysis:
             for j, i in enumerate(phys):
                 if self.znames[i] in gen:
                     v[j] = eval_modq(gen[self.znames[i]], at, P) % P
-            if in_span(span, v, n, P):
+            if v in span:
                 continue
-            span = np.concatenate([span, v.reshape(n, 1)], axis=1)
+            span.add(v)
             keep.append(d)
         Nphys = np.asarray(self.N, dtype=np.int64)[phys, :] % P
-        basis = np.zeros((n, 0), dtype=np.int64)
+        basis, n_basis = SpanTest(np.zeros((n, 0), dtype=np.int64), n, P), 0
         for k in range(Nphys.shape[1]):
-            if not in_span(basis, Nphys[:, k], n, P):
-                basis = np.concatenate([basis, Nphys[:, [k]]], axis=1)
+            if Nphys[:, k] not in basis:
+                basis.add(Nphys[:, k])
+                n_basis += 1
         # a single coordinate the kernel moves alone first, then the kernel columns
         for j in range(n):
-            if len(keep) >= basis.shape[1]:
+            if len(keep) >= n_basis:
                 break
             e = np.zeros(n, dtype=np.int64)
             e[j] = 1
-            if in_span(basis, e, n, P) and not in_span(span, e, n, P):
-                span = np.concatenate([span, e.reshape(n, 1)], axis=1)
+            if e in basis and e not in span:
+                span.add(e)
                 keep.append(self._unit_fill(phys[j]))
         for k in range(Nphys.shape[1]):
-            if len(keep) >= basis.shape[1]:
+            if len(keep) >= n_basis:
                 break
-            if in_span(span, Nphys[:, k], n, P):
+            if Nphys[:, k] in span:
                 continue
-            span = np.concatenate([span, Nphys[:, [k]]], axis=1)
+            span.add(Nphys[:, k])
             supp = sym_sort([self.znames[phys[j]] for j in np.nonzero(Nphys[:, k])[0]])
             if len(supp) == 1:
                 keep.append(self._unit_fill(self.znames.index(supp[0])))

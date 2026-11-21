@@ -99,8 +99,6 @@ def test_events_on_state_in_exp():
     for e in (event("A", 5, "2", "multiply"), event("A", 5, "2*A", "replace")):
         mul = det(f_ab(), G_AB, reconstruct=True, events=[ev0, e])
         assert (mul.rank, mul.dim) == (6, 7) and [sorted(d["support"]) for d in mul.symmetries] == [["B", "kB", "s"]]
-    with pytest.raises(Exception, match="equilibrate"):
-        det(f_ab(), G_AB, equilibrate=True)
 
 
 def test_hodgkin_huxley():
@@ -177,9 +175,10 @@ def test_log_and_fractional_powers():
     red = si.reduce(obs)
     assert red.remaining == []
     assert det(gz, gg, trafo=red.trafo).identifiable
-    # log() needs the positive domain
-    with pytest.raises(Exception, match="positive"):
-        det(gz, gg, positive=False)
+    # without signs the rank is the same, and log() is named in the limits
+    free = det(gz, gg, positive=False)
+    assert (free.rank, free.dim) == (obs.rank, obs.dim)
+    assert any("not declared positive" in x or "needs a positive" in x for x in free.info["limits"])
 
     # sqrt: x scales by lambda^2, k by lambda, s by lambda^-2
     sq = {"x": "-k*sqrt(x)"}
@@ -315,23 +314,22 @@ def test_a_free_exponent_of_a_condition_value_and_of_zero():
     assert (r.rank, r.dim) == (6, 7)
 
 
-def test_a_state_under_a_free_exponent_that_starts_at_zero_is_refused():
-    # x^a is not analytic at x = 0, so the Lie derivatives at t = 0 do not exist; the recast once gave the
-    # start log(0) a coordinate of its own ("zoo")
+def test_a_state_under_a_free_exponent_that_starts_at_zero_is_expanded():
+    # x^a is not analytic at x = 0: the kernel expands it in t and (c t^k)^a
     odes = {"x": "-k*x + u0", "z": "x^a/(g^a + x^a) - m*z"}
-    with pytest.raises(ValueError, match="positive, also at the start"):
-        si.detect(si.Model(odes, {"y": "z"}, trafo={"x": "0", "z": "0"}), cores=1)
+    r = si.detect(si.Model(odes, {"y": "z"}, trafo={"x": "0", "z": "0"}), cores=1)
+    assert (r.rank, r.dim) == (4, 5) and not r.info["lie_certified"]
     r = si.detect(si.Model(odes, {"y": "z"}, trafo={"x": "x0", "z": "0"}), reconstruct=True, cores=1)
     assert "zoo" not in r.info["coordinates"]
 
 
-def test_a_declared_positive_expression_charts_its_logarithm():
+def test_a_declared_positive_expression_charts_the_logarithm():
     m = si.Model({"x": "s*x^a*(1-x) - (1-s)*x*(1-x)^a"}, {"y": "x"})
     r = si.detect(m, positive=["s", "a", "x", "1-x"], cores=1)
     assert r.rank == r.dim
     m = si.Model({"x": "-k*log(1-x)"}, {"y": "x"})
-    with pytest.raises(ValueError, match="positive"):
-        si.detect(m, positive=["k", "x"], cores=1)
+    free = si.detect(m, positive=["k", "x"], cores=1)
+    assert free.identifiable and any("needs a positive" in x for x in free.info["limits"])
     assert si.detect(m, positive=["k", "x", "1-x"], cores=1).identifiable
 
 

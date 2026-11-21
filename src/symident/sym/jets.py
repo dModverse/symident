@@ -7,6 +7,18 @@ from ..rexpr import replace_symbols
 from .parse import _as_list, _make_local_parse
 
 
+def _chars(e, cap):
+    """len(str(e)), or a number above `cap` where the tree of `e` alone shows the string to be longer."""
+    n, stack = 0, [e]
+    while stack:
+        n += 1
+        # a node prints as at least half a character (-x is three nodes, two characters)
+        if n > 2 * cap + 2:
+            return n // 2
+        stack.extend(stack.pop().args)
+    return len(str(e))
+
+
 def jet_generator(conds, support, anchor, max_order=8, max_chars=20000, work_limit=None):
     """{'ok': True, 'vector'} with support S from |S| - 1 independent jet gradients, else {'ok': False}."""
     # a closed form much longer than max_chars is no usable result and costs minutes to verify
@@ -64,7 +76,7 @@ def _jet_core(conds, support, anchor, max_order, max_chars, work):
                 row = [spy.diff(he, z) for z in zs]
                 if all(r == 0 for r in row):
                     continue
-                size = sum(len(str(r)) for r in row)
+                size = sum(_chars(r, max_chars // 20) for r in row)
                 work[0] += size
                 # a minor of rows this large does not simplify in bounded time
                 if size > max_chars // 20:
@@ -87,7 +99,7 @@ def _jet_core(conds, support, anchor, max_order, max_chars, work):
             for h in jets[ci]:
                 d = sum((spy.diff(h, states[i]) * rhs[i] for i in range(len(states))),
                         spy.Integer(0))
-                size = len(str(d))
+                size = _chars(d, max_chars)
                 work[0] += size
                 if size > max_chars:
                     return {'ok': False, 'reason': 'jet too large'}

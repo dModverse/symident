@@ -221,15 +221,31 @@ PYBIND11_MODULE(_core, m) {
      arg("Nt"), arg("Mtot"), arg("cores") = 1, arg("nt_chain") = py::none(),
      arg("point_ser") = py::none(), arg("ser_order") = -1);
 
+  m.def("sym_obs_chain_rows", [](py::object chain, int nLeaves, int nStates, py::object zSlots,
+                                 py::object point, double p, int Nt, int Mtot, int threads,
+                                 bool profile) {
+    List c = cv<List>(chain); IntegerVector z = cv<IntegerVector>(zSlots), pt = cv<IntegerVector>(point);
+    return run([&] { return Value(symObsChainRows(c, nLeaves, nStates, z, pt, p, Nt, Mtot, threads, profile)); });
+  }, arg("chain"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
+     arg("Nt"), arg("Mtot"), arg("threads") = 1, arg("profile") = false);
+
+  m.def("sym_chain_reduce", [](py::object rows, py::object srows, int nz, int N, double p) {
+    IntegerMatrix r = cv<IntegerMatrix>(rows), s = cv<IntegerMatrix>(srows);
+    return run([&] { return Value(symChainReduce(r, s, nz, N, p)); });
+  }, arg("rows"), arg("srows"), arg("nz"), arg("N"), arg("p_in"));
+
+  m.def("sym_set_block_bytes", [](double bytes) { return symSetBlockBytes(bytes); }, arg("bytes"));
+
   m.def("sym_segment_ranks", [](py::object segs, int nLeaves, int nStates, py::object zSlots,
                                 py::object point, double p, int Nt, py::object stateVals,
-                                int threads, py::object dropStates) {
+                                int threads, py::object dropStates, bool fromStates) {
     List s = cv<List>(segs); IntegerVector z = cv<IntegerVector>(zSlots), pt = cv<IntegerVector>(point);
     IntegerMatrix sv = stateVals.is_none() ? IntegerMatrix(0, 0) : cv<IntegerMatrix>(stateVals);
     IntegerVector dr = dropStates.is_none() ? IntegerVector(0) : cv<IntegerVector>(dropStates);
-    return run([&] { return Value(symSegmentRanks(s, nLeaves, nStates, z, pt, p, Nt, sv, threads, dr)); });
+    return run([&] { return Value(symSegmentRanks(s, nLeaves, nStates, z, pt, p, Nt, sv, threads, dr, fromStates)); });
   }, arg("segs"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
-     arg("Nt"), arg("state_vals") = py::none(), arg("threads") = 1, arg("drop_states") = py::none());
+     arg("Nt"), arg("state_vals") = py::none(), arg("threads") = 1, arg("drop_states") = py::none(),
+     arg("from_states") = false);
 
   m.def("sym_obs_null_chain_seed_batch", [](py::object chains, py::object evalChain, py::object seeds,
                                             py::object primes, int nLeaves, int nStates,

@@ -22,8 +22,23 @@ def _lines(lines):
     return out
 
 
+def _nodes(e, cap):
+    """The number of nodes of `e`, counted up to `cap`: a size without the assumptions count_ops asks."""
+    n, stack = 0, [e]
+    while stack:
+        n += 1
+        if n > cap:
+            break
+        stack.extend(stack.pop().args)
+    return n
+
+
 def _lie(e, F):
-    return spy.expand(sum((spy.diff(e, x) * fx for x, fx in F.items()), spy.Integer(0)))
+    d = sum((spy.diff(e, x) * fx for x, fx in F.items()), spy.Integer(0))
+    # the size cap applies to the tree before the expansion, which is cheap to measure
+    if _nodes(d, 4 * _OPS) > 4 * _OPS:
+        raise OverflowError("a Lie derivative grows past the size cap")
+    return spy.expand(d)
 
 
 def _values(rows, env, p):

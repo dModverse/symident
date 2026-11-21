@@ -458,6 +458,18 @@ coefficients, the *series order*, is proven sufficient. The kernel at :math:`\va
 comes from Padé forms of the kernel entries, each accepted only when the coefficients beyond
 those determining it agree. ``SYMIDENT_NODIAG`` turns the diagonal start off.
 
+**Existence of a resting state.** Before the analysis, the balances of each resting model are
+solved over :math:`\mathbb{Q}` by msolve at three random rational parameter values, positive
+where declared positive, with the poles of the right-hand sides excluded. Balances without a
+solution over the complex numbers at all three values raise an ``InputError``: a system with
+solutions at generic parameter values has them outside a proper subvariety. Where the real roots,
+isolated by msolve, include none in the declared domain (real, positive where declared positive),
+a warning is given. ``info["resting"]`` holds the counts: ``points``, ``consistent``,
+``in_domain``, and ``undecided`` for an isolating interval that contains zero or a resting set of
+positive dimension. This is a check at random points, not a proof. Stability of the resting
+state is not considered. The check is skipped for resting models with leaves of transcendental
+terms or more than twelve resting states.
+
 Unknown and known inputs
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -726,8 +738,8 @@ functions go through :math:`\tan(\psi/2)`. A *free power* :math:`b^\mu`, with a 
 so that the field is rational and :math:`\mu` enters through :math:`\partial B / \partial \mu
 = B L_b`.
 
-Under ``equilibrate`` the resting model has no exponential, so a power :math:`b^\mu` of a
-positive rational number :math:`b` is rewritten first: next to a power :math:`c^\mu` of a symbol
+Under ``equilibrate`` a power :math:`b^\mu` of a positive rational number :math:`b` is
+rewritten first: next to a power :math:`c^\mu` of a symbol
 :math:`c` with the same exponent, :math:`c` stands for :math:`b c` throughout,
 :math:`(b c)^\mu` being a power of one symbol, and the result is mapped back. Otherwise
 :math:`b` is a constant with :math:`\log b` taken independent of the other constants, as for
@@ -742,11 +754,13 @@ variety, so a random point on it is generic. With several transcendental constan
 Schanuel's conjecture and is not proven. An algebraic :math:`\varphi`, a root or rational power,
 is exact: through :math:`L = \log \psi` when :math:`\psi` is affine in one coordinate, else by
 the root modulo the prime at each sample point, over primes in which every root of the model
-exists. Logarithms, fractional powers and bases of free powers need an argument positive on
-:math:`\Theta`, also in initial and event values; otherwise an error names the symbols not
-declared positive. An observable :math:`\kappa \sum_i a_i \log \rho_i + \beta`, with rational
-:math:`\rho_i` and constants :math:`\kappa, a_i, \beta`, is strictly monotone in
-:math:`\prod_i \rho_i^{a_i} e^{\beta/\kappa}` and is analyzed as that product.
+exists. Logarithms, fractional powers and bases of free powers are real for a positive argument.
+The rank and the kernel are taken at generic points, where every argument is nonzero, so the
+detection needs no sign. An argument that the declared signs do not make positive on
+:math:`\Theta`, also in initial and event values, is named in ``info["limits"]``. An observable
+:math:`\kappa \sum_i a_i \log \rho_i + \beta`, with rational :math:`\rho_i` and constants
+:math:`\kappa, a_i, \beta`, is strictly monotone in :math:`\prod_i \rho_i^{a_i} e^{\beta/\kappa}`
+and is analyzed as that product.
 
 An event after the start reads the states just before it. There the state propagated across the
 gaps is a power series in the gap lengths whose constant term :math:`\bar x` is the state at zero
@@ -768,6 +782,192 @@ moves the new states of the recast with it, :math:`\nu` to
 moves :math:`B` and :math:`L_b`, and in log coordinates :math:`L = \log x` becomes
 :math:`\log(e^{L} + d)`. Under ``equilibrate`` :math:`\bar x` is the resting state, a
 coordinate, and an event at the start takes the leaves at it alone.
+
+**Terms of resting states.** Under ``equilibrate`` a transcendental term
+:math:`\varphi(\psi(x, \theta))` of the states is a leaf :math:`W` in the balances as well, the
+same leaf as the initial value of the new state :math:`\nu`. The balances are then rational in
+the resting states, the coordinates and the leaves, and the relation rows
+:math:`\mathrm{d}W = \varphi'(\psi)\, \mathrm{d}\psi` tie each leaf to the state columns and the
+coordinates of the joint kernel (`Steady states`_). The leaves are drawn independently of the
+resting states, and the resting states are solved from the balances at the drawn values. Let
+:math:`M = \{(\theta, x, W) : f(x, \theta, W) = 0,\ W = \varphi(\psi(x, \theta))\}` be the
+resting set and :math:`A` the component of the algebraic set :math:`\{f(x, \theta, W) = 0\}` on
+which the drawn points lie. Rank and kernel are rational in :math:`(\theta, x, W)`, so their
+generic values on :math:`A` are those on :math:`M` when :math:`M` is Zariski dense in
+:math:`A`. This holds under two conditions. First, let :math:`H` be the states and
+:math:`\theta_A` the coordinates inside the arguments :math:`\psi`. The resting values
+:math:`x_H` vary independently of :math:`\theta_A`, i.e., the tangent space of the resting set
+projects onto the coordinates :math:`(\theta_A, x_H)`. Then :math:`(\theta_A, x_H)` and further
+coordinates form a chart of :math:`M` in which every argument is rational. Second, no nontrivial
+integer combination of the arguments is constant, which the recast ensures by one leaf per
+basis term, as for leaves of coordinates. The density then follows from a classical lemma, the
+exponential case of the theorem of Kolchin and Ostrowski (Ostrowski 1946, Kolchin 1968;
+attribution to be verified): exponentials :math:`e^{\psi_1}, \dots, e^{\psi_n}` of rational
+functions :math:`\psi_i \in \mathbb{C}(z)` are algebraically independent over
+:math:`\mathbb{C}(z)` if and only if no nontrivial integer combination :math:`\sum_i n_i \psi_i`
+is constant. Proof of the direction used: an algebraic relation reads :math:`\sum_a c_a(z)\,
+e^{\langle a, \psi \rangle} = 0` with rational :math:`c_a \neq 0` and distinct integer vectors
+:math:`a`, whose exponents differ pairwise by nonconstant functions. On a generic line through
+the domain this stays so, with one variable :math:`t`. Take a relation with the fewest terms,
+divide by the last term and differentiate in :math:`t`. The constant term drops, and the
+other terms :math:`r_j e^{h_j}` become :math:`(r_j' + r_j h_j') e^{h_j}`, a shorter relation,
+so every :math:`r_j' + r_j h_j' = 0`. Then :math:`e^{h_j}` is a constant over :math:`r_j`, a
+rational function, which a nonconstant rational :math:`h_j` excludes. Logarithms of
+rational functions no product of integer powers of which is constant, such as distinct
+irreducible factors, are algebraically independent in the same way, and a half-angle tangent
+:math:`\tan(\psi/2)` is rational in :math:`e^{i\psi}`. Ax's theorem [Ax1971]_, a functional form
+of Schanuel's conjecture, generalizes the lemma. The image of :math:`M` is therefore dense in
+the space of the chart and the leaves, which has the dimension of :math:`A` where the resting
+Jacobian is invertible, and :math:`M` is dense in :math:`A`. The first condition is checked at
+the base point; where it fails, an ``InputError`` names the states. An example is
+:math:`\dot x = k - x e^{x/k}`, whose resting value no coordinate outside the exponent moves.
+
+A state that enters the balances only through leaves, such as :math:`x` in :math:`\dot x = p - k
+\sin x`, leaves the resting Jacobian singular with the leaves drawn. The resting value of such a
+state is drawn, and one leaf of the state that enters the balance becomes a resting unknown,
+solved from the balance; the points remain points of :math:`A`.
+``info["settings"]["rest_leaves"]`` lists the resting states inside transcendental terms with
+their leaves, and under ``drawn`` the states whose resting value is drawn. A leaf of a resting
+state is one coordinate for all conditions, so conditions with different resting models are
+refused for such a state. A root or rational power of an expression in the states in the resting
+model has no leaf and is refused.
+
+Singular starts
+~~~~~~~~~~~~~~~
+
+The Lie series of Equation :eq:`eq-lie-series` needs an output that is analytic at the start.
+Two kinds of terms are not, although the prediction is analytic for :math:`t > t_0`: a quotient
+whose numerator and denominator both vanish at the start, such as the fraction of a species in
+one compartment when every compartment starts empty, and a free power :math:`x^\alpha` of a state
+that starts at 0. In both cases the prediction has an expansion at :math:`t_0` whose
+coefficients are rational in :math:`\theta`, and these coefficients take the place of the Lie
+derivatives. In the following, :math:`t_0 = 0`.
+
+**Quotients at 0/0.** Let the right-hand side be analytic at the start and let the observable
+read the states through a quotient :math:`N/D` whose denominator vanishes at :math:`z_0`. The
+states are power series in :math:`t`, and so are :math:`N` and :math:`D`. Let :math:`v` be the
+smallest order with :math:`D_v(\theta) \not\equiv 0`. Then
+
+.. math::
+   :label: eq-laurent
+
+   \frac{N}{D} = t^{-v}\, \frac{N}{D_v + D_{v+1} t + \dots},
+
+a Laurent series whose coefficients are rational in :math:`\theta` where :math:`D_v(\theta) \ne
+0`, and a power series when :math:`N` vanishes to order :math:`v` as well. The engine evaluates
+every reciprocal outside the right-hand sides whose operand starts at 0 in this form, after the
+states, with the dual numbers inside the coefficients: an operand :math:`a = t^{v}(U + M)`,
+with :math:`U` a power series of nonzero constant value and :math:`M` the terms below
+:math:`t^v`, which lie in the dual part and the monomials of the gap lengths, has the inverse
+:math:`t^{-v} U^{-1} \sum_e (-M U^{-1})^e`, a finite sum since :math:`M` is nilpotent. Each
+division costs :math:`v` orders, so the states are expanded further until every output is known
+to the Lie order. Rows are the gradients of the coefficients of the prediction, and the
+argument of `Lie derivatives and the observability-identifiability matrix`_ holds for them
+unchanged, since it uses only that the coefficients determine the prediction near the start.
+The valuation :math:`v` is taken at the base point, where :math:`D_k(\theta) = 0` for
+:math:`k < v` holds together with the gradient; a point where a coefficient that is not
+identically zero vanishes gives the expansion of that point, whose rank is a lower bound. A pole
+of the prediction itself is refused, and so is a reciprocal of an operand that starts at 0 inside
+the right-hand sides.
+
+The stopping rule of `Sufficient Lie order`_ extends to these outputs. Let :math:`u(t) =
+\partial_{z_0} y(t)` be the gradient of the prediction with respect to the start, a Laurent
+series, possibly with a pole: away from the start the quotient is defined, and a start moved
+off :math:`D = 0` gives a denominator of order 0.
+
+**Lemma.** Let :math:`U_\infty` be the span of the coefficients of :math:`u`. Then
+:math:`\dim U_\infty \le \rho_S`.
+
+*Proof.* :math:`\dim U_\infty` is the number of functions among the components
+:math:`u_i(t)` that are linearly independent over :math:`\mathbb{R}`, which equals the rank of
+their Wronskian matrix :math:`\big(u^{(j)}(t)\big)_{j \ge 0}` over the meromorphic functions.
+Along the solution :math:`\varphi_t(z_0)`, the chain rule gives :math:`u^{(j)}(t) = \partial_z
+L_F^j h\big(\varphi_t(z_0)\big)\, \Phi(t)` with the invertible fundamental matrix :math:`\Phi(t)
+= \partial \varphi_t / \partial z_0`. For small :math:`t > 0`, :math:`\varphi_t(z_0)` is a point
+of :math:`S`, which is invariant under the flow, where the output is defined, so by the lemma of
+`Sufficient Lie order`_ the rank is at most :math:`\rho_S`. :math:`\square`
+
+The rows of the coordinates are the coefficients of :math:`\partial_\theta y = u\,
+\partial_\theta z_0`. If the coefficients of :math:`u` up to order :math:`N`, those of negative
+order included, reach rank :math:`\rho_S` at the start, they span :math:`U_\infty`, and the
+rows up to order :math:`N` span all rows: the order is proven sufficient, as in the proposition
+there. The coefficients at the base point are those of generic :math:`\theta` unless the base
+point lies where a leading coefficient vanishes; this event is not counted in
+``info["order_bound"]``.
+
+**Free powers of a state at 0.** Let a state :math:`x` start at 0 in every condition and enter
+through powers :math:`x^{c_0 + c\alpha}`, with integers :math:`c_0 \ge 0`, :math:`c > 0` and a
+coordinate :math:`\alpha > 0` as exponent. Generically :math:`x = c_x t^k (1 + O(t))` with
+:math:`k \ge 1` and :math:`c_x \neq 0`, so :math:`x^\alpha` behaves as :math:`t^{k\alpha}`, which
+is not analytic at 0 for :math:`\alpha \notin \mathbb{N}`. The recast :math:`B = x^\alpha` of
+`Non-rational terms`_ needs :math:`x \ne 0` at the start. Instead, with the formal variable
+:math:`S = (c_x t^k)^\alpha`,
+
+.. math::
+   :label: eq-start-power
+
+   x^\alpha = S\, Q, \qquad Q = \Big(\frac{x}{c_x t^k}\Big)^{\alpha},
+
+where :math:`Q` is a power series in :math:`t` with constant term 1. Every state and output
+becomes a power series in :math:`t` and :math:`S`. A coefficient of :math:`t^n S^m`, kept with
+the *index* :math:`n` (the exponent of :math:`t` at :math:`\alpha = 1`, so :math:`n \ge km`),
+stands for the function :math:`t^{n - km + km\alpha}`. Differentiation in :math:`t` maps it to
+:math:`\lambda_{n,m} = n + km(\alpha - 1)` times the coefficient of index :math:`n - 1`, so the
+states follow from :math:`\lambda_{n+1,m}\, x_{n+1,m} = f_{n,m}`, and :math:`Q` from the
+derivation of the index, :math:`n Q_n = A_0^{-1} \sum_{j=1}^{n} (\alpha j + j - n)\, A_j Q_{n-j}`
+with :math:`A = x / (c_x t^k)` and :math:`Q_0 = A_0^\alpha`, where :math:`A_0 - 1` is nilpotent.
+:math:`Q_n` needs :math:`x` up to index :math:`n + k`, which is the index of :math:`S Q_n`, so the
+recursion runs order by order as for analytic outputs. The coefficients :math:`d_{n,m}` of an
+output are rational in :math:`\theta` where no :math:`\lambda` vanishes, which holds for
+:math:`\alpha > 0`: :math:`\lambda_{n,m} \ge \min(1, \alpha)\, n`. The same bound shows that the
+series converges for small :math:`t > 0`: the recursion divides by at least :math:`\min(1, \alpha)`
+times the divisor of a Taylor series, so Cauchy's majorant of the right-hand side divided by
+:math:`\min(1, \alpha)` dominates it.
+
+**Lemma.** For distinct real numbers :math:`q_1, \dots, q_r`, the functions :math:`t^{q_j}` and
+:math:`t^{q_j} \log t` are linearly independent over :math:`\mathbb{R}` on every interval
+:math:`(0, \varepsilon)`, also as terms of convergent sums whose exponents have no accumulation
+point.
+
+*Proof.* Let :math:`\sum_j (a_j + b_j \log t)\, t^{q_j} = 0` with :math:`q_1 < q_2 < \dots` and
+:math:`j` the first index with :math:`(a_j, b_j) \neq 0`. Divided by :math:`t^{q_j}`, the other
+terms tend to 0 as :math:`t \to 0^+`, since :math:`t^\delta \log t \to 0` for :math:`\delta > 0`,
+while :math:`a_j + b_j \log t` does not. :math:`\square`
+
+For :math:`\alpha \notin \mathbb{Q}`, distinct :math:`(n, m)` give distinct exponents
+:math:`n - km + km\alpha`, and with several powers the exponents :math:`n + \sum_i k_i m_i
+(\alpha_i - 1)` are distinct when :math:`1, \alpha_1, \dots, \alpha_K` are linearly independent
+over :math:`\mathbb{Q}`; this holds for generic coordinates if the exponents are distinct
+coordinates, and two powers of states at 0 with the same exponent are refused. The gradient of
+the prediction is
+
+.. math::
+
+   \partial_\theta y = \sum_{n,m} c_x^{m\alpha} \Big(\partial_\theta d_{n,m}
+   + m\, d_{n,m} \big(\alpha\, \partial_\theta c_x / c_x + \log c_x\, \partial_\theta \alpha\big)
+   + km\, d_{n,m} \log t\; \partial_\theta \alpha\Big)\, t^{n - km + km\alpha},
+
+so by the lemma a direction lies in the kernel if and only if it annihilates the vectors in
+parentheses without the logarithm of :math:`t` and, separately, the vectors :math:`km\, d_{n,m}\,
+\partial_\theta \alpha`. Once a coefficient with :math:`m > 0` is nonzero, the latter span
+:math:`\partial_\theta \alpha`, and the transcendental term :math:`\log c_x\, \partial_\theta
+\alpha` lies in their span. The rows are therefore :math:`\partial_\theta d_{n,m} + m\,
+d_{n,m}\, \alpha\, \partial_\theta c_x / c_x`, rational in :math:`\theta`, and one row
+:math:`\partial_\theta \alpha`. With several powers, the rows of the logarithm are
+:math:`\sum_i k_i m_i\, \partial_\theta \alpha_i`; the engine refuses an expansion in which the
+vectors :math:`(k_i m_i)_i` of the nonzero coefficients do not span every power that occurs.
+The engine computes :math:`d_{n,m}` with :math:`S` held fixed in the dual numbers and adds the
+term of :math:`c_x`, the leading coefficient of :math:`x`, from the dual of :math:`c_x`. The ranks
+are taken at random points, where :math:`\alpha` is generic.
+
+Truncation at the Lie order :math:`N` keeps the indices :math:`n \le N`, and each power of
+:math:`S` counts :math:`k` orders, so the monomials have total degree at most :math:`N/k` in the
+:math:`S`. Every coefficient computed is exact, and the rank grows to the final value with
+:math:`N`. The stopping rule does not apply: the rows :math:`\partial_z L_F^j h` do not exist at
+the start, and a start moved off :math:`x = 0` changes the type of the expansion, so no start
+reaches the ceiling. The order stops after the plateau and the saturation guard, the result
+says that the Lie order is not proven sufficient, and ``info["limits"]`` names the power. Events,
+``equilibrate`` and a state that starts at 0 in one condition only are refused for such powers.
 
 Closed forms and proofs
 -----------------------
@@ -1289,6 +1489,24 @@ has one sign on :math:`\Theta`, shows that the generator component on the pinned
 one sign, else the orbits can be the intervals between the zeros of that component, and the pin
 is listed under ``unproven``.
 
+**Linear flows.** A block of :math:`r` general generators is a *linear flow* when, in the
+coordinates :math:`\tilde\theta_i = \theta_i` for a moved coordinate that is not declared
+positive and :math:`\tilde\theta_i = \log \theta_i` for a positive one, every component
+:math:`\tilde\xi_i` depends only on the coordinates :math:`u` that the block does not move, and
+no declared bound involves a moved coordinate. The generators then commute, and the orbit of a
+point is the affine set :math:`\{(u, \tilde\theta + \Xi(u) s) : s \in \mathbb{R}^r\}`, with
+:math:`\Xi(u)` the matrix of the components, on which every moved coordinate takes every real
+value. Pins :math:`\tilde\theta_P = 0` on :math:`r` moved coordinates :math:`P` whose minor
+:math:`\det \Xi_P(u)` has one sign on :math:`\Theta` give a global section:
+:math:`\tilde\theta_P + \Xi_P(u) s = 0` has exactly one solution on every orbit, so the section is
+``injective`` and ``reach``-es every orbit. The invariants are
+:math:`\tilde\theta_N - \Xi_N(u) \Xi_P(u)^{-1} \tilde\theta_P` for the other moved coordinates
+:math:`N`, and a linear coordinate is pinned to 0, a positive one to 1. This stage runs before
+the search for invariants. Among the pin sets, a coordinate that enters only the observables (an
+offset of the observation function) is preferred, an initial value is taken last. In a model with
+``unknown_inputs``, a direction whose components depend on states or unknown inputs is no field on
+the parameters and has no chart; the reduction names the unknown inputs that absorb it.
+
 The pinned coordinates of a block of scalings, its *transversal*, are chosen among the
 coordinates of the support that are not fixed: subsets :math:`T` of the size of the block, taken
 in the order of the coordinates, for which the columns :math:`W_T` of the weight matrix
@@ -1376,6 +1594,9 @@ detection again on the reduced model (``Reduction.checks["loop"]``).
 
 References
 ----------
+
+.. [Ax1971] J. Ax. On Schanuel's conjectures. *Annals of Mathematics* 93(2), 252-268,
+   1971.
 
 .. [BenOr1988] M. Ben-Or and P. Tiwari. A deterministic algorithm for sparse
    multivariate polynomial interpolation. *Proceedings of the 20th ACM Symposium on

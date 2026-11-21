@@ -1,7 +1,9 @@
 """Curved blocks: invariant search per block, fixed parameters, block verification."""
 
 import re
+from contextlib import contextmanager
 
+import mpmath
 import numpy as np
 import sympy as spy
 
@@ -18,6 +20,7 @@ from .invariants import (
     poly_invariants,
     rational_invariants,
 )
+from .linear import linear_flow
 from .scaling import coords_of, scaling_block
 from .sections import translation_compress, unmoved_compress
 from .sign import sgn
@@ -31,6 +34,68 @@ def block_corank(preps):
     return len(moved) - r, r >= min(len(preps), len(moved))
 
 
+_IV_PREC = 200
+# the functions mpmath has in interval arithmetic; an invariant with another one is evaluated exactly
+_IV_MODULE = {"exp": mpmath.iv.exp, "log": mpmath.iv.log, "sqrt": mpmath.iv.sqrt,
+              "sin": mpmath.iv.sin, "cos": mpmath.iv.cos, "tan": mpmath.iv.tan,
+              "pi": mpmath.iv.pi, "E": mpmath.iv.e}
+
+
+@contextmanager
+def _ivprec():
+    """The precision of mpmath's interval context set to _IV_PREC bits for the block."""
+    old = mpmath.iv.prec
+    mpmath.iv.prec = _IV_PREC
+    try:
+        yield
+    finally:
+        mpmath.iv.prec = old
+
+
+_IV_FUNCS = {"exp", "log", "sin", "cos", "tan"}
+
+
+def _iv_value(d, syms, point):
+    """`d` at the interval `point` of `syms` in interval arithmetic, or None where a function or constant has no
+    interval version; a non-integer number enters as an interval that encloses it, never as a float."""
+    if {type(f).__name__ for f in d.atoms(spy.Function)} - _IV_FUNCS:
+        return None
+    consts = {spy.pi: mpmath.iv.pi, spy.E: mpmath.iv.e}
+    if d.atoms(spy.NumberSymbol) - set(consts):
+        return None
+    nums = sorted((a for a in d.atoms(spy.Number) if not a.is_Integer), key=str)
+    vals = []
+    for a in nums:
+        if not (a.is_Rational or a.is_Float):
+            return None
+        q = spy.Rational(a)
+        vals.append(mpmath.iv.mpf(int(q.p)) / int(q.q))
+    cs = sorted(d.atoms(spy.NumberSymbol), key=str)
+    dums = [spy.Dummy() for _ in nums + cs]
+    d2 = d.xreplace(dict(zip(nums + cs, dums)))
+    f = spy.lambdify(list(syms) + dums, d2, modules=[_IV_MODULE])
+    return mpmath.iv.mpf(f(*(list(point) + vals + [consts[c] for c in cs])))
+
+
+def _iv_det(rows):
+    """The determinant of a square interval matrix by elimination with pivots away from zero;
+    None if no pivot interval excludes zero."""
+    a = [list(r) for r in rows]
+    n, det = len(a), mpmath.iv.mpf(1)
+    for k in range(n):
+        piv = next((i for i in range(k, n) if not (a[i][k].a <= 0 <= a[i][k].b)), None)
+        if piv is None:
+            return None
+        if piv != k:
+            a[k], a[piv] = a[piv], a[k]
+            det = -det
+        det *= a[k][k]
+        for i in range(k + 1, n):
+            f = a[i][k] / a[k][k]
+            a[i] = [a[i][j] - f * a[k][j] for j in range(n)]
+    return det
+
+
 def independent_set(invs, vars_, target, moved=None):
     """A functionally independent subset of invariants, in order, by a nonzero Jacobian minor certified at a point."""
     if moved is None:
@@ -41,7 +106,6 @@ def independent_set(invs, vars_, target, moved=None):
     pool = np.array([float(x) for x in ipool])
     if any("exp(" in s for s in invs):
         pool = 1 + pool / (pool.max() + 1)
-    pt = dict(zip(vars_, pool))
     ipt = {spy.Symbol(k): spy.Integer(v) for k, v in zip(vars_, ipool)}
     loc = {v: spy.Symbol(v) for v in vars_}
 
@@ -55,28 +119,50 @@ def independent_set(invs, vars_, target, moved=None):
             return None
         return out if all(x.is_Rational for x in out) else None
 
-    rpt = {spy.Symbol(k): spy.Rational(v).limit_denominator(10**6) for k, v in pt.items()}
+    rat = [spy.Rational(v).limit_denominator(10**6) for v in pool]
+    rpt = {spy.Symbol(k): r for k, r in zip(vars_, rat)}
+    with _ivprec():
+        ivpt = [mpmath.iv.mpf(int(r.p)) / int(r.q) for r in rat]
+    syms = [spy.Symbol(v) for v in vars_]
 
     def grad(iv):
-        # the gradient as exact numbers at a rational point, with a float copy to order the minors
+        # the gradient at a rational point, with a float copy to order the minors: in interval
+        # arithmetic where every function has an interval version, else from an exact value
+        # widened to an interval
         try:
             e = spy.sympify(iv.replace("^", "**"), locals=dict(loc, **red_locals(iv)))
-            ex = [spy.diff(e, spy.Symbol(v)).xreplace(rpt) for v in moved]
-            return ex, np.array([float(spy.N(x)) for x in ex])
+            ds = [spy.diff(e, spy.Symbol(v)) for v in moved]
         except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return None
+        try:
+            with _ivprec():
+                ex = [_iv_value(d, syms, ivpt) for d in ds]
+            if all(x is not None and mpmath.isfinite(x.a) and mpmath.isfinite(x.b) for x in ex):
+                return ex, np.array([float(x.mid) for x in ex])
+        except (NameError, TypeError, ValueError, ZeroDivisionError, OverflowError):
+            pass
+        try:
+            ex = [d.xreplace(rpt) for d in ds]
+            with _ivprec():
+                ivx = [mpmath.iv.mpf(str(spy.N(x, 80, strict=True))) for x in ex]
+            # a point value from 80 digits is widened to an interval of that accuracy
+            ivx = [x + mpmath.iv.mpf([-1, 1]) * (abs(x).b * mpmath.mpf(10) ** -70 + mpmath.mpf(10) ** -70)
+                   for x in ivx]
+            return ivx, np.array([float(x.mid) for x in ivx])
+        except spy.core.evalf.PrecisionExhausted:
+            return None
+        except SYMPY_FAILS + (ZeroDivisionError, OverflowError) as exc:
             sympy_fail(exc)
             return None
 
     def certified(rows, fl):
-        # a nonzero maximal minor: columns chosen by pivoted QR, value shown nonzero
+        # a nonzero maximal minor: columns chosen by pivoted QR, the interval of the minor free of zero
         from scipy.linalg import qr
         cols = sorted(qr(fl, pivoting=True)[2][:len(rows)])
-        try:
-            det = spy.Matrix([[r[c] for c in cols] for r in rows]).det(method="berkowitz")
-            return det.evalf(30, strict=True) != 0
-        except (SYMPY_FAILS + (spy.core.evalf.PrecisionExhausted,)) as exc:
-            sympy_fail(exc)
-            return False
+        with _ivprec():
+            det = _iv_det([[r[c] for c in cols] for r in rows])
+        return det is not None and not (det.a <= 0 <= det.b)
     cand = list(dict.fromkeys(invs))
 
     def select(exact):
@@ -265,8 +351,33 @@ def _axis_signed(v, reduced, originals):
     return False
 
 
-def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=None):
-    """Curved directions: prep, group, fixed elimination, compressions, module reduction, search."""
+def _input_absorbed(d, prefer):
+    """The reason a direction of a model with unknown inputs has no chart in the parameters, or None."""
+    unknown = (prefer or {}).get("unknown_inputs") or {}
+    if not unknown or d.get("generator") is None:
+        return None
+    varying = set((prefer or {}).get("states") or ()) | {j for js in unknown.values() for j in js}
+    comps = [str(v) for v in d["generator"].values()]
+    used = {x for x in red_locals(comps)}
+    hit = sym_sort(used & varying)
+    if not hit:
+        return None
+    moved = [c for c, v in d["generator"].items() if str(v).strip() not in ("0", "0.0")]
+    inputs = sym_sort([w for w, js in unknown.items() if set(js) & (set(moved) | used)])
+    params = sym_sort([c for c in moved if c not in varying])
+    w = ", ".join(inputs) or "the unknown inputs"
+    p = ", ".join(params) or "the moved parameters"
+    return (f"the direction changes the trajectory of {w} together with {p}, with components that depend on "
+            f"{', '.join(hit)}, which vary in time: it is no vector field on the parameters, so the reduction "
+            f"has no chart for it; {p} {'is' if len(params) == 1 else 'are'} non-identifiable because {w} "
+            f"{'absorbs' if len(inputs) == 1 else 'absorb'} the change")
+
+
+def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=None, prefer=None):
+    """Curved directions: prep, group, fixed elimination, linear flows, compressions, module reduction, search.
+
+    `prefer` holds the structure of the model the reduction uses: ``observation_only`` and ``states`` (for
+    the choice of pins) and ``unknown_inputs`` (input names and jets)."""
     blocks = []
 
     def unresolved(labs, support, reason):
@@ -277,11 +388,21 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
 
     def kind_of(labs):
         return "scaling" if labs and all(l in scal_labs for l in labs) else "curved"
-    has_gen = [i for i in idx if syms[i].get("generator") is not None]
+    has_gen = []
     for i in idx:
         if syms[i].get("generator") is None:
-            blocks.append(unresolved([labels[i]], coords_of(syms[i]),
-                                     "no closed-form generator; re-run the detection with reconstruct=True"))
+            why = ("no closed-form generator: the reconstruction of the detection found none (level open)"
+                   if (prefer or {}).get("reconstructed") else
+                   "no closed-form generator; re-run the detection with reconstruct=True")
+            blocks.append(unresolved([labels[i]], coords_of(syms[i]), why))
+            continue
+        why = _input_absorbed(syms[i], prefer)
+        if why is not None:
+            blk = unresolved([labels[i]], coords_of(syms[i]), why)
+            blk["absorbed_by_inputs"] = True
+            blocks.append(blk)
+            continue
+        has_gen.append(i)
     gi = has_gen
     preps = [gen_prep(syms[i], pins) for i in gi]
     for w, pr in enumerate(preps):
@@ -316,6 +437,15 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
         originals = [preps[g] for g in grp if not set(preps[g]["support"]) & set(fixed or [])]
         glab_k = [glab[s[0]] if len(s) == 1 else "(" + "+".join(glab[i] for i in s) + ")"
                   for s in fx["sources"]]
+        # a block that translates linear and logarithmic coordinates needs no invariant search
+        lf = linear_flow(fx["preps"], fixed, prefer)
+        if lf is not None:
+            own = sym_sort([l for l in glab if l not in set(fixed_labs)])[:len(fx["preps"])]
+            lf.update(labels=own, kind=kind_of(own), originals=originals,
+                      removed_by_fixed=fx["removed"] if fx["removed"] > 0 and not fixed_labs else None)
+            lf["certificates"] = fix_cert + lf["certificates"]
+            blocks.append(lf)
+            continue
         try:
             tc = translation_compress(fx["preps"])
         except RouteError:

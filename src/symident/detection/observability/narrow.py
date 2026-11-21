@@ -51,6 +51,10 @@ class Narrow:
         M = np.vstack([np.asarray(pp[:run.n_leaves], dtype=np.int64) for pp in point_list])
         nc = self.cols if run.nuis_cols else None
         if run.has_gaps:
+            os_ = run.stacked_chain_batch(point_list, prime_vec, run.exact_nt(Nt, run.mtot), int(run.mtot),
+                                          list(run.nt_cap), self.zs)
+            if os_ is not None:
+                return [run.modulo_nuisance(o, q, nc) for o, q in zip(os_, prime_vec)] if nc else os_
             os_ = _core.sym_obs_null_chain_point_batch([run.chain_tapes(idx) for idx in run.chain_groups],
                                                        run.n_leaves, run.n_states, self.zs, M, list(prime_vec),
                                                        run.exact_nt(Nt, run.mtot), int(run.mtot), run.cores,

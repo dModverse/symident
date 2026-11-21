@@ -1,9 +1,11 @@
 """PEtab problems (format versions 1 and 2) read into a Model."""
 
 import csv
+import functools
 import math
 import os
 import re
+import warnings
 from fractions import Fraction
 
 from .errors import SYMPY_FAILS, InapplicableError, sympy_fail
@@ -96,7 +98,8 @@ def _true(text):
 
 
 def _table(path):
-    with open(path, newline="", encoding="utf-8") as f:
+    # utf-8-sig: a byte order mark is not part of the first column name
+    with open(path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f, delimiter="\t"))
     return [{k.strip(): (v or "").strip() for k, v in r.items() if k is not None} for r in rows]
 
@@ -418,7 +421,11 @@ def _time_switches(odes, states, values):
     return out, steps, texts
 
 
+@functools.lru_cache(maxsize=65536)
 def _zero(expr):
+    """Whether `expr` is 0, parsed once per text."""
+    if expr.strip("() ") == "0":
+        return True
     from .sym.parse import model_sympify
     try:
         return model_sympify(expr) == 0
@@ -440,7 +447,7 @@ def _inline(exprs, assign):
 
 def _problem(path):
     yaml = _need("yaml")
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:
         y = yaml.safe_load(f)
     base = os.path.dirname(os.path.abspath(path))
     version = str(y.get("format_version", "1")).split(".")[0]
@@ -523,7 +530,8 @@ def read_petab(path):
         experiment starts with a preequilibration, and ``Model.reduce_cq`` when the
         preequilibrated network has conserved totals. ``Model.positive`` holds the estimated
         parameters of the model on a log scale or with a positive lower bound. ``m.petab``
-        lists the experiments, the estimated parameters, the fixed values and the renamed ids.
+        lists the experiments, the estimated parameters, the fixed values, the renamed ids and,
+        under ``without_effect``, the estimated parameters that no remaining term holds.
 
     Raises
     ------
@@ -533,6 +541,12 @@ def read_petab(path):
         event triggers other than a time or one comparison, and preequilibration in some
         experiments only; and for a problem the reader cannot map, such as several
         subproblems, a fixed parameter without nominal value or an unknown condition target.
+
+    Warns
+    -----
+    UserWarning
+        For estimated parameters without effect on the model: every term that holds them
+        vanishes in every experiment.
 
     Notes
     -----
@@ -549,9 +563,14 @@ def read_petab(path):
     override from the measurement table; one observable measured with several overrides in an
     experiment becomes one observable per override. A parameter that a later period changes
     becomes the value at the start plus an input, zero at rest, that an event at the start of
-    the period sets. A species target of a period after the first is an event. A switch
+    the period sets; where every period sets the value the parameter already has, there is no
+    input. A species target of a period after the first is an event. A switch
     between two expressions at a time that every experiment fixes becomes a step state, off
     during a preequilibration, that an event switches on at that time or at the start.
+
+    A parameter value that names another parameter, such as an initial assignment, takes the
+    value of that parameter in each experiment. States that start at 0 in every experiment,
+    that no event sets and whose rates vanish where all of them are 0 leave the model.
     """
     from .api import Model
     version, sbml, tabs = _problem(path)
@@ -623,6 +642,14 @@ def read_petab(path):
     for i, per in enumerate(exps.values()):
         first = per[0][1]
         tr = {k: val(first[k]) if k in first else value[k] for k in value}
+        # a value that names another parameter, such as an initial assignment k = k_syn, takes the value of
+        # that parameter in this experiment
+        for _ in range(len(tr)):
+            refs = {k: v for k, v in tr.items() if k != v and k not in is_state}
+            new = {k: _sub(v, refs) if k != v else v for k, v in tr.items()}
+            if new == tr:
+                break
+            tr = new
         x0 = {x: val(first[x]) if x in first else _sub(initial[x], tr) for x in states}
         starts.append(x0)
         if not pre[0]:
@@ -648,6 +675,24 @@ def read_petab(path):
         events += [dict(ev, cond=[i], value=_sub(_inline({"v": ev["value"]}, sb["assignments"])["v"], params),
                         **{k: _sub(ev[k], fixed if k == "time" else params) for k in ("time", "root") if k in ev})
                    for ev in sb["events"]]
+    # a parameter that a later period sets to the value it already has in every experiment never changes: the
+    # input of that parameter stays 0 and leaves the model with every term of it
+    still_in = [u for u, k in zip(inputs, changed)
+                if all(_zero(str(e["value"])) for e in events if e["var"] == u)]
+    if still_in:
+        zero = {u: "0" for u in still_in}
+        for u, k in zip(inputs, changed):
+            if u in zero:
+                shift[k] = k
+        odes = {x: _sub(f, zero) for x, f in odes.items() if x not in zero}
+        if net is not None:
+            net = dict(net, rates=[_sub(r, zero) for r in net["rates"]])
+        events = [e for e in events if e["var"] not in zero]
+        for tr in trafos:
+            for u in still_in:
+                tr.pop(u, None)
+        changed = [k for u, k in zip(inputs, changed) if u not in zero]
+        inputs = [u for u in inputs if u not in zero]
     obs = {r["observableId"]: r for r in tabs["observables"]}
     observables = [{} for _ in names]
     seen = [{} for _ in names]
@@ -696,6 +741,36 @@ def read_petab(path):
             totals = conserved_totals(net["stoichiometry"], net["species"]) or None
             for tr, x0 in zip(trafos, starts):
                 tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
+    # states that start at 0 in every experiment, that no event sets and whose rates vanish where all of them are 0
+    # stay 0, also through a preequilibration that starts from these values: they leave the model
+    hit = {e["var"] for e in events}
+    nil = {x for x in states if x in odes and x not in hit and all(_zero(str(st.get(x, "1"))) for st in starts)}
+    while nil:
+        zero = {x: "0" for x in nil}
+        keep_nil = {x for x in nil if _zero(_sub(odes[x], zero))}
+        if keep_nil == nil:
+            break
+        nil = keep_nil
+    if nil:
+        zero = {x: "0" for x in nil}
+        odes = {x: _sub(f, zero) for x, f in odes.items() if x not in nil}
+        observables = [{k: _sub(f, zero) for k, f in o.items()} for o in observables]
+        events = [dict(e, value=_sub(str(e["value"]), zero)) for e in events]
+        for tr, x0 in zip(trafos, starts):
+            for x in nil:
+                tr.pop(x, None)
+                x0.pop(x, None)
+        if net is not None:
+            cols = [j for j, x in enumerate(net["species"]) if x not in nil]
+            net = dict(net, species=[net["species"][j] for j in cols],
+                       stoichiometry=[[r[j] for j in cols] for r in net["stoichiometry"]],
+                       rates=[_sub(r, zero) for r in net["rates"]])
+            if all(pre):
+                from .detection.cq import conserved_totals
+                totals = conserved_totals(net["stoichiometry"], net["species"]) or None
+                for tr, x0 in zip(trafos, starts):
+                    tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
+        states = [x for x in states if x not in nil]
     # a species without dynamics, events or inputs that starts at one value everywhere is that value
     moved = {e["var"] for e in events} | set(inputs) | set(steps)
     still = {x: starts[0][x] for x in states if odes.get(x) == "0" and x not in moved and x in starts[0]
@@ -738,6 +813,35 @@ def read_petab(path):
               conditions=None if one else {"rows": names, "cols": {}}, events=events or None,
               inputs=inputs, totals=totals, reactions=net, equilibrate=all(pre), positive=positive,
               reduce_cq=bool(totals))
+    # an estimated parameter that only terms vanishing in every experiment hold has no effect on the output; an
+    # identity entry k = k of a trafo holds no term
+    texts = list(dict.fromkeys(
+        list(odes.values()) + [v for tr in trafos for k, v in tr.items() if k != v]
+        + [f for o in observables for f in o.values()]
+        + [str(e.get(k, "")) for e in events or [] for k in ("value", "time", "root")]))
+    syms_of = [set(get_symbols([t])) for t in texts]
+    est = set(estimated)
+    # a parameter in an expression without a substituted 0 is held; one that appears only next to a substituted 0
+    # is read from the expression, since the 0 can cancel the term
+    held, unsure = set(), set()
+    for t, sy in zip(texts, syms_of):
+        (unsure if "(0)" in t else held).update(sy & est)
+    unsure -= held
+    if unsure:
+        from .sym.parse import model_sympify
+        for t, sy in zip(texts, syms_of):
+            if sy & unsure:
+                try:
+                    held |= {str(x) for x in model_sympify(t).free_symbols} & unsure
+                except SYMPY_FAILS as exc:
+                    sympy_fail(exc)
+                    held |= sy & unsure
+    without = [p for p in estimated if p not in held]
+    if without:
+        warnings.warn(f"estimated parameters without effect on the model as fitted: {', '.join(without)} (every term "
+                      "that holds them vanishes in every experiment); they are not identifiable and are not "
+                      "coordinates of the detection; m.petab['without_effect'] lists them", stacklevel=2)
     m.petab = {"experiments": names, "estimated": estimated,
-               "fixed": {k: v for k, v in value.items() if k != v}, "renamed": sb["renamed"]}
+               "fixed": {k: v for k, v in value.items() if k != v}, "renamed": sb["renamed"],
+               "without_effect": without}
     return m

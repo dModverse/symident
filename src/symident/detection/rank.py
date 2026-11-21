@@ -14,10 +14,24 @@ def _ok(r):
     return r is not None and bool(r.get("ok"))
 
 
+def _next_order(rk, nt, nt_end, need, cols):
+    """The Lie order of the next rank profile after `nt`: where the ranks `rk` reach `cols` at the rate of the last
+    orders, plus the plateau and a margin, at most four times `nt`; twice `nt` without a rate."""
+    top = 2 * nt
+    if cols:
+        back = max(1, min(8, nt // 4))
+        rate = (int(rk[nt]) - int(rk[nt - back])) / back
+        if rate > 0:
+            est = nt + (int(cols) - int(rk[nt])) / rate
+            top = min(4 * nt, max(nt + need + 2, int(1.05 * est) + need + 4))
+    return min(nt_end, top)
+
+
 def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_block=1, block_call=None,
                      budget=None, block_map=None, nt_min=0, nt_min_block=None, prep=None,
-                     rank_cap=None, block_profile=None, checks=True):
-    """Saturated reference rank after raising the Lie and gap orders, or None without a usable point."""
+                     rank_cap=None, block_profile=None, checks=True, longest_first=False):
+    """Saturated reference rank after raising the Lie and gap orders, or None without a usable point;
+    `longest_first` scans the blocks of the highest known orders first, for blocks without shared state."""
     if rank_cap is None:
         rank_cap = nz
     block_call = block_call or []
@@ -74,7 +88,7 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
                     Nt += 1
                 if stop:
                     break
-                nt_try = min(nt_end, 2 * nt_try)
+                nt_try = _next_order(rk, nt_try, nt_end, need, pr.get("cols"))
             res = call1(point, P, Nt, Mtot)
             if not _ok(res):
                 return None
@@ -83,10 +97,11 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
                       f"{','.join(str(x) for x in rk[max(1, frm):Nt + 1])} (nz={nz}, profile to {nt_try})")
             return {"res": res, "Nt": Nt, "grew": grew, "ranks": rk}
         if frm > 1 and frm > lo0:
+            # the higher order first: the kernel of the lower one reads the rows of the higher one
+            hi = call1(point, P, frm + need, Mtot)
             lo = call1(point, P, frm, Mtot)
             if not _ok(lo):
                 return None
-            hi = call1(point, P, frm + need, Mtot)
             if not _ok(hi):
                 return None
             if rank_score(lo) == rank_score(hi):
@@ -107,7 +122,8 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
             cap = nz + 1 + lo0
             x, step = max(1, frm), need
             while True:
-                a, b = at(x), at(min(cap, x + need))
+                b = at(min(cap, x + need))
+                a = at(x)
                 if sc1(a) is None or sc1(b) is None:
                     return None
                 if sc1(a) == sc1(b) or rank_of(b) >= nz or x + need >= cap:
@@ -176,7 +192,15 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
                 frm = max(1, int(from_orders[bi])) if known else 1
                 return scan_nt(block_call[bi], point, Mtot, frm, need_used, f"block {bi + 1}",
                                lo_of(bi), prof_of(bi))
-            sbs = block_map(one, list(range(len(block_call))))
+            # the blocks of the highest known orders first, so that the longest scans do not start last
+            nb = len(block_call)
+            idx = list(range(nb))
+            if longest_first and from_orders is not None and len(from_orders) == nb:
+                idx.sort(key=lambda bi: -int(from_orders[bi]))
+            got = block_map(one, idx)
+            sbs = [None] * nb
+            for bi, sb in zip(idx, got):
+                sbs[bi] = sb
             if any(s is None for s in sbs):
                 return None
             orders = [int(s["grew"]) for s in sbs]

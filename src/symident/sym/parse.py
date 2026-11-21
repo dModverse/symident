@@ -1,5 +1,6 @@
 """Parsing of model lines into sympy expressions with a clean symbol table."""
 
+import functools
 import io
 import tokenize
 
@@ -48,6 +49,16 @@ def _build_symbol_table(all_lines):
 
 def _function_aliases():
     """Functions of the model language that sympy lacks by name or defines otherwise, as sympy expressions."""
+    # built once: every parse of a line reads them
+    if not _ALIASES:
+        _ALIASES.update(_build_function_aliases())
+    return dict(_ALIASES)
+
+
+_ALIASES = {}
+
+
+def _build_function_aliases():
     x = spy.Symbol('_x_')
     return {
         'log10': spy.Lambda(x, spy.log(x) / spy.log(10)),
@@ -118,8 +129,14 @@ def _make_local_parse(all_lines):
 
 def model_sympify(text):
     """`text` (R syntax) as a SymPy expression with every name but pi a Symbol, also S, N, E, I or beta."""
-    _, parse = _make_local_parse([str(text)])
-    return spy.sympify(parse(str(text)))
+    return _model_sympify(str(text))
+
+
+# the conditions and copies of a model repeat the same lines; SymPy expressions are immutable
+@functools.lru_cache(maxsize=1 << 16)
+def _model_sympify(text):
+    _, parse = _make_local_parse([text])
+    return spy.sympify(parse(text))
 
 
 def _read_equations(lines, parse):

@@ -93,6 +93,7 @@ def log_chart(obj, coords):
                                 for k, v in d["generator"].items()})
     o["info"]["coordinates"] = ren(list(coords))
     o["info"]["recast_coordinates"] = True
+    o["info"]["chart_names"] = dict((o["info"].get("chart_names") or {}), **dict(zip(X, th)))
     return {"object": o, "theta": th, "X": X, "base": bs, "ren": ren}
 
 
@@ -129,10 +130,11 @@ def exp_chart(obj, coords, positive):
         d["support"] = sym_sort(ren(d.get("support") or []))
     o["info"]["coordinates"] = ren(list(coords))
     o["info"]["recast_coordinates"] = True
+    o["info"]["chart_names"] = dict((o["info"].get("chart_names") or {}), **dict(zip(L, v)))
     return {"object": o, "v": v, "L": L, "ren": ren}
 
 
-def _chart_back(res, names_from, names_to, back):
+def _chart_back(res, names_from, names_to, back, domain_to=None):
     def unren(x):
         if x is None:
             return x
@@ -159,6 +161,9 @@ def _chart_back(res, names_from, names_to, back):
         if b.get("new_parameters"):
             b["new_parameters"] = {unren([k])[0]: back(v, k if k in names_from else None)
                                     for k, v in b["new_parameters"].items()}
+        if b.get("solved_domain"):
+            b["solved_domain"] = {unren([k])[0]: (domain_to if domain_to and k in names_from else v)
+                                  for k, v in b["solved_domain"].items()}
         blocks.append(b)
     res["blocks"] = blocks
     return res
@@ -168,7 +173,7 @@ def exp_back(res, ec):
     """The reduction result `res` mapped back from the exp coordinates `ec`."""
     def back(x, solve_for=None):
         return str(exp_chart_back(str(x).replace("^", "**"), ec["v"], ec["L"], solve_for)).replace("**", "^")
-    return _chart_back(res, ec["L"], ec["v"], back)
+    return _chart_back(res, ec["L"], ec["v"], back, "positive")
 
 
 def log_back(res, lc):
@@ -186,6 +191,23 @@ _SUB = "₀₁₂₃₄₅₆₇₈₉"
 WORK_CAP = 4000
 # seconds the section search of one block may take by default
 REDUCE_TIMEOUT = 600
+
+
+def model_structure(obj, coords):
+    """The structure of the model behind `obj` that the choice of pins uses: the coordinates that enter only the
+    observables, the states, and the unknown inputs with their jets."""
+    from .scaling import _ID
+    info = obj.get("info") or {}
+    unknown = (info.get("unknown_inputs") or {}).get("jets") or {}
+    jets = {j for js in unknown.values() for j in js}
+    rhs = {k: v for k, v in (info.get("model_rhs") or {}).items() if k not in jets}
+    dyn = set(rhs) | {x for v in rhs.values() for x in _ID.findall(str(v))}
+    orig = info.get("chart_names") or {}
+    obs = [c for c in coords if orig.get(c, c) not in dyn] if rhs else []
+    states = [c for c in coords if orig.get(c, c) in rhs]
+    reconstructed = bool((info.get("settings") or {}).get("reconstruct"))
+    return {"observation_only": obs, "states": list(dict.fromkeys(list(rhs) + states)), "unknown_inputs": unknown,
+            "reconstructed": reconstructed}
 
 
 def ordered(obj):
@@ -739,8 +761,13 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                 scal_pins.update(b["pins"])
         if curved_idx:
             blocks += curved(o["syms"], curved_idx, o["labels"], fixed, d_poly, d_darboux, d_exp,
-                             separable_, scal_pins)
+                             separable_, scal_pins, model_structure(obj, coords))
         blocks = verify_blocks(blocks)
+        for b in blocks:
+            # a linear-flow section requires every invariant to pass the exact check
+            if b.get("stage") == "linear flow" and any("DROPPED" in c for c in b.get("certificates") or []):
+                b.update(status="invariant_only", pins=None, transversal=None, new_parameters=None,
+                         injective=None, reach=None, reason="an invariant of the linear flow failed the exact check")
         for b in blocks:
             short = b.get("target") is not None and len(b.get("invariants") or []) < b["target"]
             for c in (b.get("certificates") or []) if b["type"] == "curved" and short else []:
@@ -750,7 +777,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
         dens = None
         gen_of = dict(zip(o["labels"], o["syms"]))
         for b in blocks:
-            if b["type"] != "curved" or not b.get("invariants"):
+            if b["type"] != "curved" or not b.get("invariants") or b.get("status") == "reduced":
                 continue
             if b.get("target") is not None and len(b["invariants"]) < b["target"]:
                 continue

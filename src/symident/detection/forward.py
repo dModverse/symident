@@ -89,6 +89,10 @@ def _basis(rp, nz, p):
     return null_basis_rows(rp, fc, p)
 
 
+# points of the shared bank of the forward route, each a kernel call
+_BANK_MAX = 600
+
+
 def _fit_entry(primes, bankU_rows, reli_cols, mons, vals_of, vars_):
     """Rational fit of one entry at every prime and the lift; None without a fit."""
     n_mon = mons.shape[0]
@@ -571,7 +575,8 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             ok_a.append(len(u) <= fwd_cap_dir and m <= ctrl["relevance_cap_sparse"])
         union_rel = sorted({x for a in range(len(acs)) if ok_a[a] for r in rel_by[a] for x in r})
 
-        d_cap = max(1, min(3, int(ctrl["degree_cap"])))
+        # an entry of a leaf solved from a resting balance has the degree of that balance plus one
+        d_cap = max(1, min(4, int(ctrl["degree_cap"])))
         bank = {"U": np.zeros((0, len(union_rel)), dtype=np.int64), "V": [[] for _ in primes]}
 
         def need_of(k, d):
@@ -607,13 +612,21 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             reli_cols = [union_rel.index(r) for r in reli]
             vars_ = [leaf_names[r] for r in reli]
             for d in range(d_cap + 1):
+                # a degree whose fit needs more points than the bank may hold is past reach, and so are the higher ones
+                if need_of(len(reli), d) > _BANK_MAX:
+                    break
                 mons = mono_table(len(reli), d)
                 if not fill_bank_to(need_of(len(reli), d)):
+                    if rdiag:
+                        print(f"[fwds] entry {znames[c9]}: {len(reli)} leaves, degree {d}: bank of "
+                              f"{len(bank['V'][0])} of {need_of(len(reli), d)} points")
                     continue
                 expr = _fit_entry(primes, bank["U"], reli_cols, mons,
                                   lambda jp, need: val_of(jp, a, c9, need), vars_)
                 if expr is not None:
                     return {"expr": expr, "reli": vars_}
+            if rdiag:
+                print(f"[fwds] entry {znames[c9]}: no fit up to degree {d_cap} in {vars_}")
             return None
 
         ptv = vver = None

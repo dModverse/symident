@@ -414,16 +414,22 @@ class _Setup:
         seen = False
         for _ in range(3):
             pt = {x: rng.randrange(2, p) for x in sorted(syms, key=str)}
+            order = len(self.dyn) + 2
+            # the jets to a few orders first: a difference there decides, and the cost grows with the cube
+            # of the order
+            n = min(order, 8)
             try:
                 pt[sol[0]] = output_series({}, [sol[1]], pt, 1, p)[0][0]
-                va = output_series({_sym(k): v for k, v in fa.items()}, [ha[y] for y in ys], pt,
-                                   len(self.dyn) + 2, p)
-                vb = output_series({_sym(k): v for k, v in fb.items()}, [hb[y] for y in ys], pt,
-                                   len(self.dyn) + 2, p)
+                while True:
+                    va = output_series({_sym(k): v for k, v in fa.items()}, [ha[y] for y in ys], pt, n, p)
+                    vb = output_series({_sym(k): v for k, v in fb.items()}, [hb[y] for y in ys], pt, n, p)
+                    seen = any(x != y for A, B, c in zip(va, vb, caps)
+                               for x, y in list(zip(A, B))[:None if c is None else c + 1])
+                    if seen or n >= order:
+                        break
+                    n = min(order, 2 * n)
             except NoSeriesError:
                 continue
-            seen = any(x != y for A, B, c in zip(va, vb, caps)
-                       for x, y in list(zip(A, B))[:None if c is None else c + 1])
             break
         memo[key] = seen
         return seen
@@ -765,8 +771,22 @@ def _regular_zero(e, sub):
     return not any(spy.diff(e, a).xreplace(sub).has(*_INFINITE) for a in e.free_symbols & sub.keys())
 
 
-def _zero_set(st, cd):
-    """The states that start at zero in `cd` and that every allowed regime and every later event keep at zero."""
+def _zero_set(st, cd, memo=None):
+    """The states that start at zero in `cd` and that every allowed regime and every later event keep at zero;
+    `memo` keeps the tests of _regular_zero across conditions, which repeat the same right-hand sides."""
+    memo = {} if memo is None else memo
+
+    def regular(e, sub):
+        e = spy.sympify(e)
+        fs = memo.get(("free", e))
+        if fs is None:
+            fs = memo[("free", e)] = e.free_symbols
+        # the test reads the states of `sub` that `e` holds
+        key = (e, frozenset(x for x in fs if x in sub))
+        r = memo.get(key)
+        if r is None:
+            r = memo[key] = _regular_zero(e, sub)
+        return r
     zs = {x for x, v in _start_values(st, cd).items() if v is not None and is_zero(v)}
     fields = [st.model(cd, r)[0] for r in cd.regimes]
     later = [(e["var"], e["method"], e["value"]) for e in cd.events if not e["t0"]] + \
@@ -778,7 +798,7 @@ def _zero_set(st, cd):
     check = set(zs)
     while check:
         sub = {_sym(x): spy.Integer(0) for x in zs}
-        drop = {x for x in check if not (all(_regular_zero(f[x], sub) for f in fields) and
+        drop = {x for x in check if not (all(regular(f[x], sub) for f in fields) and
                 all(is_zero(_compose(spy.Integer(0), m, spy.sympify(v).xreplace(sub))) for var, m, v in later
                     if var == x))}
         zs -= drop
@@ -789,7 +809,8 @@ def _zero_set(st, cd):
 def zero_restriction(hy, kw, regimes=None):
     """(kw, states, notes, setup): the model without the states every condition, regime and event keeps at zero."""
     st = _Setup(hy, kw, regimes)
-    per = {cd.name: _zero_set(st, cd) for cd in st.conds}
+    memo = {}
+    per = {cd.name: _zero_set(st, cd, memo) for cd in st.conds}
     shared = set.intersection(*per.values()) if per and regimes is None else set()
     kw2 = _without_states(kw, sorted(shared, key=str)) if shared else None
     common = shared if kw2 is not None else set()
@@ -1452,7 +1473,8 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
                               "; ".join(f"{c}: {', '.join(st.text(r))} ({k})" for c, r, k in miss))
         jet_fresh = _jet_values(copies, jets, names)
         rows = _rows_model(st, copies, fresh, jets, jet_fresh, order)
-        with state.options(keep_kernel=True, random_kernel=True):
+        # the closed forms below read only directions without fresh coordinates
+        with state.options(keep_kernel=True, random_kernel=True, open_coords=tuple(fresh)):
             res = detection_with_primes(rows)
         short = bool((res["info"].get("nuisance") or {}).get("short"))
         # the chains are lengthened until exact at every Lie order taken

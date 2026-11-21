@@ -278,3 +278,85 @@ def test_the_totals_of_a_benchmark_model_are_conserved_exactly(name):
     from symident.detection.cq import check_conserved
     m = bench(name)
     check_conserved(dict(m.totals or {}), m.odes)
+
+
+def test_a_table_with_a_byte_order_mark_keeps_the_name_of_the_first_column(tmp_path):
+    from symident.petab import _table
+    p = tmp_path / "conditions.tsv"
+    p.write_bytes("﻿conditionId\tk\nc1\t2\n".encode())
+    assert _table(p) == [{"conditionId": "c1", "k": "2"}]
+
+
+def test_a_parameter_named_by_an_initial_assignment_takes_the_value_of_the_condition(tmp_path):
+    # a parameter named by an initial assignment takes the value of the named one, which a condition changes
+    libsbml = pytest.importorskip("libsbml")
+    doc = libsbml.SBMLDocument(3, 2)
+    model = doc.createModel()
+    c = model.createCompartment()
+    c.setId("V"), c.setSize(1), c.setConstant(True)
+    x = model.createSpecies()
+    x.setId("x"), x.setCompartment("V"), x.setInitialConcentration(1), x.setHasOnlySubstanceUnits(False)
+    x.setBoundaryCondition(False), x.setConstant(False)
+    for name, value in (("k", 1), ("ks", 2), ("m", 0)):
+        p = model.createParameter()
+        p.setId(name), p.setValue(value), p.setConstant(True)
+    model.createInitialAssignment().setSymbol("m")
+    model.getInitialAssignment("m").setMath(libsbml.parseL3Formula("ks"))
+    r = model.createReaction()
+    r.setId("syn"), r.setReversible(False)
+    ref = r.createProduct()
+    ref.setSpecies("x"), ref.setStoichiometry(1), ref.setConstant(True)
+    r.createKineticLaw().setMath(libsbml.parseL3Formula("m - k*x"))
+    libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
+    (tmp_path / "conditions.tsv").write_text("conditionId\tks\nc1\t\nc2\t0\n")
+    (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tx\t1\n")
+    (tmp_path / "measurements.tsv").write_text("observableId\tsimulationConditionId\ttime\tmeasurement\n"
+                                               "obs\tc1\t1\t1\nobs\tc2\t1\t1\n")
+    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\nks\tlin\t0\t10\t2\t0\n")
+    (tmp_path / "p.yaml").write_text("format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
+                                     "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
+                                     "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n")
+    m = si.read_petab(str(tmp_path / "p.yaml"))
+    vals = [str(t.get("m")).strip("()") for t in m.trafo]
+    assert vals == ["2", "0"] and "ks" not in str(m.odes) + str(m.trafo)
+
+
+@pytest.mark.parametrize("xi0", [1, 0])
+def test_a_parameter_that_no_period_changes_leaves_no_input(tmp_path, xi0):
+    # a parameter that both periods set to the same value gets no input, one that changes keeps it; a state that
+    # starts at 0 then stays 0 and leaves the model
+    libsbml = pytest.importorskip("libsbml")
+    doc = libsbml.SBMLDocument(3, 2)
+    model = doc.createModel()
+    c = model.createCompartment()
+    c.setId("V"), c.setSize(1), c.setConstant(True)
+    for sp in ("x", "xi"):
+        x = model.createSpecies()
+        x.setId(sp), x.setCompartment("V"), x.setInitialConcentration(xi0 if sp == "xi" else 1)
+        x.setHasOnlySubstanceUnits(False), x.setBoundaryCondition(False), x.setConstant(False)
+    for name, value in (("k", 1), ("ks", 1), ("inh", 0), ("kb", 1)):
+        p = model.createParameter()
+        p.setId(name), p.setValue(value), p.setConstant(True)
+    for rid, prod, law in (("syn", "x", "ks - k*x"), ("bind", "xi", "inh*kb*x - xi")):
+        r = model.createReaction()
+        r.setId(rid), r.setReversible(False)
+        ref = r.createProduct()
+        ref.setSpecies(prod), ref.setStoichiometry(1), ref.setConstant(True)
+        r.createKineticLaw().setMath(libsbml.parseL3Formula(law))
+    libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
+    (tmp_path / "conditions.tsv").write_text("conditionId\tks\tinh\npre\t1\t0\nsim\t2\t0\n")
+    (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tx + xi\t1\n")
+    (tmp_path / "measurements.tsv").write_text("observableId\tpreequilibrationConditionId\tsimulationConditionId"
+                                               "\ttime\tmeasurement\nobs\tpre\tsim\t1\t1\n")
+    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\nkb\tlog10\t0.1\t10\t1\t1\n")
+    (tmp_path / "p.yaml").write_text("format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
+                                     "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
+                                     "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n")
+    m = si.read_petab(str(tmp_path / "p.yaml"))
+    assert "ks_si_input" in m.inputs and "inh_si_input" not in m.inputs
+    assert "inh_si_input" not in str(m.odes) + str(m.events)
+    assert ("xi" in m.odes) == (xi0 == 1)
+    # a parameter that only vanishing terms hold has no effect
+    assert m.petab["without_effect"] == ["kb"]

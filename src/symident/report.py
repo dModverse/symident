@@ -437,6 +437,16 @@ def _section_reason(b, what, domain):
     out = [f"{labs} moves {moved}. Constant along each orbit:"]
     inv = b.get("new_parameters") or {}
     out += [("  ", k, v) for k, v in inv.items()]
+    if b.get("stage") == "linear flow":
+        logs = [k for k, v in (b.get("solved_domain") or {}).items() if v == "positive"]
+        logs += [k for k, v in (b.get("pins") or {}).items() if v == "1"]
+        t = ", ".join(b.get("transversal") or [])
+        coords = f", taking the logarithm of {', '.join(logs)}," if logs else ""
+        out.append(f"In the moved coordinates{coords} every component of {labs} depends only on coordinates "
+                   f"that {labs} does not move, so each orbit is an affine subspace on which every moved "
+                   f"coordinate takes every real value. The components on {t} form a minor of one sign on the "
+                   f"{domain}, so {what} holds at exactly one point of every orbit.")
+        return out
     sec = set(b.get("section") or [])
     pins = b.get("pins") or {}
     pt = {k: v for k, v in pins.items() if f"{k} = {v}" not in sec}

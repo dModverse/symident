@@ -1,3 +1,151 @@
+# symident 0.17.0
+
+## Steady states
+
+* `equilibrate` supports every non-rational term the recast handles: exponentials and powers
+  `b^x` of states, logarithms, trigonometric and hyperbolic functions and their inverses of
+  expressions in the resting states, and exponentials of the clock. A term at rest becomes a leaf
+  drawn independently of the resting states, which are solved from the balances at the drawn
+  values.
+* This is exact where the resting set is Zariski dense in the algebraic set of the balances
+  (docs, "Terms of resting states"). The density holds under two conditions: the resting values
+  of the states inside the terms vary independently of the coordinates inside them, and no
+  integer combination of the arguments is constant. The first condition is checked at the base
+  point, and an `InputError` names the states where it fails.
+* A state that enters the balances only through leaves has the resting value drawn and one leaf
+  solved from the balance. `info["settings"]["rest_leaves"]` lists the resting states inside
+  non-rational terms with their leaves, and under `drawn` the states whose resting value is drawn.
+* Refused at rest: conditions with different resting models where a state at rest enters a
+  non-rational term, and roots or rational powers of expressions in the states.
+* Before the analysis, msolve solves the resting balances at three random parameter values.
+  Balances without a complex solution at all three raise an `InputError`. Where no real solution
+  lies in the declared domain at some of the values, a warning is given, and `info["resting"]`
+  holds the counts. This is a check at random points, not a proof, and it does not consider
+  stability. Resting models with leaves of non-rational terms or more than twelve resting states
+  are not checked.
+
+## Reduction
+
+* A block of directions that, in linear coordinates and logarithms of positive coordinates, moves
+  every coordinate at a rate that depends only on coordinates the block does not move is a linear
+  flow, reduced before the invariant search. The orbits are affine subspaces. Pins on coordinates
+  whose minor of the components has one sign give a global section with `injective` and `reach`
+  proven. An offset that enters only the observables is pinned first, an initial value last. The
+  other moved coordinates keep their names and stand for the invariants.
+* The functional independence of invariants is decided by a Jacobian minor in interval arithmetic
+  at a rational point, which needs no exact powers of rationals for exponential invariants.
+* A direction of a model with unknown inputs whose components depend on states or inputs is
+  reported as no vector field on the parameters, with the unknown inputs that absorb it.
+* A direction without closed form after a detection with `reconstruct=True` is reported at level
+  open, without the advice to rerun the reconstruction.
+* A root with the imaginary unit of a triangular invariant system is dropped as a branch without a
+  real section, and the solution is marked incomplete.
+
+## Detection
+
+* An observable that is 0/0 at the start, such as a quotient of sums of states that all start at
+  0, is analyzed. The kernel takes a reciprocal of a series without constant value outside the
+  right-hand sides as a Laurent series, expands the states further by the orders the division
+  costs, and uses the coefficients of the prediction as rows. The stopping rule of the Lie order
+  holds for these rows, with the coefficients along the states, poles included, in place of the
+  Lie derivatives at the start (docs, "Singular starts").
+* A free power `x^n` of a state that starts at 0, such as a Hill term of a species absent at the
+  start, is analyzed. With `x = c t^k + ...`, the kernel expands the model in `t` and
+  `S = (c t^k)^n`. The coefficients give the rows, and the terms in `log t` give a row for the
+  exponent; this is exact for generic exponents `n > 0`. The Lie order is not proven sufficient
+  there, and `info["limits"]` says so. Supported are powers `x^(c0 + c*n)` with integers
+  `c0 >= 0` and `c > 0`, one exponent per state and one state per exponent, without events and
+  `equilibrate`, and with the state at 0 in every condition.
+* Exact scalings may move the resting states of some conditions only, such as a total that one
+  parameter scales in part of the experiments together with the scale factors of the observables
+  there. The parameter weights are those that extend to the states of every condition, found
+  condition by condition from the left null space of the state columns. Each condition is checked
+  with the state weights of that condition.
+* A logarithm, fractional power or base of a free exponent whose argument the declared signs do
+  not make positive is analyzed. Rank and kernel are taken at generic values, where every argument
+  is nonzero, so the detection needs no sign. `info["limits"]` names the argument.
+* The rank bound that proves the gap order sufficient stops once a symbolic Lie derivative grows
+  past the size cap, measured on the expression tree before the expansion.
+* The rewrite of a direction from resting states into coordinates tries each set of solved
+  equations and coordinates once and stops after a fixed number of steps. The direction then stays
+  in the resting states.
+* The forward route fits an entry up to degree 4, the degree of a leaf of a non-rational term that
+  is solved from a resting balance. A degree whose fit needs more points than the bank holds is
+  skipped, with the higher ones.
+* The closed forms from Taylor jets bound the size of a jet from the expression tree and print the
+  jet only where the bound does not already exceed the size limit.
+* In a model with switches, a direction whose free column is a fresh coordinate of a switch
+  surface stays open with the kernel support: the closed forms that the switch rule reads hold no
+  fresh coordinate.
+
+## Large models
+
+* Each chain of segments (a condition with events, or a copy of a condition in a regime of a
+  switch) is built over the coordinates that the tapes of the chain read, for the rank profiles,
+  the kernels of the saturation and of the closed forms, and the ranks of the Lie-order
+  certificate. The other columns of the rows are zero, so ranks and kernels are unchanged.
+* The stacked kernel over all chains is the reduced form of the stacked reduced rows of the chains,
+  with the series rows reduced together. Where a chain changes the rows at the end of the gaps, the
+  joint build is used.
+* The jets of a chain are built once per point, prime and gap order and kept unreduced, each row
+  with the Lie order. The coefficients at an order do not depend on the order the jets are taken
+  to, so the kernel at a lower order reduces the rows up to that order. The rank profiles of the
+  saturation, the kernel at the order the scan stops at, the lowered caps and the stacked kernels
+  read the same jets. The kernel of a chain alone is kept for the point, prime and orders it was
+  taken at.
+* The next rank profile goes to the order at which the rank reaches the columns of the chain at the
+  current rate, at most four times the last order. The rank profiles of the chains run in
+  parallel, one thread per chain.
+* With recast atoms (free exponents, exponentials, trigonometric functions), each chain of the
+  saturation is taken to the saturated Lie order of that chain. The relation rows of the atoms join
+  the stacked rows and do not change the rows of a chain.
+* A chain of one segment has no gap: the rows at gap order 1 or more are those at gap order 0 with
+  zero rows of the gap monomials.
+* The certificate of the Lie order starts the blocks with the most lanes over their segments and
+  the highest saturated orders first, and takes the generic and the start ranks of a block side by
+  side. The ranks at an order do not depend on the order taken, so the orders 16, 32, 64, ... of
+  the sequence are checked on prefixes of ranks taken once. The first ranks of a block go a tenth
+  past the saturated order, later ones to the order at which the ranks reach their plateau at the
+  current rate. A block whose generic ranks have reached their plateau takes only the start ranks
+  to higher orders.
+* The free columns whose kernel vectors leave the span of the scalings are found from one reduced
+  form of all kernel vectors side by side. The minimal-support gauge and the selection of
+  independent directions test their vectors against a span kept in reduced form.
+* Whether two regimes of a switch give different observable jets is decided from the jets to a few
+  orders first, doubling the order up to the full one only while they agree.
+* Conditions and segments that repeat the same entries are handled once per distinct text or
+  expression: the form checks of the arguments, the parsing of model lines, the search for
+  coordinates that enter only as `b^theta`, the logarithmic chart, the trigonometric recast, the
+  tests for non-rational terms, the zero sets of the regimes of a switch, the degree bounds of the
+  certificate and the substitutions of the tape compiler. The error bound of the projection of a
+  model with switches parses the parameter rules of a copy once.
+* The degrees of the field do not change under a renaming of the symbols and are shared by the
+  copies of a model that differ only in names. `detect()` copies dicts and lists of strings of the
+  model directly, not through `copy.deepcopy`.
+* The Taylor coefficients of values that are constant in time, the parameters and what the tape
+  forms from them alone, are not formed past order 0, and a product with one takes a single term.
+* The Taylor values of a column block take an eighth of the physical memory over the cores,
+  between 256 MB and 1 GB (`SYMIDENT_BLOCKMB` overrides it).
+
+## PEtab
+
+* A table that starts with a byte order mark keeps the name of the first column.
+* A parameter that a later period sets to the value it already has, in every experiment, gets no
+  input: the terms of that input leave the model, so a parameter that only such terms hold is
+  found exactly as without effect.
+* States that start at 0 in every experiment, that no event sets and whose rates vanish where all
+  of them are 0 stay at 0, also through a preequilibration that starts from these values. They
+  leave the model, and so do the parameters that only their terms hold.
+* An estimated parameter that only terms vanishing in every experiment hold gives a warning and is
+  listed in `m.petab["without_effect"]`.
+* A parameter value that names another parameter, such as an SBML initial assignment `k = k_syn`,
+  takes the value of that parameter in each experiment, also where a condition changes it.
+
+## Other
+
+* An expression that holds a Python keyword as a name, such as `and` or `lambda`, raises an
+  `InputError` that names the keyword.
+
 # symident 0.16.1
 
 * `install_msolve()` links msolve with `-pthread`, which the thread pool of FLINT needs. On

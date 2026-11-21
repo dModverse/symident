@@ -32,10 +32,16 @@ class JointSystem(RestingStates):
         is_equil = [len(strs(t.get("constraint_model"))) > 0 and run.first_of_chain[i]
                     for i, t in enumerate(multi["tapes"])]
         self.recast = list(multi.get("power_recast") or [])
-        self.real_state_names = strs(multi.get("real_state_names")) if self.recast else self.state_names
+        # power recasts and the states of other recasts, which start at their leaf values, are no resting unknowns
+        self.real_state_names = strs(multi.get("real_state_names")) if (self.recast or multi.get("rest_aux")) \
+            else self.state_names
         gen_names = [str(r["base"]) if r.get("inverted") else str(r["E"]) for r in self.recast]
         self.l_names = list(dict.fromkeys(str(r["L"]) for r in self.recast))
         held_solve = {str(v) for v in self.held_state_params.values()}
+        # a state that enters the balance only through leaves is drawn, and one leaf of the state is solved
+        inverted = {str(k): str(v) for k, v in (multi.get("rest_inverted") or {}).items()}
+        gen_names += list(inverted)
+        held_solve |= set(inverted.values())
         self.solve_param_names = [n for n in self.param_names + gen_names if n not in held_solve]
         self.held_param_of = {str(k): str(v) for k, v in self.held_state_params.items()}
         self.held_names = [n for n in self.held_param_of
@@ -109,7 +115,8 @@ class JointSystem(RestingStates):
         self.fwd_solve_cache = {}
         self.fwd_cond = self.equil_conds[0] if self.equil_conds else None
         self.fwd_rates = None
-        self.fwd_banned = []
+        # the leaves of non-rational terms are drawn, never solved from the balances
+        self.fwd_banned = [n for n in strs(multi.get("exp_atoms")) if n in set(self.solve_param_names)]
         self.fwd_on = not any(r.get("inverted") for r in self.recast) and not state.env("NOFWDSEED")
         self.cont_t = max(1, int(run.ctrl["gap_order_cap"]))
         n_eq = (max(self.equil_conds) + 1) if self.equil_conds else 0
@@ -149,7 +156,8 @@ class JointSystem(RestingStates):
         reps = list({self.model_key[ci]: ci for ci in reversed(self.equil_conds)}.values())
         if len(reps) < 2 and not self.held_names:
             return None
-        cand = [n for n in self.solve_param_names if run.slot(n) is not None and n not in self.l_names]
+        cand = [n for n in self.solve_param_names if run.slot(n) is not None and n not in self.l_names
+                and n not in self.fwd_banned]
         try:
             ds = DiagonalStart(self.models, reps, self.fwd_cond, self.held_of, cand, keep=self.held_names)
         except SYMPY_FAILS as exc:

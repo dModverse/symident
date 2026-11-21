@@ -87,7 +87,8 @@ SWITCHES = {
     "VERIFY_MARGIN": ("number", "orders the saturation guard checks past the reported one (6)"),
     "JETWORK": ("number", "characters of jets the jet route may form (1000000)"),
     "DIRECTSECS": ("number", "seconds msolve may take for the direct kernel (120)"),
-    "BLOCKMB": ("number", "megabytes of Taylor values per column block of the kernel (256); environment only"),
+    "BLOCKMB": ("number", "megabytes of Taylor values per column block of the kernel (an eighth of the physical "
+                          "memory over the cores, 256 to 1024); environment only"),
     "MSOLVE": ("install", "path of the msolve executable"),
     "CACHE": ("install", "directory of the symident cache"),
     "MSOLVE_VERSION": ("install", "msolve version install_msolve() builds"),

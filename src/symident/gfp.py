@@ -202,6 +202,61 @@ def null_basis_rows(res, free_cols, p):
     return out
 
 
+class SpanTest:
+    """Membership in the column span of the nz-row matrix M over GF(p), as in_span(), for many vectors: the
+    columns are kept in reduced form, so a vector is reduced by one product with them; add() extends the
+    span."""
+
+    def __init__(self, M, nz, p):
+        self.p, self.nz, self.k = int(p), int(nz), 0
+        self.rows = np.zeros((8, self.nz), dtype=np.int64)
+        self.piv = np.zeros(8, dtype=np.int64)
+        M = np.asarray(M, dtype=np.int64).reshape(self.nz, -1)
+        self.empty = M.shape[1] == 0
+        for j in range(M.shape[1]):
+            self.add(M[:, j])
+
+    def _times(self, c, R):
+        # c @ R mod p in two 16-bit halves of c, so that no sum leaves int64
+        p = self.p
+        lo, hi = c & 0xFFFF, c >> 16
+        return ((hi @ R) % p * 65536 + (lo @ R) % p) % p
+
+    def _reduce(self, v):
+        v = np.asarray(v, dtype=np.int64) % self.p
+        if not self.k:
+            return v
+        c = v[self.piv[:self.k]]
+        nzr = np.nonzero(c)[0]
+        if not len(nzr):
+            return v
+        return (v - self._times(c[nzr], self.rows[nzr])) % self.p
+
+    def __contains__(self, v):
+        return not self.empty and not np.any(self._reduce(v))
+
+    def add(self, v):
+        """The column v joins the span."""
+        self.empty = False
+        p = self.p
+        v = self._reduce(v)
+        nzc = np.nonzero(v)[0]
+        if not len(nzc):
+            return
+        c = int(nzc[0])
+        v = v * invmod(int(v[c]), p) % p
+        # the other rows lose their entry in the new pivot column
+        hit = np.nonzero(self.rows[:self.k, c])[0]
+        if len(hit):
+            f = self.rows[hit, c]
+            self.rows[hit] = (self.rows[hit] - (f[:, None] * v[None, :]) % p) % p
+        if self.k == self.rows.shape[0]:
+            self.rows = np.vstack([self.rows, np.zeros_like(self.rows)])
+            self.piv = np.concatenate([self.piv, np.zeros_like(self.piv)])
+        self.rows[self.k], self.piv[self.k] = v, c
+        self.k += 1
+
+
 def in_span(M, x, nz, p):
     """Whether x lies in the column span of the nz-row matrix M over GF(p)."""
     M = np.asarray(M, dtype=np.int64).reshape(nz, -1)
@@ -444,19 +499,19 @@ def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20
                 add(v)
 
     found, sel = [], np.zeros((nz, 0), dtype=np.int64)
-    base = scal_rows.T.copy()
+    base = SpanTest(scal_rows.T, nz, P)
     ranked = sorted(cands.values(), key=lambda t: (t[0], t[1]))
     # every minimal support outside the scalings: which of them the greedy pick below takes
     # depends on the column order, so the narrow route tries the others too
-    circuits = [(v, supp[0]) for _, supp, v in ranked if not in_span(base, v, nz, P)]
+    circuits = [(v, supp[0]) for _, supp, v in ranked if v not in base]
     for _, supp, v in ranked:
         if len(found) >= k:
             break
-        if in_span(base, v, nz, P):
+        if v in base:
             continue
         found.append({"supp": list(supp), "anchor": supp[0], "S": list(supp)})
         sel = np.concatenate([sel, v.reshape(nz, 1)], axis=1)
-        base = np.concatenate([base, v.reshape(nz, 1)], axis=1)
+        base.add(v)
     if not found:
         return dict(raw, circuits=circuits)
 

@@ -377,14 +377,16 @@ def test_a_resting_branch_is_named_and_analyzed():
     assert (r.rank, r.dim) == (explicit.rank, explicit.dim)
 
 
-def test_recast_arguments_need_the_declared_domain():
-    with pytest.raises(ValueError, match=r"\bK\b"):
-        detect({"x": "-k*x"}, {"y": "log(K)*x"}, positive=["k", "x"])
-    with pytest.raises(ValueError, match=r"\bx\b.*not declared positive"):
-        detect({"x": "-k*x^n"}, {"y": "x"}, positive=["k", "n"])
-    with pytest.raises(ValueError, match=r"\ba\b"):
-        detect({"x": "-k*x"}, {"y": "x"}, trafo={"x": "sqrt(a)"}, positive=["k", "x"])
-    assert detect({"x": "-k*x"}, {"y": "log(K)*x"}, positive=["k", "x", "K"]).rank == 2
+def test_recast_arguments_without_declared_sign_are_noted():
+    # the rank is generic: an argument without declared sign gives the same result and a note
+    for kw, pos in [(dict(f={"x": "-k*x"}, g={"y": "log(K)*x"}), ["k", "x"]),
+                    (dict(f={"x": "-k*x^n"}, g={"y": "x"}), ["k", "n"]),
+                    (dict(f={"x": "-k*x"}, g={"y": "x"}, trafo={"x": "sqrt(a)"}), ["k", "x"])]:
+        free = detect(kw["f"], kw["g"], trafo=kw.get("trafo"), positive=pos)
+        signed = detect(kw["f"], kw["g"], trafo=kw.get("trafo"), positive=True)
+        assert (free.rank, free.dim) == (signed.rank, signed.dim)
+        assert any("not declared positive" in x for x in free.info["limits"])
+        assert not any("not declared positive" in x for x in signed.info["limits"])
 
 
 def test_an_event_scaling_is_an_exact_scaling_without_reconstruct():
@@ -606,8 +608,8 @@ def test_log_observable_of_an_eliminated_species():
     r_f = detect(**args, observables=obs, reduce_cq=False, positive=pos + ["oB"])
     assert (r_t.rank, r_t.dim) == (r_f.rank, r_f.dim)
     for p in (pos + ["c"], True):
-        with pytest.raises(ValueError, match="needs a positive argument"):
-            detect(**args, observables={"yA": "log(sA * A - c)", "yB": "sB * B"}, reduce_cq=True, positive=p)
+        r = detect(**args, observables={"yA": "log(sA * A - c)", "yB": "sB * B"}, reduce_cq=True, positive=p)
+        assert any("needs a positive argument" in x for x in r.info["limits"])
 
 
 def test_equilibrate_held_variable_moiety():
@@ -786,9 +788,9 @@ def test_log_parameters_and_log_observables():
     # an offset on a log observable is a translation; a scale on it needs A > 0
     off = detect(f, {"y": "log(A) + c"}, reconstruct=True)
     assert off.rank == 3
-    with pytest.raises(Exception, match=r"a\*log\(h\)"):
-        detect(f, {"y": "s*log(A)"}, positive=False)
-    detect(f, {"y": "s*log(A)"})
+    free = detect(f, {"y": "s*log(A)"}, positive=False)
+    signed = detect(f, {"y": "s*log(A)"})
+    assert (free.rank, free.dim) == (signed.rank, signed.dim)
     # a parameter that also enters outside an exponent stays a coordinate
     both = detect({"A": "-exp(lk)*A + lk"}, {"y": "A"})
     assert both.identifiable is True
@@ -1838,9 +1840,11 @@ def test_the_clock_under_equilibrate_is_an_input_from_the_start():
     rest = detect(f, {"y": "x"}, inputs=["u"], events=[event("u", "-1", "1")], equilibrate=True)
     told = detect(f, {"y": "x"}, trafo={"x": "(kb - c)/k"}, events=[event("u", "-1", "1")])
     assert brief(rest) == brief(told)
-    with pytest.raises(ValueError, match="clock"):
-        detect({"x": "kb + kin*u*exp(-a*time) - k*x", "u": "0"}, {"y": "x"}, inputs=["u"],
-               events=[event("u", "0", "1")], equilibrate=True)
+    # exp() of the clock rests at one and decays from the start
+    f = {"x": "kb + kin*u*exp(-a*time) - k*x", "u": "0"}
+    rest = detect(f, {"y": "x"}, inputs=["u"], events=[event("u", "0", "1")], equilibrate=True)
+    told = detect(f, {"y": "x"}, trafo={"x": "kb/k", "u": "1"})
+    assert brief(rest) == brief(told)
 
 
 def _scaling_rows(r):
@@ -2114,3 +2118,15 @@ def test_each_direction_has_the_kind_of_its_orbits():
     assert [b["labels"] for b in red["blocks"]][0] == ["X₁"]
     out = json.loads(rjson.detect_json(json.dumps({"f": m.odes, "g": m.observables, "reconstruct": True})))
     assert sorted(d["kind"] for d in out["symmetries"]) == ["scaling", "translation"]
+
+
+def test_a_scaling_that_moves_the_states_of_some_resting_conditions_only_is_exact():
+    # a parameter scales the total in some conditions only, with the resting states and the scale factors there
+    ev = [{"var": "u", "time": "0", "value": "1"}]
+    tr = [{"H": h, "u": "0"} for h in ("0", "1", "1", "0")]
+    r = detect({"P": "r*(1+u)*(exp(H*d) - P) - ki*P", "u": "0"}, [{f"y{i}": f"s{i}*P"} for i in range(4)],
+               trafo=tr, conditions={"rows": [f"c{i}" for i in range(4)], "cols": {}}, events=ev, inputs=["u"],
+               equilibrate=True, reconstruct=True)
+    assert (r.rank, r.dim) == (6, 7) and r.info["rank_status"]["status"] == "proven"
+    (d,) = r.symmetries
+    assert d.level == "exact" and d.generator == {"d": "1", "s1": "-s1", "s2": "-s2"}

@@ -304,6 +304,12 @@ def tri_solve(sys_, vars_, info=None):
                 continue
             here = {"complete": True}
             roots = roots_in(eq, v, here)
+            # a root with the imaginary unit gives no real section: the branch of the root is dropped
+            # and counts as missing
+            real = [r for r in roots if not r.has(spy.I)]
+            if len(real) < len(roots):
+                here["complete"] = False
+                roots = real
             if info is not None and not here["complete"]:
                 info["complete"] = False
             if not roots:

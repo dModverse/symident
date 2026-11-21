@@ -337,6 +337,108 @@ def _scaling_gens_recast(gens, znames, nz, recast):
     return out
 
 
+def scaling_symmetries_per_condition(per_cond_model, per_cond_obs, inputs=None, fixed=None,
+                                     extra_model=None, extra_obs=None):
+    """Scalings whose state weights may differ between conditions, as {'params': {name: w}, 'states': [{state: w}]}
+    with one state dict per condition and integer weights.
+
+    The rows of condition c over the states of c and the shared parameters are [A_c | B_c]. A parameter weight p
+    extends to the states of condition c exactly when B_c p lies in the column space of A_c, i.e. when n B_c p = 0
+    for every n with n A_c = 0; the state weights s_c then solve A_c s_c = -B_c p. A condition whose states do not
+    move keeps weight 0 on them."""
+    per_cond_model = [_as_list(m) for m in per_cond_model]
+    per_cond_obs = [_as_list(o) for o in per_cond_obs]
+    K = len(per_cond_model)
+    extra_model = [_as_list(m) for m in (extra_model or [[] for _ in range(K)])]
+    extra_obs = [_as_list(o) for o in (extra_obs or [[] for _ in range(K)])]
+    if K < 2:
+        return []
+    inputset, fixedset = set(_as_list(inputs)), set(_as_list(fixed))
+    local, parse = _make_local_parse([l for ls in per_cond_model + per_cond_obs + extra_model + extra_obs for l in ls])
+    state_names = [_clean(l).split('=', 1)[0].strip() for l in per_cond_model[0]]
+    state_syms = [local.get(nm, spy.Symbol(nm)) for nm in state_names]
+    m = len(state_syms)
+    systems, paramset = [], set()
+    for c in range(K):
+        rhs = {}
+        for l in per_cond_model[c]:
+            lhs, expr = _clean(l).split('=', 1)
+            rhs[lhs.strip()] = spy.sympify(parse(expr))
+        if set(rhs) != set(state_names):
+            return []
+        f = [rhs[nm] for nm in state_names]
+        g = [spy.sympify(parse(_clean(l).split('=', 1)[1])) for l in per_cond_obs[c]]
+        xf = []
+        for l in extra_model[c]:
+            lhs, expr = _clean(l).split('=', 1)
+            if lhs.strip() in state_names:
+                xf.append((state_names.index(lhs.strip()), spy.sympify(parse(expr))))
+        xg = [spy.sympify(parse(_clean(l).split('=', 1)[1])) for l in extra_obs[c]]
+        for e in f + g + [e for _, e in xf] + xg:
+            paramset |= set(e.free_symbols)
+        systems.append((f, g, xf, xg))
+    paramset -= set(state_syms)
+    paramset -= {local.get(nm, spy.Symbol(nm)) for nm in inputset}
+    params = sorted(paramset, key=spy.default_sort_key)
+    zvars = state_syms + params
+    nz, npar = len(zvars), len(params)
+    blocks = []
+    for f, g, xf, xg in systems:
+        seen, rows = set(), []
+        sparse, _ = _scaling_rows(f, g, m, zvars, False, seen)
+        rows += sparse
+        pending = list(xf)
+        while pending:
+            fx, rest, used = [spy.Integer(0)] * m, [], set()
+            for i, e in pending:
+                if i in used:
+                    rest.append((i, e))
+                else:
+                    fx[i] = e
+                    used.add(i)
+            pending = rest
+            rows += _scaling_rows(fx, [], m, zvars, False, seen)[0]
+        if xg:
+            rows += _scaling_rows([spy.Integer(0)] * m, xg, m, zvars, False, seen)[0]
+        M = spy.Matrix(_materialize_rows(rows, nz)) if rows else spy.zeros(0, nz)
+        blocks.append((M[:, :m], M[:, m:]))
+    cons = []
+    for A, B in blocks:
+        if A.rows == 0:
+            continue
+        # without states every row constrains the parameters directly
+        lefts = A.T.nullspace() if m else [spy.eye(A.rows).col(i) for i in range(A.rows)]
+        for n in lefts:
+            row = n.T * B
+            if any(x != 0 for x in row):
+                cons.append([spy.Rational(x) for x in row])
+    for j, p in enumerate(params):
+        if str(p) in fixedset:
+            cons.append([1 if k == j else 0 for k in range(npar)])
+    out = []
+    for pv in _scaling_gens(cons, npar) if npar else []:
+        p = spy.Matrix([spy.Rational(x) for x in pv])
+        sts, scale = [], 1
+        for A, B in blocks:
+            if A.rows == 0 or not m:
+                sts.append([spy.Integer(0)] * m)
+                continue
+            try:
+                sol, free = A.gauss_jordan_solve(-B * p)
+            except ValueError:
+                sts = None
+                break
+            sol = sol.subs({t: 0 for t in free})
+            sts.append(list(sol))
+            for x in sol:
+                scale = spy.ilcm(scale, spy.Rational(x).q)
+        if sts is None:
+            continue
+        out.append({'params': {str(params[j]): int(pv[j] * scale) for j in range(npar) if pv[j] != 0},
+                    'states': [{state_names[i]: int(s[i] * scale) for i in range(m) if s[i] != 0} for s in sts]})
+    return out
+
+
 def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=None,
                            recast=None, logs=False, extra_model=None, extra_obs=None):
     """Scaling symmetries common to every condition; `inputs` and `fixed` do not scale."""

@@ -46,6 +46,13 @@ returned only where it is valid on the declared domain, by default the positive 
 space, which the orbits reach only in a limit; the model is continuous there, so the limit
 gives the output of the orbit.
 
+A direction that shifts some coordinates and rescales positive ones at rates that depend only on
+coordinates it does not move, such as an unknown offset of a measurement that also shifts other
+coordinates, is a *linear flow* (:doc:`../method`, "Linear flows"). It is removed by fixing as
+many moved coordinates as the block has directions, a coordinate that enters only the observables
+first: a linear one to 0, a positive one to 1. The other moved coordinates keep their names and
+stand for the invariants listed under ``Invariants``.
+
 ``red.trafo`` is the transformation as a dict of strings:
 
 .. code-block:: python

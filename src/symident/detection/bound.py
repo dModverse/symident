@@ -2,6 +2,7 @@
 
 import functools
 import math
+import re
 
 import sympy as spy
 
@@ -52,6 +53,18 @@ def _rational(e):
         all(a.exp.is_Integer for a in e.atoms(spy.Pow))
 
 
+@functools.lru_cache(maxsize=65536)
+def _rational_cached(e):
+    """_rational(e), kept: segments and conditions repeat the same expressions."""
+    return _rational(e)
+
+
+@functools.lru_cache(maxsize=65536)
+def _ops(e):
+    """The operations of e, kept as _rational_cached."""
+    return spy.count_ops(e)
+
+
 def _cleared(exprs, X):
     """(numerators, dW): the degrees in the symbols X of the numerators of `exprs` over a common denominator W and
     the degree of W. W is the least common multiple of the denominators while they are below _DENSE, else their
@@ -72,23 +85,50 @@ def _cleared(exprs, X):
     return [_total_degree(n, X) + dW - (0 if d.is_number else distinct[spy.expand(d)]) for n, d in fr], dW
 
 
+@functools.lru_cache(maxsize=65536)
+def _fraction_degrees(e, X):
+    """(numerator degree, expanded denominator or None for a number, denominator degree) of e in the symbols X
+    that e holds."""
+    num, den = spy.fraction(spy.together(e))
+    k = None if den.is_number else spy.expand(den)
+    return _total_degree(num, X), k, (0 if k is None else _total_degree(den, X))
+
+
 def _over_common_denominator(exprs, X):
     """The numerator and denominator degrees in the symbols X of each expression, the degree of a common
     denominator B, the product of the distinct denominators, and the degree of each numerator over B."""
     parts, distinct, keys = [], {}, []
     for e in exprs:
-        num, den = spy.fraction(spy.together(e))
-        k = None if den.is_number else spy.expand(den)
+        fs = e.free_symbols
+        dn, k, dd = _fraction_degrees(e, tuple(x for x in X if x in fs))
         if k is not None:
-            distinct.setdefault(k, _total_degree(den, X))
+            distinct.setdefault(k, dd)
         keys.append(k)
-        parts.append((_total_degree(num, X), 0 if k is None else distinct[k]))
+        parts.append((dn, 0 if k is None else distinct[k]))
     dB = sum(distinct.values())
     return parts, dB, [dn + dB - dd for dn, dd in parts]
 
 
-@functools.lru_cache(maxsize=256)
+# a name in a model line: not a part of a number, not a function
+_NAME = re.compile(r"(?<![0-9A-Za-z_.])(?:[A-Za-z_]|\.(?=[A-Za-z_]))[A-Za-z0-9_.]*(?!\s*\()")
+
+
 def _model_degrees(f_items, g_items, x0_items):
+    """(dA, dB, gd, d0) of the field, observables and initial values, None where not rational.
+
+    The degrees do not change under a renaming of the symbols, so the lines are taken with the names
+    numbered in the order they occur: copies of a model that differ in names share the result."""
+    names = {}
+
+    def rename(text):
+        return _NAME.sub(lambda m: m.group(0) if m.group(0) == "pi" else
+                         names.setdefault(m.group(0), f"_n{len(names)}"), str(text))
+    items = [tuple((rename(k), rename(v)) for k, v in its) for its in (f_items, g_items, x0_items)]
+    return _model_degrees_named(*items)
+
+
+@functools.lru_cache(maxsize=256)
+def _model_degrees_named(f_items, g_items, x0_items):
     f = {k: model_sympify(v) for k, v in f_items}
     g = [model_sympify(v) for _, v in g_items]
     x0 = [model_sympify(v) for _, v in x0_items]
@@ -107,7 +147,7 @@ def field_degrees(F, G, X):
     """(dA, dB, gd) as in _model_degrees of the field F and the functions G in the symbols X, None if not rational."""
     try:
         F, G = [spy.sympify(e) for e in F], [spy.sympify(e) for e in G]
-        if not all(_rational(e) for e in F + G) or sum(spy.count_ops(e) for e in F + G) > _ROW_OPS:
+        if not all(_rational_cached(e) for e in F + G) or sum(_ops(e) for e in F + G) > _ROW_OPS:
             return None
         X = list(X) or [spy.Symbol("_")]
         _, dB, over = _over_common_denominator(F, X)

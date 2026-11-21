@@ -1,11 +1,14 @@
 """The shared state of one observability analysis."""
 
+import os
+import threading
 import time
 
 import numpy as np
 
 from ... import _core, state
-from ...par import process_map
+from ...par import process_map, thread_map
+from ...sym.tape import _OP_SPOW
 
 
 def ints(x):
@@ -51,6 +54,86 @@ def tape_fields(t):
                     "tm_cnum": strs(t["tm_cnum"]), "tm_cden": strs(t["tm_cden"]),
                     "tm_out": ints(t["tm_out"])})
     return out
+
+
+# tape fields that hold slot indices; a slot below n_leaves is a leaf
+_SLOT_FIELDS = ("a", "b", "f_out", "g_out", "ic_leaf", "ic_a", "ic_b", "ic_out", "ev_a", "ev_b", "ev_out",
+                "tm_a", "tm_b", "tm_out")
+
+
+def read_columns(tapes, n_leaves, z_slots):
+    """The columns of the coordinates that the tapes read, ascending, or None for all columns.
+
+    The jets of a chain have zero derivative in a coordinate that no tape of the chain reads, so the
+    kernel over the read columns has the same rows there. None where a tape holds a seed of the initial
+    values, whose columns are set per coordinate."""
+    used = np.zeros(int(n_leaves), dtype=bool)
+    for t in tapes:
+        if t.get("ic_seed") is not None:
+            return None
+        for key in _SLOT_FIELDS:
+            v = t.get(key)
+            if v is None:
+                continue
+            v = np.asarray(v, dtype=np.int64).ravel()
+            used[v[(v >= 0) & (v < n_leaves)]] = True
+    cols = np.nonzero(used[np.asarray(z_slots, dtype=np.int64)])[0]
+    if len(cols) == len(z_slots):
+        return None
+    # the kernel takes at least one column
+    return cols if len(cols) else np.zeros(1, dtype=np.int64)
+
+
+def embed_columns(o, cols, nz):
+    """The kernel result `o` over the columns `cols` as a result over all `nz` columns."""
+    if cols is None or not ok(o):
+        return o
+    o = dict(o)
+    m = len(cols)
+    R = np.asarray(o["R"], dtype=np.int64).reshape(-1, m)
+    full = np.zeros((R.shape[0], nz), dtype=np.int64)
+    full[:, cols] = R
+    o["R"] = full
+    o["pivots"] = cols[np.atleast_1d(np.asarray(o["pivots"], dtype=np.int64))]
+    o["dim"] = nz
+    if o.get("S") is not None:
+        N = int(o.get("N") or 1)
+        S = np.asarray(o["S"], dtype=np.int64).reshape(-1, m * N)
+        fullS = np.zeros((S.shape[0], nz * N), dtype=np.int64)
+        fullS[:, (cols[:, None] * N + np.arange(N)).ravel()] = S
+        o["S"] = fullS
+    return o
+
+
+def _with_gap_order(e, Mtot):
+    """The rows `e` of a chain of one segment at gap order 0 as the rows of the chain at gap order `Mtot`: the row
+    of the constant gap monomial with zero rows of the other monomials, and each series row at eps^0."""
+    m, nz = Mtot + 1, e["nz"]
+    rows = np.zeros((e["rows"].shape[0] * m, nz), dtype=np.int32)
+    rows[::m] = e["rows"]
+    # the series rows of gap order 0 are the rows themselves
+    srows = np.zeros((e["srows"].shape[0], nz * m), dtype=np.int32)
+    srows[:, ::m] = e["srows"]
+    return {"Nt": e["Nt"], "plain": e["plain"], "N": m, "nz": nz, "rows": rows, "tag": np.repeat(e["tag"], m),
+            "srows": srows, "stag": e["stag"].copy(), "ranks": None,
+            "bytes": rows.nbytes + srows.nbytes}
+
+
+def _block_bytes():
+    """Sets the Taylor values per column block of a kernel call to an eighth of the physical memory over the cores,
+    between 256 MB and 1 GB; SYMIDENT_BLOCKMB overrides it."""
+    try:
+        mem = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):
+        return
+    _core.sym_set_block_bytes(float(min(1 << 30, max(256 << 20, mem // (8 * (os.cpu_count() or 1))))))
+
+
+_block_bytes()
+
+# bytes of unreduced chain rows a Run keeps
+_ROWS_BYTES = 4 << 30
+_ROWS_LOCK = threading.Lock()
 
 
 class Run:
@@ -169,6 +252,139 @@ class Run:
         sys.merge_route_states(base, [r[1] for r in res if r is not None])
         return [None if r is None else r[0] for r in res]
 
+    def chain_columns(self, idx, zs=None):
+        """The positions in `zs` (the coordinate slots by default) of the coordinates the chain of the tapes
+        `idx` reads (read_columns), memoized."""
+        zs = self.z_slots if zs is None else np.asarray(zs, dtype=np.int64)
+        memo = self.__dict__.setdefault("_chain_columns", {})
+        key = (tuple(idx), zs.tobytes())
+        if key not in memo:
+            memo[key] = read_columns(self.chain_tapes(idx), self.n_leaves, zs)
+        return memo[key]
+
+    def chain_rows(self, idx, point, p, Nt, Mtot, threads, zs, cols):
+        """The unreduced rows of the chain of the tapes `idx` over the columns `cols` of the slots `zs` to Lie
+        order `Nt` or above (sym_obs_chain_rows), kept per point, prime and gap order.
+
+        The coefficients at a Lie order do not depend on the order the jets are taken to, so where no segment
+        boundary moves (`plain`) the rows of a lower order are a selection of those kept."""
+        memo = self.__dict__.setdefault("_chain_rows", {})
+        key = (tuple(idx), point.tobytes(), int(p), int(Mtot), zs.tobytes())
+        e = memo.get(key)
+        if e is not None and (e["Nt"] == int(Nt) or (e["plain"] and e["Nt"] > int(Nt))):
+            return e
+        z = zs if cols is None else zs[cols]
+        if int(Mtot) > 0 and len(idx) == 1 and _OP_SPOW not in self.tapes[idx[0]]["op"]:
+            # one segment has no gap: the coefficients of a gap monomial are zero, so the rows are those of gap
+            # order 0 with zero rows of the other monomials (not for a power of a state at 0, whose rows are
+            # ordered otherwise)
+            e0 = self.chain_rows(idx, point, p, Nt, 0, threads, zs, cols)
+            if e0 is None:
+                return None
+            return self._keep_rows(key, _with_gap_order(e0, int(Mtot)))
+        r = _core.sym_obs_chain_rows(self.chain_tapes(idx), self.n_leaves, self.n_states, z, point, p, int(Nt),
+                                     int(Mtot), int(threads), int(Mtot) == 0)
+        if not ok(r):
+            return None
+        e = {"Nt": int(r["Nt"]), "plain": bool(r["plain"]), "N": int(r["N"]), "nz": len(z),
+             "rows": np.asarray(r["rows"], dtype=np.int32).reshape(-1, len(z)),
+             "tag": np.atleast_1d(np.asarray(r["tag"], dtype=np.int32)),
+             "srows": np.asarray(r["srows"], dtype=np.int32).reshape(-1, len(z) * int(r["N"])),
+             "stag": np.atleast_1d(np.asarray(r["stag"], dtype=np.int32)),
+             "ranks": None if r.get("ranks") is None else np.atleast_1d(np.asarray(r["ranks"], dtype=np.int64))}
+        return self._keep_rows(key, e)
+
+    def _keep_rows(self, key, e):
+        """Keep the rows `e` of chain_rows under `key`."""
+        memo = self.__dict__.setdefault("_chain_rows", {})
+        e["bytes"] = e["rows"].nbytes + e["srows"].nbytes
+        # the rows of the chains at the points of the saturation and of the checks; the oldest are dropped first
+        with _ROWS_LOCK:
+            held = self.__dict__.setdefault("_chain_rows_bytes", [0])
+            old = memo.pop(key, None)
+            if old is not None:
+                held[0] -= old["bytes"]
+            while memo and held[0] + e["bytes"] > _ROWS_BYTES:
+                held[0] -= memo.pop(next(iter(memo)))["bytes"]
+            memo[key] = e
+            held[0] += e["bytes"]
+        return e
+
+    def chain_kernel(self, idx, point, p, Nt, Mtot, threads, zs=None):
+        """sym_obs_null_chain of the chain of the tapes `idx` alone over the slots `zs`, built over the columns
+        the chain reads, from the rows kept by chain_rows."""
+        zs = self.z_slots if zs is None else np.asarray(zs, dtype=np.int64)
+        cols = self.chain_columns(idx, zs)
+        point = np.asarray(point, dtype=np.int64)
+        # the scans of the saturation and the stacked kernels after them take the same chains at the same
+        # orders; the results are kept over the columns read
+        memo = self.__dict__.setdefault("_chain_kernels", {})
+        key = (tuple(idx), point.tobytes(), int(p), int(Nt), int(Mtot), zs.tobytes())
+        # a kept result is only read: embed_columns copies it
+        o = memo.get(key)
+        if o is None:
+            e = self.chain_rows(idx, point, p, Nt, Mtot, threads, zs, cols)
+            if e is None:
+                o = {"ok": False}
+            else:
+                sel, ssel = (slice(None), slice(None)) if e["Nt"] == int(Nt) else \
+                    (e["tag"] <= int(Nt), e["stag"] <= int(Nt))
+                o = _core.sym_chain_reduce(e["rows"][sel], e["srows"][ssel], e["nz"], e["N"], p)
+            if len(memo) >= 8 * max(1, len(self.chain_groups or ())):
+                memo.clear()
+            memo[key] = o
+        return embed_columns(o, cols, len(zs))
+
+    def stacked_chain_kernel(self, point, p, Nt, Mtot, caps, zs=None):
+        """sym_obs_null_chain over every chain and the slots `zs`, chain `t` to Lie order min(Nt, caps[t]), from
+        the kernels of the chains alone over the columns each reads; None where that saves little or the rows
+        of a chain change at t = 1.
+
+        The rows of the stacked kernel are those of the chains, so their reduced form is the reduced form of
+        the stacked reduced rows of the chains, and the series rows span the same module."""
+        zs = self.z_slots if zs is None else np.asarray(zs, dtype=np.int64)
+        T = len(self.chain_groups)
+        cols = [self.chain_columns(idx, zs) for idx in self.chain_groups]
+        nz = len(zs)
+        if T < 2 or sum(nz if c is None else len(c) for c in cols) > T * nz // 2:
+            return None
+        nts = [min(int(Nt), int(caps[t])) if len(caps) == T else int(Nt) for t in range(T)]
+        # the costly chains first, so that none starts last: the cost grows with the columns, the segments and
+        # the square of the order
+        order = sorted(range(T), key=lambda t: -(nz if cols[t] is None else len(cols[t])) *
+                       len(self.chain_groups[t]) * (nts[t] + 1) ** 2)
+        got = thread_map(lambda t: self.chain_kernel(self.chain_groups[t], point, p, nts[t], Mtot, 1, zs),
+                         order, self.cores_call)
+        per = [None] * T
+        for t, o in zip(order, got):
+            per[t] = o
+        if not all(ok(o) for o in per):
+            return {"ok": False}
+        if any(o.get("at_one") for o in per):
+            return None
+        rows = np.vstack([np.asarray(o["R"], dtype=np.int64).reshape(-1, nz) for o in per])
+        N = int(Mtot) + 1
+        sers = [np.asarray(o["S"], dtype=np.int64).reshape(-1, nz * N) for o in per]
+        if not rows.shape[0] or not sum(S.shape[0] for S in sers):
+            return None
+        rr = _core.sym_rref_mod(rows.astype(np.float64), p)
+        res = {"ok": True, "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), nz),
+               "pivots": np.atleast_1d(rr["piv"]).astype(np.int64), "rank": int(rr["rank"]), "dim": nz}
+        from ..fields import series_stack
+        res = series_stack(res, sers, nz, N, p, self.cores_call)
+        return None if res["at_one"] else res
+
+    def stacked_chain_batch(self, points, primes, Nt, Mtot, caps, zs=None):
+        """stacked_chain_kernel at each point and prime, as sym_obs_null_chain_point_batch; None where it does
+        not apply."""
+        out = []
+        for pt, q in zip(points, primes):
+            o = self.stacked_chain_kernel(np.asarray(pt, dtype=np.int64)[:self.n_leaves], q, Nt, Mtot, caps, zs)
+            if o is None:
+                return None
+            out.append(o)
+        return out
+
     def block_threads(self):
         """Threads per block call: one with gaps, else all cores."""
         return 1 if self.has_gaps else self.cores
@@ -183,9 +399,8 @@ class Run:
         if self.has_gaps:
             def mk(idx):
                 def f(point, p, Nt, Mtot=0):
-                    return self.modulo_nuisance(_core.sym_obs_null_chain(
-                        [self.chain_tapes(idx)], nl, ns, zs, np.asarray(point, dtype=np.int64), p,
-                        self.exact_nt(Nt, Mtot), int(Mtot), 1), p)
+                    return self.modulo_nuisance(self.chain_kernel(idx, point, p, self.exact_nt(Nt, Mtot),
+                                                                  Mtot, 1), p)
                 return f
             return [mk(idx) for idx in self.chain_groups]
 
@@ -204,10 +419,17 @@ class Run:
         zs, nl, ns = self.z_slots, self.n_leaves, self.n_states
         if self.has_gaps:
             def mk(bi):
+                idx = self.chain_groups[bi]
+
                 def f(point, p, Nt):
-                    return _core.sym_obs_chain_rank_profile(
-                        self.chain_tapes(self.chain_groups[bi]), nl, ns, zs,
-                        np.asarray(point, dtype=np.int64), p, int(Nt), self.block_threads())
+                    # the rank does not see the columns the chain does not read; the rows stay for the kernel at
+                    # the order the scan stops at
+                    cols = self.chain_columns(idx)
+                    e = self.chain_rows(idx, np.asarray(point, dtype=np.int64), p, Nt, 0, self.block_threads(),
+                                        zs, cols)
+                    if e is None or e["ranks"] is None:
+                        return {"ok": False}
+                    return {"ok": True, "ranks": e["ranks"][:int(Nt) + 1], "cols": e["nz"]}
                 return f
             return [mk(bi) for bi in range(len(self.chain_groups))]
 

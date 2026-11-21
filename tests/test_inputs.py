@@ -66,6 +66,12 @@ def test_the_error_names_the_argument():
         CASES["total not conserved"]()
 
 
+def test_a_keyword_in_an_expression_is_named():
+    m = si.Model(odes={"x": "-and*x"}, observables={"y": "x"})
+    with pytest.raises(InputError, match="and is a Python keyword"):
+        si.detect(m)
+
+
 def test_an_input_error_is_a_value_error():
     assert issubclass(InputError, ValueError)
 

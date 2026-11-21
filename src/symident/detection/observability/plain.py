@@ -98,9 +98,14 @@ class PlainSystem:
         run = self.run
         pt = np.asarray(point, dtype=np.int64)
         if run.has_gaps:
-            o = _core.sym_obs_null_chain([run.chain_tapes(idx) for idx in run.chain_groups], run.n_leaves,
-                                         run.n_states, run.z_slots, pt, p, run.exact_nt(Nt, Mtot), int(Mtot),
-                                         run.cores_call, [] if self.transient else list(run.nt_cap))
+            # a chain whose own rank saturated is taken to the cap of the chain; the relation rows of the recast
+            # atoms join the stacked rows and do not change the rows of a chain
+            caps = list(run.nt_cap)
+            o = run.stacked_chain_kernel(pt, p, run.exact_nt(Nt, Mtot), int(Mtot), caps)
+            if o is None:
+                o = _core.sym_obs_null_chain([run.chain_tapes(idx) for idx in run.chain_groups], run.n_leaves,
+                                             run.n_states, run.z_slots, pt, p, run.exact_nt(Nt, Mtot), int(Mtot),
+                                             run.cores_call, caps)
         else:
             o = _core.sym_obs_null_multi(run.tapes, run.n_leaves, run.n_states, run.z_slots, pt, p,
                                          run.exact_nt(Nt), run.cores_call)

@@ -104,7 +104,15 @@ all of them.
    general directions as exact rational functions; otherwise only by their support.
 ``equilibrate``
    starts every condition at a steady state, with the inputs at zero. Each conserved total
-   adds a free resting value, held by one species of the total, the pivot.
+   adds a free resting value, held by one species of the total, the pivot. A state at rest may
+   enter exponentials, logarithms, trigonometric and hyperbolic functions and their inverses,
+   as without ``equilibrate``; :doc:`../method` states the conditions, and an ``InputError``
+   names a state whose resting value no coordinate outside these terms moves. Before the
+   analysis, the resting balances are solved at random parameter values: balances without a
+   solution over the complex numbers raise an ``InputError``, and resting states outside the
+   declared domain (real, positive where declared positive) give a warning, with the counts in
+   ``info["resting"]``. This is a check at random points, not a proof, and it does not
+   consider stability.
 ``reduce_cq``
    eliminates one species per conserved total, the pivot, through the totals, which become
    coordinates; unobserved species are eliminated first. An event on a species of a total changes the

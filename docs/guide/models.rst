@@ -120,8 +120,9 @@ The language is that of cppDE (``?cppDE::expressions``), with the following conv
 - ``acot(x)`` is ``atan(1/x)``, and likewise for the other inverse reciprocal functions.
 - ``pi`` is π and cannot name a symbol; ``E`` is a name, ``exp(1)`` is Euler's number, and
   ``time`` is the clock.
-- Logarithms, roots, fractional powers and bases of free exponents need an argument that is
-  positive on the ``positive`` coordinates, also in initial and event values.
+- Logarithms, roots, fractional powers and bases of free exponents are real for a positive
+  argument. The detection takes generic values and needs no sign; an argument that the
+  ``positive`` coordinates do not make positive is named in ``info["limits"]``.
 - A rational power is written as a fraction, ``x^(1/2)``, not as ``x^0.5``.
 - ``floor``, ``ceiling`` and ``round`` are refused; their steps are written with
   ``piecewise()``.

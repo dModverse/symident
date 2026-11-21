@@ -1,6 +1,7 @@
 """Form checks of the model arguments, before any analysis: an error names the argument."""
 
 import keyword
+import re
 from tokenize import TokenError
 
 import sympy as spy
@@ -18,8 +19,16 @@ def _dicts(x):
     return [d for d in (x if isinstance(x, (list, tuple)) else [x]) if d is not None]
 
 
+# texts that passed _expression during one check_arguments call: conditions repeat the same entries
+_PASSED = set()
+# a plain name or decimal number always parses
+_PLAIN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?")
+
+
 def _expression(text, where):
     """InputError for a missing, empty or unparsable expression; numbers pass."""
+    if isinstance(text, str) and (text in _PASSED or (_PLAIN.fullmatch(text) and not keyword.iskeyword(text))):
+        return
     if text is None or isinstance(text, bool):
         raise InputError(f"{where} has no expression")
     if isinstance(text, (int, float)):
@@ -31,11 +40,16 @@ def _expression(text, where):
     try:
         e = model_sympify(text)
     except (SyntaxError, TokenError) as exc:
+        kws = [w for w in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", text) if keyword.iskeyword(w)]
+        if kws:
+            raise InputError(f"{where} cannot be parsed: {text!r}; {kws[0]} is a Python keyword and cannot "
+                             f"name a state, parameter or input, rename it") from exc
         raise InputError(f"{where} cannot be parsed: {text!r}") from exc
     except Exception:  # an expression the engine handles or refuses by name later
         return
     if e.has(spy.zoo, spy.nan, spy.oo):
         raise InputError(f"{where} divides by zero or is no number: {text!r}")
+    _PASSED.add(text)
 
 
 def _names(kw):
@@ -77,6 +91,14 @@ def _n_conditions(kw, grid):
 
 def check_arguments(kw):
     """InputError for a malformed model argument of the detection `kw`."""
+    _PASSED.clear()
+    try:
+        _check_arguments(kw)
+    finally:
+        _PASSED.clear()
+
+
+def _check_arguments(kw):
     f = kw.get("f")
     if f is not None:
         if not isinstance(f, dict):

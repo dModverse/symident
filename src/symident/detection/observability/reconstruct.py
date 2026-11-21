@@ -329,6 +329,11 @@ class Reconstruction:
                     e["random_checked"] = held is True and not trial.get("partial_check")
                 except Exception as exc:
                     swallow(exc, "forward form at random points")
+            eb = an.multi.get("exp_back") or {}
+            if e.get("closed_form") and eb.get("names") and e.get("vector"):
+                # the leaves of non-rational terms at rest back in the model symbols
+                e.setdefault("checked", dict(e["vector"]))
+                e["vector"] = exp_backsub(e["vector"], eb, an.multi.get("exp_atoms"))
             out.append(e)
         return out
 
@@ -446,7 +451,9 @@ class Reconstruction:
                 and len({sys.model_key[c] for c in sys.equil_conds}) == 1):
             return []
         kind = self.rest_kind()
-        if kind != ("core" if late else "msolve"):
+        # the leaves of non-rational terms at rest: the entries are simple in the drawn resting states
+        leaves = bool(an.multi.get("rest_aux"))
+        if (kind != ("core" if late else "msolve")) and not (leaves and not late):
             return []
         def run():
             try:
@@ -752,9 +759,18 @@ class Reconstruction:
     def run(self):
         """All directions, scalings first; None when the stacked first step must rerun condition by condition."""
         an, run = self.an, self.an.run
+        # the caller reads no closed form of a direction with one in an `open_coords` column (the fresh
+        # coordinates of a switch surface): such a direction stays open with the kernel support
+        skip = set(state.get("open_coords") or ())
+        held = [fc for fc in self.residual if an.znames[fc] in skip]
+        self.residual = [fc for fc in self.residual if an.znames[fc] not in skip]
+        held = [{"support": sym_sort([an.znames[i] for i in np.nonzero(self.residues(fc))[0]]), "type": "general",
+                 "closed_form": False, "reason": "a direction of the fresh coordinates of a switch surface",
+                 "kernel_residue": self.residues(fc).tolist()} for fc in held]
         if an.joint and self.residual:
             self.tlog("solve fill: " + ("serial" if run.cores <= 1 else f"fork, {run.cores} cores"))
-        self.tlog(f"start: {len(self.residual)} residual direction(s)")
+        self.tlog(f"start: {len(self.residual)} residual direction(s)" +
+                  (f", {len(held)} of fresh coordinates left open" if held else ""))
         static_part = self.statics() if an.joint and self.residual else []
         stacked_ss = an.stacked_first and run.ss_constraint
         fwd_first = self.forward_first(stacked_ss)
@@ -819,4 +835,4 @@ class Reconstruction:
                       for e, fc in zip(interp, self.residual)]
         self.tlog(f"reconstruction done: {sum(bool(e.get('closed_form')) for e in interp)}/{len(interp)} closed")
         return (an.scaling + narrowed + peeled + static_part + list(field_part) + fwd_first
-                + self.with_attempts(list(interp)))
+                + self.with_attempts(list(interp)) + held)

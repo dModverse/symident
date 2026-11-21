@@ -106,7 +106,8 @@ Numbers:
 ``DIRECTSECS``
    seconds msolve may take for the direct kernel (120).
 ``BLOCKMB``
-   megabytes of Taylor values per column block of the kernel (256); environment only.
+   megabytes of Taylor values per column block of the kernel (an eighth of the physical memory over the
+   cores, 256 to 1024); environment only.
 
 Installation of msolve:
 

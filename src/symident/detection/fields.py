@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 
 import numpy as np
 import sympy as spy
@@ -9,7 +10,7 @@ import sympy as spy
 from .. import _core, session, state
 from ..errors import SYMPY_FAILS, RouteError, swallow, sympy_fail
 from ..gfp import PRIMES, invmod, mulmod, random_point, uniform_point, verify_prime
-from ..par import process_map
+from ..par import process_map, thread_map
 from ..rexpr import get_symbols, sym_sort
 from ..sym.exact import (
     certify,
@@ -765,6 +766,22 @@ def _flat_at(r):
     return None if not len(d) else int(d[0])
 
 
+def _rate_order(r, top):
+    """The order at which the ranks `r` reach `top` at the rate of their last orders, 0 without a rate. The ranks
+    at an order do not depend on the order taken, so this sets the cost only."""
+    n = len(r) - 1
+    back = max(1, min(8, n // 4))
+    rate = (int(r[n]) - int(r[n - back])) / back if n >= back else 0
+    return int(n + (int(top) - int(r[n])) / rate) + 2 if rate > 0 else 0
+
+
+def _segment_key(sg):
+    """What the ranks of a segment from a given start read of the tape of the segment."""
+    return tuple(tuple(np.atleast_1d(np.asarray(sg[k])).tolist()) if sg.get(k) is not None else None
+                 for k in ("op", "a", "b", "cnum", "cden", "state_slots", "f_out", "g_out", "tm_op", "tm_a",
+                           "tm_b", "tm_cnum", "tm_cden", "tm_out"))
+
+
 def _reach_at(r, rho):
     i = np.nonzero(np.asarray(r) >= rho)[0]
     return None if not len(i) else int(i[0])
@@ -813,7 +830,7 @@ def _sz_term(deg, n_cols, K, draws=None, rest=1):
 
 def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=None, threads=1,
                     start=None, degs=None, terms=None, at_rest=False, start_seeds=None, start_p=None,
-                    rest_draws=1, draws=None, drop_states=()):
+                    rest_draws=1, draws=None, drop_states=(), cores=None):
     """Certified Lie order per block, None where the start does not reach the generic rank; `terms` receives the error
     bounds and `draws` per block the most points drawn for one random point, `rest_draws` those of the resting point.
 
@@ -834,11 +851,32 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
     th = np.array([] if at_rest else [int(s) for s in np.atleast_1d(z_slots) if int(s) < n_leaves], dtype=np.int64)
     nt = len(th)
 
+    from .observability.context import read_columns
+
+    # blocks with the same segment and start share the start ranks; the threads of a block grow as the blocks
+    # still running drop below the cores
+    shared, seg_keys, lock, active = {}, {}, threading.Lock(), [0]
+
+    def width():
+        return max(1, int(cores or 1) // max(1, active[0]))
+
     def one(b):
+        with lock:
+            active[0] += 1
+        try:
+            return one_block(b)
+        finally:
+            with lock:
+                active[0] -= 1
+
+    def one_block(b):
         seed = np.asarray(seeds[b], dtype=np.int64) % p
         sb = segs[b]
         n_seg = len(sb)
-        base = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, seed, p, 0, none)
+        # the ranks over the coordinates the block reads: the other columns of the rows are zero
+        cols = read_columns(sb, n_leaves, z_slots)
+        z_b = np.asarray(z_slots, dtype=np.int64) if cols is None else np.asarray(z_slots, dtype=np.int64)[cols]
+        base = _core.sym_segment_ranks(sb, n_leaves, n_states, z_b, seed, p, 0, none)
         if not base.get("ok"):
             return None
         Q = np.asarray(base["start"], dtype=np.int64).reshape(n_seg, n_states)
@@ -866,7 +904,7 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             for k in range(8):
                 lv = seed.copy()
                 lv[th] = np.asarray(rnd(nt), dtype=np.int64) % p
-                s0 = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, lv, p, 0, none)
+                s0 = _core.sym_segment_ranks(sb, n_leaves, n_states, z_b, lv, p, 0, none)
                 if s0.get("ok"):
                     return lv, np.asarray(s0["start"], dtype=np.int64).reshape(n_seg, n_states), k + 1
             return None, None, 8
@@ -886,7 +924,7 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
                 y = rand_in(Qt[j], V)
                 Y = Qt[:j + 1].copy()
                 Y[j] = y
-                fz = _core.sym_segment_ranks(sb[:j + 1], n_leaves, n_states, z_slots, lv, p, 0, Y)
+                fz = _core.sym_segment_ranks(sb[:j + 1], n_leaves, n_states, z_b, lv, p, 0, Y)
                 if not fz.get("ok"):
                     return None
                 field = np.asarray(fz["field"], dtype=np.int64).reshape(j + 1, n_states)[j]
@@ -908,27 +946,116 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             return None
         s_seed = np.asarray(seeds[b] if start_seeds is None else start_seeds[b], dtype=np.int64)
         s_p = p if start_p is None else int(start_p)
+
+        def step(t):
+            return 16 if t < 16 else int(min(cap, 2 * t))
+
+        # each segment is ranked alone from the start of the segment (from_states), the generic ranks at the
+        # starts of the set, the start ranks at the starts of the seed; a segment and start that another block
+        # has already ranked reuse those ranks
+        q_base = _core.sym_segment_ranks(sb, n_leaves, n_states, z_b, s_seed % s_p, s_p, 0, none)
+        if not q_base.get("ok"):
+            return None
+        q_start = np.asarray(q_base["start"], dtype=np.int64).reshape(n_seg, n_states)
+        G, Q = [None] * n_seg, [None] * n_seg
+
+        def call(kind, s, Nc, threads):
+            if kind == "g":
+                return _core.sym_segment_ranks([sb[s]], n_leaves, n_states, z_b, lv_g, p, Nc, st_g[s:s + 1],
+                                               threads, drop, True)
+            if id(sb[s]) not in seg_keys:
+                seg_keys[id(sb[s])] = _segment_key(sb[s])
+            key = (seg_keys[id(sb[s])], q_start[s].tobytes(), (s_seed % s_p).tobytes(), int(s_p), z_b.tobytes(),
+                   drop.tobytes())
+            kept = shared.get(key)
+            if kept is not None and len(kept) > Nc:
+                return {"ok": True, "ranks": kept[:Nc + 1]}
+            r = _core.sym_segment_ranks([sb[s]], n_leaves, n_states, z_b, s_seed % s_p, s_p, Nc,
+                                        q_start[s:s + 1], threads, drop, True)
+            if r.get("ok"):
+                shared[key] = np.asarray(r["ranks"]).ravel()
+            return r
+
+        def extend(jobs):
+            """The ranks of (kind, segment, order) jobs side by side, with the threads of the block shared among
+            them; False where a call fails."""
+            if threads == 1:
+                n = min(len(jobs), max(2, width()))
+                got = thread_map(lambda j: call(*j, max(1, width() // n)), jobs, n)
+            else:
+                got = [call(*j, threads) for j in jobs]
+            for (kind, sj, Nc), r in zip(jobs, got):
+                if not r.get("ok"):
+                    return False
+                (G if kind == "g" else Q)[sj] = np.asarray(r["ranks"]).ravel()[:Nc + 1]
+            return True
+
+        def known(Nt):
+            """Per segment the first flat order of the generic ranks and the first order the start ranks reach
+            the rank after it, up to Nt; the jobs that the ranks up to Nt need."""
+            g_n, ordv, jobs = [], [], []
+            for sj in range(n_seg):
+                gn = _flat_at(G[sj][:Nt + 1])
+                if gn is None and len(G[sj]) <= Nt:
+                    jobs.append(("g", sj))
+                g_n.append(gn)
+                ra = None if gn is None else _reach_at(Q[sj][:Nt + 1], G[sj][gn + 1])
+                if gn is not None and ra is None and len(Q[sj]) <= Nt:
+                    jobs.append(("q", sj))
+                ordv.append(ra)
+            return g_n, ordv, jobs
+
+        def target(kind, sj, Nt):
+            """The order of the next ranks of a segment: where they reach the plateau at the current rate, past
+            1.5 times the order taken; without a rate, the order of the sequence where a flat start fails, or Nt."""
+            r = G[sj] if kind == "g" else Q[sj]
+            n = len(r) - 1
+            est = _rate_order(r, len(z_b) + n_states if kind == "g" else G[sj][_flat_at(G[sj]) + 1])
+            if est:
+                Nc = max(n + n // 2 + 1, int(1.1 * est) + 8)
+            else:
+                Nc = max(Nt, n + n // 2 + 1)
+                gns = [_flat_at(G[x]) for x in range(n_seg)]
+                if kind == "q" and all(x is not None for x in gns):
+                    h = Nt
+                    while h < min(cap, 4 * max(gns) + 16):
+                        h = step(h)
+                    Nc = max(Nc, h)
+            return int(min(cap, Nc))
+
+        # The orders Nt of the sequence are checked on prefixes: the ranks at an order do not depend on the order
+        # taken, so the first flat order and the first order that reaches a rank are those of every prefix that
+        # holds them. A segment is taken further only where the check at Nt needs it.
+        Nc0 = Nt if start is None or start[b] is None else max(Nt, int(min(cap, int(1.1 * int(start[b])) + 8)))
+        if not extend([(k, sj, Nc0) for sj in range(n_seg) for k in ("g", "q")]):
+            return None
         while True:
-            g = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, lv_g, p, Nt, st_g, threads, drop)
-            q = _core.sym_segment_ranks(sb, n_leaves, n_states, z_slots, s_seed % s_p, s_p, Nt, none, threads,
-                                        drop)
-            if not g.get("ok") or not q.get("ok"):
-                return None
-            gr = np.asarray(g["ranks"]).reshape(n_seg, Nt + 1)
-            qr = np.asarray(q["ranks"]).reshape(n_seg, Nt + 1)
-            g_n = [_flat_at(gr[s]) for s in range(n_seg)]
-            ordv = [None if g_n[s] is None else _reach_at(qr[s], gr[s, g_n[s] + 1])
-                    for s in range(n_seg)]
+            g_n, ordv, jobs = known(Nt)
+            if jobs:
+                if not extend([(k, sj, target(k, sj, Nt)) for k, sj in jobs]):
+                    return None
+                continue
             if state.env("LIEDIAG"):
                 print(f"[liediag] certificate block {b + 1} at order {Nt}")
             if all(o is not None for o in ordv):
                 return max(ordv), {"stop": stops, "generic": n_gen}
             if Nt >= cap or (all(x is not None for x in g_n) and Nt >= 4 * max(g_n) + 16):
                 return None
-            Nt = 16 if Nt < 16 else int(min(cap, 2 * Nt))
+            Nt = step(Nt)
 
     idx = list(range(len(segs)))
-    res = map_fn(one, idx) if map_fn is not None else [one(b) for b in idx]
+    if map_fn is not None:
+        # the blocks of the most lanes over all segments first, then of the highest orders, so that the longest
+        # calls do not start last: the ranks with the states as columns rise past the saturated order
+        def lanes(b):
+            cols = read_columns(segs[b], n_leaves, z_slots)
+            return len(segs[b]) * ((len(z_slots) if cols is None else len(cols)) + n_states)
+        order = sorted(idx, key=lambda b: (-lanes(b), -(start[b] or 0) if start is not None and len(start) == len(idx)
+                                           else 0))
+        got = dict(zip(order, map_fn(one, order)))
+        res = [got[b] for b in idx]
+    else:
+        res = [one(b) for b in idx]
     out = [None if r is None else r[0] for r in res]
     nd = [None if r is None else r[1] for r in res]
     if terms is not None:
