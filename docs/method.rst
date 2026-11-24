@@ -1,12 +1,11 @@
 Method
 ======
 
-The method chapters state the mathematics behind symident: the notion of identifiability it
-decides, how the rank of the observability-identifiability matrix is computed and when the order
-is sufficient, how non-identifiable directions are obtained in closed form and proven, how a model
-is reduced to identifiable parameters, and how the parameter values with the same output are
-counted. Every statement that rests on random points comes with an error probability or is named
-in the result.
+The method chapters state the mathematics behind symident: the rank of the
+observability-identifiability matrix and when the order is sufficient, non-identifiable directions
+in closed form and their proofs, the reduction to identifiable parameters, and the count of
+parameter values with the same output. Every statement that rests on random points comes with an
+error probability or is named in the result.
 
 .. toctree::
    :maxdepth: 1
@@ -29,8 +28,7 @@ Notation and terms
    \dot x = f(x, u, \eta), \qquad x(t_0) = x_0(\eta),
 
 with states :math:`x \in \mathbb{R}^{n_x}`, parameters :math:`\eta`, start time :math:`t_0`,
-inputs :math:`u = u(t, \eta)`, i.e., given functions of time such as a dose set by an event,
-and an observation function :math:`h = (h_1, \dots, h_{n_y})` with one component per
+given inputs :math:`u = u(t, \eta)`, and an observation function :math:`h = (h_1, \dots, h_{n_y})` with one component per
 observable. The *coordinates* :math:`\theta \in \Theta \subseteq \mathbb{R}^d` are the
 estimated parameters and the free initial values; they give the parameters by a
 *parametrization* :math:`\eta = \eta(\theta)` and the initial value :math:`x_0(\theta)`, and
@@ -98,8 +96,8 @@ Structural identifiability and Lie symmetries
 
 The model is *locally structurally identifiable* at :math:`\theta` if no nearby
 :math:`\tilde\theta \ne \theta` has the same output. *Structural* means that the question
-is decided by the equations alone, as if the observables were known exactly and continuously,
-and for generic :math:`\theta`.
+is decided by the equations alone, for exact and continuous observables and generic
+:math:`\theta`.
 
 A continuous family of coordinate values with the same output is the orbit of a *Lie
 symmetry*, a local one-parameter group :math:`\Phi_\lambda` of transformations of
