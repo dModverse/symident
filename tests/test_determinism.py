@@ -88,18 +88,11 @@ def _detect(**kw):
     return d
 
 
-def test_a_time_limit_that_does_not_fire_changes_nothing():
+def test_the_reconstruction_takes_no_time_limit():
     import symident as si
-    plain = _detect()
-    limited = _detect(control=si.reconst_control(timeout=1e6))
-    assert plain["info"]["limits"] == limited["info"]["limits"] == []
-    assert plain["symmetries"] == limited["symmetries"]
-
-
-def test_a_time_limit_that_fires_is_reported():
-    import symident as si
-    d = _detect(control=si.reconst_control(timeout=1e-9))
-    assert any(lim.startswith("timeout") for lim in d["info"]["limits"])
+    with pytest.raises(TypeError):
+        si.reconst_control(timeout=10)
+    assert "timeout" not in si.reconst_control()
 
 
 def test_the_jet_route_stops_at_its_work_limit():

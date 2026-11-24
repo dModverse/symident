@@ -2,6 +2,7 @@
 
 import sympy as spy
 
+from .. import state
 from ..errors import SYMPY_FAILS, sympy_fail
 from .charts import (
     _apply_power_recast,
@@ -43,6 +44,7 @@ from .recast import (
     pre_state,
     pre_state_name,
 )
+from .shared import shared_tape_compile
 from .steady import _FORCE_CONSTRAINT_SEED
 
 # Opcodes for the flat tape consumed by the C++ kernel (cpp/kernel.cpp). Integer powers
@@ -361,6 +363,18 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                                   keep_coords=None, condition_rest_subs=None, const_states=None,
                                   positive=True, condition_chain=None):
     """Per-condition observability tapes over shared coordinates, without `const_states`, or {'ok': False, ...}."""
+    if not state.env("NOSHARED"):
+        shared = shared_tape_compile(compile_observability_tape_multi, dict(
+            model=model, observation=observation, condition_subs=condition_subs, condition_ic0=condition_ic0,
+            fixed=fixed, parameters=parameters, equilibrate=equilibrate, forcings=forcings,
+            seg_equilibrate=seg_equilibrate, condition_events=condition_events,
+            condition_t0_events=condition_t0_events, joint_steady_state=joint_steady_state,
+            joint_fixed_states=joint_fixed_states, held_state_params=held_state_params,
+            condition_obs=condition_obs, condition_times=condition_times, keep_coords=keep_coords,
+            condition_rest_subs=condition_rest_subs, const_states=const_states, positive=positive,
+            condition_chain=condition_chain))
+        if shared is not None:
+            return shared
     _s = _str_memo()
     model = _as_list(model)
     observation = _as_list(observation)

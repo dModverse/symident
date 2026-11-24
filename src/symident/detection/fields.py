@@ -1,5 +1,6 @@
 """Gap series, exact scalings, field analyses per regime and the proof that the Lie order suffices."""
 
+import hashlib
 import json
 import re
 import threading
@@ -31,6 +32,7 @@ from ..sym.fields import (
 from ..sym.modp import eval_rational_mod_batch
 from ..sym.parse import model_sympify
 from ..sym.scaling import scaling_symmetries_multi, verify_scalings
+from ..sym.supportlift import support_lift
 from .bound import lie_row_degree
 
 
@@ -150,10 +152,20 @@ def _evs(x):
     return list(x)
 
 
+def scaling_tapes(multi):
+    """One tape per group of conditions with the same monomials (multi['scaling_groups'] of a shared tape): the
+    scaling rows and checks of a group are those of any member."""
+    if multi.get("scaling_tapes"):
+        return list(multi["scaling_tapes"])
+    groups = multi.get("scaling_groups")
+    tapes = multi["tapes"]
+    return [tapes[g[0]] for g in groups] if groups else list(tapes)
+
+
 def exact_scaling_set(multi, fixed):
     """Weight vectors of the scalings of the whole model, exactly checked."""
     ver_keys = ["model_lines", "obs_lines", "ver_ic", "ver_ev", "ver_t0", "ver_time", "ver_rest"]
-    ver_tapes = _uniq([{k: t[k] for k in ver_keys if k in t} for t in multi["tapes"]])
+    ver_tapes = _uniq([{k: t[k] for k in ver_keys if k in t} for t in scaling_tapes(multi)])
     jets = set(multi.get("nuisance_jet_states") or [])
     inputs = [u for u in multi.get("forcings") or [] if u not in jets]
 
@@ -163,12 +175,14 @@ def exact_scaling_set(multi, fixed):
             if (e["method"] != "multiply") == add:
                 out.append(f"{e['var']} = {e['value']}" if add else f"_ = {e['value']}")
         return out
+    # a recast E = base^e scales with weight e times that of the base, L = log(base) is translated
+    recast = [r for r in multi.get("power_recast") or [] if not r.get("inverted")]
     try:
         full = scaling_symmetries_multi(
             per_cond_model=[_lines(t.get("model_lines")) for t in ver_tapes],
             per_cond_obs=[_lines(t.get("obs_lines")) for t in ver_tapes],
             inputs=inputs or None,
-            fixed=list(fixed) if fixed else None,
+            fixed=list(fixed) if fixed else None, recast=recast or None, powers=True,
             extra_model=[_lines(t.get("ver_ic")) + ev_lines(t, True) + _lines(t.get("ver_rest"))
                          for t in ver_tapes],
             extra_obs=[ev_lines(t, False) + ([f"_ = {t['ver_time']}"]
@@ -179,11 +193,12 @@ def exact_scaling_set(multi, fixed):
     if full is None:
         return []
     ws = [d["vector"] for d in full.get("non_identifiable", [])]
-    ws = [w for w in ws if all(re.match(r"^-?[0-9]+$", str(v)) for v in w.values())]
+    exps = {str(r["E"]) for r in recast}
+    ws = [w for w in ws if all(k in exps or re.match(r"^-?[0-9]+$", str(v)) for k, v in w.items())]
     if not ws:
         return []
     try:
-        ok = [bool(x) for x in verify_scalings(ws, ver_tapes)]
+        ok = [bool(x) for x in verify_scalings(ws, ver_tapes, shifts={str(r["L"]) for r in recast})]
     except Exception as exc:
         swallow(exc, "scaling verification")
         ok = [False] * len(ws)
@@ -464,6 +479,9 @@ def _rename_init(expr, init):
     return str(e.xreplace({spy.Symbol(x): spy.Symbol(x + INIT) for x in init}))
 
 
+_NAMES = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+
+
 def restricted_setup(setup, chains, joint):
     """The setup on the states that reach an observable of their chain, the states that stay at zero set to 0."""
     regimes, tapes = setup["regimes"], setup["tapes"]
@@ -475,37 +493,48 @@ def restricted_setup(setup, chains, joint):
     targets = {str(e["var"]) for ch in chains for i in ch for e in events[i]}
     zero = set()
     if not joint:
-        zero = {x for x in states if x not in targets and
-                all(any(l.split("=", 1)[0].strip() == x and l.split("=", 1)[1].strip() in ("0", "0.0")
-                        for l in _lines(tapes[ch[0]].get("ver_ic"))) for ch in chains)}
+        zero = set(states) - targets
+        for i in dict.fromkeys(ch[0] for ch in chains):
+            zero &= {l.split("=", 1)[0].strip() for l in _lines(tapes[i].get("ver_ic"))
+                     if l.split("=", 1)[1].strip() in ("0", "0.0")}
         visited = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
         while True:
             sub = {spy.Symbol(x): spy.Integer(0) for x in zero}
-            drop = {x for x in zero if any(x in eqs[r] and spy.cancel(eqs[r][x].xreplace(sub)) != 0
-                                           for r in visited)}
+            # the regimes of many conditions repeat an equation: each distinct one is checked once
+            drop = {x for x in zero if any(spy.cancel(e.xreplace(sub)) != 0
+                                           for e in {eqs[r][x] for r in visited if x in eqs[r]})}
             if not drop:
                 break
             zero -= drop
     sub = {spy.Symbol(x): spy.Integer(0) for x in zero}
 
     def syms(e):
-        e = e.xreplace(sub) if sub else e
-        return {str(y) for y in e.free_symbols} & stset
+        names = {str(y) for y in e.free_symbols}
+        if names & zero:
+            names = {str(y) for y in e.xreplace(sub).free_symbols}
+        return names & stset
     # the states each equation, observable and event value holds, once per regime and tape
     dep = [{x: syms(f) for x, f in eq.items()} for eq in eqs]
     obs_dep = [set().union(*[syms(model_sympify(l.split("=", 1)[1] if "=" in l else l)) for l in rg["g"]])
                for rg in regimes]
     ev_dep = [set().union(*[syms(model_sympify(str(e["value"]))) for e in evs]) for evs in events]
-    keep_of = {}
+    # regimes that differ in values only have the same dependencies, and the same closure from the same start
+    kinds = {}
+    kind = [kinds.setdefault(tuple(sorted((x, frozenset(d)) for x, d in dr.items())), len(kinds)) for dr in dep]
+    keep_of, closure = {}, {}
     for ch in chains:
         rs = sorted({setup["regime_of"][i] - 1 for i in ch})
         seen = set().union(*[obs_dep[r] for r in rs]) | set().union(*[ev_dep[i] for i in ch])
         seen -= zero
-        while True:
-            more = set().union(*[dep[r][x] for r in rs for x in seen if x in dep[r]]) - zero - seen
-            if not more:
-                break
-            seen |= more
+        key = (tuple(sorted({kind[r] for r in rs})), frozenset(seen))
+        if key not in closure:
+            while True:
+                more = set().union(*[dep[r][x] for r in rs for x in seen if x in dep[r]]) - zero - seen
+                if not more:
+                    break
+                seen |= more
+            closure[key] = seen
+        seen = closure[key]
         for i in ch:
             keep_of[i] = keep_of.get(i, set()) | seen
     keep_r = {}
@@ -515,12 +544,18 @@ def restricted_setup(setup, chains, joint):
     if not zero and all(keep_r.get(r, stset) >= {x for x in eqs[r]} for r in keep_r):
         return setup
 
+    zeroed = {}
+
     def cut(lines, keep):
         out = []
         for l in _lines(lines):
             lhs, rhs = (u.strip() for u in l.split("=", 1))
             if lhs in keep or lhs not in stset:
-                out.append(f"{lhs} = {model_sympify(rhs).xreplace(sub)}")
+                if rhs not in zeroed:
+                    # a value that holds no state at zero stays as written
+                    zeroed[rhs] = str(model_sympify(rhs).xreplace(sub)) \
+                        if set(_NAMES.findall(rhs)) & zero else rhs
+                out.append(f"{lhs} = {zeroed[rhs]}")
         return out
     new_regimes = [{"f": cut(rg["f"], keep_r.get(r, stset)),
                     "g": [f"{l.split('=', 1)[0].strip()} = {model_sympify(l.split('=', 1)[1]).xreplace(sub)}"
@@ -573,26 +608,33 @@ def exact_direction(setup, field, chains, joint, init=(), known=()):
             return True
         return False
 
-    of = {}
+    of, found = {}, {}
     for r in used:
-        if holds(r, field):
-            of[r] = field
-            continue
-        res = certify(regime_identities(regimes[r], field, jets))
         own = [ch for ch in chains if setup["regime_of"][ch[0]] - 1 == r]
-        # initial values set by other parameters: the state components from their identities
+        ics = None
         if own and not joint:
             ics = [f"{x.strip()} = {_rename_init(e.strip(), init)}" for x, e in
                    (line.split("=", 1) for line in _lines(setup["tapes"][own[0][0]].get("ver_ic")))]
-            lifts = (initial_lift(field, ics, states, regimes[r]["f"]), linear_lift(field, regimes[r], ics, states))
-            lift = next((x for x in lifts if x is not None and holds(r, x)), None)
+            # the lift of a regime with the same initial values first: the regimes of many conditions share it
+            if tuple(ics) in found and holds(r, found[tuple(ics)]):
+                of[r] = found[tuple(ics)]
+                continue
+        if holds(r, field):
+            of[r] = field
+            continue
+        # initial values set by other parameters: the state components from their identities
+        if ics is not None:
+            lifts = (lambda: initial_lift(field, ics, states, regimes[r]["f"]),
+                     lambda: linear_lift(field, regimes[r], ics, states),
+                     lambda: None if jets else support_lift(field, regimes[r], ics, states))
+            lift = next((x for x in (make() for make in lifts) if x is not None and holds(r, x)), None)
             if lift is not None:
-                of[r] = lift
+                of[r] = found[tuple(ics)] = lift
                 continue
         # in another regime the direction may need other state components
         alt = None if jets else \
             combined_field(extended_fields(setup, own) if own else setup["gens"][r], theta, states)
-        res = certify(regime_identities(regimes[r], alt, jets)) if alt is not None else res
+        res = certify(regime_identities(regimes[r], alt if alt is not None else field, jets))
         if res["ok"] is not True:
             return res
         of[r] = dict(alt, **extra)
@@ -608,15 +650,24 @@ def exact_direction(setup, field, chains, joint, init=(), known=()):
                 ids += part
             else:
                 ids += event_identities(e["ev"], of[e["from"]], of[e["to"]], states)
+    seen_ics = set()
     for ch in chains:
         t1, r0 = setup["tapes"][ch[0]], setup["regime_of"][ch[0]] - 1
         if not joint:
-            # start events are composed into the initial values
+            # start events are composed into the initial values; a value off the field, of a state no component
+            # reads, holds the identity 0 = 0, and chains with the same values give the same identities
+            moved = {str(k) for k, v in dict(of[r0]).items() if str(v) != "0"}
+            read = set().union(*[names(v) for v in dict(of[r0]).values()]) if of[r0] else set()
             ics = []
             for line in _lines(t1.get("ver_ic")):
                 x, e = (u.strip() for u in line.split("=", 1))
-                ics.append(f"{x} = {_rename_init(e, init)}")
-            ids += initial_identities(ics, of[r0])
+                e = _rename_init(e, init)
+                if x in moved or x in read or names(e) & moved:
+                    ics.append(f"{x} = {e}")
+            key = (r0, tuple(ics))
+            if key not in seen_ics:
+                seen_ics.add(key)
+                ids += initial_identities(ics, of[r0])
             continue
         t0 = _evs(t1.get("ver_t0"))
         if t0:
@@ -779,7 +830,12 @@ def _segment_key(sg):
     """What the ranks of a segment from a given start read of the tape of the segment."""
     return tuple(tuple(np.atleast_1d(np.asarray(sg[k])).tolist()) if sg.get(k) is not None else None
                  for k in ("op", "a", "b", "cnum", "cden", "state_slots", "f_out", "g_out", "tm_op", "tm_a",
-                           "tm_b", "tm_cnum", "tm_cden", "tm_out"))
+                           "tm_b", "tm_cnum", "tm_cden", "tm_out", "leaf_slot", "leaf_src", "leaf_num", "leaf_den"))
+
+
+def _jet_key(key):
+    """The name under which the kernel keeps the jets of the ranks `key`."""
+    return hashlib.sha256(repr(key).encode()).hexdigest()
 
 
 def _reach_at(r, rho):
@@ -960,18 +1016,21 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
         G, Q = [None] * n_seg, [None] * n_seg
 
         def call(kind, s, Nc, threads):
-            if kind == "g":
-                return _core.sym_segment_ranks([sb[s]], n_leaves, n_states, z_b, lv_g, p, Nc, st_g[s:s + 1],
-                                               threads, drop, True)
             if id(sb[s]) not in seg_keys:
                 seg_keys[id(sb[s])] = _segment_key(sb[s])
+            if kind == "g":
+                # the jets of a call continue those of the call before at a lower order
+                jets = _jet_key((seg_keys[id(sb[s])], st_g[s].tobytes(), np.asarray(lv_g).tobytes(), int(p),
+                                 z_b.tobytes(), drop.tobytes()))
+                return _core.sym_segment_ranks([sb[s]], n_leaves, n_states, z_b, lv_g, p, Nc, st_g[s:s + 1],
+                                               threads, drop, True, jets)
             key = (seg_keys[id(sb[s])], q_start[s].tobytes(), (s_seed % s_p).tobytes(), int(s_p), z_b.tobytes(),
                    drop.tobytes())
             kept = shared.get(key)
             if kept is not None and len(kept) > Nc:
                 return {"ok": True, "ranks": kept[:Nc + 1]}
             r = _core.sym_segment_ranks([sb[s]], n_leaves, n_states, z_b, s_seed % s_p, s_p, Nc,
-                                        q_start[s:s + 1], threads, drop, True)
+                                        q_start[s:s + 1], threads, drop, True, _jet_key(key))
             if r.get("ok"):
                 shared[key] = np.asarray(r["ranks"]).ravel()
             return r

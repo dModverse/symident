@@ -184,12 +184,16 @@ def _split_powers(e, atoms):
     return e.func(*[_split_powers(a, atoms) for a in e.args])
 
 
+# the regimes of many conditions repeat an identity: each distinct one is decided once
+@functools.lru_cache(maxsize=1 << 14)
 def _zero(e):
     """True or False when `e` cancels to zero or not over Q; None past the caps or where it is open.
 
     A nonzero value modulo a prime shows it nonzero; a numerator that expands to zero shows it zero.
     Powers with symbolic exponents and exponentials are split into powers of independent atoms first,
     so that x**(2*n) and x**n meet as a square."""
+    if e == 0:
+        return True
     if spy.count_ops(e) > SIZE_CAP:
         return None
     if _nonzero_at_a_point(e):
@@ -226,6 +230,12 @@ def _zero_split(e):
     return True if not v else (None if opaque else False)
 
 
+@functools.lru_cache(maxsize=1 << 16)
+def _free(e):
+    """The free symbols of `e`, read once per expression: the equations of a regime meet every check."""
+    return frozenset(e.free_symbols)
+
+
 class _Field:
     """A field as SymPy expressions with the derivation of the field."""
 
@@ -234,7 +244,8 @@ class _Field:
 
     def __call__(self, e):
         """Y(e): the derivative of `e` along the field."""
-        return sum((v * spy.diff(e, k) for k, v in self.c.items() if k in e.free_symbols), spy.Integer(0))
+        fs = _free(e)
+        return sum((v * spy.diff(e, k) for k, v in self.c.items() if k in fs), spy.Integer(0))
 
     def at(self, s):
         """The component on the symbol `s`."""
@@ -249,14 +260,23 @@ def _rhs(lines):
     return out
 
 
+@functools.lru_cache(maxsize=1 << 14)
+def _rhs_of(lines):
+    """_rhs() of a tuple of lines, parsed once: the regimes of many conditions repeat in every check."""
+    return _rhs(lines)
+
+
 def regime_identities(regime, field, skip=()):
-    """(label, expression) of [Y, F] per state but `skip` and per constant coordinate, and Y(h) per observable."""
+    """(label, expression) of [Y, F] per state but `skip` and per constant coordinate, and Y(h) per observable.
+
+    A state off the field whose equation holds no coordinate of the field has the identity 0 = 0 and is left out."""
     Y = _Field(field)
-    F = _rhs(regime["f"])
+    F = _rhs_of(tuple(str(x) for x in regime["f"]))
+    moved = {k for k, v in Y.c.items() if v != 0}
     skip = {spy.Symbol(str(x)) for x in skip}
     out = []
     for x, fx in F.items():
-        if x in skip:
+        if x in skip or (x not in moved and not _free(fx) & moved):
             continue
         xi = Y.at(x)
         out.append((f"[Y, F] on {x}", Y(fx) - sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F),
@@ -268,7 +288,8 @@ def regime_identities(regime, field, skip=()):
                                           spy.Integer(0))))
     for line in regime["g"]:
         h = _expr(str(line).split("=", 1)[1]) if "=" in str(line) else _expr(str(line))
-        out.append((f"Y({h})", Y(h)))
+        if h.free_symbols & moved:
+            out.append((f"Y({h})", Y(h)))
     return out
 
 
@@ -462,6 +483,10 @@ def _implicit_lift(Y, xs, sol):
     return dict(zip(xs, J.LUsolve(rhs)))
 
 
+# states past which no linear lift xi = G x is solved for: G has their square of unknowns
+_LINEAR_LIFT_CAP = 64
+
+
 def linear_lift(field, regime, ic_lines, states):
     """`field` with state components xi = G x for a regime linear in the states, or None.
 
@@ -473,12 +498,19 @@ def linear_lift(field, regime, ic_lines, states):
     if not xs or any(x in Y.c for x in xs):
         return None
     n = len(xs)
-    G = spy.Matrix(n, n, lambda i, j: spy.Symbol(f"_g{i}_{j}"))
     try:
-        M = spy.Matrix([[spy.diff(F[a], b) for b in xs] for a in xs])
-        if any(_zero(F[a] - sum((M[i, j] * xs[j] for j in range(n)), spy.Integer(0))) is not True
-               for i, a in enumerate(xs)):
+        # the Jacobian row by row, each equation checked linear before the next: a nonlinear one ends the search
+        col = {x: j for j, x in enumerate(xs)}
+        M = spy.zeros(n, n)
+        for i, a in enumerate(xs):
+            on = F[a].free_symbols & set(xs)
+            for b in on:
+                M[i, col[b]] = spy.diff(F[a], b)
+            if _zero(F[a] - sum((M[i, col[b]] * b for b in on), spy.Integer(0))) is not True:
+                return None
+        if n > _LINEAR_LIFT_CAP:
             return None
+        G = spy.Matrix(n, n, lambda i, j: spy.Symbol(f"_g{i}_{j}"))
         eqs = list(spy.Matrix([[Y(M[i, j]) for j in range(n)] for i in range(n)]) + M * G - G * M)
         xi = G * spy.Matrix(xs)
         for line in regime["g"]:

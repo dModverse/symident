@@ -44,7 +44,7 @@ def msolve_check(path):
             fh.write("x, y\n65521\nx^2+y-7,\nx*y-6\n")
         try:
             r = subprocess.run([path, "-f", fi, "-o", fo, "-P", "1", "-t", "1"],
-                               capture_output=True, timeout=60)
+                               capture_output=True)
         except (OSError, subprocess.SubprocessError):
             return None
         if r.returncode != 0 or not os.path.exists(fo):
@@ -54,7 +54,7 @@ def msolve_check(path):
     if not out.startswith("[0,[65521,2,3,") or "[36,0,65514,1]" not in out:
         return None
     try:
-        v = subprocess.run([path, "-V"], capture_output=True, text=True, timeout=30).stdout.strip()
+        v = subprocess.run([path, "-V"], capture_output=True, text=True).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         v = ""
     return v or "unknown"

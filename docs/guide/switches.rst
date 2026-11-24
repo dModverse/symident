@@ -56,7 +56,7 @@ A reported direction leaves the observables of every regime unchanged and keeps 
 switching surfaces, the events and the given initial values. Every sign pattern of the
 switching functions is a regime, reached or not. A parameter of a regime that is never entered
 is therefore reported identifiable unless ``regimes`` excludes that regime. The state at a
-switch is any point of the surface; :doc:`../method` states the rule and the exception of
+switch is any point of the surface; :ref:`switching` states the rule and the exception of
 states that stay at zero (``info["zero_states"]``).
 
 Visibility
@@ -121,5 +121,5 @@ A switch on time alone, such as ``time > tau``, is a surface like the others. An
 ``root`` resets ``var`` each time the root expression changes sign. Where the rule is not
 proven for every direction, the rank is a lower bound, ``info["switching"]["uncertified"]``
 says why, and the printout lists the open directions as candidates
-(``info["switching"]["candidates"]``), not as symmetries. :doc:`../method` lists the options
+(``info["switching"]["candidates"]``), not as symmetries. :ref:`switching` lists the options
 and models that switches refuse.

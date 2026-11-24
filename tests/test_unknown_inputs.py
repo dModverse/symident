@@ -161,3 +161,97 @@ def test_full_rank_with_unknown_inputs_is_verified():
     st = r.info["rank_status"]
     assert r.identifiable and r.info["projection"]["status"] == "verified"
     assert st["status"] == "verified" and 0 < st["probability"] < 1e-6
+
+
+def test_an_unknown_input_under_a_log_chart_is_no_coordinate():
+    r = si.detect(si.Model({"x": "k0 + k/(1 + (x/(1 + w))^n) - x"}, {"y": "x"}, unknown_inputs=["w"]),
+                  reconstruct=True)
+    assert "w" not in r.info["coordinates"] and r.info["rank_status"]["status"] == "proven"
+    assert {s.level for s in r.symmetries} == {"exact"}
+    # the lift in the log coordinate of the input has no closed form in the input: no input change of zero
+    for s in r.symmetries:
+        assert s.input_change is None or any(str(v) != "0" for v in s.input_change.values())
+        assert not set(s.state_components or {}) - {"x"}
+
+
+# a flux w between two states: one direction moves N, d and the initial values, and w absorbs it
+FLUX = ({"a": "-w*a", "b": "w*a - d*b"}, {"y1": "a + b", "y2": "N*b"})
+
+
+def test_a_pointwise_lift_reduces_a_direction_the_input_absorbs():
+    r = si.detect(si.Model(*FLUX, unknown_inputs=["w"]), reconstruct=True)
+    (s,) = r.symmetries
+    assert s.level == "exact" and {"N", "d"} <= set(s.generator)
+    red = si.reduce(r)
+    assert red.removed and not red.remaining and red.checks["loop"]["ok"]
+    (b,) = red.to_dict()["blocks"]
+    assert b["inputs"]["proof"] == "lift" and b["inputs"]["absorb"] == ["w"]
+    assert {k for k, v in red.trafo.items() if v != k} <= {"N", "d"}
+    assert "Unknown inputs:" in repr(red)
+    # the lift satisfies D(xi_x) = V(f) and V(h) = 0 as identities
+    (lf,) = b["inputs"]["lift"].values()
+    a, bb, d, N, w = spy.symbols("a b d N w")
+    loc = {"a": a, "b": bb, "d": d, "N": N, "w": w}
+    xi = {k: spy.sympify(v.replace("^", "**"), locals=loc) for part in ("params", "states", "inputs")
+          for k, v in lf[part].items()}
+    V = {spy.Symbol(k): v for k, v in xi.items()}
+    f = {a: -w * a, bb: w * a - d * bb}
+
+    def act(e):
+        return sum(spy.diff(e, k) * v for k, v in V.items())
+    for x, fx in f.items():
+        Dxi = sum(spy.diff(V.get(x, 0), y) * f[y] for y in f)
+        assert spy.cancel(Dxi - act(fx)) == 0
+    assert spy.cancel(act(a + bb)) == 0 and spy.cancel(act(N * bb)) == 0
+
+
+TWO_COMPARTMENTS = {"x1": "-(k12 + k1e)*x1 + k21*x2 + b*u", "x2": "k12*x1 - k21*x2"}
+
+
+def test_the_inversion_of_the_input_proves_every_section():
+    r = si.detect(si.Model(TWO_COMPARTMENTS, {"y1": "x1"}, unknown_inputs=["u"]), reconstruct=True)
+    red = si.reduce(r)
+    assert len(red.removed) == 5 and not red.remaining
+    for b in red.to_dict()["blocks"]:
+        assert b["inputs"]["proof"] == "inversion" and b["inputs"]["determinant"] == "b"
+        assert "u positive" in b["inputs"]["condition"]
+
+
+def test_a_direction_without_a_proof_that_the_input_absorbs_it_stays():
+    # a second, separate observable leaves no inversion; the rates of the hidden compartment need a lift that
+    # depends on the past of the trajectory
+    odes = dict(TWO_COMPARTMENTS, z="-m*z")
+    r = si.detect(si.Model(odes, {"y1": "x1", "y2": "z"}, unknown_inputs=["u"]), reconstruct=True)
+    red = si.reduce(r)
+    gens = dict(zip([f"X{c}" for c in "₁₂₃₄₅"], [s.generator for s in r.symmetries]))
+    left = {k for b in red.to_dict()["blocks"] if b["status"] == "unresolved" for k in gens[b["labels"][0]]}
+    assert "k21" in left and "x2" in left
+    assert all("pointwise lift" in b["reason"] for b in red.to_dict()["blocks"] if b["status"] == "unresolved")
+    done = {k for b in red.to_dict()["blocks"] if b["status"] == "reduced" for k in gens[b["labels"][0]]}
+    assert {"b", "k1e"} <= done
+
+
+def test_the_count_takes_the_jets_of_an_unknown_input_as_unknowns():
+    # x -> -x with w -> -w keeps the output: an exact map of the states and the input
+    r = si.detect(si.Model({"x": "-k*x + w"}, {"y": "x^2"}, unknown_inputs=["w"]), reconstruct=True)
+    out = r.discrete()
+    info = out["info"]
+    assert info["count"] == 2 and info["certificate"]["complete"] == "verified" and 0 < info["count_bound"] < 1e-6
+    (s,) = out["symmetries"]
+    assert s["map"] == {"x": "-x"} and s["level"] == "exact" and s["state_maps"] == [{"x": "-x", "w": "-w"}]
+
+
+def test_the_count_leaves_out_the_jets_the_output_does_not_read():
+    # the flux cancels in y1: the jets above the order the outputs read would leave a free direction
+    r = si.detect(si.Model(*FLUX, unknown_inputs=["w"]), reconstruct=True)
+    info = r.discrete()["info"]
+    assert info["count"] == 1 and info["certificate"]["complete"] == "verified"
+    assert info["reduced"]["coordinates"] and "w" not in info["reduced"]["coordinates"]
+
+
+def test_a_direction_the_inputs_absorb_in_several_conditions_keeps_without_a_proof():
+    m = si.Model({"x": "-k*x + s*w"}, {"y": "x"}, unknown_inputs=["w", "w2"],
+                 conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "w2"]}})
+    red = si.reduce(si.detect(m, reconstruct=True))
+    (b,) = red.to_dict()["blocks"]
+    assert red.remaining and b["status"] == "unresolved" and "one condition" in b["reason"]

@@ -84,6 +84,19 @@ def test_hodgkin_huxley_offset_at_rest():
     assert same_direction(parameter_form(hand.symmetries[0], ("V0",)), {k: v for k, v in shift.items() if k != "EL"})
 
 
+def test_hodgkin_huxley_offset_banks_per_entry(monkeypatch):
+    # each entry fitted on points that move only the leaves of the entry from the base point
+    import symident.detection.forward as fw
+    monkeypatch.setattr(fw, "_UNION_CAP", 0)
+    eq = det(HH, {"y": "V + Vlj"}, events=HH_EVENTS, inputs=["Iapp"], equilibrate=True, positive=HH_POS,
+             cores=4, control=si.reconst_control(relevance_cap_dir=1))
+    (d,) = eq.symmetries
+    assert d["level"] == "exact" and eq.info["rank_status"]["status"] == "proven"
+    assert same_direction(d["generator"], {"EK": "1", "EL": "1", "ENa": "1", "Vlj": "-1", "am": "-am/kam",
+                                           "bm": "bm/kbm", "ah": "ah/kah", "bh": "-bh/kbh", "an": "-an/kan",
+                                           "bn": "bn/kbn"})
+
+
 # ---- small models: a trigonometric and a logarithmic term of a state at rest
 
 def test_trigonometric_state_at_rest():

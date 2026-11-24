@@ -7,7 +7,7 @@ import time
 import numpy as np
 import sympy as spy
 
-from .. import session, state
+from .. import _core, session, state
 from ..gfp import PRIMES
 from ..rexpr import sym_sort
 from ..sym.scaling import scaling_symmetries_multi
@@ -90,6 +90,11 @@ class HybridError(ValueError):
     """A hybrid model the analysis does not support or cannot certify."""
 
 
+def _applies(e, c):
+    """Whether event `e` applies to the condition of index `c`: every condition without "cond"."""
+    return e.get("cond") is None or c in [int(k) for k in e["cond"]]
+
+
 class _Cond:
     """One condition in the coordinates of the model: substitutions, initial values, observables, events."""
 
@@ -142,7 +147,6 @@ class _Setup:
         self.fixed += [str(s) for s in CONSTS.values() if s in used and str(s) not in self.fixed]
         self.kw = dict(kw, fixed=list(self.fixed))
         self.regimes, self.excluded = self._regimes()
-        self.roots = {r["surface"] for r in hy.roots}
         decl = self._declarations(regimes)
         for cd in self.conds:
             self._select(cd, decl[cd.index])
@@ -213,6 +217,8 @@ class _Setup:
             cd.obs = {k: app(v) for k, v in g.items()}
             cd.events = []
             for i, e in enumerate(self.time_events):
+                if not _applies(e, c):
+                    continue
                 tv = e["time"]
                 vv = e["value"]
                 if grid is not None and tv in grid.colnames():
@@ -224,6 +230,8 @@ class _Setup:
                 cd.events.append({"var": e["var"], "time": T, "value": app(_parse(vv)).xreplace({TIME: T}),
                                   "method": e["method"], "index": i})
             cd.equil = self.equilibrate
+            cd.roots = [r for r in hy.roots if _applies(r["event"], c)]
+            cd.root_events = [r["event"] for r in cd.roots]
             conds.append(cd)
         # the start: 0, or the earliest event time that is a number in a condition
         self.t0e = min([_rational(e["time"]) for cd in conds for e in cd.events if e["time"].is_number] +
@@ -323,7 +331,7 @@ class _Setup:
                 cd.regimes += [r for r in hit if r not in cd.regimes]
             self._check_start(cd, picks[0])
         cd.surfaces = [j for j in range(len(self.sw.funcs))
-                       if {r[j] for r in cd.regimes} == {1, -1} or j in self.roots]
+                       if {r[j] for r in cd.regimes} == {1, -1} or j in {r["surface"] for r in cd.roots}]
         # no trajectory crosses a surface in the parameters alone
         moving = {_sym(x) for x in self.f} | {TIME}
         for j in cd.surfaces:
@@ -372,7 +380,7 @@ class _Setup:
 
     def visibility(self, cd, j):
         """Whether the switch on surface j is visible, invisible or undecided in the observables of `cd`."""
-        if j in self.roots:
+        if j in {r["surface"] for r in cd.roots}:
             return _VISIBLE
         pairs = []
         for a in cd.regimes:
@@ -529,22 +537,23 @@ def _copies(st, names=None):
         if st.unknown or any(v != _VISIBLE for v in cd.vis.values()):
             points.append((None, None))
         resets = []
-        for r in st.hy.roots:
+        for r in cd.roots:
             j = r["surface"]
             sol = st.on_surface(cd, j) if j in cd.surfaces and st.hy.kind[j] == "state" else None
             resets.append((sol if sol is not None and str(sol[0]) in st.dyn else None, r["event"]))
         # a copy from a point of a surface names that surface under "surface"
         for sol, ev, on in [(s, None, j) for s, j in points] + [(s, e, None) for s, e in resets]:
-            pt = {}
+            pt, mine = {}, []
             for x in st.dyn:
                 if sol is None or _sym(x) != sol[0]:
                     pt[_sym(x)] = _sym(names(f"{x}_si"))
-                    fresh.append(str(pt[_sym(x)]))
+                    mine.append(str(pt[_sym(x)]))
             tsym = None
             if st.clock:
                 tsym = _sym(names("si_time"))
-                fresh.append(str(tsym))
+                mine.append(str(tsym))
                 pt[TIME] = tsym
+            fresh += mine
             pt.update({_sym(u): v for u, v in _start_inputs(st, cd).items()})
             if sol is not None:
                 pt[sol[0]] = sol[1].xreplace(pt)
@@ -558,7 +567,8 @@ def _copies(st, names=None):
             for sides in cd.regimes:
                 copies += _switched({"cd": cd, "sides": sides, "ic": ic, "events": False, "obs": {},
                                      "time": tsym if tsym is not None else st.t0e,
-                                     "inputs": {u: pt[_sym(u)] for u in st.inputs}, "surface": on}, st)
+                                     "inputs": {u: pt[_sym(u)] for u in st.inputs}, "surface": on,
+                                     "block": tuple(mine)}, st)
     return copies, fresh
 
 
@@ -790,7 +800,7 @@ def _zero_set(st, cd, memo=None):
     zs = {x for x, v in _start_values(st, cd).items() if v is not None and is_zero(v)}
     fields = [st.model(cd, r)[0] for r in cd.regimes]
     later = [(e["var"], e["method"], e["value"]) for e in cd.events if not e["t0"]] + \
-        [(str(e["var"]), e.get("method", "replace"), cd.apply(_parse(e["value"]))) for e in st.root_events]
+        [(str(e["var"]), e.get("method", "replace"), cd.apply(_parse(e["value"]))) for e in cd.root_events]
     # a state is checked again only when a state named in the right-hand sides or later events
     # of the checked state has left the set
     uses = {x: {str(s) for e in [f[x] for f in fields] + [v for var, _, v in later if var == x]
@@ -874,7 +884,7 @@ def _coords(st):
                 pars |= {str(s) for s in v.free_symbols}
         for e in cd.events:
             pars |= {str(s) for s in e["time"].free_symbols | e["value"].free_symbols}
-        for e in st.root_events:
+        for e in cd.root_events:
             pars |= {str(s) for s in cd.apply(_parse(e["value"])).free_symbols}
     pars -= set(st.f) | {"time"} | set(st.fixed) | set(st.inputs) | set(st.unknown)
     free = []
@@ -944,7 +954,7 @@ def _bracket(st, X, f):
 def _events_of(st, cd):
     return [e for e in cd.events if not e["t0"]] + \
         [{"var": e["var"], "time": None, "value": cd.apply(_parse(e["value"])),
-          "method": e.get("method", "replace")} for e in st.root_events]
+          "method": e.get("method", "replace")} for e in cd.root_events]
 
 
 def _starts(st, cd):
@@ -1215,7 +1225,7 @@ def _scaling_candidates(st):
             if v is not None and not cd.equil:
                 cons_m.append(f"{x} = {to_str(v)}")
         resets = [{"var": r["var"], "time": None, "method": r.get("method", "replace"),
-                   "value": cd.apply(_parse(r["value"]))} for r in st.root_events]
+                   "value": cd.apply(_parse(r["value"]))} for r in cd.root_events]
         for e in list(cd.events) + resets:
             if e["var"] in st.inputs or e["method"] == "multiply":
                 cons_o.append(f"_ = {to_str(e['value'])}")
@@ -1367,10 +1377,13 @@ def _settings(st):
 
 def _entering(st, copies, fresh):
     """The fresh coordinates that can enter a row: entry values of states that reach an observable, and the clock."""
-    fr, out = set(fresh), set()
+    fr, out, memo = set(fresh), set(), {}
     for cp in copies:
         pair = (cp["sides"], cp["switch"][1]) if cp.get("switch") is not None else (cp["sides"], cp["sides"])
-        for x in st._reach(cp["cd"], pair):
+        key = (id(cp["ic"]), tuple(pair[0]), tuple(pair[1]))
+        if key not in memo:
+            memo[key] = _reach_held(st, cp, pair, fr)
+        for x in memo[key]:
             v = cp["ic"].get(x)
             if v is not None:
                 out |= {str(a) for a in spy.sympify(v).free_symbols} & fr
@@ -1379,20 +1392,102 @@ def _entering(st, copies, fresh):
     return out
 
 
+def _reach_held(st, cp, pair, fr):
+    """The states that reach an observable of the copy in either regime of `pair`, with the held states at their
+    start value."""
+    cd, ic = cp["cd"], cp["ic"]
+    # a copy with the events of the condition, or without fresh start values, takes the plain reach
+    if cp.get("events", True) or \
+            not any({str(a) for a in spy.sympify(v).free_symbols} & fr for v in ic.values() if v is not None):
+        return st._reach(cd, pair)
+    models = [st.model(cd, r) for r in pair]
+    # a set of states whose right-hand sides vanish identically at their start values keeps them in every regime
+    # of the pair, so the Lie derivatives of the copy are those of the fields restricted to that level set
+    held = {x for x in st.dyn if ic.get(x) is not None and not {str(a) for a in spy.sympify(ic[x]).free_symbols} & fr}
+    while True:
+        sub = {_sym(x): spy.sympify(ic[x]) for x in held}
+        drop = {x for x in held if not all(_regular_zero(f[x], sub) for f, _ in models)}
+        if not drop:
+            break
+        held -= drop
+    out = set()
+    for _, h in models:
+        for v in h.values():
+            out |= {str(a) for a in spy.sympify(v).xreplace(sub).free_symbols if str(a) in st.f}
+    while True:
+        more = set(out)
+        for f, _ in models:
+            for x in out - held:
+                more |= {str(a) for a in spy.sympify(f[x]).xreplace(sub).free_symbols if str(a) in st.f}
+        if more == out:
+            return out - held
+        out = more
+
+
+def _rank_mod(A, p):
+    """The rank of the columns of the integer matrix `A` modulo p."""
+    return 0 if A.size == 0 else int(_core.sym_rref_mod((A.T % p).astype(np.float64), p)["rank"])
+
+
 def _relaxed_dim(res, coords, fresh, entering):
     """(dimension, proven): the dimension of the stacked kernel projected onto the coordinates of the model."""
     need, sub = _projected(res, coords)
     if sub is None or sub.shape[1] == 0:
         return need, True
-    from .. import _core
     ker = res["info"]["kernel"]
-    within = sub.shape[1] - int(_core.sym_rref_mod(sub.T.astype(np.float64), int(ker["p"]))["rank"])
+    within = sub.shape[1] - _rank_mod(sub, int(ker["p"]))
     idle = [z for z in ker["coords"] if z in set(fresh) and z not in entering]
     # proven where every direction within the fresh coordinates alone is the unit direction of one that enters no row
     return need, within == len(idle)
 
 
 _OF_FRESH = "the fresh coordinates of the switch surfaces"
+_FULL_BLOCKS = "the copies from the start and from the start points whose fresh columns have full rank"
+
+
+def _dropping_blocks(res, coords, copies, entering):
+    """The start points whose entering fresh columns drop rank at the sample point of the kernel."""
+    ker = res["info"].get("kernel")
+    if ker is None:
+        return set()
+    kc, p = list(ker["coords"]), int(ker["p"])
+    N = np.asarray(ker["N"], dtype=np.int64).reshape(len(kc), -1)
+    if N.shape[1] == 0:
+        return set()
+    at = [kc.index(z) for z in coords if z in kc]
+    base = _rank_mod(N[at, :], p)
+    out = set()
+    for blk in {cp["block"] for cp in copies if cp.get("block")}:
+        own = [kc.index(z) for z in blk if z in kc and z in entering]
+        # the kernel within the fresh columns has a part on this start point exactly when the rank rises
+        if own and _rank_mod(N[at + own, :], p) > base:
+            out.add(blk)
+    return out
+
+
+def _on_copies(st, kept, fresh, coords):
+    """(dimension of the projection or None where not proven, result, rows) of the stacked rows of `kept` alone."""
+    from .core import detection_with_primes
+    held = {z for cp in kept for z in cp.get("block") or ()}
+    fresh = [z for z in fresh if z in held]
+    # the kernel at the sample point bounds the rank; closed forms and the saturation guard are not needed
+    rows = dict(_rows_model(st, kept, fresh), reconstruct=False, verify=False)
+    with state.options(keep_kernel=True, random_kernel=False, open_coords=tuple(fresh), inner=True):
+        res = detection_with_primes(rows)
+    need, proven = _relaxed_dim(res, coords, fresh, _entering(st, kept, fresh))
+    return need if proven else None, res, rows
+
+
+def _without_dropping_blocks(st, copies, fresh, res, coords, entering, start):
+    """The dimension of the projection, proven on the copies whose start points keep full column rank, or None;
+    `start` is the dimension on the copies without fresh coordinates, None where not taken."""
+    drop = _dropping_blocks(res, coords, copies, entering)
+    if not drop:
+        return None
+    kept = [cp for cp in copies if cp.get("block") not in drop]
+    if start is not None and not any(cp.get("block") for cp in kept):
+        return start
+    return _on_copies(st, kept, fresh, coords)[0]
 
 
 def _at_random(rows, res, coords, fresh, entering, need):
@@ -1430,7 +1525,6 @@ def _minor_bound(rows, res, cols):
 
 def _projected(res, coords):
     """The dimension of the stacked kernel projected onto the coordinates of the model, and that projection."""
-    from .. import _core
     ker = res["info"].get("kernel")
     if ker is None and res.get("identifiable"):
         return len([z for z in coords if z not in res["info"]["coordinates"]]), None
@@ -1449,7 +1543,7 @@ def _projected(res, coords):
     if not rows or N.shape[1] == 0:
         return len(missing), None
     sub = N[rows, :] % int(ker["p"])
-    return len(missing) + int(_core.sym_rref_mod(sub.T.astype(np.float64), int(ker["p"]))["rank"]), sub
+    return len(missing) + _rank_mod(sub, int(ker["p"])), sub
 
 
 def hybrid_detection(hy, kw, regimes=None, setup=None):
@@ -1463,6 +1557,7 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
     from .core import _jet_order, detection_with_primes
     given = int(dict(kw.get("control") or {}).get("input_jet_order") or 0)
     order = given or (_jet_order(kw) if st.unknown else 0)
+    start = None
     while True:
         names = _Names(_model_symbols(st))
         jets = _jet_chains(st, order, names)
@@ -1472,6 +1567,13 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
             raise HybridError("internal: a regime enters no copy of the condition: " +
                               "; ".join(f"{c}: {', '.join(st.text(r))} ({k})" for c, r, k in miss))
         jet_fresh = _jet_values(copies, jets, names)
+        if fresh and not jets and start is None:
+            # full rank on the copies without fresh coordinates is full rank of the rule, with nothing to project
+            plain = [cp for cp in copies if not cp.get("block")]
+            start, res, rows = _on_copies(st, plain, [], coords)
+            if start == 0:
+                copies, fresh, short = plain, [], False
+                break
         rows = _rows_model(st, copies, fresh, jets, jet_fresh, order)
         # the closed forms below read only directions without fresh coordinates
         with state.options(keep_kernel=True, random_kernel=True, open_coords=tuple(fresh)):
@@ -1484,6 +1586,10 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
     entering = _entering(st, copies, fresh)
     need, proven = _relaxed_dim(res, coords, fresh, entering)
     projection = None
+    if not proven and not jets:
+        fewer = _without_dropping_blocks(st, copies, fresh, res, coords, entering, start)
+        if fewer is not None and fewer <= need:
+            projection, need, proven = {"status": "proven", "of": _OF_FRESH, "rows": _FULL_BLOCKS}, fewer, True
     if not proven:
         projection, need = _at_random(rows, res, coords, fresh, entering, need)
     if jets:

@@ -29,9 +29,11 @@ def _next_order(rk, nt, nt_end, need, cols):
 
 def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_block=1, block_call=None,
                      budget=None, block_map=None, nt_min=0, nt_min_block=None, prep=None,
-                     rank_cap=None, block_profile=None, checks=True, longest_first=False):
+                     rank_cap=None, block_profile=None, checks=True, longest_first=False,
+                     stacked_profile=None):
     """Saturated reference rank after raising the Lie and gap orders, or None without a usable point;
-    `longest_first` scans the blocks of the highest known orders first, for blocks without shared state."""
+    `longest_first` scans the blocks of the highest known orders first, for blocks without shared state;
+    `stacked_profile` gives the rank per Lie order of the stacked rows from one jet."""
     if rank_cap is None:
         rank_cap = nz
     block_call = block_call or []
@@ -60,8 +62,9 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
     else:
         need_used = min(plateau_need, budget + 1)
 
-    def scan_nt(call1, point, Mtot, frm, need, label, lo0=0, prof1=None):
+    def scan_nt(call1, point, Mtot, frm, need, label, lo0=0, prof1=None, rel=0.0):
         lo0 = int(lo0)
+        need0 = need
         if prof1 is not None and Mtot == 0 and not _ok(prof1(point, P, 1)):
             # a chain with a moving boundary has no profile; the orders are scanned
             prof1 = None
@@ -81,6 +84,10 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
                             flat += 1
                     else:
                         grew = Nt
+                        if rel:
+                            # a plateau of consecutive orders, growing with the order the rank last rose at
+                            flat = 0
+                    need = max(need0, int(rel * grew))
                     if rk[Nt] >= nz or (flat >= need and Nt >= 2) or Nt > nz + 1 + lo0:
                         stop = True
                         break
@@ -179,7 +186,9 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
             if point is None:
                 return None
         if not per_block:
-            sb = scan_nt(kcall, point, Mtot, 1, need_used, "stacked", nt_min)
+            # the stacked rows of many conditions stall and rise again: the plateau grows with the order
+            sb = scan_nt(kcall, point, Mtot, 1, need_used, "stacked", nt_min, stacked_profile,
+                         rel=float(state.env_value("STACKEDPLATEAU", "0.5")) if stacked_profile is not None else 0.0)
             if sb is not None:
                 sb["point"] = point
             return sb

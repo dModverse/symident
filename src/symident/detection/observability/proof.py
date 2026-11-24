@@ -9,6 +9,7 @@ import sympy as spy
 from ... import session, state
 from ...errors import SYMPY_FAILS, RouteError, swallow, sympy_fail
 from ...gfp import PRIMES, rref_modp
+from ...par import process_map
 from ...sym.direction import classify_generator
 from ...sym.exact import (
     _rhs,
@@ -51,10 +52,12 @@ def _fail(dirs, why):
 
 
 def _weights(vec):
+    """Rational weights, or weights rational in coordinates (the weight of a recast power); None otherwise."""
     try:
-        return {k: spy.Rational(str(v)) for k, v in vec.items()}
-    except (TypeError, ValueError, SyntaxError):
+        out = {k: model_sympify(str(v)) for k, v in vec.items()}
+    except SYMPY_FAILS:
         return None
+    return out if all(x.is_Rational or (x.is_rational_function() and x.free_symbols) for x in out.values()) else None
 
 
 def _exact_scalings(an, dirs):
@@ -62,16 +65,20 @@ def _exact_scalings(an, dirs):
     as the lift."""
     ws = [_weights(w) for w in an.exact_scalings(an.scal_fixed)]
     coords = set(an.znames) - {an.znames[i] for i in an.run.nuis_cols}
+    # the logarithm of a scaled coordinate is translated: the component is the weight itself
+    shifts = {str(r["L"]) for r in an.recast or []}
     for d in dirs:
-        v = _weights({k: spy.cancel(model_sympify(str(x)) / spy.Symbol(k)) for k, x in d["vector"].items()})
+        v = _weights({k: model_sympify(str(x)) if k in shifts else spy.cancel(model_sympify(str(x)) / spy.Symbol(k))
+                      for k, x in d["vector"].items()})
         if not v:
             continue
         k0 = next(k for k, x in v.items() if x != 0)
         for w in ws:
             if not w or not w.get(k0):
                 continue
-            c = v[k0] / w[k0]
-            if all(v.get(k, 0) == c * w.get(k, 0) for k in set(v) | (set(w) & coords)):
+            c = spy.cancel(v[k0] / w[k0])
+            if c.is_Rational and all(spy.cancel(v.get(k, 0) - c * w.get(k, 0)) == 0
+                                     for k in set(v) | (set(w) & coords)):
                 d["exact"], d["proof"] = True, None
                 d["state_components"] = {k: scaling_component(c * x, k) for k, x in w.items()
                                          if x != 0 and k not in set(an.znames)}
@@ -183,26 +190,42 @@ def _output_proof(light, chains, vec):
     return certify(ids)
 
 
-def light_proofs(light, chains, dirs, joint, plain, forms):
+# directions past which a pass of the lifts runs in forked workers
+_PAR_LIFTS = 16
+
+
+def light_proofs(light, chains, dirs, joint, plain, forms, map_fn=None):
     """Each of `dirs` proven by the lift of one form of the direction, else, with `plain`, by the output identities.
 
-    A direction proven makes the others a new try, since their brackets may contain its field."""
+    A direction proven makes the others a new try, since their brackets may contain the field proven. With `map_fn`
+    (f over items in workers) and many directions, a pass tries every direction with the fields proven before
+    the pass."""
+    def attempt(d, known):
+        first = None
+        for vec in forms(d):
+            ex = exact_direction(light, vec, chains, joint, known=known)
+            if ex["ok"] is True:
+                return vec, ex, None
+            first = first or ex
+        return None, None, ("no lift through an inverted power recast" if first is None else
+                            f"lift of the closed form: {first.get('why') or 'undecided'}")
     known, todo = [], list(dirs)
     while todo:
         left = []
-        for d in todo:
-            first = None
-            for vec in forms(d):
-                ex = exact_direction(light, vec, chains, joint, known=known)
-                if ex["ok"] is True:
-                    d["exact"], d["state_components"] = True, lift_of(d, vec, ex.get("states"))
-                    d.pop("proof", None)
-                    known.append(ex["fields"])
-                    break
-                first = first or ex
+        if map_fn is not None and len(todo) >= _PAR_LIFTS:
+            fixed = list(known)
+            got = map_fn(lambda d: attempt(d, fixed), todo)
+        else:
+            got = None
+        for k, d in enumerate(todo):
+            r = attempt(d, known) if got is None else got[k]
+            vec, ex, why = r if r is not None else (None, None, "lift of the closed form: a worker failed")
+            if ex is not None:
+                d["exact"], d["state_components"] = True, lift_of(d, vec, ex.get("states"))
+                d.pop("proof", None)
+                known.append(ex["fields"])
             else:
-                d["proof"] = ("no lift through an inverted power recast" if first is None else
-                              f"lift of the closed form: {first.get('why') or 'undecided'}")
+                d["proof"] = why
                 left.append(d)
         if len(left) == len(todo):
             break
@@ -676,7 +699,7 @@ def _rest_degrees(an, q):
 
 
 # routes whose closed forms pass the kernel check at points uniform modulo the verification prime
-_RANDOM_ROUTES = ("fit", "read-off", "narrow fit", "jets", "homotopy fit")
+_RANDOM_ROUTES = ("fit", "read-off", "narrow", "jets", "homotopy fit")
 
 
 def _checked_at_random(route):
@@ -736,7 +759,8 @@ def prove_exact(an, result):
         light["jet_tops"] = list(an.multi.get("nuisance_tops") or [])
         light["params"] = [z for z in an.znames if z not in set(light["states"]) | set(an.atom_names)]
     light_proofs(light, an.field_chains, dirs, joint, not joint and not an.run.has_gaps and not nuis,
-                 lambda d: _forms(an, d))
+                 lambda d: _forms(an, d), map_fn=lambda f, xs: process_map(f, xs, an.run.cores,
+                                                                         on_error=lambda x: None))
     dirs = [d for d in dirs if not d.get("exact")]
     if nuis:
         return _fail(dirs, "no combined lift with unknown inputs")

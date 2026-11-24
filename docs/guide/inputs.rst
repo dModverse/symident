@@ -52,7 +52,14 @@ As an example we consider a readout ``x`` that follows an unmeasured stimulus ``
 Only the initial value of ``x`` is identifiable: ``k`` trades against the scale of ``u``, and
 every ``tau`` fits with ``u = (tau*x' + x)/k``. ``Symmetry.input_change`` holds the component
 :math:`\xi(u)` of each exact direction; the type of a direction and the reduction concern
-parameters and initial values only, so ``res.reduce()`` fixes ``k = 1`` and ``tau = 1``.
+parameters and initial values only, so ``res.reduce()`` fixes ``k = 1`` and ``tau = 1`` and keeps
+``u`` free. The reduction proves per direction that the input absorbs it: here ``u`` is solved
+from the derivative of the observable, elsewhere a lift of the parameter field to the states and
+the input changes the input along the flow (:ref:`red-inputs`). The
+section then gives the output of a point where the changed input stays in the domain of the
+input, positive by default; near every point it does. The report lists this condition under "Unknown inputs:", and a
+direction without either proof stays in the model. ``discrete()`` counts the values of the
+coordinates with the jets of the inputs as further unknowns.
 
 A cubic in place of ``u``, i.e., the states ``u' = u1, u1' = u2, u2' = u3, u3' = 0`` with free
 initial values, makes ``tau`` identifiable: four numbers, which the output determines, replace
@@ -65,15 +72,15 @@ The following rules apply to unknown inputs:
 - The input is analytic across an event, so a state jump can separate parameters that the
   input absorbs otherwise.
 - Under ``equilibrate`` the input is zero at rest and arbitrary from the start on.
-- With switches each condition needs a separate input (:doc:`../method`).
+- With switches each condition needs a separate input (:ref:`switching`).
 - An event or ``trafo`` entry for the input and ``engine="symbolic"`` are refused.
 
-``info["unknown_inputs"]`` lists per input the jets (:doc:`../method`), the Lie order up to
+``info["unknown_inputs"]`` lists per input the jets (:ref:`inputs`), the Lie order up to
 which they are exact, and whether the analysis went past it.
 ``reconst_control(input_jet_order=)`` sets the number of jets, which grows with the model; too
 short a chain makes the rank a lower bound (``info["limits"]``). A direction without a *lift*,
 i.e., without components on states and input as functions of states, parameters and input that
-prove it (:doc:`../method`), stays ``checked``, without input change.
+prove it (:ref:`proofs-over-q`), stays ``checked``, without input change.
 
 Known inputs
 ------------

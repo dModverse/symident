@@ -354,22 +354,32 @@ def _axis_signed(v, reduced, originals):
 def _input_absorbed(d, prefer):
     """The reason a direction of a model with unknown inputs has no chart in the parameters, or None."""
     unknown = (prefer or {}).get("unknown_inputs") or {}
-    if not unknown or d.get("generator") is None:
+    if not unknown or d.get("generator") is None or d.get("input_proof"):
         return None
     varying = set((prefer or {}).get("states") or ()) | {j for js in unknown.values() for j in js}
     comps = [str(v) for v in d["generator"].values()]
     used = {x for x in red_locals(comps)}
     hit = sym_sort(used & varying)
-    if not hit:
+    if not hit and not d.get("input_refusal"):
         return None
     moved = [c for c, v in d["generator"].items() if str(v).strip() not in ("0", "0.0")]
     inputs = sym_sort([w for w, js in unknown.items() if set(js) & (set(moved) | used)])
     params = sym_sort([c for c in moved if c not in varying])
     w = ", ".join(inputs) or "the unknown inputs"
     p = ", ".join(params) or "the moved parameters"
+    verb = "is" if len(params) == 1 else "are"
+    if d.get("input_refusal") == "setting":
+        return (f"the direction changes the trajectory of {w} together with {p}; the proofs that unknown inputs absorb "
+                "a direction cover models with one condition, without events and equilibrate, so the reduction has "
+                f"no section for it; {p} {verb} non-identifiable")
+    if d.get("input_refusal"):
+        return (f"the direction changes the trajectory of {w} together with {p}; neither the inversion of the inputs "
+                f"from the observables nor a pointwise lift of the parameter field proves that {w} "
+                f"{'absorbs' if len(inputs) == 1 else 'absorb'} it, so the reduction has no section for it; {p} {verb} "
+                "non-identifiable")
     return (f"the direction changes the trajectory of {w} together with {p}, with components that depend on "
             f"{', '.join(hit)}, which vary in time: it is no vector field on the parameters, so the reduction "
-            f"has no chart for it; {p} {'is' if len(params) == 1 else 'are'} non-identifiable because {w} "
+            f"has no chart for it; {p} {verb} non-identifiable because {w} "
             f"{'absorbs' if len(inputs) == 1 else 'absorb'} the change")
 
 

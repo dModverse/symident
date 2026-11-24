@@ -778,12 +778,12 @@ def test_unmoved_monomial_searched_as_one_symbol():
     assert not any("si_w" in s for s in texts)
 
 
-def test_section_search_stops_at_timeout():
+def test_section_search_stops_at_its_work_cap():
     f = {"c": "k0 - kd*c", "x": "w*(q + b*c) - x"}
     pos = ["c", "k0", "kd", "w", "b", "x"]
     res = det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos)
-    r = red(res, positive=pos, timeout=0)
-    assert any(b["status"] == "invariant_only" and "timeout" in (b.get("reason") or "")
+    r = red(res, positive=pos, work_cap=0)
+    assert any(b["status"] == "invariant_only" and "work_cap" in (b.get("reason") or "")
                for b in blocks_of(r, "curved"))
 
 
@@ -1096,6 +1096,18 @@ def test_the_sign_changes_of_undecided_coefficients_are_counted_without_enumerat
         assert _interval(spy.Poly(sum((a**2 + 1) * x**k for k in range(1, 12)) - 1, x), True)
 
 
+def test_the_work_cap_of_a_reduction_ends_with_the_call():
+    from symident.reduction.expr import tri_solve
+    from symident.reduction.sign import DOMAIN
+    f = {"c": "k0 - kd*c", "x": "w*(q + b*c) - x"}
+    pos = ["c", "k0", "kd", "w", "b", "x"]
+    red(det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos), positive=pos, work_cap=0)
+    assert DOMAIN.get("work_cap") is None
+    x, y = spy.symbols("x y")
+    info = {"complete": True}
+    assert len(tri_solve([x**2 - 2, y - x], ["x", "y"], info)) == 2 and info["complete"]
+
+
 def test_a_triangular_solve_says_when_a_branch_may_be_missing():
     from symident.reduction.expr import tri_solve
     x, y = spy.symbols("x y")
@@ -1106,6 +1118,18 @@ def test_a_triangular_solve_says_when_a_branch_may_be_missing():
     assert not info["complete"]
     info = {"complete": True}
     assert tri_solve([spy.Integer(1)], ["x"], info) == [] and info["complete"]
+
+
+def test_a_triangular_solve_drops_a_large_branch_over_a_radical(monkeypatch):
+    from symident.reduction import expr
+    from symident.reduction.expr import tri_solve
+    monkeypatch.setattr(expr, "RADICAL_NODES", 20)
+    x, y, a = spy.symbols("x y a")
+    big = (x + a) ** 3 / (x - 1) + (x - a) ** 2 / (x + 2)
+    info = {"complete": True}
+    assert tri_solve([x**2 - a, y - big], ["x", "y"], info) == [] and not info["complete"]
+    info = {"complete": True}
+    assert len(tri_solve([x**2 - a, y - x - a], ["x", "y"], info)) == 2 and info["complete"]
 
 
 def test_a_rank_of_exact_numbers_is_certified():
@@ -1371,8 +1395,7 @@ def test_a_system_of_invariants_past_the_degree_cap_is_a_limit_not_a_hang():
     f = {"A": "-k1*A*B + k2*C", "B": "-k1*A*B + k2*C", "C": "k1*A*B - k2*C"}
     m = si.Model(f, {"Aobs": "alpha*A"}, trafo={"k1": "k2*C/(A*B)"},
                  events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
-    with pytest.warns(UserWarning, match="verified, not proven"):
-        red = si.detect(m, reconstruct=True).reduce(check=False)
+    red = si.detect(m, reconstruct=True).reduce(check=False)
     assert any("above 32" in lim for lim in red.limits)
     # another gauge coordinate gives a system within the cap
     assert red.remaining == [] and red.blocks[0]["pins"]["alpha"] == "1" and red.blocks[0]["injective"]
@@ -1385,3 +1408,114 @@ def test_translations_of_log_coordinates_are_scalings():
     assert not r.remaining and r.level == "exact" and r.checks["pins"] and r.checks["invariants"]
     assert sorted(v for v in r.trafo.values() if v == "0") == ["0", "0"]
     assert all(b["type"] == "scaling" for b in r.blocks)
+
+
+@pytest.fixture
+def positive_domain():
+    from symident.reduction.sign import set_positive
+
+    def declare(names):
+        set_positive(list(names))
+    old = set_positive(None)
+    yield declare
+    set_positive(old)
+
+
+def test_a_scaling_pins_a_positive_coordinate_before_a_signed_one():
+    # a scaling keeps the sign of a coordinate, so only a positive pin meets every orbit
+    from symident.reduction import symmetry_reduction
+    obj = mkobj([mkdir({"x0": "x0", "c": "-c"}, "scaling", {"x0": "1", "c": "-1"})], ["x0", "c"])
+    r = symmetry_reduction(obj, positive=["c"])
+    assert r["blocks"][0]["pins"] == {"c": "1"} and r["blocks"][0].get("coverage") is None
+
+
+def test_curved_directions_combine_with_the_scalings_to_leave_their_pins_unmoved(positive_domain):
+    from symident.reduction.core import _rebased
+    from symident.reduction.scaling import scaling_block
+    positive_domain(["a1", "a2", "b", "c"])
+    blk = scaling_block(np.array([[1, -1, 1]]), ["a2", "b", "P"], ["X1"], [], allowed=["b"])
+    curved_dir = {"type": "general", "generator": {"a1": "b*P", "a2": "c*P - a2", "b": "b"}}
+    out = _rebased([{"type": "scaling"}, curved_dir], [1], [blk])
+    # X + S, divided by the common factor P
+    assert blk["pins"] == {"b": "1"} and out[1]["generator"] == {"a1": "b", "a2": "c", "P": "1"}
+
+
+def test_a_signed_invariant_proposes_products_with_a_jacobian_of_one_sign(positive_domain):
+    from symident.reduction.expr import red_locals, red_sympify
+    from symident.reduction.sections import section_jacobian, section_monotone, split_products
+    positive_domain(["a1", "a2", "b11", "b21", "b22"])
+    a1, a2, b11, b22 = spy.symbols("a1 a2 b11 b22")
+    assert split_products([a1 * b22 - a2, b11 + b22], ["a1", "a2", "b11", "b22"]) == \
+        [["a1*a2", "1"], ["a2*b22", "1"]]
+    gens = [{"a1": "1", "a2": "b22", "P2": "1"},
+            {"a1": "b11*P2 - b21*P1 - b22*P2", "a2": "a1*b21 + b11*b22*P2 - b21*b22*P1 - b22^2*P2",
+             "b11": "-b21", "b22": "b21", "b21": "b11*b21 - b21*b22", "P2": "b11*P2 - b22*P2"}]
+    preps = [{"comps": {k: v.replace("^", "**") for k, v in g.items()}} for g in gens]
+    loc = red_locals([x for p in preps for x in p["comps"].values()] + ["a1*a2"])
+    xi_of = [{k: red_sympify(v, loc) for k, v in p["comps"].items()} for p in preps]
+    # the product alone changes sign along the second generator, the pair has a Jacobian of one sign
+    assert section_monotone(["a1*a2", "1"], preps, xi_of, loc, [{}]) is None
+    assert section_jacobian([["a1*a2", "1"], ["b11", "b22"]], preps, xi_of, loc)
+    assert not section_jacobian([["b11", "b22"], ["b11", "1"]], preps, xi_of, loc)
+
+
+def test_a_section_under_a_square_root_is_injective_where_the_radicand_is_a_square(positive_domain):
+    from symident.reduction import sign
+    from symident.reduction.sections import section_injective
+    positive_domain(["a1", "a2", "b11", "b21", "b22"])
+    old = sign.DOMAIN["real_carriers"]
+    sign.DOMAIN["real_carriers"] = ["t3", "t4"]
+    try:
+        a1, a2, b11, b21, b22, P1, P2 = spy.symbols("a1 a2 b11 b21 b22 P1 P2")
+        t1, t2, t3, t4 = spy.symbols("t1 t2 t3 t4")
+        inv = [b11 + b22, b11**2 + 2 * b21 + b22**2, a1 * b22 - a2, a1 - P2 - b11 * P1]
+        r = spy.sqrt(2 * t1 + t3**2)
+        sol = {"a1": (t3 + r) / t1, "a2": (r - t3) / 2, "b11": t1 / 2, "b22": t1 / 2, "b21": t2 / 2 - t1**2 / 4,
+               "P2": (t3 + r) / t1 - t1 * P1 / 2 - t4}
+        assert section_injective(inv, sol, ["t1", "t2", "t3", "t4"], [], [(a1 * a2, spy.Integer(1)), (b11, b22)])
+    finally:
+        sign.DOMAIN["real_carriers"] = old
+
+
+def test_charts_with_total_coverage_rank_before_rational_ones():
+    from symident.reduction.core import _chart_rank
+    total = {"level": "exact", "removed": ["X1"], "trafo": {"a": "sqrt(q_1)"}, "blocks": [{"coverage": "total"}]}
+    part = {"level": "exact", "removed": ["X1"], "trafo": {"a": "q_1"}, "blocks": [{"coverage": "partial"}]}
+    assert sorted([part, total], key=_chart_rank)[0] is total
+
+
+def test_the_carriers_are_solved_without_the_unbounded_solver(monkeypatch):
+    from symident.reduction import solve
+
+    def refuse(*a, **k):
+        raise AssertionError("unbounded solver")
+    monkeypatch.setattr(solve.spy, "solve", refuse)
+    q1, q2, a1, a2, b = spy.symbols("q1 q2 a1 a2 b")
+    br = solve._carrier_branches([a1 * b - a2 - q1, a1 + a2**2 - q2], ["a1", "a2"], 2)
+    # a discriminant with a negative content keeps the roots real
+    assert len(br) == 2 and not any(e.has(spy.I) for d in br for e in d.values())
+    for d in br:
+        sub = {a1: d["a1"], a2: d["a2"]}
+        assert spy.simplify((a1 * b - a2 - q1).subs(sub)) == 0 and spy.simplify((a1 + a2**2 - q2).subs(sub)) == 0
+
+
+def test_a_section_met_once_is_its_own_rational_chart(positive_domain):
+    from symident.reduction.solve import _section_chart
+    positive_domain(["a1", "a2", "b11", "b22"])
+    a1, a2, b11, b22, t1, t2 = spy.symbols("a1 a2 b11 b22 t1 t2")
+    # the section point solved from the invariants holds a root; the coordinates of the section are rational
+    r = spy.sqrt(t2**2 + 4 * t1)
+    es = {"a1": (t2 + r) / t1, "a2": (r - t2) / 2, "b11": t1 / 2, "b22": t1 / 2}
+    sc = _section_chart(["a1", "a2", "b11", "b22"], ["a1", "a2", "b11", "b22"], es, [(a1 * a2, 1), (b11, b22)],
+                        ["t1", "t2"], ["q_1", "q_2"], [b11 + b22, a1 * b22 - a2], {}, [])
+    assert sc["pins"] == {"a1": "1/q_1", "a2": "q_1", "b11": "q_2", "b22": "q_2"}
+    assert sc["solved_domain"] == {"q_1": "positive", "q_2": "positive"}
+    assert spy.sympify(sc["meaning"]["q_2"]) == (b11 + b22) / 2
+
+
+def test_the_reduced_model_declares_the_domains_of_the_new_parameters():
+    from symident.api import _reduced_positive
+    red = {"trafo": {"a": "q_1", "b": "c*sqrt(q_2)", "d": "q_3"},
+           "blocks": [{"solved_domain": {"q_1": "positive", "q_2": "real"}}, {"solved_domain": {"q_3": "positive"}}]}
+    assert _reduced_positive(True, red, ["x"]) == ["c", "q_1", "q_3", "x"]
+    assert _reduced_positive(["a", "c"], red, ["x"]) == ["c", "q_1", "q_3"]

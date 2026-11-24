@@ -190,7 +190,7 @@ def finalize(raw, method, settings, elapsed=None, coordinates=None):
             "order_draws": raw.get("order_draws"),
             "projection": raw.get("projection"),
             "series_certified": raw.get("series_certified"), "series_certificate": raw.get("series_certificate"),
-            "conditions": raw.get("conditions"),
+            "conditions": raw.get("conditions"), "selection": raw.get("selection"),
             "segments": raw.get("segments"),
             "coordinates": list(raw["coordinates"]) if raw.get("coordinates") is not None else coordinates,
             "settings": settings, "elapsed": elapsed, "timing": raw.get("timing"),

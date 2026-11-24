@@ -229,6 +229,45 @@ def module_reduce(preps, labels):
     return {"preps": out_preps, "labels_of": labels_of, "combos": combos}
 
 
+RADICAL_NODES = 3000
+
+
+# a discriminant is tested for a square only below this size
+SQUARE_NODES = 400
+
+
+def _nodes_above(e, cap=None):
+    """Whether `e` has more than `cap` (RADICAL_NODES) nodes."""
+    cap = RADICAL_NODES if cap is None else cap
+    return any(n > cap for n, _ in enumerate(spy.preorder_traversal(e)))
+
+
+def _radical_heavy(e):
+    """Whether `e` holds a radical and more than RADICAL_NODES nodes."""
+    return any(not a.exp.is_Integer for a in e.atoms(spy.Pow)) and _nodes_above(e)
+
+
+def _low_roots(c):
+    """The roots of the linear or quadratic polynomial with coefficients `c`, highest first, by the formulas."""
+    if len(c) == 2:
+        return [spy.cancel(-c[1] / c[0])]
+    a, b, d = c
+    disc = spy.expand(b**2 - 4 * a * d)
+    if disc == 0:
+        return [spy.cancel(-b / (2 * a))]
+    if _nodes_above(disc, SQUARE_NODES):
+        r = spy.sqrt(disc)
+        return [(-b + r) / (2 * a), (-b - r) / (2 * a)]
+    k, fl = spy.sqf_list(disc)
+    odd = spy.Mul(*[f for f, m in fl if m % 2])
+    if k < 0:
+        # a negative content stays under the root with the odd part: no imaginary unit for a real radicand
+        k, odd = -k, spy.expand(-odd)
+    # a square discriminant gives rational roots
+    r = spy.sqrt(k) * spy.Mul(*[f ** (m // 2) for f, m in fl]) * spy.sqrt(odd)
+    return [(-b + r) / (2 * a), (-b - r) / (2 * a)]
+
+
 def roots_in(e, v, info=None):
     """Roots in `v` of the linear and quadratic numerator factors of `e`; else `info["complete"]` is False.
 
@@ -238,8 +277,23 @@ def roots_in(e, v, info=None):
     sv = spy.Symbol(v)
     try:
         num = spy.fraction(spy.together(e))[0]
+        if _radical_heavy(num):
+            # factoring a large polynomial over a radical has no bound on time
+            if info is not None:
+                info["complete"] = False
+            return []
         rad = {a: spy.Dummy() for a in num.atoms(spy.Pow) if not a.exp.is_Integer and not a.has(sv)}
-        fl = spy.factor_list(num.xreplace(rad), sv)
+        num = num.xreplace(rad)
+        # a factorization is needed only past degree 2, and only below a bounded size
+        pn = spy.Poly(num, sv)
+        if pn.degree() <= 2:
+            fl = (1, [(pn, 1)])
+        elif _nodes_above(num):
+            if info is not None:
+                info["complete"] = False
+            return []
+        else:
+            fl = spy.factor_list(num, sv)
         back = {d: a for a, d in rad.items()}
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
@@ -250,11 +304,12 @@ def roots_in(e, v, info=None):
     for fm in fl[1]:
         f = fm[0]
         try:
-            dg = int(spy.Poly(f, sv).degree())
+            pf = f if isinstance(f, spy.Poly) else spy.Poly(f, sv)
+            dg = int(pf.degree())
             if dg > 2:
                 raise ValueError("degree above 2")
             if dg >= 1:
-                out += [r.xreplace(back) for r in spy.solve(f, sv)]
+                out += [r.xreplace(back) for r in _low_roots(pf.all_coeffs())]
         except SYMPY_FAILS + (ValueError,) as exc:
             if not isinstance(exc, ValueError):
                 sympy_fail(exc)
@@ -289,7 +344,7 @@ def first_subsets(n, k, m):
 def tri_solve(sys_, vars_, info=None):
     """Triangular elimination of the equations; `info["complete"]` is False when a branch may be missing.
 
-    Stops, with the branches incomplete, once the work budget or the deadline of the section search is spent."""
+    Stops, with the branches incomplete, once the work cap of the section search is spent."""
     from .sign import budget_spent
     if not vars_:
         return [{}]
@@ -323,10 +378,25 @@ def tri_solve(sys_, vars_, info=None):
                     if info is not None:
                         info["complete"] = False
                     continue
+                if any(_radical_heavy(e) for e in rest):
+                    if info is not None:
+                        info["complete"] = False
+                    continue
                 for s in tri_solve(rest, [x for x in vars_ if x != v], info):
                     s = dict(s)
-                    s[v] = spy.cancel(r.subs([(spy.Symbol(k), x) for k, x in s.items()])) if s else r
+                    e = r.subs([(spy.Symbol(k), x) for k, x in s.items()]) if s else r
+                    if s and _radical_heavy(e):
+                        # canceling a large expression over a radical has no bound on time: the branch counts as
+                        # missing
+                        if info is not None:
+                            info["complete"] = False
+                        continue
+                    s[v] = spy.cancel(e) if s else r
                     out.append(s)
+                    if budget_spent():
+                        if info is not None:
+                            info["complete"] = False
+                        break
             if out:
                 return out
     # no branch is complete only when an equation is a nonzero constant

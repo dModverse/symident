@@ -129,6 +129,20 @@ def _exp_split(expr, logs=False):
     return rec(_hyp_to_exp(expr)), exps
 
 
+def _power_atoms(exprs, states, frozen):
+    """{x**e: fresh symbol} for powers of a coordinate x with a non-numeric exponent e free of the states; under a
+    scaling such a power has the weight e times the weight of x."""
+    out = {}
+    for e in exprs:
+        for at in spy.sympify(e).atoms(spy.Pow):
+            if at in out or at.exp.is_number or not at.base.is_Symbol or str(at.base) in frozen:
+                continue
+            if at.exp.free_symbols & states:
+                continue
+            out[at] = spy.Symbol('_P%d_%s' % (len(out), at.base))
+    return out
+
+
 def _scaling_rows(diff_equations, obs_functions, m, zvars, logs=False, seen=None):
     """(rows, skipped): sparse monomial-exponent rows of one (f, g) system for the scaling kernel."""
     skipped = 0
@@ -214,7 +228,7 @@ def _weighted_degree(e, w):
         return w.get(str(e), 0)
     if e.is_Add:
         ds = [_weighted_degree(a, w) for a in e.args]
-        return ds[0] if None not in ds and len(set(ds)) == 1 else None
+        return ds[0] if None not in ds and len({spy.expand(d) for d in ds}) == 1 else None
     if e.is_Mul:
         tot = 0
         for a in e.args:
@@ -228,14 +242,18 @@ def _weighted_degree(e, w):
         db = _weighted_degree(b, w)
         if x.is_Number:
             return None if db is None else db * x
-        return 0 if db == 0 and _weighted_degree(x, w) == 0 else None
+        # (lam^d b)^x = lam^(d x) b^x for lam > 0 on the principal branch
+        return None if db is None or _weighted_degree(x, w) != 0 else spy.expand(db * x)
     if e.args:
         return 0 if all(_weighted_degree(a, w) == 0 for a in e.args) else None
     return None
 
 
-def verify_scalings(scalings, tapes):
-    """One bool per scaling: whether it leaves every tape's equations, observables, values and events invariant."""
+def verify_scalings(scalings, tapes, shifts=()):
+    """One bool per scaling: whether it leaves every tape's equations, observables, values and events invariant.
+
+    Weights may be symbolic in coordinates the scaling leaves fixed. A coordinate in `shifts` (the logarithm of a
+    scaled coordinate) is translated, not scaled: it may occur only in the constant equation and value of itself."""
     lines = []
     for t in tapes:
         lines += _as_list(t.get('model_lines', [])) + _as_list(t.get('obs_lines', []))
@@ -269,15 +287,24 @@ def verify_scalings(scalings, tapes):
     checks = list(dict.fromkeys(checks))
     syms = [{str(x) for x in e.free_symbols} for e, _ in checks]
     out = []
+    shifts = set(shifts)
     for sc in scalings:
-        w = {str(k): spy.Rational(str(v)) for k, v in dict(sc).items()}
+        w = {str(k): spy.sympify(parse(str(v))) for k, v in dict(sc).items()}
         sup = {k for k, v in w.items() if v != 0}
-        ok = True
+        moved = sup & shifts
+        ok = all(not ({str(x) for x in w[k].free_symbols} & sup) for k in sup)
         for (e, target), es in zip(checks, syms):
+            if not ok:
+                break
             if e == 0:                # zero has every weight
                 continue
+            if es & moved:
+                if target in moved and e.is_Symbol and str(e) == target:
+                    continue
+                ok = False
+                break
             d = _weighted_degree(e, w) if es & sup else 0
-            if d is None or d != (w.get(target, 0) if target else 0):
+            if d is None or spy.expand(d - (w.get(target, 0) if target else 0)) != 0:
                 ok = False
                 if state.env("LIEDIAG"):
                     print('[liediag] scaling fails at %s -> %s: degree %s' %
@@ -323,7 +350,7 @@ def _scaling_gens_recast(gens, znames, nz, recast):
         # L = log(base) shifts by c_base*log(lam) under the scaling; the kernel above
         # leaves it at 0, the joint nullspace contains the shift
         for rc in recast:
-            base, L = str(rc['base']), str(rc['L'])
+            base, L = str(rc['base']), str(rc.get('L'))
             if base in idx and L in idx:
                 v[idx[L]] = v[idx[base]]
         # clear denominators so the weights are polynomial in the exponents
@@ -440,8 +467,9 @@ def scaling_symmetries_per_condition(per_cond_model, per_cond_obs, inputs=None, 
 
 
 def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=None,
-                           recast=None, logs=False, extra_model=None, extra_obs=None):
-    """Scaling symmetries common to every condition; `inputs` and `fixed` do not scale."""
+                           recast=None, logs=False, extra_model=None, extra_obs=None, powers=False):
+    """Scaling symmetries common to every condition; `inputs` and `fixed` do not scale. With `powers`, a power of a
+    coordinate with a free exponent has the weight of the exponent times that of the coordinate."""
     per_cond_model = [_as_list(m) for m in per_cond_model]
     per_cond_obs = [_as_list(o) for o in per_cond_obs]
     extra_model = [_as_list(m) for m in (extra_model or [[] for _ in per_cond_model])]
@@ -489,10 +517,22 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
 
     paramset -= set(state_syms)
     paramset -= {local.get(nm, spy.Symbol(nm)) for nm in inputset}
+    recast = list(_as_list(recast))
+    powers = _power_atoms([e for f in per_f + per_g + per_xg for e in f] +
+                          [e for xf in per_xf for _, e in xf], set(state_syms), inputset | fixedset) if powers else {}
+    if powers:
+        def sub(e):
+            return e.xreplace(powers) if e.has(*powers) else e
+        per_f = [[sub(e) for e in f] for f in per_f]
+        per_g = [[sub(e) for e in g] for g in per_g]
+        per_xf = [[(i, sub(e)) for i, e in xf] for xf in per_xf]
+        per_xg = [[sub(e) for e in xg] for xg in per_xg]
+        paramset |= set(powers.values())
+        recast += [{'E': str(P), 'base': str(at.base), 'exp': str(at.exp)} for at, P in powers.items()]
     params = sorted(paramset, key=spy.default_sort_key)
     # re-add free-exponent bases the recast eliminated, so _scaling_gens_recast can
     # impose c_E = exp*c_base on them
-    for rc in _as_list(recast):
+    for rc in recast:
         b = local.get(str(rc['base']), spy.Symbol(str(rc['base'])))
         if (b not in set(state_syms) and b not in params
                 and str(b) not in inputset and str(b) not in fixedset):
@@ -530,19 +570,26 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
         print('[liediag] scaling_symmetries_multi: %d non-polynomial term(s) skipped '
               '(a scaling they would forbid may be over-reported)' % skipped)
     dense = _materialize_rows(rows, nz)
+    # a coordinate in a free exponent does not scale: base^e is a monomial only for e invariant
+    in_exp = {str(x) for at in powers for x in at.exp.free_symbols}
     for j in range(nz):
-        if znames[j] in fixedset:
+        if znames[j] in fixedset or znames[j] in in_exp:
             row = [0] * nz
             row[j] = 1
             dense.append(row)
 
     gens = _scaling_gens(dense, nz)
     # the integer kernel treats each recast E as free; recover the symbolic-weight scalings
-    recast = _as_list(recast)
     if recast:
         physical = _scaling_gens_recast(gens, znames, nz, recast)
         non_id = _scaling_nonid(physical, znames, nz)
     else:
         non_id = _scaling_nonid(gens, znames, nz)
+    aux = {str(P) for P in powers.values()}
+    if aux:
+        for d in non_id:
+            d['vector'] = {k: v for k, v in d['vector'].items() if k not in aux}
+            d['support'] = [k for k in d['support'] if k not in aux]
+        non_id = [d for d in non_id if d['vector']]
     return {'method': 'scaling', 'count': len(non_id), 'non_identifiable': non_id,
-            'coordinates': znames, 'skipped': skipped}
+            'coordinates': [z for z in znames if z not in aux], 'skipped': skipped}

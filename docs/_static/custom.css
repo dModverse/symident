@@ -1,0 +1,44 @@
+/* The font stack of Bootstrap 5, as on the dMod2 and cppDE sites. */
+html {
+  --pst-font-family-base: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans",
+    "Liberation Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+    "Noto Color Emoji";
+  --pst-font-family-heading: var(--pst-font-family-base);
+  --pst-font-family-monospace: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+}
+
+/* From 1400 px on, the page takes 92 % of the window, at most 1600 px. */
+@media (min-width: 1400px) {
+  .bd-page-width {
+    max-width: min(92vw, 1600px);
+  }
+}
+
+/* The text column fills the page next to the sidebar. */
+.bd-main .bd-content .bd-article-container {
+  max-width: none;
+}
+
+/* Prose, tables, code and figures share one width, so that no table sticks out of the text. */
+.bd-article p, .bd-article li, .bd-article dd, .bd-article table, .bd-article div.highlight,
+.bd-article img, .bd-article figure, .bd-article div.math, .bd-article dl {
+  max-width: 100ch;
+}
+
+/* Justified and hyphenated prose only where the column is wide enough for it. */
+@media (min-width: 768px) {
+  .bd-article p, .bd-article li, .bd-article dd {
+    text-align: justify;
+    hyphens: auto;
+  }
+}
+
+/* Display math wider than the text column scrolls inside it instead of running over the margin. */
+mjx-container[display="true"] {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2em 0;
+}

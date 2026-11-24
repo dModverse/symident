@@ -600,6 +600,10 @@ class JointSystem(RestingStates):
             return f
         return [mk(mi) for mi in range(self.kc)]
 
+    def stacked_profile(self):
+        """No stacked profile: the joint rows hold the resting constraints."""
+        return None
+
     def block_profiles(self):
         """The rank per Lie order of a condition's chain from one jet (gap paths)."""
         run = self.run

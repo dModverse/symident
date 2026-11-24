@@ -1,13 +1,11 @@
 """Settings of the observability engine."""
 
-import math
-
 
 def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=30, degree_cap=4,
                     sample_slack=5, probe_retries=8, laurent_deg_num=4, laurent_deg_den=2,
                     laurent_cand_cap=200000, term_cap=60, general_deg_num=4, general_deg_den=3,
                     gap_order_cap=8, minsupport_cand_cap=20000, perprime_cap=120, perprime_min_primes=3,
-                    homotopy=True, homotopy_degree=4, timeout=math.inf, seed=0, exact_proof=True,
+                    homotopy=True, homotopy_degree=4, seed=0, exact_proof=True,
                     degree_cap_max=8, exact_work_cap=500000, input_jet_order=0):
     """Saturation and closed-form reconstruction settings.
 
@@ -16,7 +14,9 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
     relevance_cap : int
         Coordinates in one entry for the dense fit; wider entries use sparse interpolation.
     relevance_cap_dir : int
-        Coordinates in one direction; a wider one is reported by the support.
+        Coordinates in one direction; a wider one is reported by the support. The narrow route, which samples
+        the kernel on the support of the direction alone, bounds each entry only where the model has no event
+        gaps, resting states or unknown inputs.
     relevance_cap_sparse : int
         Coordinates in one entry for the sparse fit; a wider entry is reported by the support of the direction.
     degree_cap : int
@@ -49,9 +49,6 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
         Whether directions still open are fitted along parameter lines as a last route.
     homotopy_degree : int
         Total degree bound of the entries fitted by the homotopy route.
-    timeout : float
-        Time limit of the reconstruction in seconds; unfinished directions are reported
-        by their support.
     seed : int
         Seed of the random choices: sample points and the order of trials. The same seed
         and model give the same result.
@@ -74,7 +71,7 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
             and laurent_deg_num >= 1 and laurent_deg_den >= 0 and laurent_cand_cap >= 1
             and general_deg_num >= 1 and general_deg_den >= 1 and gap_order_cap >= 0
             and minsupport_cand_cap >= 1 and perprime_cap >= 1 and perprime_min_primes >= 2
-            and homotopy_degree >= 1 and timeout > 0 and degree_cap_max >= 0 and exact_work_cap > 0
+            and homotopy_degree >= 1 and degree_cap_max >= 0 and exact_work_cap > 0
             and input_jet_order >= 0):
         raise ValueError("reconst_control: invalid setting")
     return {"relevance_cap": int(relevance_cap), "relevance_cap_dir": int(relevance_cap_dir),
@@ -86,7 +83,6 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
             "gap_order_cap": int(gap_order_cap), "minsupport_cand_cap": int(minsupport_cand_cap),
             "perprime_cap": int(perprime_cap), "perprime_min_primes": int(perprime_min_primes),
             "homotopy": bool(homotopy), "homotopy_degree": int(homotopy_degree),
-            "timeout": float(timeout), "seed": int(seed),
+            "seed": int(seed),
             "exact_proof": bool(exact_proof), "degree_cap_max": int(max(degree_cap, degree_cap_max)),
             "exact_work_cap": float(exact_work_cap), "input_jet_order": int(input_jet_order)}
-

@@ -6,7 +6,7 @@ import warnings
 
 import numpy as np
 
-from . import report, state
+from . import _core, report, state
 from .detection import pivot_choice, symmetry_detection
 from .errors import InputError
 from .options import reconst_control
@@ -14,8 +14,15 @@ from .reduction import symmetry_reduction
 from .reduction.core import check_levels, detection_positive, finish_reduction
 from .sym.domain import declared
 
+# the types _data_copy() returns as they are
+_ATOMS = frozenset((str, int, float, bool, type(None)))
+# the settings global_options of detect() takes
+_GLOBAL_OPTIONS = ("order", "points", "memory", "experiments", "msolve_entries", "msolve_terms", "search_entries",
+                   "elimination_terms")
+
 
 def _rhs_from_reactions(species, smatrix, rates):
+    """The right-hand sides of a reaction network, state name to expression."""
     S = np.asarray(smatrix, dtype=float)
     out = {}
     for j, s in enumerate(species):
@@ -37,7 +44,7 @@ class Model:
     ----------
     odes : dict, optional
         Right-hand sides, state name to expression (``^`` or ``**`` for powers), with
-        switches such as ``piecewise()`` and comparisons allowed (see the user guide).
+        switches such as ``piecewise()`` and comparisons allowed (see the guide).
         Derived from ``reactions`` when omitted.
     observables : dict or list of dict
         Observables, name to expression; a list gives one dict per condition.
@@ -55,7 +62,7 @@ class Model:
         A list holds one transformation per condition.
     conditions : pandas.DataFrame or dict, optional
         One row per condition; a numeric cell fixes a symbol, a string replaces it by an
-        expression or another name, and a column named like a state sets its initial value.
+        expression or another name, and a column named like a state sets the initial value of that state.
         As a dict: ``{"rows": [...], "cols": {name: [values]}}``.
     events : list of dict, optional
         Events with keys ``var``, ``time``, ``value`` and ``method`` (``replace``,
@@ -68,7 +75,7 @@ class Model:
         Input states, zero at the start and at rest; an event sets them.
     unknown_inputs : sequence of str
         Unknown functions of time of no assumed form, symbols in the right-hand sides and
-        observables without an equation. A direction may change them along with the parameters (see the user guide).
+        observables without an equation. A direction may change them along with the parameters (see the guide).
     known_inputs : sequence of str
         Known functions of time of no assumed form, symbols in the right-hand sides and
         observables without an equation; their values and time derivatives are known.
@@ -80,7 +87,7 @@ class Model:
         The regimes an experiment visits, for a model with switches: each entry is a
         comparison or a list of comparisons that selects the regimes on those sides, the
         first entry the regime at the start; a dict gives one list per condition name.
-        Without it every regime counts. See the user guide.
+        Without it every regime counts. See the guide.
     equilibrate : bool, optional
         The default of :func:`detect`'s ``equilibrate`` for this model.
     positive : bool or sequence of str, optional
@@ -159,9 +166,6 @@ def _trace(on):
 
 
 
-_ATOMS = frozenset((str, int, float, bool, type(None)))
-
-
 def _data_copy(x):
     """A deep copy of `x` that copies dicts, lists and tuples of strings and numbers without the memo of
     copy.deepcopy."""
@@ -186,6 +190,7 @@ def _model_copy(model):
     out = copy.copy(model)
     out.__dict__ = {k: _data_copy(v) for k, v in vars(model).items()}
     return out
+
 
 class Symmetry(dict):
     """One non-identifiable direction, a dict whose entries are also attributes.
@@ -296,20 +301,20 @@ class Symmetries:
           they do not apply).
         * ``order_bound``, ``order_bound_why``: the probability that a certified order is not
           sufficient, or why there is none; ``order_draws``: the most points drawn for one
-          random point of the Lie order certificate, which multiplies its terms.
+          random point of the Lie order certificate, which multiplies the terms of the certificate.
         * ``bound``: the probability that a wrong closed form passes the kernel check, or
           why none applies. ``proof``: per direction verified on every entry, why the exact
           proof did not apply; ``attempts``: per open direction, the routes tried and why
           they failed.
         * ``verification``: the saturation guard, with ``ok`` and ``reason``; where ``ok`` is
           False the rank still grows past the order used.
-        * ``projection``: the rank modulo the unknown inputs, or modulo resting states whose
-          Jacobian is singular at the base point.
+        * ``projection``: the rank modulo the unknown inputs, modulo the fresh coordinates of
+          switch surfaces, or modulo resting states whose Jacobian is singular at the base point.
         * ``unknown_inputs``, ``known_inputs``: per input the jets and the order up to which
           they are exact.
         * ``assumptions``: the declared ``domain`` and switch ``starts`` the result assumes,
           and the ``error_bound`` of a verified closed form or rank.
-        * ``limits``: the time limits, budgets and orders that stopped part of the
+        * ``limits``: the work caps and orders that stopped part of the
           analysis; while it is not empty, a direction without closed form may have one.
           ``errors``: exceptions a route recorded.
         * ``branches``: resting states with several roots modulo a prime, and the one taken.
@@ -372,7 +377,7 @@ class Symmetries:
         """
         return _Text("\n".join(report.summary_lines(self._raw, verbose)))
 
-    def solution_count(self, order=None, timeout=600):
+    def solution_count(self, order=None):
         """The number of values of the coordinates that give the output of a generic one.
 
         Local identifiability leaves finitely many such values; more than one is a discrete
@@ -387,14 +392,13 @@ class Symmetries:
         ----------
         order : int, optional
             The highest Taylor coefficient; twice the number of coordinates by default.
-        timeout : float
-            Seconds msolve may take.
 
         Returns
         -------
         dict or None
             ``{"count", "order", "prime"}``, or None where the model is not rational, msolve
-            fails or times out, or the solutions are not finitely many. Points where a
+            fails, reaches the work caps (``msolve_entries`` and ``msolve_terms`` of
+            :meth:`discrete`), or the solutions are not finitely many. Points where a
             coordinate or a denominator vanishes are not counted.
 
         Raises
@@ -430,9 +434,10 @@ class Symmetries:
             raise ValueError("solution_count() handles one condition without events")
         seg = parts[0]["segments"][0]
         f, g, ic = seg["f"], seg["g"], seg["ic"]
-        return solution_count(f, g, ic, list(self.info["coordinates"]), order, timeout=timeout)
+        return solution_count(f, g, ic, list(self.info["coordinates"]), order)
 
-    def discrete(self, order=None, points=5, timeout=600, budget=300, cores=1):
+    def discrete(self, order=None, points=5, cores=1, memory=None, experiments=None, msolve_entries=None,
+                 msolve_terms=None, search_entries=None, elimination_terms=None):
         """The discrete symmetries: other values of the coordinates in the domain with the same output.
 
         The Taylor coefficients of the observables up to `order` are equated with their values at
@@ -445,8 +450,15 @@ class Symmetries:
         (``"exact"``). Permutations of coordinates with the same dependence of the output are
         tested as candidates first. A model with logarithmic coordinates, observables under an
         injective function or factors ``exp(a*time)`` is rewritten into rational form with the
-        same fiber, and the results are given in the coordinates of the model. A sigma that maps
-        no point of the domain into it is listed but not relevant.
+        same fiber, and the results are given in the coordinates of the model. Other non-rational
+        terms of the states become new states and new coordinates, their values at the start; the
+        count is then that of this relaxed model (``info["relaxed"]``). A free power x^alpha of a
+        state that starts at 0 enters through (x/c)^alpha, c the leading Taylor coefficient of x, as
+        a series in t and t^(k*alpha) (``info["start_powers"]``). A sigma that maps no point of
+        the domain into it is listed but not relevant. The jets of unknown inputs are unknowns of the
+        count, not coordinates; a sigma may change the input (``state_maps``). A result of ``reduce_cq``
+        is counted on the level sets of the conserved totals, with the species solved through the
+        totals in ``info["eliminated"]``.
 
         Parameters
         ----------
@@ -455,13 +467,39 @@ class Symmetries:
         points : int or list of dict
             The number of random points of the count in the domain, or the points themselves
             as ``{coordinate: value}``.
-        timeout : float
-            Seconds one call of msolve may take.
-        budget : float
-            Seconds the reconstruction of the maps may take; past it, the counts are reported
-            without closed forms.
         cores : int
             Threads of msolve.
+        memory : float, optional
+            GiB of address space one call of msolve may take, 8 by default; past it the call
+            fails.
+        experiments : bool or int, optional
+            The count of several experiments with shared parameters and free starts, projected
+            onto the parameters and starts of the first, which bounds the fiber of a model with
+            free starts and no rational first integral, proven at one point of the parameters
+            (docs/method/global.rst, "Several experiments"). By default it runs where a short count of
+            one experiment finds none; ``True`` runs it first with the number of experiments from
+            the rank criterion, a number ``K`` with ``K`` experiments, ``False`` never.
+            ``info["experiments"]`` reports it, or why it does not apply.
+        msolve_entries : int, optional
+            The nonzero entries of the matrices of the F4 rounds that one call of msolve may reduce,
+            4 * 10^8 by default, read from the output of msolve; the call ends after the round that
+            passes it, without a result. The first short count and the count of a block before the
+            stages take a fraction of it.
+        msolve_terms : int, optional
+            The most terms of one system given to msolve, 10^5 by default; a larger system is not
+            solved.
+        search_entries : int, optional
+            The entries of the matrices over finite fields that the exact count may reduce, 5 * 10^8
+            by default, in the search for the invariant functions as rational functions of the
+            output coefficients (docs/method/global.rst, "The exact count").
+        elimination_terms : int, optional
+            The most terms of a polynomial of the elimination of the states in the exact count,
+            3 * 10^6 by default.
+
+        The global analysis stops on these work limits and on further fixed caps on orders,
+        points and candidates, never on a clock, so that the result is the same on every machine.
+        A count or a proof that reaches a limit ends without a result, and ``info["limits"]`` or
+        the certificate names the limit and the value of the limit.
 
         Returns
         -------
@@ -472,40 +510,84 @@ class Symmetries:
             None with the ``domain_conditions`` under which sigma(theta) lies in the domain) and
             ``fixed_set``, the factors on which sigma fixes theta. ``info``: ``order``,
             ``count`` (solutions over the algebraic closure at a random point modulo a prime),
+            ``count_bound`` (the probability that a generic point has more, None where the count
+            is exact or has no bound),
+            ``count_domain`` (the points of the fiber of a generic point of the domain inside the
+            domain, where the count is final and each map keeps the domain or leaves it entirely,
+            else None),
             ``counts`` per point (``complex``, ``real``, ``in_domain``, ``undecided``),
             ``closed_forms``, ``count_final`` (every solution is the image of a proven sigma),
             ``fundamental_domain`` (inequalities that keep one point of each orbit),
             ``rewrites``, ``candidates``, ``timing`` (seconds per stage), ``certificate`` (what
-            the result rests on: the invariance per map, the size of the orbit, the count and
-            the axiom of the count) and ``limits``.
+            the result rests on: the invariance per map, the size of the orbit, ``exact`` with the
+            invariant functions as rational functions of the output coefficients, the verified
+            count with ``count_bound``, or the axiom of the count where neither applies, and
+            ``complete``: ``"exact"``, ``"verified"``, ``"axiom"``, ``"no"`` or ``"open"``; with the
+            count of several experiments also ``route``, and ``pinned`` where the exact search stopped
+            and the functions it proved were counted), ``experiments`` (the number of experiments,
+            the orders, the count and the certificate ``first_integrals`` of the premise, or ``why``
+            the route does not apply) and ``limits``.
 
         Raises
         ------
         ValueError
-            Unless the result is identifiable and was detected without ``equilibrate`` and
-            ``reduce_cq``, on a model with one condition and no events, switches or unknown
-            inputs.
+            Unless the result is identifiable and was detected without ``equilibrate``, on a
+            model with one condition and no events or switches, and for a model with unknown inputs
+            and events, switches or more than one condition.
         MsolveMissingError
             Where msolve is not found (:func:`install_msolve`).
         """
+        from .detection import work
+        limits = {"msolve_entries": msolve_entries, "msolve_terms": msolve_terms, "search_entries": search_entries,
+                  "elimination_terms": elimination_terms}
+        for k, v in limits.items():
+            if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or v < 1):
+                raise InputError(f"`{k}` must be a positive number, not {v!r}")
+        with work.msolve_memory(memory), work.caps(**limits):
+            return self._discrete(order, points, cores, experiments)
+
+    def _discrete(self, order, points, cores, experiments=None):
         from .detection.discrete import analyze
         if self.model is None or self.identifiable is None:
             raise ValueError("discrete() needs a result of detect() on a Model")
         if not self.identifiable:
+            from .detection.relax import terms_of_states
+            obs = self.model.observables
+            if isinstance(obs, dict) and terms_of_states(self.model.odes, obs):
+                # the relaxed model is rational: the directions reduce there, without a reduction of this model
+                try:
+                    out = self._relaxed_discrete(ValueError("discrete() needs a model rational in the states"),
+                                                 order=order, points=points,
+                                                 cores=cores)
+                    if not (out["info"].get("certificate") or {}).get("relaxed_why"):
+                        return out
+                except ValueError:
+                    pass
             # the continuous symmetries first: the reduced model has a finite fiber
-            red = self._reduced_detection()
-            out = red.discrete(order=order, points=points, timeout=timeout, budget=budget, cores=cores)
+            try:
+                red = self._reduced_detection()
+            except ValueError as exc:
+                from .detection.rationalize import _blocking
+                from .sym.parse import model_sympify
+                obs = self.model.observables
+                texts = list(self.model.odes.values()) + (list(dict(obs).values()) if isinstance(obs, dict) else [])
+                if all(_blocking(model_sympify(str(t))) is None for t in texts):
+                    raise
+                # a direction the reduction does not remove can be a scaling of the relaxed model
+                return self._relaxed_discrete(exc, order=order, points=points, cores=cores,
+                                              experiments=experiments)
+            out = red.discrete(order=order, points=points, cores=cores, experiments=experiments)
             out["info"]["reduced"] = {"trafo": red.model.trafo, "fixed": list(red.model.fixed or []),
                                       "coordinates": list(red.info["coordinates"]),
                                       "section": getattr(red, "_section", None)}
-            self.info["discrete"] = out["info"]
-            self.discrete_symmetries = self._raw["discrete_symmetries"] = out["symmetries"]
-            # a reduction computed before holds no discrete symmetries
-            self.__dict__.pop("_reductions", None)
-            return out
+            return self._keep_discrete(out)
         coords = list(self.info["coordinates"])
-        # the jets of known inputs reach past the highest order the count may take
-        parts, rw = self._fiber_parts(int(order or 2 * len(coords)), "discrete()")
+        from .detection.rationalize import NotRationalError
+        try:
+            # the jets of known inputs reach past the highest order the count may take
+            parts, rw = self._fiber_parts(int(order or 2 * len(coords)), "discrete()")
+        except NotRationalError as exc:
+            return self._relaxed_discrete(exc, order=order, points=points, cores=cores, experiments=experiments)
         st = self.info.get("settings") or {}
         positive = st.get("positive", True)
         if rw["logs"] and positive is not True:
@@ -513,18 +595,126 @@ class Symmetries:
             positive = list(declared(positive)[0] or ()) + [str(x) for x in declared(positive)[1]] + list(rw["logs"])
         from .sym.msolve import msolve_threads
         with msolve_threads(cores):
-            out = analyze(parts, coords, positive, list(self.model.odes), order=order,
-                          start=self.info.get("lie_order_used"), points=points, timeout=timeout, budget=budget)
+            out = analyze(parts, coords, positive, rw["states"], order=order,
+                          start=self.info.get("lie_order_used"), points=points,
+                          inputs=[str(u) for u in getattr(self.model, "known_inputs", None) or []],
+                          experiments=experiments)
         out["info"]["limits"] = ["the counts are at random points: the count over the algebraic closure modulo "
                                  "a prime, the real count at rational points"] + out["info"]["limits"]
         out["info"]["rewrites"] = rw["rewrites"]
+        if rw["eliminated"]:
+            out["info"]["eliminated"] = {x: v.replace("**", "^") for x, v in rw["eliminated"].items()}
+            free = [t for t in self.model.totals or {} if t in set(coords)]
+            if free:
+                # the domain of a free total holds the total, not the species solved through it
+                out["info"]["limits"].append(
+                    "the totals " + ", ".join(free) + " are coordinates; the domain holds them in their declared "
+                    "signs, not the species " + ", ".join(rw["eliminated"]) + " solved through them "
+                    "(info['discrete']['eliminated']), so count_domain stands only at 1")
+                if (out["info"].get("count_domain") or 1) > 1:
+                    out["info"]["count_domain"] = None
         if rw["logs"]:
             from .detection.rationalize import report_given
             report_given(out, rw["logs"])
+        return self._keep_discrete(out)
+
+    def _keep_discrete(self, out):
+        """The result `out` of discrete(), stored on this result."""
         self.info["discrete"] = out["info"]
         self.discrete_symmetries = self._raw["discrete_symmetries"] = out["symmetries"]
+        # a reduction computed before holds no discrete symmetries
         self.__dict__.pop("_reductions", None)
         return out
+
+    def _relaxed_discrete(self, exc, **opts):
+        """discrete() on the relaxed model of detection.relax: the count there, modulo the continuous directions, bounds
+        the count of the model, which is proven where the new coordinates are absorbed or independent and the maps
+        keep the starts of the new states (docs/method/global.rst, "Rational form of the fiber")."""
+        from .detection.relax import independent_leaves, keeps_leaves, relax, scalings_keep_leaves
+        if getattr(self, "_relaxed", False):
+            # a relaxed model is not relaxed again
+            raise exc
+        m = self.model
+        st = self.info.get("settings") or {}
+        obs = m.observables
+        equil = bool(st.get("equilibrate"))
+        if (m.events and not equil) or m.conditions or isinstance(obs, (list, tuple)) or \
+                isinstance(m.trafo, (list, tuple)) or self.info.get("switching") or (equil and (
+                m.known_inputs or set(m.trafo or {}) & set(m.odes))):
+            raise exc
+        coords = list(self.info["coordinates"])
+        odes, trafo, positive, events, chart = m.odes, m.trafo, st.get("positive", True), None, None
+        try:
+            if equil:
+                # the resting values inside transcendental terms become coordinates
+                from .detection.restchart import rest_chart
+                chart = rest_chart(m.odes, dict(obs), list(m.inputs or []), coords, positive, list(m.fixed or []),
+                                   m.events or [], m.trafo or {})
+                odes, obs, trafo, positive = chart["odes"], chart["observables"], chart["trafo"], chart["positive"]
+                coords, events = chart["coordinates"], chart["events"] or None
+            rx = relax(odes, dict(obs), trafo, coords, list(m.known_inputs or []), positive)
+        except ValueError as why:
+            raise ValueError(f"{exc}; the relaxation does not apply: {why}") from None
+        fixed = [p for p in m.fixed or [] if p not in rx["dropped"]] + rx["known"]
+        mr = Model(rx["odes"], rx["observables"], trafo=rx["trafo"], known_inputs=rx["inputs"], fixed=fixed,
+                   positive=rx["positive"], events=events)
+        r = detect(mr, positive=rx["positive"], engine=st.get("sym_engine", "modular"), reconstruct=True)
+        r._relaxed = True
+        out = r.discrete(**opts)
+        info = out["info"]
+        cert = info.get("certificate") or {}
+        why = scalings_keep_leaves(r._raw.get("symmetries") or [], rx["leaves"], rx["dropped"]) \
+            if not r.identifiable else None
+        moved = {n for s in r._raw.get("symmetries") or [] for n in s.get("support") or []}
+        free = [lf for lf in rx["leaves"] if lf["absorbs"] is None and lf["name"] not in moved]
+        kinds = {lf["kind"] for lf in free}
+        premise = None
+        if free and not (len(kinds) == 1 and kinds <= {"exp", "log"} and independent_leaves(free, coords)):
+            premise = ("the starts of the new states " + ", ".join(lf["name"] for lf in free) + " are algebraically "
+                       "independent over the rational functions of the coordinates")
+        keep = [s for s in out["symmetries"] if s.get("level") == "exact"]
+        lost = [s for s in keep if not keeps_leaves(s.get("map") or {}, rx["leaves"], rx["dropped"])]
+        count = info.get("count")
+        if why is None and lost and count != 1:
+            why = "an exact map of the relaxed model moves a new coordinate or a coordinate the new states start from"
+        info["relaxed"] = {
+            "rewrites": rx["rewrites"], "dropped": rx["dropped"], "premise": premise, "why": why,
+            "leaves": [{"name": lf["name"], "kind": lf["kind"], "start": str(lf["value"]).replace("**", "^"),
+                        "absorbs": lf["absorbs"]} for lf in rx["leaves"]],
+            "model": {"odes": rx["odes"], "observables": rx["observables"], "trafo": rx["trafo"]},
+            "rest_chart": None if chart is None else {"rest": chart["rest"], "exchanged": chart["exchanged"]},
+            "coordinates": list(r.info.get("coordinates") or [])}
+        info["limits"] = list(info.get("limits") or []) + [
+            "the count is that of the relaxed model, in the coordinates of that model: each non-rational term of the "
+            "states is a new state times or plus a new coordinate, the value of the term at the start "
+            "(info['discrete']['relaxed'])"]
+        if chart is not None:
+            info["limits"].append(
+                "under equilibrate the count is over the points of the resting set, in the chart where the resting "
+                "values " + ", ".join(chart["rest"].values()) + " are coordinates in place of " +
+                ", ".join(chart["exchanged"]) + " (info['discrete']['relaxed']['rest_chart']); the counts in the "
+                "domain do not hold these in their declared signs")
+        if why is not None:
+            # the count of the relaxed model bounds nothing here
+            info["relaxed"]["count"], info["count"] = count, None
+            info["count_domain"] = None
+            cert["relaxed_why"] = why
+            if cert.get("complete") in ("exact", "verified", "axiom"):
+                cert["complete"] = "open"
+            info["count_final"] = False
+        elif premise is not None:
+            # with the premises of the count of the relaxed model
+            cert["premise"] = "; ".join(p for p in (cert.get("premise"), premise) if p)
+            if cert.get("complete") in ("exact", "verified"):
+                cert["complete"] = "axiom"
+                cert["axiom"] = cert["premise"]
+        cert.setdefault("proven", []).append(
+            "the values of the coordinates with the output of a generic point map injectively into the fiber of the "
+            "relaxed model modulo the continuous directions")
+        for s in out["symmetries"]:
+            if s.get("map"):
+                s["relaxed"] = True
+        return self._keep_discrete(out)
 
     def _reduced_detection(self):
         """The detection on the model reduced by :meth:`reduce`, which must be locally identifiable."""
@@ -533,23 +723,21 @@ class Symmetries:
         if any(d.get("level") == "open" for d in self.symmetries):
             res = detect(self.model, positive=st.get("positive", True), engine=st.get("sym_engine", "modular"),
                          equilibrate=bool(st.get("equilibrate")), reconstruct=True)
-        red = res.reduce().to_dict()
+        # a rational trafo keeps the reduced model rational: a section met once is a chart by itself where it solves so
+        with state.options(section_charts=True):
+            red = reduce(res).to_dict()
         if red.get("remaining"):
             raise ValueError("discrete() needs a reduction that removes every direction; directions remain: "
                              + ", ".join(str(d) for d in red["remaining"]))
-        m = copy.copy(self.model)
-        rm = reduced_model(m.odes, m.observables, m.trafo, m.conditions, m.events, red["trafo"],
-                           bool(st.get("equilibrate")))
-        if rm["why"] is not None:
-            raise ValueError("discrete(): " + rm["why"])
-        m.trafo, m.conditions = rm["trafo"], rm["conditions"]
-        m.fixed = list(dict.fromkeys(list(m.fixed or []) + list(res.gauge or []) + list(red.get("fixed") or []) +
-                                     rm["fixed"]))
-        r = detect(m, positive=st.get("positive", True), engine=st.get("sym_engine", "modular"),
-                   equilibrate=bool(st.get("equilibrate")))
+        m, why = _reduced_copy(self.model, red, res.gauge, bool(st.get("equilibrate")))
+        if why is not None:
+            raise ValueError("discrete(): " + why)
+        r = detect(m, positive=_reduced_positive(st.get("positive", True), red, list(m.odes)),
+                   engine=st.get("sym_engine", "modular"), equilibrate=bool(st.get("equilibrate")))
         if not r.identifiable:
             raise ValueError("discrete(): the reduced model is not locally identifiable")
         r._section = red.get("trafo")
+        r._relaxed = getattr(self, "_relaxed", False)
         return r
 
     def _fiber_parts(self, order, what, switches=True):
@@ -573,18 +761,23 @@ class Symmetries:
         from .sym.switching import _SWITCHY
         m = self.model
         st = self.info.get("settings") or {}
-        if m.unknown_inputs:
+        unknown = [str(w) for w in m.unknown_inputs or []]
+        if unknown and what != "discrete()":
             raise ValueError(f"{what} handles no unknown inputs")
-        if st.get("reduce_cq"):
-            raise ValueError(f"{what} needs a result of detect() without reduce_cq")
         equil = bool(st.get("equilibrate"))
         if equil and getattr(m, "known_inputs", None):
             raise ValueError(f"{what} handles no known inputs under equilibrate")
         f0 = {str(k): str(v) for k, v in dict(m.odes).items()}
         obs = m.observables
+        events = as_events(m.events) or []
+        recon = {}
+        if st.get("reduce_cq") and st.get("eliminated"):
+            # the model on the level sets of the totals, as the detection read it: the totals are parameters
+            from .detection.cq import reduced_by_totals
+            f0, obs, events, recon = reduced_by_totals(f0, obs, events, m.totals, st["eliminated"])
+        states = list(f0)
         obs_list = list(obs) if isinstance(obs, (list, tuple)) else None
         texts = list(f0.values()) + [str(v) for o in (obs_list or [obs]) for v in dict(o).values()]
-        events = as_events(m.events) or []
         roots = [e for e in events if e.get("root") is not None]
         hy = None
         if self.info.get("switching") or roots or any(_SWITCHY.search(v) for v in texts):
@@ -612,7 +805,8 @@ class Symmetries:
         for c in range(K):
             g = {str(k): str(v) for k, v in dict(obs_list[c] if obs_list else obs).items()}
             # one simultaneous substitution as in the detection: the trafo, then the cells of the grid
-            tr = {str(k): num_str(v) for k, v in dict((trafos[c] if trafos else m.trafo) or {}).items()}
+            tr = {str(k): num_str(replace_symbols(list(recon), list(recon.values()), str(v)) if recon else v)
+                  for k, v in dict((trafos[c] if trafos else m.trafo) or {}).items() if str(k) not in recon}
             tr = initial_value_split([tr], list(f0), taken=list(g))["trafos"][0]
             sub = {k: v for k, v in tr.items() if k not in f0}
             cells = {} if grid is None else {col: replace_symbols(list(sub), list(sub.values()), grid.cell(c, col))
@@ -641,7 +835,7 @@ class Symmetries:
             regimes = self._regimes(hy, c, apply, tr, cells, inputs, start, what) if hy is not None else None
             fc = f0
             if regimes is not None:
-                # the condition runs in the regime of its start; each allowed regime is a copy with a free start
+                # the condition runs in the regime of the start; each allowed regime is a copy with a free start
                 fc, g = regimes[0]["f"], regimes[0]["g"]
             g = {k: apply(v) for k, v in g.items()}
             f = {k: apply(fc[k]) for k in observed_states(fc, g, ev)}
@@ -675,10 +869,18 @@ class Symmetries:
                 taken = set(get_symbols(list(f.values()) + list(g.values()))) | set(f)
                 f, jets = _input_jets(f, known, 2 * order + 12, taken)
                 ic.update({x: x for names in jets.values() for x in names})
+            free_jets = {}
+            if unknown:
+                # an unknown input is a chain of jets with free starts, unknowns of the fiber but no coordinates
+                from .detection.uinputs import unknown_chain
+                f, ic, free_jets = unknown_chain(f, g, ic, unknown, 2 * order + 12, hy is not None or bool(ev) or
+                                                 equil or K > 1, what)
             # the clock advances at rate one from the start
             f["time"], ic["time"] = "1", start
             one_seg = K == 1 and not keys
             segs = [{"f": f, "g": g, "ic": ic, "t": start, "label": "" if one_seg else f"{rows[c]}:"}]
+            if free_jets:
+                segs[0]["inputs"], segs[0]["input_of"] = list(free_jets), free_jets
             for t in keys:
                 evs = [{k: e[k] for k in ("var", "method", "value")} for e in later if key(e) == t]
                 segs.append({"f": f, "g": g, "events": evs, "t": t, "label": f"{rows[c]}@{t}:"})
@@ -690,7 +892,7 @@ class Symmetries:
                 fr = {x: apply(r["f"][x]) for x in observed_states(r["f"], gr, [])}
                 icr = {x: None for x in fr}
                 if known:
-                    # the input is known at the switch as well: its jets take known values
+                    # the input is known at the switch as well: the jets take known values
                     taken = set(get_symbols(list(fr.values()) + list(gr.values()))) | set(fr)
                     fr, jets_r = _input_jets(fr, known, 2 * order + 12, taken)
                     icr.update({x: x for names in jets_r.values() for x in names})
@@ -707,15 +909,15 @@ class Symmetries:
                     part["surfaces"] = [apply(q) for q in regimes[0]["surfaces"]]
         from .detection.rationalize import NotRationalError, rationalize
         try:
-            parts, rewrites, logs = rationalize(parts, list(self.info.get("coordinates") or ()), list(m.odes))
+            parts, rewrites, logs = rationalize(parts, list(self.info.get("coordinates") or ()), states)
         except NotRationalError:
             raise
         except SYMPY_FAILS as exc:
             raise ValueError(f"{what} needs a model rational in the states and coordinates") from exc
-        return parts, {"rewrites": rewrites, "logs": logs}
+        return parts, {"rewrites": rewrites, "logs": logs, "states": states, "eliminated": recon}
 
     def _switches(self, f, obs, events, what):
-        """The model in the indicators of its undecided switches (sym.switching.Hybrid), a dict where the declared
+        """The model in the indicators of the undecided switches (sym.switching.Hybrid), a dict where the declared
         signs decide them all, or None."""
         from .errors import InapplicableError
         from .sym.switching import hybrid_model
@@ -830,7 +1032,10 @@ class Reduction:
         positivity certificate as conditions on the new parameters, and the trafo covers the
         orbits on which they hold. A face section (``face``) holds ``face_why``, why the
         model is not shown continuous up to the face (``None`` when it is), and
-        ``face_level``.
+        ``face_level``. A block of directions that unknown inputs absorb holds ``inputs``: the
+        inputs (``absorb``), the ``proof`` (``"inversion"`` with the ``determinant``, or
+        ``"lift"`` with the components of the lift per direction) and the ``condition`` under
+        which the section gives the output of a point.
     removed, remaining : list of str
         Labels of the directions.
     dependent : list of str
@@ -838,8 +1043,8 @@ class Reduction:
     alternatives : list of dict
         The charts of the other valid choices of the fixed coordinates, each with ``trafo``,
         ``pins``, ``removed``, ``remaining`` and ``rational``; the returned one has the best
-        level, removes the most directions, and prefers charts without ``sign_conditions`` and
-        a rational trafo.
+        level, removes the most directions, and prefers charts without ``sign_conditions``, then
+        charts that cover the whole domain, then a rational trafo.
     partial : list of str
         Removed directions whose chart covers only part of the domain: some positive
         coordinates have no positive preimage in the new parameters.
@@ -862,7 +1067,7 @@ class Reduction:
         Exceptions that the reduction turned into failed routes, such as an alternative
         section left out (see the ``DEBUG`` switch).
     limits : list of str
-        The work budgets and time limits that stopped a section or invariant search.
+        The work caps that stopped a section or invariant search.
     coordinates : list of str
         The coordinates of the detection.
     fixed : list of str
@@ -875,7 +1080,7 @@ class Reduction:
         are stated in (the reduced model's for a model with directions). ``injective`` and
         ``reach`` of a section refer to the orbits of the directions: a discrete symmetry maps
         a point of the section to another point with the same output, which the fundamental
-        domain excludes. ``branches`` holds per side of the fixed set of the map its chart (see
+        domain excludes. ``branches`` holds per side of the fixed set of the map the chart of that side (see
         :func:`reduce`, ``branch``), ``branch`` the chosen one, and ``why`` the reason where
         there are none.
     """
@@ -934,9 +1139,6 @@ class _Text(str):
         return str(self)
 
 
-_GLOBAL_OPTIONS = ("order", "points", "timeout", "budget")
-
-
 def _check_detect(model, *, cores, engine, trace, control, gauge, mode="local", global_options=None):
     """InputError for an argument of detect() that no analysis takes."""
     if mode not in ("local", "global"):
@@ -962,7 +1164,7 @@ def _check_detect(model, *, cores, engine, trace, control, gauge, mode="local", 
 
 def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free_initial=None,
            reconstruct=False, positive=None, verify=True, gauge=False, cores=1, control=None,
-           engine="modular", trace=False, mode="local", global_options=None, discrete=None):
+           engine="modular", trace=False, mode="local", global_options=None):
     """Structural non-identifiabilities of a model, locally and, with ``mode="global"``, globally.
 
     Parameters
@@ -1011,22 +1213,14 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
         ``info["discrete"]``; a model the global analysis does not handle gets the reason in
         ``info["discrete"]["unsupported"]`` and a warning.
     global_options : dict, optional
-        Arguments of the global analysis: ``order``, ``points``, ``timeout`` and ``budget`` of
-        :meth:`Symmetries.discrete`.
-    discrete : bool or dict, optional
-        Deprecated: ``True`` is ``mode="global"``, a dict also sets ``global_options``.
+        Arguments of the global analysis: ``order``, ``points``, ``memory``, ``experiments`` and the
+        work limits ``msolve_entries``, ``msolve_terms``, ``search_entries`` and
+        ``elimination_terms`` of :meth:`Symmetries.discrete`.
 
     Returns
     -------
     Symmetries
     """
-    if discrete:
-        warnings.warn("`discrete` is deprecated; use mode='global' (and global_options)", DeprecationWarning,
-                      stacklevel=2)
-        mode = "global"
-        if isinstance(discrete, dict):
-            global_options = {**discrete, **(global_options or {})}
-            global_options.pop("cores", None)
     _check_detect(model, cores=cores, engine=engine, trace=trace, control=control, gauge=gauge, mode=mode,
                   global_options=global_options)
     if mode == "global":
@@ -1048,7 +1242,11 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
                                       reconstruct=reconstruct, positive=positive, verify=verify,
                                       cores=cores, control=control or reconst_control(),
                                       scalings_only=scalings_only, sym_engine=engine)
-    res = Symmetries(pivot_choice(run, free_initial, reduce_cq), model)
+    try:
+        res = Symmetries(pivot_choice(run, free_initial, reduce_cq), model)
+    finally:
+        # the jets the kernel keeps for calls at higher orders belong to this detection
+        _core.sym_clear_jets()
     n_open = sum(s.level == "open" for s in res.symmetries)
     free_moiety = equilibrate and not reduce_cq and bool(model.totals)
     if free_moiety and n_open:
@@ -1072,16 +1270,31 @@ def global_step(res, options=None, cores=1):
     return res
 
 
+def _reduced_positive(positive, red, states):
+    """The declared domain in the chart of the reduction `red`: each new parameter with the domain the block solved,
+    the other names as declared."""
+    import re
+    names, exprs = declared(positive)
+    dom = {q: d for b in red.get("blocks") or [] for q, d in (b.get("solved_domain") or {}).items()}
+    if names is None and all(d == "positive" for d in dom.values()):
+        return positive
+    ident = re.compile(r"[A-Za-z_.][A-Za-z0-9_.]*\b(?!\s*\()")
+    coords = {t for v in (red.get("trafo") or {}).values() for t in ident.findall(str(v))}
+    out = sorted(c for c in coords if (dom[c] == "positive" if c in dom else names is None or c in names))
+    out += [x for x in states if (names is None or x in names) and x not in out]
+    return out + [str(e) for e in exprs if {str(x) for x in e.free_symbols} <= coords]
+
+
 def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2, separable=True,
-           zero_limits=False, timeout=600, alternatives=False, allow_open=True, allow_checked=True,
+           zero_limits=False, alternatives=False, allow_open=True, allow_checked=True,
            check=True, work_cap=4000, branch=None):
     """Reparametrization that removes the directions of a detection result.
 
     The model is described in the invariants of the directions, each a new parameter ``q_<k>``. The
     invariants are coordinates on the quotient of the parameter space by the orbits, a chart, which is
     returned only where it is valid on the declared domain. A scaling (``Symmetry.kind``) fixes one
-    coordinate to one, a translation is replaced by its linear invariants with a coordinate fixed to zero on
-    a face of the positive orthant, and a curved direction by its invariants.
+    coordinate to one, a translation is replaced by the linear invariants with a coordinate fixed to zero on
+    a face of the positive orthant, and a curved direction by the invariants of that direction.
 
     Parameters
     ----------
@@ -1098,10 +1311,6 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
         Solve separable blocks by quadratures.
     zero_limits : bool
         Report which coordinates each block can drive to zero.
-    timeout : float
-        Wall time of the section search per block in seconds, 600 by default; ``math.inf`` lets
-        the search run to its end. A block that reaches it is named in ``Reduction.limits``.
-        Unlike ``work_cap``, it makes the result depend on the load of the machine.
     work_cap : int
         Candidate sections the search of one block may try; reaching it is an entry in
         ``Reduction.limits``.
@@ -1121,7 +1330,7 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
         left; needs the model of a :class:`Symmetries` result of a detection without
         ``scalings_only``. Large models may turn it off.
     branch : str, optional
-        With a discrete symmetry of a detection with ``mode="global"``: the side of its fixed set
+        With a discrete symmetry of a detection with ``mode="global"``: the side of the fixed set
         as an inequality, such as ``"k01 > k12"``, on which the trafo maps free values in the
         positive orthant one to one, chained with the section; ``Reduction.discrete["branches"]``
         lists the sides. Without it every branch is in ``Reduction.alternatives`` and the trafo is
@@ -1148,9 +1357,17 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
     if positive is None:
         positive = detection_positive(raw)
     check_levels(raw, allow_open, allow_checked)
-    red = symmetry_reduction(raw, fixed=fixed, positive=positive, d_poly=d_poly, d_darboux=d_darboux,
+    absorbed, notes = raw, {}
+    if isinstance(result, Symmetries) and getattr(result.model, "unknown_inputs", None):
+        # the directions the unknown inputs absorb, each with the proof that they do
+        from .reduction.absorb import prepare
+        absorbed, notes = prepare(raw, result.model)
+    red = symmetry_reduction(absorbed, fixed=fixed, positive=positive, d_poly=d_poly, d_darboux=d_darboux,
                              d_exp=d_exp, separable_=separable, zero_compatibility=zero_limits,
-                             timeout=timeout, alternatives=alternatives, work_cap=work_cap)
+                             alternatives=alternatives, work_cap=work_cap)
+    if notes:
+        from .reduction.absorb import annotate
+        annotate(red, absorbed, notes)
     if check and isinstance(result, Symmetries) and isinstance(red, dict) and red.get("trafo"):
         red.setdefault("checks", {})["loop"] = _closed_loop(result, red)
     finish_reduction(raw, red)
@@ -1183,7 +1400,7 @@ def _branches(red, d, raw, positive, branch):
     if d.get("reduced") and section != red.get("trafo"):
         # the maps are stated in the coordinates of the section that the global analysis took
         red["discrete"]["branches"] = []
-        red["discrete"]["why"] = "the discrete symmetries hold in the chart of reduce() with its default settings"
+        red["discrete"]["why"] = "the discrete symmetries hold in the chart of reduce() with the default settings"
     else:
         bc = branch_charts(red["discrete"], red.get("trafo"), list(raw["info"].get("coordinates") or []), positive)
         red["discrete"]["branches"] = bc.get("branches") or []
@@ -1248,20 +1465,28 @@ def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
     return {"trafo": trafo, "conditions": conditions, "fixed": fixed, "why": why}
 
 
+def _reduced_copy(model, red, gauge, equilibrate):
+    """(model, why): a copy of `model` with the trafo of the reduction `red` applied and the fixed coordinates
+    added, or (None, why) where the model cannot take the trafo."""
+    m = copy.copy(model)
+    rm = reduced_model(m.odes, m.observables, m.trafo, m.conditions, m.events, red["trafo"], equilibrate)
+    if rm["why"] is not None:
+        return None, rm["why"]
+    m.trafo, m.conditions = rm["trafo"], rm["conditions"]
+    m.fixed = list(dict.fromkeys(list(m.fixed or []) + list(gauge or []) + list(red.get("fixed") or []) +
+                                 rm["fixed"]))
+    return m, None
+
+
 def _closed_loop(result, red):
     """The detection on the model with the trafo applied: the directions found against the remaining ones."""
     if result.model is None or result.method != "observability":
         return None
     st = result.info.get("settings") or {}
     want = len(red.get("remaining") or [])
-    m = copy.copy(result.model)
-    rm = reduced_model(m.odes, m.observables, m.trafo, m.conditions, m.events, red["trafo"],
-                       bool(st.get("equilibrate")))
-    if rm["why"] is not None:
-        return {"ok": None, "directions": None, "expected": want, "reason": "not run, " + rm["why"]}
-    m.trafo, m.conditions = rm["trafo"], rm["conditions"]
-    m.fixed = list(dict.fromkeys(list(m.fixed or []) + list(result.gauge or []) + list(red.get("fixed") or []) +
-                                 rm["fixed"]))
+    m, why = _reduced_copy(result.model, red, result.gauge, bool(st.get("equilibrate")))
+    if why is not None:
+        return {"ok": None, "directions": None, "expected": want, "reason": "not run, " + why}
 
     def run():
         r = detect(m, equilibrate=bool(st.get("equilibrate")), reduce_cq=bool(st.get("reduce_cq")),

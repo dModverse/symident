@@ -10,6 +10,7 @@
 #include "kernel.h"
 
 #include <vector>
+#include <memory>
 #include <string>
 #include <cstdint>
 #include <cstdlib>
@@ -19,6 +20,11 @@
 #include <exception>
 #include <stdexcept>
 #include <atomic>
+#include <mutex>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+#include <cstdio>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -433,6 +439,165 @@ std::vector<int> rref_mod(std::vector<std::vector<u64> >& A, u64 p) {
   }
   return pivots;
 }
+
+// ---- Reduced echelon basis, rows added a batch at a time ----
+// Basis rows live on the non-pivot columns `cols` (ascending), 1 at the pivot of the row, 0 at the other pivots.
+// A batch is reduced by the basis in parallel, echelonized, and clears the basis at the new pivots; the reduced
+// form of a row space is unique, so the result does not depend on the batching.
+struct RrefBasis {
+  int nz;
+  u64 p;
+  std::vector<int> cols, piv;                  // free columns; the pivot column of each row
+  std::vector<std::vector<u64> > rows;         // per basis row, the entries at `cols`
+  RrefBasis(int nz_, u64 p_) : nz(nz_), p(p_) {
+    cols.resize(nz);
+    for (int c = 0; c < nz; ++c) cols[c] = c;
+  }
+  int rank() const { return (int)piv.size(); }
+
+  // the rows of X (nz residues each, reduced below p) added; X is consumed. With `from`, the indices of the rows
+  // of X that are independent of the basis and of the rows of X before them, ascending
+  void add(std::vector<std::vector<u64> >& X, int threads, std::vector<int>* from = nullptr) {
+    if (X.empty() || cols.empty()) return;
+    int m = (int)X.size(), nf = (int)cols.size(), r = rank();
+    const Barrett br(p);
+    const u64 LIM = (((u64)1 << 63) / p) * p;
+    // reduction by the basis: y = x at the free columns minus the sum of x at the pivots times the rows
+    std::vector<std::vector<u64> > Y(m);
+    OmpGuard guard_;
+    int nThr = std::max(1, std::min(threads, m));
+    #pragma omp parallel for num_threads(nThr) schedule(dynamic, 16) if (nThr > 1)
+    for (int i = 0; i < m; ++i) {
+      try {
+        std::vector<u64> acc(nf, 0);
+        const std::vector<u64>& x = X[i];
+        for (int j = 0; j < r; ++j) {
+          u64 f = x[piv[j]] % p;
+          if (!f) continue;
+          const u64* bj = rows[j].data();
+          for (int n = 0; n < nf; ++n) {
+            u64 t = acc[n] + f * bj[n];
+            acc[n] = t >= LIM ? t - LIM : t;
+          }
+        }
+        std::vector<u64>& y = Y[i];
+        y.resize(nf);
+        bool any = false;
+        for (int n = 0; n < nf; ++n) {
+          y[n] = submod(x[cols[n]] % p, br.red(acc[n]), p);
+          any |= y[n] != 0;
+        }
+        if (!any) y.clear();
+        std::vector<u64>().swap(X[i]);
+      } catch (...) {
+        guard_.capture();
+      }
+    }
+    guard_.rethrow();
+    // echelon of the reduced rows among themselves, a chunk at a time: the rows of a chunk are reduced by
+    // the new rows of the earlier chunks in parallel, then by each other in order
+    std::vector<std::vector<u64> > E;
+    std::vector<int> epiv;                       // position in `cols` of each new pivot
+    auto reduce_by = [&](std::vector<u64>& y, size_t k0, size_t k1) {
+      for (size_t k = k0; k < k1; ++k) {
+        u64 f = y[epiv[k]];
+        if (!f) continue;
+        u64 nfac = p - f;
+        const u64* e = E[k].data();
+        for (int n = 0; n < nf; ++n)
+          if (e[n]) y[n] = br.red(y[n] + nfac * e[n]);
+      }
+    };
+    const int CH = 64;
+    for (int i0 = 0; i0 < m; i0 += CH) {
+      int i1 = std::min(m, i0 + CH);
+      size_t q0 = E.size();
+      int nThr3 = std::max(1, std::min(threads, i1 - i0));
+      #pragma omp parallel for num_threads(nThr3) schedule(static, 1) if (nThr3 > 1 && q0 > 0)
+      for (int i = i0; i < i1; ++i)
+        if (!Y[i].empty()) reduce_by(Y[i], 0, q0);
+      for (int i = i0; i < i1; ++i) {
+        std::vector<u64>& y = Y[i];
+        if (y.empty()) continue;
+        reduce_by(y, q0, E.size());
+        int pc = -1;
+        for (int n = 0; n < nf; ++n) if (y[n]) { pc = n; break; }
+        if (pc < 0) continue;
+        u64 inv = invmod(y[pc], p);
+        for (int n = pc; n < nf; ++n) if (y[n]) y[n] = br.red(y[n] * inv);
+        E.push_back(std::move(y));
+        epiv.push_back(pc);
+        if (from) from->push_back(i);
+      }
+    }
+    if (E.empty()) return;
+    int q = (int)E.size();
+    // the new rows reduced at each other's pivots
+    int nThr4 = std::max(1, std::min(threads, q));
+    for (int k = 0; k < q; ++k) {
+      const u64* ek = E[k].data();
+      #pragma omp parallel for num_threads(nThr4) schedule(static, 16) if (nThr4 > 1 && q > 64)
+      for (int l = 0; l < q; ++l) {
+        if (l == k) continue;
+        u64 f = E[l][epiv[k]];
+        if (!f) continue;
+        u64 nfac = p - f;
+        u64* el = E[l].data();
+        for (int n = 0; n < nf; ++n)
+          if (ek[n]) el[n] = br.red(el[n] + nfac * ek[n]);
+      }
+    }
+    // the old rows cleared at the new pivots
+    int nThr2 = std::max(1, std::min(threads, r));
+    #pragma omp parallel for num_threads(nThr2) schedule(dynamic, 16) if (nThr2 > 1)
+    for (int j = 0; j < r; ++j) {
+      std::vector<u64>& bj = rows[j];
+      for (int k = 0; k < q; ++k) {
+        u64 f = bj[epiv[k]];
+        if (!f) continue;
+        u64 nfac = p - f;
+        const u64* e = E[k].data();
+        for (int n = 0; n < nf; ++n)
+          if (e[n]) bj[n] = br.red(bj[n] + nfac * e[n]);
+      }
+    }
+    // the new pivots leave the free columns
+    std::vector<char> isNew(nf, 0);
+    for (int k = 0; k < q; ++k) isNew[epiv[k]] = 1;
+    std::vector<int> keep;
+    for (int n = 0; n < nf; ++n) if (!isNew[n]) keep.push_back(n);
+    auto compact = [&](std::vector<u64>& v) {
+      std::vector<u64> w(keep.size());
+      for (size_t n = 0; n < keep.size(); ++n) w[n] = v[keep[n]];
+      v.swap(w);
+    };
+    for (auto& bj : rows) compact(bj);
+    for (int k = 0; k < q; ++k) {
+      piv.push_back(cols[epiv[k]]);
+      compact(E[k]);
+      rows.push_back(std::move(E[k]));
+    }
+    std::vector<int> nc(keep.size());
+    for (size_t n = 0; n < keep.size(); ++n) nc[n] = cols[keep[n]];
+    cols.swap(nc);
+  }
+
+  // the basis as full rows ordered by pivot column, as rref_mod returns them
+  void full(std::vector<std::vector<u64> >& R, std::vector<int>& pivots) const {
+    int r = rank();
+    std::vector<int> ord(r);
+    for (int j = 0; j < r; ++j) ord[j] = j;
+    std::sort(ord.begin(), ord.end(), [&](int x, int y) { return piv[x] < piv[y]; });
+    R.assign(r, std::vector<u64>(nz, 0));
+    pivots.assign(r, 0);
+    for (int i = 0; i < r; ++i) {
+      int j = ord[i];
+      pivots[i] = piv[j];
+      R[i][piv[j]] = 1;
+      for (size_t n = 0; n < cols.size(); ++n) R[i][cols[n]] = rows[j][n];
+    }
+  }
+};
 
 // ---- Rank over GF(p)((eps)) of rows truncated at eps^N ----
 // A series row holds nz entries, each a truncated power series: coefficient d of
@@ -918,8 +1083,21 @@ bool build_obs_rows(std::vector<std::vector<u64> >& val,
   int m = (int)stateSlots.size();
   std::vector<std::vector<u64> > invA0(nInstr);
   bool fail = false;
+  // values constant in time: zero past order 0, so a product with one takes a single term
+  std::vector<char> tconst(instrBase + nInstr, 0);
+  {
+    std::vector<char> isState(instrBase, 0);
+    for (int s : stateSlots) if (s >= 0 && s < instrBase) isState[s] = 1;
+    for (int v = 0; v < instrBase; ++v) tconst[v] = !isState[v];
+    for (int i = 0; i < nInstr; ++i) {
+      int o = op[i];
+      tconst[instrBase + i] = o == OP_CONST || ((o == OP_ADD || o == OP_MUL) && tconst[a[i]] && tconst[b[i]]) ||
+                              (o == OP_INV && tconst[a[i]]);
+    }
+  }
   for (int k = 0; k <= Nt && !fail; ++k) {
     for (int i = 0; i < nInstr; ++i) {
+      if (k > 0 && tconst[instrBase + i]) continue;
       u64* o = val[instrBase + i].data() + (size_t)k * w;
       switch (op[i]) {
         case OP_CONST:
@@ -934,7 +1112,8 @@ bool build_obs_rows(std::vector<std::vector<u64> >& val,
         case OP_MUL: {
           const u64* pa = val[a[i]].data();
           const u64* pb = val[b[i]].data();
-          for (int ii = 0; ii <= k; ++ii)
+          int j0 = tconst[b[i]] ? k : 0, j1 = tconst[a[i]] ? 0 : k;
+          for (int ii = j0; ii <= j1; ++ii)
             dual_mul_acc(o, pa + (size_t)ii * w, pb + (size_t)(k - ii) * w, w, p);
           break;
         }
@@ -1115,7 +1294,8 @@ inline bool lb_inv(LBlk& out, const LBlk& a, const PolyBasis& pb, u64 p) {
 // that is 0/0 at the start) is evaluated after the recursion as a Laurent series; where the
 // truncation needs more orders, the recursion is run again further. Rows of negative order
 // (poles of the dual lanes, e.g. along a state of the start) go to `preRows` as
-// (output, -order, monomial, lanes...); without it, a pole fails.
+// (output, -order, monomial, lanes...); without it, a pole fails. `deferredOut` is set where an
+// instruction is taken as a Laurent series.
 bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
                          const std::vector<int>& op, const std::vector<int>& a,
                          const std::vector<int>& b, const std::vector<u64>& cval,
@@ -1125,7 +1305,7 @@ bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
                          std::vector<std::vector<u64> >& rows,
                          const u64* dtau = nullptr,
                          std::vector<std::vector<u64> >* preRows = nullptr, int depth = 0,
-                         int need = -1, int spowAxis0 = -1) {
+                         int need = -1, int spowAxis0 = -1, char* deferredOut = nullptr) {
   if (need < 0) need = Nrun + 1;
   int nInstr = (int)op.size();
   int m = (int)stateSlots.size();
@@ -1259,6 +1439,7 @@ bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
         if (fcone[i]) { fail = true; break; }
         deferred[i] = 1;
         anyDeferred = true;
+        if (deferredOut) *deferredOut = 1;
       }
       if (deferred[i] || (k > 0 && tconst[instrBase + i])) continue;
       u64* o = val[instrBase + i].data() + (size_t)k * blk;
@@ -1536,15 +1717,26 @@ bool build_obs_rows_poly(std::vector<std::vector<u64> >& val,
 // constants and the IC map as decimal strings, an optional steady-state seed
 // icSeed as raw ints. Constants are reduced per prime in build_one_condition, so
 // one extraction serves every prime (the batch path relies on this).
+// A condition of a shared tape sets leaves: leaf ovSlot[i] takes the value and duals of leaf
+// ovSrc[i], or the constant ovNum[i]/ovDen[i] where ovSrc[i] < 0.
 struct CondRaw {
   std::vector<int> op, a, b, stateSlots, fOut, gOut, icLeaf, icOp, icA, icB, icOut;
   std::vector<std::string> cnum, cden, icCnum, icCden, icNum, icDen;
   bool hasIcTape, hasIcSeed;
   std::vector<std::vector<int> > icSeedRaw;
+  std::vector<int> ovSlot, ovSrc;
+  std::vector<std::string> ovNum, ovDen;
 };
+
+void extract_leaf_set(const List& tp, CondRaw& cd) {
+  if (!tp.containsElementNamed("leaf_slot")) return;
+  cd.ovSlot = to_ivec(tp["leaf_slot"]); cd.ovSrc = to_ivec(tp["leaf_src"]);
+  cd.ovNum = to_svec(tp["leaf_num"]); cd.ovDen = to_svec(tp["leaf_den"]);
+}
 
 CondRaw extract_cond_raw(List tp, int nStates, int w) {
   CondRaw cd;
+  extract_leaf_set(tp, cd);
   cd.op = to_ivec(tp["op"]); cd.a = to_ivec(tp["a"]); cd.b = to_ivec(tp["b"]);
   cd.stateSlots = to_ivec(tp["state_slots"]);
   cd.fOut = to_ivec(tp["f_out"]); cd.gOut = to_ivec(tp["g_out"]);
@@ -1567,23 +1759,79 @@ CondRaw extract_cond_raw(List tp, int nStates, int w) {
   return cd;
 }
 
-// Build one condition's observability rows at a single point/prime. leafVal holds
-// each leaf's value and dual already reduced mod p; the tape and IC constants are
-// reduced from their strings here, so the same CondRaw serves any prime. Returns
-// false on a vanishing denominator (tape reciprocal or reciprocal IC).
-bool build_one_condition(const CondRaw& cd,
-                         const std::vector<std::vector<u64> >& leafVal,
-                         int nLeaves, int nStates, int nz, int w, int Nt, u64 p,
-                         std::vector<std::vector<u64> >& outRows, bool laurent = false) {
-  int nInstr = (int)cd.op.size();
-  int instrBase = nLeaves + nStates;
-  int S = instrBase + nInstr;
+// The tapes of a call. A tape with an entry `base` holds the arrays of the earlier tape `base` and
+// only the leaves it sets, so that the arrays of a shared tape are read once.
+struct TapeSet {
+  std::vector<CondRaw> td;
+  std::vector<int> base;
+  TapeSet(List& tapes, int nStates, int w) {
+    int T = tapes.size();
+    td.resize(T);
+    base.resize(T);
+    for (int t = 0; t < T; ++t) {
+      List tp = tapes[t];
+      base[t] = t;
+      if (tp.containsElementNamed("base")) {
+        base[t] = (int)tp["base"];
+        if (base[t] < 0 || base[t] >= t || base[base[t]] != base[t])
+          throw std::invalid_argument("a tape names a base that is no earlier full tape");
+        extract_leaf_set(tp, td[t]);
+      } else {
+        td[t] = extract_cond_raw(tp, nStates, w);
+      }
+    }
+  }
+  int size() const { return (int)td.size(); }
+  // tape t, assembled in `tmp` where it holds the arrays of a base
+  const CondRaw& get(int t, CondRaw& tmp) const {
+    if (base[t] == t) return td[t];
+    tmp = td[base[t]];
+    tmp.ovSlot = td[t].ovSlot; tmp.ovSrc = td[t].ovSrc;
+    tmp.ovNum = td[t].ovNum; tmp.ovDen = td[t].ovDen;
+    return tmp;
+  }
+};
 
-  std::vector<u64> cval(nInstr, 0);
+// The leaves of a condition: the shared leaf values with the leaves the condition sets replaced.
+struct LeafView {
+  const std::vector<std::vector<u64> >& base;
+  std::vector<int> at;
+  std::vector<std::vector<u64> > own;
+  explicit LeafView(const std::vector<std::vector<u64> >& b) : base(b) {}
+  const std::vector<u64>& operator[](int L) const {
+    return (!at.empty() && at[L] >= 0) ? own[at[L]] : base[L];
+  }
+};
+
+LeafView cond_leaves(const CondRaw& cd, const std::vector<std::vector<u64> >& leafVal, int w, u64 p) {
+  LeafView v(leafVal);
+  if (cd.ovSlot.empty()) return v;
+  v.at.assign(leafVal.size(), -1);
+  for (size_t i = 0; i < cd.ovSlot.size(); ++i) {
+    v.at[cd.ovSlot[i]] = (int)v.own.size();
+    if (cd.ovSrc[i] >= 0) {
+      v.own.push_back(leafVal[cd.ovSrc[i]]);
+    } else {
+      std::vector<u64> c(w, 0);
+      c[0] = reduce_rational(cd.ovNum[i], cd.ovDen[i], p);
+      v.own.push_back(c);
+    }
+  }
+  return v;
+}
+
+// The constants of a condition's tape modulo p and the start of each state as a dual of width w.
+// False on a vanishing denominator of a start value.
+bool cond_start(const CondRaw& cd, const std::vector<std::vector<u64> >& leafVal,
+                int nLeaves, int nStates, int w, u64 p, std::vector<u64>& cval,
+                std::vector<std::vector<u64> >& st0) {
+  int nInstr = (int)cd.op.size();
+  cval.assign(nInstr, 0);
   for (int i = 0; i < nInstr; ++i)
     if (cd.op[i] == OP_CONST)
       cval[i] = reduce_rational(cd.cnum[i], cd.cden[i], p);
 
+  const LeafView lv = cond_leaves(cd, leafVal, w, p);
   std::vector<std::vector<u64> > icVal;
   if (cd.hasIcTape && !cd.hasIcSeed) {
     int nIc = (int)cd.icOp.size();
@@ -1591,9 +1839,15 @@ bool build_one_condition(const CondRaw& cd,
     for (int i = 0; i < nIc; ++i)
       if (cd.icOp[i] == OP_CONST)
         icCval[i] = reduce_rational(cd.icCnum[i], cd.icCden[i], p);
-    icVal.assign(nLeaves + nIc, std::vector<u64>(w, 0));
-    for (int L = 0; L < nLeaves; ++L)
-      for (int c = 0; c < w; ++c) icVal[L][c] = leafVal[L][c];
+    // the leaves the initial-value tape reads
+    icVal.assign(nLeaves + nIc, std::vector<u64>());
+    auto need = [&](int s) { if (s >= 0 && s < nLeaves && icVal[s].empty()) icVal[s] = lv[s]; };
+    for (int i = 0; i < nIc; ++i) {
+      icVal[nLeaves + i].assign(w, 0);
+      if (cd.icOp[i] == OP_CONST) continue;
+      need(cd.icA[i]);
+      if (cd.icOp[i] == OP_ADD || cd.icOp[i] == OP_MUL) need(cd.icB[i]);
+    }
     if (!eval_ic_order0(icVal, cd.icOp, cd.icA, cd.icB, icCval, nLeaves, w, p))
       return false;
   }
@@ -1605,23 +1859,46 @@ bool build_one_condition(const CondRaw& cd,
       icConst[i] = reduce_rational(cd.icNum[i], cd.icDen[i], p);
   }
 
-  std::vector<std::vector<u64> > val(S, std::vector<u64>((size_t)(Nt + 1) * w, 0));
-  for (int L = 0; L < nLeaves; ++L)
-    for (int c = 0; c < w; ++c) val[L][c] = leafVal[L][c];
+  st0.assign(cd.stateSlots.size(), std::vector<u64>(w, 0));
   for (int i = 0; i < (int)cd.stateSlots.size(); ++i) {
-    int slot = cd.stateSlots[i];
     if (cd.hasIcSeed) {
-      for (int c = 0; c < w; ++c) val[slot][c] = red(cd.icSeedRaw[i][c], p);
+      for (int c = 0; c < w; ++c) st0[i][c] = red(cd.icSeedRaw[i][c], p);
       continue;
     }
     int src = cd.hasIcTape ? cd.icOut[i] : (cd.icLeaf[i] >= 0 ? cd.icLeaf[i] : -1);
     if (src >= 0) {
-      const std::vector<u64>& s = src < nLeaves ? leafVal[src] : icVal[src];
-      for (int c = 0; c < w; ++c) val[slot][c] = s[c];
+      const std::vector<u64>& s = src < nLeaves ? lv[src] : icVal[src];
+      for (int c = 0; c < w; ++c) st0[i][c] = s[c];
     } else {
-      val[slot][0] = icConst[i];
+      st0[i][0] = icConst[i];
     }
   }
+  return true;
+}
+
+// Build one condition's observability rows at a single point/prime. leafVal holds
+// each leaf's value and dual already reduced mod p; the tape and IC constants are
+// reduced from their strings here, so the same CondRaw serves any prime. Returns
+// false on a vanishing denominator (tape reciprocal or reciprocal IC).
+bool build_one_condition(const CondRaw& cd,
+                         const std::vector<std::vector<u64> >& leafVal,
+                         int nLeaves, int nStates, int nz, int w, int Nt, u64 p,
+                         std::vector<std::vector<u64> >& outRows, bool laurent = false) {
+  int nInstr = (int)cd.op.size();
+  int instrBase = nLeaves + nStates;
+  int S = instrBase + nInstr;
+  std::vector<u64> cval;
+  std::vector<std::vector<u64> > st0;
+  if (!cond_start(cd, leafVal, nLeaves, nStates, w, p, cval, st0)) return false;
+
+  std::vector<std::vector<u64> > val(S, std::vector<u64>((size_t)(Nt + 1) * w, 0));
+  {
+    const LeafView lv = cond_leaves(cd, leafVal, w, p);
+    for (int L = 0; L < nLeaves; ++L)
+      for (int c = 0; c < w; ++c) val[L][c] = lv[L][c];
+  }
+  for (int i = 0; i < (int)cd.stateSlots.size(); ++i)
+    for (int c = 0; c < w; ++c) val[cd.stateSlots[i]][c] = st0[i][c];
 
   if (laurent) {
     // one axis per power of a state at 0, within the total degree Nt (a power counts at
@@ -1649,12 +1926,302 @@ bool build_one_condition(const CondRaw& cd,
   return build_one_condition(cd, leafVal, nLeaves, nStates, nz, w, Nt, p, outRows, true);
 }
 
+// SYMIDENT_KERNEL_MODE: `forward` or `reverse` fixes the mode of the rows, `check` builds a call in
+// both and requires equal rows; otherwise the mode that sweeps fewer residues.
+enum { KM_AUTO, KM_FORWARD, KM_REVERSE, KM_CHECK };
+int kernel_mode() {
+  const char* e = std::getenv("SYMIDENT_KERNEL_MODE");
+  std::string m = e ? e : "";
+  if (m == "forward") return KM_FORWARD;
+  if (m == "reverse") return KM_REVERSE;
+  if (m == "check") return KM_CHECK;
+  return KM_AUTO;
+}
+
+// rows of the two modes, equal modulo p, or an error naming the call
+void require_same_rows(const std::vector<std::vector<u64> >& fw,
+                       const std::vector<std::vector<u64> >& rv, u64 p, const char* what) {
+  bool same = fw.size() == rv.size();
+  for (size_t i = 0; same && i < fw.size(); ++i) {
+    same = fw[i].size() == rv[i].size();
+    for (size_t c = 0; same && c < fw[i].size(); ++c) same = fw[i][c] % p == rv[i][c] % p;
+  }
+  if (!same)
+    throw std::runtime_error(std::string("kernel: the reverse mode differs from the forward mode (") +
+                             what + ")");
+}
+
+// dst += c * src over n residues
+inline void axpy_mod(u64* dst, const u64* src, u64 c, int n, const Barrett& br) {
+  for (int j = 0; j < n; ++j) dst[j] = br.red(dst[j] + src[j] * c);
+}
+
+// ---- Reverse mode of build_one_condition ----
+// A pass of the values alone, then adjoint sweeps over blocks of rows. Row r is output r % nOut at
+// order Nt - r / nOut, so the sweep down from order j covers a prefix of the rows.
+struct RevPass {
+  int nOut = 0, Nt = 0, S = 0, nMarked = 0;
+  std::vector<std::vector<u64> > v;                     // Taylor values per slot
+  std::vector<std::vector<u64> > nsq;                   // per reciprocal: -(o*o) as a series
+  std::vector<std::vector<std::pair<int, u64> > > d0;  // per slot: the duals at order 0
+  std::vector<char> tconst;                             // values constant in time
+  std::vector<int> mark;                                // slot*(Nt+1)+k: adjoint index or -1
+};
+
+enum { REV_OK, REV_FAIL, REV_FORWARD };
+
+// The orders ii of A in sum_ii A_ii B_(k-ii) where neither factor vanishes for being constant in time
+inline void conv_range(bool ca, bool cb, int k, int& j0, int& j1) {
+  j0 = cb ? k : 0;
+  j1 = ca ? 0 : k;
+}
+
+// The values and the adjoint cells of the reverse mode. REV_FAIL on a vanishing denominator of a
+// start value; REV_FORWARD for an operation other than CONST/ADD/MUL/INV or a reciprocal without
+// value at order 0, which the forward mode takes as a Laurent series.
+int rev_values(const CondRaw& cd, const std::vector<std::vector<u64> >& leafVal,
+               int nLeaves, int nStates, int w, int Nt, u64 p, RevPass& rp) {
+  int nInstr = (int)cd.op.size(), instrBase = nLeaves + nStates;
+  int S = instrBase + nInstr, N1 = Nt + 1;
+  for (int o : cd.op)
+    if (o != OP_CONST && o != OP_ADD && o != OP_MUL && o != OP_INV) return REV_FORWARD;
+  std::vector<u64> cval;
+  std::vector<std::vector<u64> > st0;
+  if (!cond_start(cd, leafVal, nLeaves, nStates, w, p, cval, st0)) return REV_FAIL;
+  rp.nOut = (int)cd.gOut.size(); rp.Nt = Nt; rp.S = S;
+  rp.v.assign(S, std::vector<u64>(N1, 0));
+  rp.d0.assign(S, {});
+  std::vector<char> isState(S, 0);
+  for (int s : cd.stateSlots) isState[s] = 1;
+  rp.tconst.assign(S, 0);
+  for (int L = 0; L < instrBase; ++L) rp.tconst[L] = !isState[L];
+  const LeafView lv = cond_leaves(cd, leafVal, w, p);
+  for (int L = 0; L < nLeaves; ++L) {
+    const std::vector<u64>& x = lv[L];
+    rp.v[L][0] = x[0] % p;
+    for (int c = 1; c < w; ++c)
+      if (x[c] % p) rp.d0[L].push_back({c - 1, x[c] % p});
+  }
+  for (size_t i = 0; i < cd.stateSlots.size(); ++i) {
+    int s = cd.stateSlots[i];
+    rp.v[s][0] = st0[i][0] % p;
+    rp.d0[s].clear();
+    for (int c = 1; c < w; ++c)
+      if (st0[i][c] % p) rp.d0[s].push_back({c - 1, st0[i][c] % p});
+  }
+  for (int i = 0; i < nInstr; ++i) {
+    int o = cd.op[i], a = cd.a[i], b = cd.b[i];
+    rp.tconst[instrBase + i] = o == OP_CONST ||
+        ((o == OP_ADD || o == OP_MUL) && rp.tconst[a] && rp.tconst[b]) ||
+        (o == OP_INV && rp.tconst[a]);
+  }
+  const Barrett br(p);
+  for (int k = 0; k <= Nt; ++k) {
+    for (int i = 0; i < nInstr; ++i) {
+      int s = instrBase + i;
+      if (k > 0 && rp.tconst[s]) continue;
+      int a = cd.a[i], b = cd.b[i];
+      u64& o = rp.v[s][k];
+      switch (cd.op[i]) {
+        case OP_CONST: o = cval[i]; break;
+        case OP_ADD: o = addmod(rp.v[a][k], rp.v[b][k], p); break;
+        case OP_MUL: {
+          int j0, j1;
+          conv_range(rp.tconst[a], rp.tconst[b], k, j0, j1);
+          u64 acc = 0;
+          for (int ii = j0; ii <= j1; ++ii) acc = br.red(acc + rp.v[a][ii] * rp.v[b][k - ii]);
+          o = acc;
+          break;
+        }
+        case OP_INV:
+          if (k == 0) {
+            if (rp.v[a][0] == 0) return REV_FORWARD;
+            o = invmod(rp.v[a][0], p);
+          } else {
+            u64 acc = 0;
+            for (int j = 1; j <= k; ++j) acc = br.red(acc + rp.v[a][j] * rp.v[s][k - j]);
+            o = mulmod(submod(0, acc, p), rp.v[s][0], p);
+          }
+          break;
+      }
+    }
+    if (k == Nt) break;
+    u64 ik = invmod((u64)(k + 1), p);
+    for (size_t i = 0; i < cd.stateSlots.size(); ++i)
+      rp.v[cd.stateSlots[i]][k + 1] = mulmod(rp.v[cd.fOut[i]][k], ik, p);
+  }
+  rp.nsq.assign(nInstr, {});
+  for (int i = 0; i < nInstr; ++i) {
+    if (cd.op[i] != OP_INV) continue;
+    const std::vector<u64>& o = rp.v[instrBase + i];
+    rp.nsq[i].assign(N1, 0);
+    int top = rp.tconst[instrBase + i] ? 1 : N1;
+    for (int k = 0; k < top; ++k) {
+      u64 s = 0;
+      for (int j = 0; j <= k; ++j) s = br.red(s + o[j] * o[k - j]);
+      rp.nsq[i][k] = submod(0, s, p);
+    }
+  }
+  // the cells an adjoint reaches: a leaf or a start with a dual at order 0, a state past order 0,
+  // an instruction that is not a constant, past order 0 only where it varies in time
+  auto live = [&](int s, int k) {
+    if (s < instrBase) return isState[s] ? (k > 0 || !rp.d0[s].empty()) : (k == 0 && !rp.d0[s].empty());
+    if (cd.op[s - instrBase] == OP_CONST) return false;
+    return k == 0 || !rp.tconst[s];
+  };
+  rp.mark.assign((size_t)S * N1, -1);
+  rp.nMarked = 0;
+  auto mark = [&](int s, int k) {
+    int& m = rp.mark[(size_t)s * N1 + k];
+    if (m < 0 && live(s, k)) m = rp.nMarked++;
+  };
+  for (int g : cd.gOut)
+    for (int k = 0; k <= Nt; ++k) mark(g, k);
+  for (int k = Nt; k >= 0; --k) {
+    if (k < Nt)
+      for (size_t i = 0; i < cd.stateSlots.size(); ++i)
+        if (rp.mark[(size_t)cd.stateSlots[i] * N1 + k + 1] >= 0) mark(cd.fOut[i], k);
+    for (int i = nInstr - 1; i >= 0; --i) {
+      if (rp.mark[(size_t)(instrBase + i) * N1 + k] < 0) continue;
+      int a = cd.a[i], b = cd.b[i];
+      switch (cd.op[i]) {
+        case OP_ADD: mark(a, k); mark(b, k); break;
+        case OP_MUL: {
+          int j0, j1;
+          conv_range(rp.tconst[a], rp.tconst[b], k, j0, j1);
+          for (int ii = j0; ii <= j1; ++ii) {
+            if (rp.v[b][k - ii]) mark(a, ii);
+            if (rp.v[a][ii]) mark(b, k - ii);
+          }
+          break;
+        }
+        case OP_INV:
+          for (int ii = 0; ii <= (rp.tconst[a] ? 0 : k); ++ii)
+            if (rp.nsq[i][k - ii]) mark(a, ii);
+          break;
+      }
+    }
+  }
+  return REV_OK;
+}
+
+// The adjoint sweep over rows [r0, r1) of the order-descending numbering; `out` receives the
+// entries of each row over the nz columns.
+void rev_sweep(const CondRaw& cd, const RevPass& rp, int nLeaves, int nStates, int nz,
+               u64 p, int r0, int r1, std::vector<std::vector<u64> >& out) {
+  int B = r1 - r0, Nt = rp.Nt, N1 = Nt + 1, nOut = rp.nOut;
+  int nInstr = (int)cd.op.size(), instrBase = nLeaves + nStates;
+  const Barrett br(p);
+  std::vector<u64> pool((size_t)rp.nMarked * B, 0);
+  auto at = [&](int s, int k) -> u64* {
+    int m = rp.mark[(size_t)s * N1 + k];
+    return m < 0 ? nullptr : pool.data() + (size_t)m * B;
+  };
+  for (int k = Nt; k >= 0; --k) {
+    int act = std::min(B, nOut * (Nt - k + 1) - r0);
+    if (act <= 0) continue;
+    for (int r = std::max(r0, nOut * (Nt - k)); r < std::min(r1, nOut * (Nt - k + 1)); ++r)
+      if (u64* g = at(cd.gOut[r % nOut], k)) g[r - r0] = addmod(g[r - r0], 1, p);
+    if (k < Nt) {
+      u64 ik = invmod((u64)(k + 1), p);
+      for (size_t i = 0; i < cd.stateSlots.size(); ++i) {
+        const u64* src = at(cd.stateSlots[i], k + 1);
+        u64* dst = at(cd.fOut[i], k);
+        if (src && dst) axpy_mod(dst, src, ik, act, br);
+      }
+    }
+    for (int i = nInstr - 1; i >= 0; --i) {
+      const u64* o = at(instrBase + i, k);
+      if (!o) continue;
+      int a = cd.a[i], b = cd.b[i];
+      switch (cd.op[i]) {
+        case OP_ADD:
+          if (u64* d = at(a, k)) axpy_mod(d, o, 1, act, br);
+          if (u64* d = at(b, k)) axpy_mod(d, o, 1, act, br);
+          break;
+        case OP_MUL: {
+          int j0, j1;
+          conv_range(rp.tconst[a], rp.tconst[b], k, j0, j1);
+          for (int ii = j0; ii <= j1; ++ii) {
+            u64 vb = rp.v[b][k - ii], va = rp.v[a][ii];
+            if (vb) if (u64* d = at(a, ii)) axpy_mod(d, o, vb, act, br);
+            if (va) if (u64* d = at(b, k - ii)) axpy_mod(d, o, va, act, br);
+          }
+          break;
+        }
+        case OP_INV:
+          for (int ii = 0; ii <= (rp.tconst[a] ? 0 : k); ++ii) {
+            u64 c = rp.nsq[i][k - ii];
+            if (c) if (u64* d = at(a, ii)) axpy_mod(d, o, c, act, br);
+          }
+          break;
+      }
+    }
+  }
+  out.assign(B, std::vector<u64>(nz, 0));
+  for (int s = 0; s < rp.S; ++s) {
+    if (rp.d0[s].empty()) continue;
+    const u64* ad = at(s, 0);
+    if (!ad) continue;
+    for (int rr = 0; rr < B; ++rr) {
+      if (!ad[rr]) continue;
+      for (const auto& e : rp.d0[s])
+        out[rr][e.first] = br.red(out[rr][e.first] + ad[rr] * e.second);
+    }
+  }
+}
+
+double chain_block_bytes();
+
+// The rows of build_one_condition in reverse mode, in the order of the forward mode; REV_FAIL and
+// REV_FORWARD as rev_values.
+int build_one_condition_reverse(const CondRaw& cd,
+                                const std::vector<std::vector<u64> >& leafVal,
+                                int nLeaves, int nStates, int nz, int Nt, u64 p,
+                                std::vector<std::vector<u64> >& outRows, int threads) {
+  RevPass rp;
+  int st = rev_values(cd, leafVal, nLeaves, nStates, nz + 1, Nt, p, rp);
+  if (st != REV_OK) return st;
+  int nRows = rp.nOut * (Nt + 1);
+  if (nRows == 0) return REV_OK;
+  // rows per block: split over the threads, and bounded so that one block's adjoints stay within
+  // the budget of chain_block_bytes()
+  double perRow = std::max(1.0, (double)rp.nMarked * 8.0);
+  int Bmem = std::max(1, (int)(chain_block_bytes() / perRow));
+  int Bt = threads > 1 ? (nRows + threads - 1) / threads : nRows;
+  int B = std::max(1, std::min(Bt, Bmem));
+  int nb = (nRows + B - 1) / B;
+  std::vector<std::vector<std::vector<u64> > > rB(nb);
+  int nThr = std::max(1, std::min(threads, nb));
+  OmpGuard guard_;
+  #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1)
+  for (int b = 0; b < nb; ++b) {
+    try {
+      rev_sweep(cd, rp, nLeaves, nStates, nz, p, b * B, std::min(nRows, (b + 1) * B), rB[b]);
+    } catch (...) {
+      guard_.capture();
+    }
+  }
+  guard_.rethrow();
+  size_t r0 = outRows.size();
+  outRows.resize(r0 + nRows);
+  for (int b = 0; b < nb; ++b)
+    for (size_t i = 0; i < rB[b].size(); ++i) {
+      int r = b * B + (int)i, gi = r % rp.nOut, k = Nt - r / rp.nOut;
+      outRows[r0 + (size_t)gi * (Nt + 1) + k] = std::move(rB[b][i]);
+    }
+  return REV_OK;
+}
+
+// The reverse mode sweeps about half the rows per order, the forward mode every column.
+bool reverse_pays(size_t nOut, int nz, int Nt) {
+  return (double)nOut * (Nt + 2) < (double)(nz + 1);
+}
+
 // build_one_condition over column blocks on `threads` threads: each block holds the
 // value and a separate range of dual lanes, the rows are assembled over all columns. A steady-state
 // seed is laid out over all columns, so a seeded condition is built unblocked.
-double chain_block_bytes();
-
-bool build_one_condition_blocked(const CondRaw& cd,
+bool build_one_condition_forward(const CondRaw& cd,
                                  const std::vector<std::vector<u64> >& leafVal,
                                  int nLeaves, int nStates, int nz, int Nt, u64 p,
                                  std::vector<std::vector<u64> >& outRows, int threads) {
@@ -1705,13 +2272,37 @@ bool build_one_condition_blocked(const CondRaw& cd,
   return true;
 }
 
+// The rows of build_one_condition in the mode of kernel_mode(), on `threads` threads.
+bool build_one_condition_blocked(const CondRaw& cd,
+                                 const std::vector<std::vector<u64> >& leafVal,
+                                 int nLeaves, int nStates, int nz, int Nt, u64 p,
+                                 std::vector<std::vector<u64> >& outRows, int threads) {
+  int mode = kernel_mode();
+  if (mode == KM_FORWARD || (mode == KM_AUTO && !reverse_pays(cd.gOut.size(), nz, Nt)))
+    return build_one_condition_forward(cd, leafVal, nLeaves, nStates, nz, Nt, p, outRows, threads);
+  std::vector<std::vector<u64> > rv;
+  int st = build_one_condition_reverse(cd, leafVal, nLeaves, nStates, nz, Nt, p, rv, threads);
+  if (st == REV_FORWARD)
+    return build_one_condition_forward(cd, leafVal, nLeaves, nStates, nz, Nt, p, outRows, threads);
+  if (mode == KM_CHECK) {
+    std::vector<std::vector<u64> > fw;
+    bool okF = build_one_condition_forward(cd, leafVal, nLeaves, nStates, nz, Nt, p, fw, threads);
+    if (okF != (st == REV_OK))
+      throw std::runtime_error("kernel: the reverse mode fails where the forward mode does not");
+    require_same_rows(fw, rv, p, "one condition");
+  }
+  if (st == REV_FAIL) return false;
+  for (auto& r : rv) outRows.push_back(std::move(r));
+  return true;
+}
+
 // One chain segment in thread-safe plain C++: the regime-substituted tape, the
 // reduced constants, and the optional first-segment steady-state seed, IC tape
 // and state-dose event map. Constants are reduced against the single call prime.
 struct SegRaw {
   std::vector<int> op, a, b, stateSlots, fOut, gOut;
   std::vector<u64> cval;
-  bool hasIcSeed, hasIcTape, hasEv, evStates = false;
+  bool hasIcSeed, hasIcTape, hasEv, evStates = false, evReadsStates = false;
   std::vector<std::vector<u64> > icSeed;
   std::vector<int> icOp, icA, icB, icOut;
   std::vector<u64> icCval;
@@ -1722,7 +2313,40 @@ struct SegRaw {
   std::vector<u64> tmCval;
 };
 
-SegRaw extract_seg_raw(List seg, int nStates, int w, u64 p) {
+// A tape whose slots below `base` are leaves and states, rewritten to read leaf slot[i] from leaf
+// src[i], or from the constant cv[i] where src[i] < 0: the constants become instructions ahead of the
+// others. `outs` are further slot arrays of the tape, remapped alike.
+void rebind_leaves(std::vector<int>& op, std::vector<int>& a, std::vector<int>& b,
+                   std::vector<u64>& cval, int base, const std::vector<int>& slot,
+                   const std::vector<int>& src, const std::vector<u64>& cv,
+                   std::initializer_list<std::vector<int>*> outs) {
+  std::vector<int> to(base, -1);
+  std::vector<u64> consts;
+  for (size_t i = 0; i < slot.size(); ++i) {
+    if (slot[i] < 0 || slot[i] >= base) continue;
+    if (src[i] >= 0) {
+      to[slot[i]] = src[i];
+    } else {
+      to[slot[i]] = base + (int)consts.size();
+      consts.push_back(cv[i]);
+    }
+  }
+  int nC = (int)consts.size();
+  auto m = [&](int x) { return x < 0 ? x : x >= base ? x + nC : to[x] >= 0 ? to[x] : x; };
+  for (size_t i = 0; i < op.size(); ++i) {
+    if (op[i] == OP_CONST) continue;
+    a[i] = m(a[i]);
+    if (op[i] == OP_ADD || op[i] == OP_MUL || op[i] == OP_SPOW) b[i] = m(b[i]);
+  }
+  for (std::vector<int>* v : outs)
+    for (int& x : *v) x = m(x);
+  op.insert(op.begin(), nC, OP_CONST);
+  a.insert(a.begin(), nC, 0);
+  b.insert(b.begin(), nC, 0);
+  cval.insert(cval.begin(), consts.begin(), consts.end());
+}
+
+SegRaw extract_seg_raw(List seg, int nLeaves, int nStates, int w, u64 p) {
   SegRaw s;
   s.op = to_ivec(seg["op"]); s.a = to_ivec(seg["a"]); s.b = to_ivec(seg["b"]);
   s.stateSlots = to_ivec(seg["state_slots"]);
@@ -1758,6 +2382,12 @@ SegRaw extract_seg_raw(List seg, int nStates, int w, u64 p) {
     s.evVarIdx = to_ivec(seg["ev_var_idx"]); s.evMethod = to_ivec(seg["ev_method"]);
     s.evOp = to_ivec(seg["ev_op"]); s.evA = to_ivec(seg["ev_a"]); s.evB = to_ivec(seg["ev_b"]);
     s.evOut = to_ivec(seg["ev_out"]);
+    if (s.evStates) {
+      std::vector<int> leafOnly;
+      if (seg.containsElementNamed("ev_leaf_only")) leafOnly = to_ivec(seg["ev_leaf_only"]);
+      s.evReadsStates = leafOnly.size() != s.evVarIdx.size() ||
+                        std::find(leafOnly.begin(), leafOnly.end(), 0) != leafOnly.end();
+    }
     std::vector<std::string> ecn = to_svec(seg["ev_cnum"]), ecd = to_svec(seg["ev_cden"]);
     int nEv = (int)s.evOp.size();
     s.evCval.assign(nEv, 0);
@@ -1775,6 +2405,20 @@ SegRaw extract_seg_raw(List seg, int nStates, int w, u64 p) {
     for (int i = 0; i < nTm; ++i)
       if (s.tmOp[i] == OP_CONST)
         s.tmCval[i] = reduce_rational(tcn[i], tcd[i], p);
+  }
+  if (seg.containsElementNamed("leaf_slot")) {
+    // the leaves a condition of a shared tape sets
+    std::vector<int> slot = to_ivec(seg["leaf_slot"]), src = to_ivec(seg["leaf_src"]);
+    std::vector<std::string> num = to_svec(seg["leaf_num"]), den = to_svec(seg["leaf_den"]);
+    std::vector<u64> cv(slot.size(), 0);
+    for (size_t i = 0; i < slot.size(); ++i)
+      if (src[i] < 0) cv[i] = reduce_rational(num[i], den[i], p);
+    rebind_leaves(s.op, s.a, s.b, s.cval, nLeaves + nStates, slot, src, cv, {&s.fOut, &s.gOut});
+    if (s.hasIcTape) rebind_leaves(s.icOp, s.icA, s.icB, s.icCval, nLeaves, slot, src, cv, {&s.icOut});
+    if (s.hasEv)
+      rebind_leaves(s.evOp, s.evA, s.evB, s.evCval, nLeaves + (s.evStates ? nStates : 0), slot, src, cv,
+                    {&s.evOut});
+    if (s.hasTm) rebind_leaves(s.tmOp, s.tmA, s.tmB, s.tmCval, nLeaves, slot, src, cv, {&s.tmOut});
   }
   return s;
 }
@@ -1806,6 +2450,17 @@ bool eval_tape_poly(std::vector<std::vector<u64> >& V, const std::vector<int>& o
   return true;
 }
 
+// What the reverse mode reads of a value pass of a chain: per segment the Taylor values of every
+// slot, the orders run and whether a boundary row follows; per boundary the start of the next
+// segment before the events; whether an instruction was taken as a Laurent series.
+struct ChainTrace {
+  std::vector<std::vector<std::vector<u64> > > val;
+  std::vector<int> nrun;
+  std::vector<char> kink;
+  std::vector<std::vector<std::vector<u64> > > preEvents;
+  char deferred = 0;
+};
+
 // Build one condition's chain (all segments) at a single point/prime, propagating
 // the state across each gap as a formal power series and applying state-dose
 // events to the propagated state. leafPt holds the leaf residues; the z-leaves seed a dual
@@ -1818,7 +2473,7 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
                      const std::vector<std::vector<u64> >* ser = nullptr,
                      const std::vector<int>* lane = nullptr,
                      const std::vector<char>* movesIn = nullptr, int Tser = -1,
-                     bool keepZeroSer = false) {
+                     bool keepZeroSer = false, ChainTrace* tr = nullptr) {
   int instrBase = nLeaves + nStates;
   int nSeg = (int)segs.size();
   int K = nSeg - 1; if (K < 1) K = 1;
@@ -1930,15 +2585,17 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
     size_t from = rows.size();
     if (!build_obs_rows_poly(val, seg.op, seg.a, seg.b, seg.cval, instrBase,
                              seg.stateSlots, seg.fOut, seg.gOut, pb, Nrun, NtS, p, rows,
-                             moves[sj] ? tau[sj].data() + 1 : nullptr))
+                             moves[sj] ? tau[sj].data() + 1 : nullptr, nullptr, 0, -1, -1,
+                             tr ? &tr->deferred : nullptr))
       return false;
     bool keepZero = lane != nullptr || keepZeroSer;
     if (lineMode) rows_to_series_axis(rows, from, pb, nz, Ns, srows, keepZero);
     else rows_to_line(rows, from, pb, lineC, nz, Mtot + 1, p, srows, keepZero);
     // where the output is not analytic across a moving boundary, the boundary time is
     // itself read off the output: the gradient of the boundary time joins the rows
+    bool kink = false;
     if (sj > 0 && moves[sj]) {
-      bool kink = leftJet.size() != seg.gOut.size();
+      kink = leftJet.size() != seg.gOut.size();
       for (size_t gi = 0; gi < seg.gOut.size() && !kink; ++gi) {
         const u64* gr = val[seg.gOut[gi]].data();
         for (int k = 0; k <= NtS && !kink; ++k)
@@ -1955,6 +2612,7 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
         srows.push_back(srow);
       }
     }
+    if (tr) tr->kink.push_back(kink);
     if (sj < nSeg - 1) {
       int axis = sj;
       carry.assign(nStates, std::vector<u64>(blk, 0));
@@ -2002,6 +2660,7 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
         leftJet.assign(seg.gOut.size(), std::vector<u64>());
         for (size_t gi = 0; gi < seg.gOut.size(); ++gi) leftJet[gi] = valL[seg.gOut[gi]];
       }
+      if (tr) tr->preEvents.push_back(carry);
       const SegRaw& nxt = segs[sj + 1];
       if (nxt.hasEv) {
         // event values over the leaves and the states just before the events
@@ -2027,6 +2686,7 @@ bool build_one_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
         }
       }
     }
+    if (tr) { tr->nrun.push_back(Nrun); tr->val.push_back(std::move(val)); }
   }
   return true;
 }
@@ -2053,6 +2713,489 @@ bool chain_moves(const std::vector<SegRaw>& segs, int nLeaves, int w,
     for (int c = 1; c < w; ++c) if (t[c]) moves[sj] = 1;
   }
   return true;
+}
+
+// ---- Reverse mode of build_one_chain ----
+// One value pass, then adjoint sweeps from the last segment to the first through the events and
+// the gap shifts. Rows run by descending segment, then order, so that each sweep covers a prefix.
+int build_one_chain_reverse(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
+                            int nz, const std::vector<int>& dualCol,
+                            const std::vector<int>& leafPt, int Nt, int Mtot, u64 p,
+                            std::vector<std::vector<u64> >& rows,
+                            std::vector<std::vector<u64> >& srows,
+                            const std::vector<std::vector<u64> >* ser, int threads, int Tser,
+                            bool keepZeroSer) {
+  int w = nz + 1, nSeg = (int)segs.size(), instrBase = nLeaves + nStates;
+  // the sweep takes an event value as a function of the leaves alone
+  for (const SegRaw& sg : segs) {
+    if (sg.evReadsStates) return REV_FORWARD;
+    for (int o : sg.op)
+      if (o != OP_CONST && o != OP_ADD && o != OP_MUL && o != OP_INV) return REV_FORWARD;
+  }
+  std::vector<char> moves;
+  if (!chain_moves(segs, nLeaves, w, dualCol, leafPt, p, moves)) return REV_FORWARD;
+  ChainTrace tr;
+  {
+    std::vector<int> none(nLeaves, -1);
+    std::vector<std::vector<u64> > r1, s1;
+    if (!build_one_chain(segs, nLeaves, nStates, 0, 1, none, leafPt, Nt, Mtot, p, r1, s1, ser,
+                         nullptr, &moves, Tser, false, &tr) || tr.deferred)
+      return REV_FORWARD;
+  }
+  int K = nSeg - 1; if (K < 1) K = 1;
+  int serAxis = -1;
+  if (ser) { serAxis = K; K += 1; }
+  bool lineMode = ser && Tser >= 0;
+  PolyBasis pb(K, Mtot, 1, lineMode ? serAxis : -1, Tser);
+  int nM = pb.nMono, blkW = nM * w;
+  int Ns = lineMode ? Tser + 1 : Mtot + 1;
+
+  // the sources of duals, in forward mode over all columns: the leaves, the boundary times, the
+  // start of the first segment and the event values
+  std::vector<std::vector<u64> > leafW(nLeaves, std::vector<u64>(blkW, 0));
+  for (int L = 0; L < nLeaves; ++L) {
+    long long pv = (long long)leafPt[L] % (long long)p; if (pv < 0) pv += p;
+    leafW[L][0] = (u64)pv;
+    if (dualCol[L] >= 0) leafW[L][1 + dualCol[L]] = 1;
+  }
+  if (ser) {
+    std::vector<int> mu(K, 0);
+    for (int L = 0; L < nLeaves; ++L)
+      for (int j = 1; j <= (int)(*ser)[L].size() && j <= (lineMode ? Tser : Mtot); ++j) {
+        mu[serAxis] = j;
+        leafW[L][(size_t)pb.slotOf.at(mu) * w] = (*ser)[L][j - 1] % p;
+      }
+  }
+  std::unique_ptr<PolyBasis> pbW;
+  if (ser) pbW.reset(new PolyBasis(K, Mtot, w, lineMode ? serAxis : -1, Tser));
+  // a side tape on the leaves: polyseries with a series, else order 0 at monomial 0; the slots
+  // from nLeaves to `base` are states the values do not read
+  auto side = [&](const std::vector<int>& op, const std::vector<int>& a, const std::vector<int>& b,
+                  const std::vector<u64>& cval, std::vector<std::vector<u64> >& V, int base) {
+    if (ser) {
+      V.assign(base + op.size(), std::vector<u64>(blkW, 0));
+      for (int L = 0; L < nLeaves; ++L) V[L] = leafW[L];
+      return eval_tape_poly(V, op, a, b, cval, base, *pbW, p);
+    }
+    std::vector<std::vector<u64> > S(base + op.size(), std::vector<u64>(w, 0));
+    for (int L = 0; L < nLeaves; ++L) std::copy(leafW[L].begin(), leafW[L].begin() + w, S[L].begin());
+    if (!eval_ic_order0(S, op, a, b, cval, base, w, p)) return false;
+    V.assign(S.size(), std::vector<u64>(blkW, 0));
+    for (size_t i = 0; i < S.size(); ++i) std::copy(S[i].begin(), S[i].end(), V[i].begin());
+    for (int L = 0; L < nLeaves; ++L) V[L] = leafW[L];
+    return true;
+  };
+  std::vector<std::vector<u64> > tau(nSeg, std::vector<u64>(w, 0));
+  for (int sj = 0; sj < nSeg; ++sj) {
+    const SegRaw& sg = segs[sj];
+    if (!sg.hasTm) continue;
+    std::vector<std::vector<u64> > tmVal(nLeaves + sg.tmOp.size(), std::vector<u64>(w, 0));
+    for (int L = 0; L < nLeaves; ++L) std::copy(leafW[L].begin(), leafW[L].begin() + w, tmVal[L].begin());
+    if (!eval_ic_order0(tmVal, sg.tmOp, sg.tmA, sg.tmB, sg.tmCval, nLeaves, w, p)) return REV_FORWARD;
+    tau[sj] = tmVal[sg.tmOut[0]];
+  }
+  std::vector<u64> lineC(K, 1);
+  for (int i = 0; i + 1 < nSeg; ++i)
+    if (segs[i].hasTm && segs[i + 1].hasTm) lineC[i] = submod(tau[i + 1][0], tau[i][0], p);
+  std::vector<std::vector<u64> > start(nStates, std::vector<u64>(blkW, 0));
+  const SegRaw& s0 = segs[0];
+  if (s0.hasIcSeed) {
+    for (int i = 0; i < nStates; ++i)
+      for (int c = 0; c < w; ++c) start[i][c] = s0.icSeed[i][c];
+  } else if (s0.hasIcTape) {
+    std::vector<std::vector<u64> > icV;
+    if (!side(s0.icOp, s0.icA, s0.icB, s0.icCval, icV, nLeaves)) return REV_FORWARD;
+    for (int i = 0; i < nStates; ++i) start[i] = icV[s0.icOut[i]];
+  }
+  std::vector<std::vector<std::vector<u64> > > evv(std::max(0, nSeg - 1));
+  for (int b = 0; b + 1 < nSeg; ++b) {
+    const SegRaw& nx = segs[b + 1];
+    if (!nx.hasEv) continue;
+    std::vector<std::vector<u64> > eV;
+    if (!side(nx.evOp, nx.evA, nx.evB, nx.evCval, eV, nLeaves + (nx.evStates ? nStates : 0)))
+      return REV_FORWARD;
+    for (size_t e = 0; e < nx.evVarIdx.size(); ++e) {
+      std::vector<u64> vv = eV[nx.evOut[e]];
+      for (u64& x : vv) x %= p;
+      evv[b].push_back(vv);
+    }
+  }
+
+  // per segment: -(o*o) of each reciprocal, the values constant in time and the (slot, order)
+  // cells an adjoint reaches
+  struct RevSeg {
+    std::vector<std::vector<u64> > nsq;
+    std::vector<char> tconst;
+    std::vector<int> mark;
+    int nMarked;
+  };
+  std::vector<RevSeg> rsg(nSeg);
+  size_t maxMarked = 1;
+  for (int sj = 0; sj < nSeg; ++sj) {
+    const SegRaw& sg = segs[sj];
+    const std::vector<std::vector<u64> >& V = tr.val[sj];
+    int N1 = tr.nrun[sj] + 1, nInstr = (int)sg.op.size(), S = (int)V.size();
+    RevSeg& rs = rsg[sj];
+    std::vector<char> isState(S, 0);
+    for (int s : sg.stateSlots) isState[s] = 1;
+    rs.tconst.assign(S, 0);
+    for (int v = 0; v < instrBase; ++v) rs.tconst[v] = !isState[v];
+    for (int i = 0; i < nInstr; ++i) {
+      int o = sg.op[i];
+      rs.tconst[instrBase + i] = o == OP_CONST ||
+          ((o == OP_ADD || o == OP_MUL) && rs.tconst[sg.a[i]] && rs.tconst[sg.b[i]]) ||
+          (o == OP_INV && rs.tconst[sg.a[i]]);
+    }
+    rs.nsq.assign(nInstr, {});
+    for (int i = 0; i < nInstr; ++i) {
+      if (sg.op[i] != OP_INV) continue;
+      const std::vector<u64>& o = V[instrBase + i];
+      std::vector<u64>& q = rs.nsq[i];
+      q.assign((size_t)N1 * nM, 0);
+      for (int k = 0; k < N1; ++k)
+        for (int ii = 0; ii <= k; ++ii)
+          for (int am = 0; am < nM; ++am) {
+            u64 x = o[(size_t)ii * nM + am];
+            if (!x) continue;
+            for (int bm = 0; bm < nM; ++bm) {
+              int sl = pb.sumSlot[am][bm];
+              if (sl < 0) continue;
+              u64& t = q[(size_t)k * nM + sl];
+              t = addmod(t, mulmod(x, o[(size_t)(k - ii) * nM + bm], p), p);
+            }
+          }
+      for (u64& t : q) t = submod(0, t, p);
+    }
+    auto nzv = [&](const std::vector<u64>& v, int k) {
+      for (int m = 0; m < nM; ++m) if (v[(size_t)k * nM + m]) return true;
+      return false;
+    };
+    auto live = [&](int s, int k) {
+      if (s < instrBase && !isState[s]) return k == 0 && s < nLeaves && dualCol[s] >= 0;
+      if (s < instrBase) return true;
+      if (sg.op[s - instrBase] == OP_CONST) return false;
+      return k == 0 || !rs.tconst[s];
+    };
+    rs.mark.assign((size_t)S * N1, -1);
+    rs.nMarked = 0;
+    auto mark = [&](int s, int k) {
+      int& m = rs.mark[(size_t)s * N1 + k];
+      if (m < 0 && live(s, k)) m = rs.nMarked++;
+    };
+    for (int g : sg.gOut)
+      for (int k = 0; k <= Nt && k < N1; ++k) mark(g, k);
+    if (sj + 1 < nSeg)
+      for (int s : sg.stateSlots)
+        for (int k = 0; k <= Mtot && k < N1; ++k) mark(s, k);
+    for (int s : sg.stateSlots) mark(s, 0);
+    for (int k = N1 - 1; k >= 0; --k) {
+      if (k + 1 < N1)
+        for (int i = 0; i < (int)sg.stateSlots.size(); ++i)
+          if (rs.mark[(size_t)sg.stateSlots[i] * N1 + k + 1] >= 0) mark(sg.fOut[i], k);
+      for (int i = nInstr - 1; i >= 0; --i) {
+        if (rs.mark[(size_t)(instrBase + i) * N1 + k] < 0) continue;
+        int a = sg.a[i], b = sg.b[i];
+        switch (sg.op[i]) {
+          case OP_ADD: mark(a, k); mark(b, k); break;
+          case OP_MUL: {
+            int j0, j1;
+            conv_range(rs.tconst[a], rs.tconst[b], k, j0, j1);
+            for (int ii = j0; ii <= j1; ++ii) {
+              if (nzv(V[b], k - ii)) mark(a, ii);
+              if (nzv(V[a], ii)) mark(b, k - ii);
+            }
+            break;
+          }
+          case OP_INV:
+            for (int ii = 0; ii <= (rs.tconst[a] ? 0 : k); ++ii) {
+              bool any = false;
+              for (int m = 0; m < nM && !any; ++m) any = rs.nsq[i][(size_t)(k - ii) * nM + m] != 0;
+              if (any) mark(a, ii);
+            }
+            break;
+        }
+      }
+    }
+    maxMarked = std::max(maxMarked, (size_t)rs.nMarked);
+  }
+  // shift of time order k at monomial a into the gap axis of boundary b
+  std::vector<std::vector<std::vector<int> > > shiftTab(std::max(0, nSeg - 1),
+      std::vector<std::vector<int> >(Mtot + 1, std::vector<int>(nM, -1)));
+  for (int b = 0; b + 1 < nSeg; ++b)
+    for (int k = 0; k <= Mtot; ++k)
+      for (int am = 0; am < nM; ++am) shiftTab[b][k][am] = pb.shiftSlot(am, b, k);
+
+  std::vector<int> nOut(nSeg), offset(nSeg + 1, 0);
+  for (int sj = nSeg - 1; sj >= 0; --sj) {
+    nOut[sj] = (int)segs[sj].gOut.size();
+    offset[sj] = offset[sj + 1] + nOut[sj] * (Nt + 1) * nM;
+  }
+  // the rows of segment sj start after those of the later segments
+  std::vector<int> first(nSeg);
+  for (int sj = 0; sj < nSeg; ++sj) first[sj] = offset[sj + 1];
+  int Rtot = offset[0];
+
+  auto sweep = [&](int r0, int r1, std::vector<std::vector<u64> >& out) {
+    int B = r1 - r0;
+    size_t cell = (size_t)nM * B;
+    const Barrett br(p);
+    out.assign(B, std::vector<u64>(nz, 0));
+    std::vector<u64> coef(B);
+    // out += coef * the duals of `dual` (w residues: value, then duals)
+    auto addDual = [&](const u64* cf, const u64* dual) {
+      for (int c = 1; c < w; ++c) {
+        u64 d = dual[c] % p;
+        if (!d) continue;
+        for (int rr = 0; rr < B; ++rr)
+          if (cf[rr]) out[rr][c - 1] = br.red(out[rr][c - 1] + cf[rr] * d);
+      }
+    };
+    std::vector<std::vector<u64> > adjC;
+    for (int sj = nSeg - 1; sj >= 0; --sj) {
+      const SegRaw& sg = segs[sj];
+      const RevSeg& rs = rsg[sj];
+      const std::vector<std::vector<u64> >& V = tr.val[sj];
+      int Nrun = tr.nrun[sj], N1 = Nrun + 1, nO = nOut[sj], nInstr = (int)sg.op.size();
+      std::vector<u64> pool((size_t)rs.nMarked * cell, 0);
+      auto at = [&](int s, int k) -> u64* {
+        int m = rs.mark[(size_t)s * N1 + k];
+        return m < 0 ? nullptr : pool.data() + (size_t)m * cell;
+      };
+      if (sj + 1 < nSeg) {
+        bool mv = moves[sj] || moves[sj + 1];
+        std::vector<u64> dd(w, 0);
+        if (mv) for (int c = 1; c < w; ++c) dd[c] = submod(tau[sj + 1][c], tau[sj][c], p);
+        std::fill(coef.begin(), coef.end(), (u64)0);
+        for (int i = 0; i < nStates; ++i) {
+          int s = sg.stateSlots[i];
+          const std::vector<u64>& xv = V[s];
+          for (int k = 0; k <= Mtot; ++k) {
+            u64* d = at(s, k);
+            for (int am = 0; am < nM; ++am) {
+              int dst = shiftTab[sj][k][am];
+              if (dst < 0) continue;
+              const u64* a = adjC[i].data() + (size_t)dst * B;
+              if (d) axpy_mod(d + (size_t)am * B, a, 1, B, br);
+              if (!mv) continue;
+              u64 fk = mulmod((u64)(k + 1) % p, xv[(size_t)(k + 1) * nM + am], p);
+              if (fk) for (int rr = 0; rr < B; ++rr) coef[rr] = br.red(coef[rr] + a[rr] * fk);
+            }
+          }
+        }
+        if (mv) addDual(coef.data(), dd.data());
+      }
+      for (int k = Nrun; k >= 0; --k) {
+        int act = std::min(B, first[sj] + std::max(0, Nt - k + 1) * nO * nM - r0);
+        if (act <= 0) continue;
+        if (k <= Nt)
+          for (int gi = 0; gi < nO; ++gi)
+            for (int mo = 0; mo < nM; ++mo) {
+              int r = first[sj] + ((Nt - k) * nO + gi) * nM + mo;
+              if (r < r0 || r >= r1) continue;
+              if (u64* g = at(sg.gOut[gi], k)) {
+                u64& e = g[(size_t)mo * B + (r - r0)];
+                e = addmod(e, 1, p);
+              }
+            }
+        if (k < Nrun) {
+          u64 ik = invmod((u64)(k + 1), p);
+          for (int i = 0; i < (int)sg.stateSlots.size(); ++i) {
+            const u64* src = at(sg.stateSlots[i], k + 1);
+            u64* dst = at(sg.fOut[i], k);
+            if (src && dst)
+              for (int m = 0; m < nM; ++m)
+                axpy_mod(dst + (size_t)m * B, src + (size_t)m * B, ik, act, br);
+          }
+        }
+        for (int i = nInstr - 1; i >= 0; --i) {
+          const u64* o = at(instrBase + i, k);
+          if (!o) continue;
+          int a = sg.a[i], b = sg.b[i];
+          switch (sg.op[i]) {
+            case OP_ADD:
+              for (int x : {a, b})
+                if (u64* d = at(x, k))
+                  for (int m = 0; m < nM; ++m)
+                    axpy_mod(d + (size_t)m * B, o + (size_t)m * B, 1, act, br);
+              break;
+            case OP_MUL: {
+              int j0, j1;
+              conv_range(rs.tconst[a], rs.tconst[b], k, j0, j1);
+              for (int ii = j0; ii <= j1; ++ii) {
+                const u64* A = V[a].data() + (size_t)ii * nM;
+                const u64* Bv = V[b].data() + (size_t)(k - ii) * nM;
+                u64* da = at(a, ii);
+                u64* db = at(b, k - ii);
+                if (!da && !db) continue;
+                for (int am = 0; am < nM; ++am)
+                  for (int bm = 0; bm < nM; ++bm) {
+                    int sl = pb.sumSlot[am][bm];
+                    if (sl < 0) continue;
+                    const u64* os = o + (size_t)sl * B;
+                    if (da && Bv[bm]) axpy_mod(da + (size_t)am * B, os, Bv[bm], act, br);
+                    if (db && A[am]) axpy_mod(db + (size_t)bm * B, os, A[am], act, br);
+                  }
+              }
+              break;
+            }
+            case OP_INV:
+              for (int ii = 0; ii <= (rs.tconst[a] ? 0 : k); ++ii) {
+                u64* da = at(a, ii);
+                if (!da) continue;
+                const u64* ns = rs.nsq[i].data() + (size_t)(k - ii) * nM;
+                for (int am = 0; am < nM; ++am)
+                  for (int bm = 0; bm < nM; ++bm) {
+                    int sl = pb.sumSlot[am][bm];
+                    if (sl < 0 || !ns[bm]) continue;
+                    axpy_mod(da + (size_t)am * B, o + (size_t)sl * B, ns[bm], act, br);
+                  }
+              }
+              break;
+          }
+        }
+      }
+      for (int L = 0; L < nLeaves; ++L) {
+        if (dualCol[L] < 0) continue;
+        const u64* d = at(L, 0);
+        if (!d) continue;
+        for (int rr = 0; rr < B; ++rr)
+          if (d[rr]) out[rr][dualCol[L]] = addmod(out[rr][dualCol[L]], d[rr], p);
+      }
+      std::vector<std::vector<u64> > adjS(nStates, std::vector<u64>(cell, 0));
+      for (int i = 0; i < nStates; ++i)
+        if (const u64* d = at(sg.stateSlots[i], 0)) std::copy(d, d + cell, adjS[i].begin());
+      if (sj == 0) {
+        for (int i = 0; i < nStates; ++i)
+          for (int m = 0; m < nM; ++m)
+            addDual(adjS[i].data() + (size_t)m * B, start[i].data() + (size_t)m * w);
+        break;
+      }
+      // the events into this segment, reversed; a scaling reads the start before it
+      int bnd = sj - 1;
+      if (sg.hasEv) {
+        int E = (int)sg.evVarIdx.size();
+        std::vector<std::vector<u64> > cur = tr.preEvents[bnd];
+        std::vector<std::vector<u64> > pre(E);
+        for (int e = 0; e < E; ++e) {
+          int s = sg.evVarIdx[e], meth = sg.evMethod[e];
+          const std::vector<u64>& vv = evv[bnd][e];
+          if (meth == 0) {
+            for (int m = 0; m < nM; ++m) cur[s][m] = vv[(size_t)m * w];
+          } else if (meth == 1) {
+            for (int m = 0; m < nM; ++m) cur[s][m] = addmod(cur[s][m], vv[(size_t)m * w], p);
+          } else {
+            pre[e] = cur[s];
+            std::vector<u64> sc(nM, 0);
+            for (int am = 0; am < nM; ++am)
+              for (int bm = 0; bm < nM; ++bm) {
+                int sl = pb.sumSlot[am][bm];
+                if (sl >= 0) sc[sl] = addmod(sc[sl], mulmod(pre[e][am], vv[(size_t)bm * w], p), p);
+              }
+            cur[s] = sc;
+          }
+        }
+        for (int e = E - 1; e >= 0; --e) {
+          int s = sg.evVarIdx[e], meth = sg.evMethod[e];
+          const std::vector<u64>& vv = evv[bnd][e];
+          std::vector<u64>& aS = adjS[s];
+          if (meth != 2) {
+            for (int m = 0; m < nM; ++m) addDual(aS.data() + (size_t)m * B, vv.data() + (size_t)m * w);
+            if (meth == 0) std::fill(aS.begin(), aS.end(), (u64)0);
+            continue;
+          }
+          std::vector<u64> nA(cell, 0);
+          for (int am = 0; am < nM; ++am)
+            for (int bm = 0; bm < nM; ++bm) {
+              int sl = pb.sumSlot[am][bm];
+              if (sl < 0) continue;
+              const u64* as = aS.data() + (size_t)sl * B;
+              u64 vb = vv[(size_t)bm * w];
+              if (vb) axpy_mod(nA.data() + (size_t)am * B, as, vb, B, br);
+              u64 pa = pre[e][am];
+              if (!pa) continue;
+              for (int rr = 0; rr < B; ++rr) coef[rr] = mulmod(as[rr], pa, p);
+              addDual(coef.data(), vv.data() + (size_t)bm * w);
+            }
+          aS.swap(nA);
+        }
+      }
+      adjC.swap(adjS);
+    }
+  };
+
+  if (Rtot == 0) return REV_OK;
+  // rows per block: split over the threads, and bounded so that one block's adjoints stay within
+  // the budget of chain_block_bytes()
+  double perRow = std::max(1.0, (double)maxMarked * nM * 8.0);
+  int Bmem = std::max(1, (int)(chain_block_bytes() / perRow));
+  int Bt = threads > 1 ? (Rtot + threads - 1) / threads : Rtot;
+  int B = std::max(1, std::min(Bt, Bmem));
+  int nb = (Rtot + B - 1) / B;
+  std::vector<std::vector<std::vector<u64> > > rB(nb);
+  int nThr = std::max(1, std::min(threads, nb));
+  OmpGuard guard_;
+  #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1)
+  for (int b = 0; b < nb; ++b) {
+    try {
+      sweep(b * B, std::min(Rtot, (b + 1) * B), rB[b]);
+    } catch (...) {
+      guard_.capture();
+    }
+  }
+  guard_.rethrow();
+
+  // the rows in the order of the forward mode, with the shift of a moving segment start
+  std::vector<std::vector<std::vector<u64> > > segRows(nSeg);
+  for (int sj = 0; sj < nSeg; ++sj) segRows[sj].resize((size_t)nOut[sj] * (Nt + 1) * nM);
+  for (int b = 0; b < nb; ++b)
+    for (size_t i = 0; i < rB[b].size(); ++i) {
+      int r = b * B + (int)i, sj = 0;
+      while (r < first[sj]) ++sj;
+      int loc = r - first[sj], nO = nOut[sj];
+      int k = Nt - loc / (nO * nM), gi = (loc % (nO * nM)) / nM, mo = loc % nM;
+      segRows[sj][((size_t)gi * (Nt + 1) + k) * nM + mo] = std::move(rB[b][i]);
+    }
+  for (int sj = 0; sj < nSeg; ++sj) {
+    const SegRaw& sg = segs[sj];
+    if (moves[sj])
+      for (int gi = 0; gi < nOut[sj]; ++gi) {
+        const std::vector<u64>& g = tr.val[sj][sg.gOut[gi]];
+        for (int k = 0; k <= Nt; ++k)
+          for (int mo = 0; mo < nM; ++mo) {
+            u64 fk = mulmod((u64)(k + 1) % p, g[(size_t)(k + 1) * nM + mo], p);
+            if (!fk) continue;
+            std::vector<u64>& row = segRows[sj][((size_t)gi * (Nt + 1) + k) * nM + mo];
+            for (int c = 0; c < nz; ++c)
+              row[c] = submod(row[c], mulmod(fk, tau[sj][1 + c], p), p);
+          }
+      }
+    size_t from = rows.size();
+    for (std::vector<u64>& r : segRows[sj]) rows.push_back(std::move(r));
+    if (lineMode) rows_to_series_axis(rows, from, pb, nz, Ns, srows, keepZeroSer);
+    else rows_to_line(rows, from, pb, lineC, nz, Mtot + 1, p, srows, keepZeroSer);
+    if (tr.kink[sj]) {
+      std::vector<u64> row(tau[sj].begin() + 1, tau[sj].end());
+      std::vector<u64> srow((size_t)nz * Ns, 0);
+      for (int c = 0; c < nz; ++c) srow[(size_t)c * Ns] = row[c];
+      rows.push_back(row);
+      srows.push_back(srow);
+    }
+  }
+  return REV_OK;
+}
+
+// Reverse mode where the rows of a chain sweep fewer residues than the columns hold, as in
+// reverse_pays
+bool reverse_pays_chain(const std::vector<SegRaw>& segs, int nz, int Nt, int Mtot, bool hasSer,
+                        int Tser) {
+  bool line = hasSer && Tser >= 0;
+  int K = std::max(1, (int)segs.size() - 1) + (hasSer && !line ? 1 : 0);
+  double nMono = 1;
+  for (int i = 1; i <= Mtot; ++i) nMono = nMono * (K + i) / i;
+  if (line) nMono *= Tser + 1;
+  double rowsTot = 0;
+  for (const SegRaw& sg : segs) rowsTot += (double)sg.gOut.size() * (Nt + 2) * nMono;
+  return rowsTot < (double)(nz + 1);
 }
 
 // Columns per block so that one block's Taylor values stay within `budget` bytes.
@@ -2092,13 +3235,23 @@ int chain_inner_threads(int cores, int outer) {
 // build_one_chain over column blocks: each block holds the value and a separate range of dual
 // lanes, the rows are assembled over all columns. Rows and series rows keep the order
 // of the unblocked call, zero series rows dropped.
-bool build_chain_blocked(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
+int lean_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates, int nz,
+               const std::vector<int>& dualCol, const std::vector<int>& leafPt, int Nt, int Mtot, u64 p,
+               std::vector<std::vector<u64> >& rows, std::vector<std::vector<u64> >& srows,
+               int threads, bool keepZeroSer, const std::string& key);
+
+bool build_chain_forward(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
                          int nz, const std::vector<int>& dualCol,
                          const std::vector<int>& leafPt, int Nt, int Mtot, u64 p,
                          std::vector<std::vector<u64> >& rows,
                          std::vector<std::vector<u64> >& srows,
                          const std::vector<std::vector<u64> >* ser, int B, int threads,
-                         int Tser = -1, bool keepZeroSer = false) {
+                         int Tser, bool keepZeroSer, const std::string& key = std::string()) {
+  if (ser == nullptr) {
+    int st = lean_chain(segs, nLeaves, nStates, nz, dualCol, leafPt, Nt, Mtot, p, rows, srows, threads,
+                        keepZeroSer, key);
+    if (st != REV_FORWARD) return st == REV_OK;
+  }
   if (B >= nz)
     return build_one_chain(segs, nLeaves, nStates, nz, nz + 1, dualCol, leafPt, Nt, Mtot,
                            p, rows, srows, ser, nullptr, nullptr, Tser, keepZeroSer);
@@ -2149,6 +3302,654 @@ bool build_chain_blocked(const std::vector<SegRaw>& segs, int nLeaves, int nStat
   return true;
 }
 
+// The rows of build_one_chain in the mode of kernel_mode(); B columns per block of the forward mode.
+bool build_chain_blocked(const std::vector<SegRaw>& segs, int nLeaves, int nStates,
+                         int nz, const std::vector<int>& dualCol,
+                         const std::vector<int>& leafPt, int Nt, int Mtot, u64 p,
+                         std::vector<std::vector<u64> >& rows,
+                         std::vector<std::vector<u64> >& srows,
+                         const std::vector<std::vector<u64> >* ser, int B, int threads,
+                         int Tser = -1, bool keepZeroSer = false,
+                         const std::string& key = std::string()) {
+  int mode = kernel_mode();
+  if (mode == KM_FORWARD ||
+      (mode == KM_AUTO && !reverse_pays_chain(segs, nz, Nt, Mtot, ser != nullptr, Tser)))
+    return build_chain_forward(segs, nLeaves, nStates, nz, dualCol, leafPt, Nt, Mtot, p, rows,
+                               srows, ser, B, threads, Tser, keepZeroSer, key);
+  std::vector<std::vector<u64> > rv, sv;
+  int st = build_one_chain_reverse(segs, nLeaves, nStates, nz, dualCol, leafPt, Nt, Mtot, p, rv,
+                                   sv, ser, threads, Tser, keepZeroSer);
+  if (st == REV_FORWARD)
+    return build_chain_forward(segs, nLeaves, nStates, nz, dualCol, leafPt, Nt, Mtot, p, rows,
+                               srows, ser, B, threads, Tser, keepZeroSer, key);
+  if (mode == KM_CHECK) {
+    std::vector<std::vector<u64> > fr, fs;
+    bool okF = build_chain_forward(segs, nLeaves, nStates, nz, dualCol, leafPt, Nt, Mtot, p, fr,
+                                   fs, ser, B, threads, Tser, keepZeroSer);
+    if (okF != (st == REV_OK))
+      throw std::runtime_error("kernel: the reverse mode fails where the forward mode does not (chain)");
+    require_same_rows(fr, rv, p, "chain rows");
+    require_same_rows(fs, sv, p, "chain series rows");
+  }
+  if (st == REV_FAIL) return false;
+  for (auto& r : rv) rows.push_back(std::move(r));
+  for (auto& r : sv) srows.push_back(std::move(r));
+  return true;
+}
+
+// ---- Jets of one segment continued to higher orders ----
+// Taylor coefficients of a segment over a block of dual lanes, kept between calls so that a higher order
+// continues from the last one. Values a convolution reads keep every order, the others the current order only.
+struct LeanJets {
+  int s0 = 0, wb = 1, K = -1;              // lanes [s0, s0 + wb - 1), last order formed
+  int nM = 1;                              // monomials in the gap lengths per value
+  std::shared_ptr<PolyBasis> pb;           // the monomials, with wb lanes
+  std::vector<std::vector<u64> > H;        // per slot: the current order, or order 0
+  std::vector<std::vector<std::vector<u64> > > C;  // per slot that keeps every order: chunks of orders
+  std::vector<std::vector<u64> > invA0;    // per reciprocal: 1/a at order 0
+  std::vector<std::vector<int> > rlo, rhi; // per kept slot, order and monomial: the nonzero lanes
+  std::vector<std::vector<u64> > rows;     // per order, output and monomial: the lanes
+  std::vector<u64> gVal;                   // per order, output and monomial: the value
+  std::vector<u64> fVal;                   // the field at order 0, monomial 0
+  int keepEarly = -1;                      // the state orders kept for the next segment
+  std::vector<std::vector<std::vector<u64> > > early;  // per state and order up to keepEarly
+  size_t bytes() const {
+    size_t b = 0;
+    for (const auto& h : H) b += h.capacity() * 8;
+    for (const auto& c : C)
+      for (const auto& x : c) b += x.capacity() * 8;
+    for (const auto& r : rows) b += r.capacity() * 8;
+    return b;
+  }
+};
+
+struct LeanTape {
+  std::vector<char> hist, tconst;
+  int instrBase = 0;
+  bool ok = true;
+};
+
+// The kept orders of a segment tape; ok = false for an operation other than CONST/ADD/MUL/INV.
+LeanTape lean_tape(const SegRaw& seg, int nLeaves, int nStates) {
+  LeanTape lt;
+  int ib = nLeaves + nStates, nI = (int)seg.op.size(), S = ib + nI;
+  lt.instrBase = ib;
+  lt.hist.assign(S, 0);
+  lt.tconst.assign(S, 0);
+  std::vector<char> isState(S, 0);
+  for (int s : seg.stateSlots) isState[s] = 1;
+  for (int v = 0; v < ib; ++v) lt.tconst[v] = !isState[v];
+  for (int i = 0; i < nI; ++i) {
+    int o = seg.op[i], a = seg.a[i], b = seg.b[i];
+    if (o != OP_CONST && o != OP_ADD && o != OP_MUL && o != OP_INV) { lt.ok = false; return lt; }
+    lt.tconst[ib + i] = o == OP_CONST || ((o == OP_ADD || o == OP_MUL) && lt.tconst[a] && lt.tconst[b]) ||
+                        (o == OP_INV && lt.tconst[a]);
+    if (o == OP_MUL && !lt.tconst[a] && !lt.tconst[b]) lt.hist[a] = lt.hist[b] = 1;
+    if (o == OP_INV && !lt.tconst[a]) lt.hist[a] = lt.hist[ib + i] = 1;
+  }
+  return lt;
+}
+
+// A block of lanes [s0, s1) at order 0: the leaves at their values with a unit lane per coordinate in
+// the block, state i at st[i] (per monomial the value, then the lanes over all nLane columns).
+LeanJets lean_block(const LeanTape& lt, const SegRaw& seg, int nLeaves, const std::vector<u64>& leaf,
+                    const std::vector<int>& dualCol, const std::vector<std::vector<u64> >& st, int s0, int s1,
+                    int nLane, int K = 1, int Mtot = 0) {
+  LeanJets J;
+  int S = (int)lt.hist.size();
+  J.s0 = s0; J.wb = s1 - s0 + 1;
+  J.pb = std::make_shared<PolyBasis>(K, Mtot, J.wb);
+  J.nM = J.pb->nMono;
+  size_t blk = (size_t)J.nM * J.wb;
+  J.H.assign(S, std::vector<u64>());
+  J.rlo.assign(S, std::vector<int>());
+  J.rhi.assign(S, std::vector<int>());
+  J.invA0.assign(seg.op.size(), std::vector<u64>());
+  for (int v = 0; v < S; ++v) J.H[v].assign(blk, 0);
+  for (int L = 0; L < nLeaves; ++L) {
+    J.H[L][0] = leaf[L];
+    if (dualCol[L] >= s0 && dualCol[L] < s1) J.H[L][1 + dualCol[L] - s0] = 1;
+  }
+  for (size_t i = 0; i < seg.stateSlots.size(); ++i) {
+    std::vector<u64>& h = J.H[seg.stateSlots[i]];
+    for (int mo = 0; mo < J.nM; ++mo) {
+      const u64* src = st[i].data() + (size_t)mo * (1 + nLane);
+      u64* d = h.data() + (size_t)mo * J.wb;
+      d[0] = src[0];
+      for (int c = s0; c < s1; ++c) d[1 + c - s0] = src[1 + c];
+    }
+  }
+  return J;
+}
+
+// The orders K + 1 .. Nrun of the jets `J`; false where a reciprocal has no unit value at order 0.
+bool lean_extend(LeanJets& J, const LeanTape& lt, const SegRaw& seg, int Nrun, u64 p) {
+  int ib = lt.instrBase, nI = (int)seg.op.size(), wb = J.wb, m = (int)seg.stateSlots.size();
+  int nOut = (int)seg.gOut.size(), nM = J.nM;
+  size_t blk = (size_t)nM * wb;
+  const PolyBasis& pb = *J.pb;
+  const Barrett br(p);
+  const u64 LIM = (((u64)1 << 63) / p) * p;
+  std::vector<u64> zero(blk, 0), acc(blk), tmp(blk);
+  // orders in chunks, so that a higher order adds chunks and copies none
+  const int CH = 32;
+  if (J.C.empty()) J.C.resize(J.H.size());
+  for (size_t s = 0; s < J.H.size(); ++s)
+    if (lt.hist[s]) {
+      if (J.C[s].empty()) J.C[s].push_back(J.H[s]);
+      while ((int)J.C[s].size() * CH < Nrun + 2) J.C[s].push_back(std::vector<u64>());
+      for (auto& c : J.C[s])
+        if (c.size() != (size_t)CH * blk) c.resize((size_t)CH * blk, 0);
+      J.rlo[s].resize((size_t)(Nrun + 2) * nM, -1);
+      J.rhi[s].resize((size_t)(Nrun + 2) * nM, 0);
+    }
+  if (J.keepEarly >= 0 && J.early.empty()) {
+    J.early.assign(m, std::vector<std::vector<u64> >());
+    for (int i = 0; i < m; ++i) J.early[i].push_back(J.H[seg.stateSlots[i]]);
+  }
+  auto hp = [&](int s, int k) -> u64* { return J.C[s][k / CH].data() + (size_t)(k % CH) * blk; };
+  auto rd = [&](int s, int k) -> const u64* {
+    if (lt.tconst[s]) return k == 0 ? J.H[s].data() : zero.data();
+    return lt.hist[s] ? hp(s, k) : J.H[s].data();
+  };
+  auto wr = [&](int s, int k) -> u64* {
+    return lt.hist[s] ? hp(s, k) : J.H[s].data();
+  };
+  auto dense = [&](const u64* x, int& lo, int& hi) {
+    lo = 1; while (lo < wb && x[lo] == 0) ++lo;
+    hi = wb; while (hi > lo && x[hi - 1] == 0) --hi;
+  };
+  auto range = [&](int s, int k, int mo, int& lo, int& hi) {
+    size_t key = (size_t)k * nM + mo;
+    if (J.rlo[s][key] < 0) {
+      int l, h;
+      dense(hp(s, k) + (size_t)mo * wb, l, h);
+      J.rlo[s][key] = l; J.rhi[s][key] = h;
+    }
+    lo = J.rlo[s][key]; hi = J.rhi[s][key];
+  };
+  // acc[sl] += x * y over the duals, unreduced below LIM
+  auto dmul1 = [&](u64* ac, const u64* x, const u64* y, int lx, int hx, int ly, int hy) {
+    u64 x0 = x[0], y0 = y[0];
+    if (x0 && y0) { u64 t = ac[0] + x0 * y0; ac[0] = t >= LIM ? t - LIM : t; }
+    if (x0) for (int c = ly; c < hy; ++c) { u64 t = ac[c] + x0 * y[c]; ac[c] = t >= LIM ? t - LIM : t; }
+    if (y0) for (int c = lx; c < hx; ++c) { u64 t = ac[c] + y0 * x[c]; ac[c] = t >= LIM ? t - LIM : t; }
+  };
+  // acc += X * Y over the monomials; `xr`, `yr` give the lanes of a monomial
+  auto pmul = [&](const u64* X, const u64* Y, auto xr, auto yr) {
+    for (int am = 0; am < nM; ++am) {
+      const u64* x = X + (size_t)am * wb;
+      int lx, hx;
+      xr(am, lx, hx);
+      if (x[0] == 0 && lx == hx) continue;
+      for (int bm = 0; bm < nM; ++bm) {
+        int sl = pb.sumSlot[am][bm];
+        if (sl < 0) continue;
+        const u64* y = Y + (size_t)bm * wb;
+        int ly, hy;
+        yr(bm, ly, hy);
+        if (y[0] == 0 && ly == hy) continue;
+        dmul1(acc.data() + (size_t)sl * wb, x, y, lx, hx, ly, hy);
+      }
+    }
+  };
+  auto dr = [&](const u64* X) { return [X, &dense, wb](int mo, int& lo, int& hi) { dense(X + (size_t)mo * wb, lo, hi); }; };
+  for (int k = J.K + 1; k <= Nrun; ++k) {
+    if (k > 0) {
+      // the states at order k, from the field at order k - 1
+      u64 ik = invmod((u64)k, p);
+      std::vector<std::vector<u64> > nx(m, std::vector<u64>(blk));
+      for (int i = 0; i < m; ++i) {
+        const u64* f = rd(seg.fOut[i], k - 1);
+        for (size_t c = 0; c < blk; ++c) nx[i][c] = mulmod(f[c], ik, p);
+      }
+      for (int i = 0; i < m; ++i) {
+        std::copy(nx[i].begin(), nx[i].end(), wr(seg.stateSlots[i], k));
+        if (k <= J.keepEarly) J.early[i].push_back(nx[i]);
+      }
+    }
+    for (int i = 0; i < nI; ++i) {
+      int s = ib + i, a = seg.a[i], b = seg.b[i];
+      if (k > 0 && lt.tconst[s]) continue;
+      u64* o = wr(s, k);
+      std::fill(acc.begin(), acc.end(), (u64)0);
+      switch (seg.op[i]) {
+        case OP_CONST:
+          std::fill(o, o + blk, (u64)0);
+          o[0] = seg.cval[i];
+          continue;
+        case OP_ADD: {
+          const u64* x = rd(a, k); const u64* y = rd(b, k);
+          for (size_t c = 0; c < blk; ++c) o[c] = addmod(x[c], y[c], p);
+          continue;
+        }
+        case OP_MUL:
+          if (lt.tconst[a] || lt.tconst[b]) {
+            const u64* x = rd(a, lt.tconst[a] ? 0 : k); const u64* y = rd(b, lt.tconst[b] ? 0 : k);
+            pmul(x, y, dr(x), dr(y));
+          } else {
+            for (int ii = 0; ii <= k; ++ii)
+              pmul(hp(a, ii), hp(b, k - ii),
+                   [&](int mo, int& lo, int& hi) { range(a, ii, mo, lo, hi); },
+                   [&](int mo, int& lo, int& hi) { range(b, k - ii, mo, lo, hi); });
+          }
+          break;
+        case OP_INV: {
+          if (k == 0) {
+            J.invA0[i].assign(blk, 0);
+            if (!poly_inv(J.invA0[i].data(), rd(a, 0), pb, p)) return false;
+            std::copy(J.invA0[i].begin(), J.invA0[i].end(), o);
+            continue;
+          }
+          for (int j = 1; j <= k; ++j)
+            pmul(hp(a, j), hp(s, k - j),
+                 [&](int mo, int& lo, int& hi) { range(a, j, mo, lo, hi); },
+                 [&](int mo, int& lo, int& hi) { range(s, k - j, mo, lo, hi); });
+          for (size_t c = 0; c < blk; ++c) tmp[c] = submod(0, br.red(acc[c]), p);
+          std::fill(acc.begin(), acc.end(), (u64)0);
+          pmul(J.invA0[i].data(), tmp.data(), dr(J.invA0[i].data()), dr(tmp.data()));
+          break;
+        }
+      }
+      for (size_t c = 0; c < blk; ++c) o[c] = br.red(acc[c]);
+    }
+    if (k == 0) {
+      J.fVal.assign(m, 0);
+      for (int i = 0; i < m; ++i) J.fVal[i] = rd(seg.fOut[i], 0)[0] % p;
+    }
+    for (int gi = 0; gi < nOut; ++gi) {
+      const u64* g = rd(seg.gOut[gi], k);
+      for (int mo = 0; mo < nM; ++mo) {
+        const u64* gm = g + (size_t)mo * wb;
+        J.rows.push_back(std::vector<u64>(gm + 1, gm + wb));
+        J.gVal.push_back(gm[0] % p);
+      }
+    }
+    J.K = k;
+  }
+  return true;
+}
+
+// Returns the freed heap of every thread to the system: the jets of many threads leave the arenas
+// fragmented, which counts against a limit on the address space. Called after the calls at high
+// orders only, since the walk over the arenas holds every thread.
+void release_heap() {
+#if defined(__GLIBC__)
+  malloc_trim(0);
+#endif
+}
+
+// Taylor values of a slot over many orders are mapped and unmapped on their own rather than taken from
+// the arenas of the threads, where the freed ones stay.
+struct MapLargeValues {
+  MapLargeValues() {
+#if defined(__GLIBC__)
+    mallopt(M_MMAP_THRESHOLD, 256 * 1024);
+#endif
+  }
+} g_map_large_values;
+
+// Sessions of continued jets: one per key, the oldest dropped past a memory budget.
+struct SegSession {
+  std::mutex mu;
+  int nz = 0, nLane = 0, B = 0, nb = 0, nOut = 0;
+  std::vector<LeanJets> blocks;
+  std::vector<std::vector<LeanJets> > segBlocks;   // a chain: the blocks of each segment
+  std::vector<std::vector<u64> > basis;
+  std::vector<int> pivCol, ranks;
+  size_t bytes = 0;
+  long long used = 0;
+};
+std::mutex g_sess_mu;
+std::map<std::string, std::shared_ptr<SegSession> > g_sess;
+long long g_sess_clock = 0;
+
+double session_budget() {
+  const char* e = std::getenv("SYMIDENT_JETMB");
+  return (e && *e) ? std::atof(e) * 1048576.0 : 8.0 * chain_block_bytes();
+}
+
+std::shared_ptr<SegSession> session_get(const std::string& key, bool& fresh) {
+  std::lock_guard<std::mutex> lk(g_sess_mu);
+  auto it = g_sess.find(key);
+  fresh = it == g_sess.end();
+  if (fresh) it = g_sess.emplace(key, std::make_shared<SegSession>()).first;
+  it->second->used = ++g_sess_clock;
+  return it->second;
+}
+
+// The bytes of the jets of `lt` over nLane lanes in nb blocks to order Nrun, with the rows.
+double lean_bytes(const LeanTape& lt, int nLane, int nb, int Nrun, int nOut, int nM = 1, int early = 0,
+                  int nStates = 0) {
+  double h = 0, S = (double)lt.hist.size();
+  for (char x : lt.hist) h += x;
+  double orders = 32.0 * ((Nrun + 2 + 31) / 32);
+  return 8.0 * nM * (nLane + nb) * (h * orders + S + (double)nOut * (Nrun + 1) + (double)nStates * early);
+}
+
+// jets being formed, in bytes, which the budget holds besides the sessions kept
+double g_sess_inflight = 0;
+
+// Reserves `need` bytes of the budget, dropping the oldest sessions not in use; false where the
+// bytes do not fit.
+bool session_reserve(double need, const SegSession* self) {
+  std::lock_guard<std::mutex> lk(g_sess_mu);
+  double budget = session_budget();
+  for (;;) {
+    double tot = g_sess_inflight;
+    for (auto& kv : g_sess) if (kv.second.get() != self) tot += (double)kv.second->bytes;
+    if (tot + need <= budget) {
+      g_sess_inflight += need;
+      return true;
+    }
+    auto old = g_sess.end();
+    for (auto it = g_sess.begin(); it != g_sess.end(); ++it) {
+      if (it->second.get() == self || !it->second->mu.try_lock()) continue;
+      it->second->mu.unlock();
+      if (old == g_sess.end() || it->second->used < old->second->used) old = it;
+    }
+    if (old == g_sess.end()) return false;
+    g_sess.erase(old);
+  }
+}
+
+void session_release(double need) {
+  std::lock_guard<std::mutex> lk(g_sess_mu);
+  g_sess_inflight -= need;
+}
+
+void session_trim() {
+  std::lock_guard<std::mutex> lk(g_sess_mu);
+  double budget = session_budget();
+  for (;;) {
+    double tot = 0;
+    for (auto& kv : g_sess) tot += (double)kv.second->bytes;
+    if (tot <= budget || g_sess.empty()) return;
+    auto old = g_sess.begin();
+    for (auto it = g_sess.begin(); it != g_sess.end(); ++it)
+      if (it->second->used < old->second->used) old = it;
+    g_sess.erase(old);
+  }
+}
+
+// The ranks of one segment from the states `q` at orders 0..Nt (symSegmentRanks with fromStates),
+// continued from the jets kept under `key`; false where the session does not apply.
+bool session_ranks(const std::string& key, const SegRaw& seg, int nLeaves, int nStates, int nz,
+                   const std::vector<int>& dualCol, const std::vector<u64>& leaf,
+                   const std::vector<u64>& qs, bool moves, int Nt, int threads,
+                   const std::vector<int>& dropStates, u64 p, std::vector<int>& ranksOut,
+                   std::vector<u64>& fValOut) {
+  LeanTape lt = lean_tape(seg, nLeaves, nStates);
+  if (!lt.ok) return false;
+  bool fresh;
+  std::shared_ptr<SegSession> ss = session_get(key, fresh);
+  std::lock_guard<std::mutex> lk(ss->mu);
+  int nzA = nz + nStates + 1, nOut = (int)seg.gOut.size();
+  int Nrun = Nt + 1;
+  if (ss->blocks.empty()) {
+    ss->nz = nz; ss->nOut = nOut;
+    ss->nLane = nz + nStates;
+    ss->nb = std::max(1, std::min(threads, ss->nLane / 16));
+    ss->B = (ss->nLane + ss->nb - 1) / ss->nb;
+    ss->nb = (ss->nLane + ss->B - 1) / ss->B;
+  }
+  if (ss->nz != nz || ss->nOut != nOut) return false;
+  // jets past the budget are formed by the blocked kernel instead
+  double need = ss->blocks.empty() || ss->blocks[0].K < Nrun ?
+      std::max(0.0, lean_bytes(lt, ss->nLane, ss->nb, Nrun, nOut) - (double)ss->bytes) : 0.0;
+  if (!session_reserve(need, ss.get())) {
+    std::lock_guard<std::mutex> lk2(g_sess_mu);
+    g_sess.erase(key);
+    return false;
+  }
+  struct Release { double n; ~Release() { session_release(n); } } rel{need};
+  if (ss->blocks.empty()) {
+    // each state a separate unit lane after the coordinates
+    std::vector<std::vector<u64> > st(nStates, std::vector<u64>(1 + ss->nLane, 0));
+    for (int i = 0; i < nStates; ++i) {
+      st[i][0] = qs[i];
+      st[i][1 + nz + i] = 1;
+    }
+    for (int b = 0; b < ss->nb; ++b)
+      ss->blocks.push_back(lean_block(lt, seg, nLeaves, leaf, dualCol, st, b * ss->B,
+                                      std::min(ss->nLane, (b + 1) * ss->B), ss->nLane));
+  }
+  if (ss->blocks[0].K < Nrun) {
+    std::vector<char> okB(ss->nb, 1);
+    int nThr = std::max(1, std::min(threads, ss->nb));
+    OmpGuard guard_;
+    #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1)
+    for (int b = 0; b < ss->nb; ++b) {
+      try {
+        okB[b] = lean_extend(ss->blocks[b], lt, seg, Nrun, p);
+      } catch (const std::bad_alloc&) {
+        okB[b] = 0;                      // the blocked kernel forms them instead
+      } catch (...) {
+        guard_.capture();
+      }
+    }
+    guard_.rethrow();
+    for (char o : okB)
+      if (!o) {
+        std::lock_guard<std::mutex> lk2(g_sess_mu);
+        g_sess.erase(key);
+        return false;
+      }
+  }
+  // rows of the new orders, ranked after those kept
+  const LeanJets& J0 = ss->blocks[0];
+  for (int k = (int)ss->ranks.size(); k <= Nt; ++k) {
+    for (int gi = 0; gi < nOut; ++gi) {
+      std::vector<u64> r(nzA, 0);
+      for (int b = 0; b < ss->nb; ++b) {
+        const std::vector<u64>& lane = ss->blocks[b].rows[(size_t)k * nOut + gi];
+        std::copy(lane.begin(), lane.end(), r.begin() + ss->blocks[b].s0);
+      }
+      if (moves) r[nzA - 1] = submod(0, mulmod((u64)(k + 1) % p, J0.gVal[(size_t)(k + 1) * nOut + gi], p), p);
+      for (int d : dropStates) r[nz + d] = 0;
+      for (size_t b = 0; b < ss->basis.size(); ++b) {
+        u64 f = r[ss->pivCol[b]] % p;
+        if (!f) continue;
+        u64 nf = p - f;
+        for (int c = 0; c < nzA; ++c)
+          if (ss->basis[b][c]) r[c] = addmod(r[c] % p, mulmod(nf, ss->basis[b][c], p), p);
+      }
+      int pc = -1;
+      for (int c = 0; c < nzA; ++c) if (r[c] % p) { pc = c; break; }
+      if (pc < 0) continue;
+      u64 inv = invmod(r[pc] % p, p);
+      for (int c = 0; c < nzA; ++c) r[c] = mulmod(r[c] % p, inv, p);
+      ss->basis.push_back(std::move(r));
+      ss->pivCol.push_back(pc);
+    }
+    ss->ranks.push_back((int)ss->basis.size());
+  }
+  ranksOut.assign(ss->ranks.begin(), ss->ranks.begin() + Nt + 1);
+  fValOut = J0.fVal;
+  size_t by = 0;
+  for (const auto& J : ss->blocks) by += J.bytes();
+  for (const auto& r : ss->basis) by += r.capacity() * 8;
+  ss->bytes = by;
+  session_trim();
+  return true;
+}
+
+
+// build_one_chain in the lean jets without a series, a moving boundary or an event after the start, else
+// REV_FORWARD: a segment starts at the orders up to Mtot of the segment before, shifted into the boundary gap.
+// The jets are kept under `key`, where one is given, and continued by a call at a higher order.
+int lean_chain(const std::vector<SegRaw>& segs, int nLeaves, int nStates, int nz,
+               const std::vector<int>& dualCol, const std::vector<int>& leafPt, int Nt, int Mtot, u64 p,
+               std::vector<std::vector<u64> >& rows, std::vector<std::vector<u64> >& srows,
+               int threads, bool keepZeroSer, const std::string& key) {
+  int nSeg = (int)segs.size(), w = nz + 1;
+  if (nSeg == 0) return REV_FORWARD;
+  std::vector<LeanTape> lts;
+  for (int sj = 0; sj < nSeg; ++sj) {
+    lts.push_back(lean_tape(segs[sj], nLeaves, nStates));
+    if (!lts.back().ok || (sj > 0 && segs[sj].hasEv)) return REV_FORWARD;
+  }
+  const SegRaw& s0 = segs[0];
+  if (!s0.hasIcSeed && !s0.hasIcTape) return REV_FORWARD;
+  std::vector<char> moves;
+  if (!chain_moves(segs, nLeaves, w, dualCol, leafPt, p, moves)) return REV_FAIL;
+  for (char m : moves) if (m) return REV_FORWARD;
+  std::vector<u64> leaf(nLeaves);
+  for (int L = 0; L < nLeaves; ++L) {
+    long long pv = (long long)leafPt[L] % (long long)p; if (pv < 0) pv += p;
+    leaf[L] = (u64)pv;
+  }
+  // the gaps between the start times, which must not vanish
+  std::vector<u64> tau(nSeg, 0);
+  for (int sj = 0; sj < nSeg; ++sj) {
+    const SegRaw& sg = segs[sj];
+    if (!sg.hasTm) continue;
+    std::vector<std::vector<u64> > tmVal(nLeaves + sg.tmOp.size(), std::vector<u64>(1, 0));
+    for (int L = 0; L < nLeaves; ++L) tmVal[L][0] = leaf[L];
+    if (!eval_ic_order0(tmVal, sg.tmOp, sg.tmA, sg.tmB, sg.tmCval, nLeaves, 1, p)) return REV_FAIL;
+    tau[sj] = tmVal[sg.tmOut[0]][0] % p;
+  }
+  int K = std::max(1, nSeg - 1);
+  std::vector<u64> lineC(K, 1);
+  for (int i = 0; i + 1 < nSeg; ++i) {
+    if (!segs[i].hasTm || !segs[i + 1].hasTm) continue;
+    lineC[i] = submod(tau[i + 1], tau[i], p);
+    if (!lineC[i]) return REV_FAIL;
+  }
+  // the start of the chain, a dual over the coordinates
+  std::vector<std::vector<u64> > st(nStates, std::vector<u64>(w, 0));
+  if (s0.hasIcSeed) {
+    for (int i = 0; i < nStates; ++i)
+      for (int c = 0; c < w; ++c) st[i][c] = s0.icSeed[i][c];
+  } else {
+    std::vector<std::vector<u64> > icVal(nLeaves + s0.icOp.size(), std::vector<u64>(w, 0));
+    for (int L = 0; L < nLeaves; ++L) {
+      icVal[L][0] = leaf[L];
+      if (dualCol[L] >= 0) icVal[L][1 + dualCol[L]] = 1;
+    }
+    if (!eval_ic_order0(icVal, s0.icOp, s0.icA, s0.icB, s0.icCval, nLeaves, w, p)) return REV_FAIL;
+    for (int i = 0; i < nStates; ++i) st[i] = icVal[s0.icOut[i]];
+  }
+  std::shared_ptr<SegSession> ss;
+  if (!key.empty()) {
+    bool fresh;
+    ss = session_get(key, fresh);
+  } else {
+    ss = std::make_shared<SegSession>();
+  }
+  std::lock_guard<std::mutex> lk(ss->mu);
+  int Nrun = std::max(Nt, Mtot);
+  PolyBasis pbS(K, Mtot, 1);
+  int nM = pbS.nMono;
+  if (ss->segBlocks.empty()) {
+    ss->nz = nz;
+    ss->nb = std::max(1, std::min(threads, nz / 16));
+    ss->B = std::max(1, (nz + ss->nb - 1) / ss->nb);
+    ss->nb = std::max(1, (nz + ss->B - 1) / ss->B);
+  }
+  if (ss->nz != nz) return REV_FORWARD;
+  // jets past the budget are formed by the blocked kernel instead
+  double need = -(double)ss->bytes;
+  for (int sj = 0; sj < nSeg; ++sj)
+    need += lean_bytes(lts[sj], nz, ss->nb, Nrun, (int)segs[sj].gOut.size(), nM, Mtot + 1, nStates);
+  need = std::max(0.0, need);
+  if (!session_reserve(need, ss.get())) {
+    if (!key.empty()) {
+      std::lock_guard<std::mutex> lk2(g_sess_mu);
+      g_sess.erase(key);
+    }
+    return REV_FORWARD;
+  }
+  struct Release { double n; ~Release() { session_release(n); } } rel{need};
+  if (ss->segBlocks.empty()) {
+    ss->segBlocks.resize(nSeg);
+    // each segment from the start the segment before gives it, the orders up to Mtot first
+    std::vector<std::vector<u64> > cur(nStates, std::vector<u64>((size_t)nM * w, 0));
+    for (int i = 0; i < nStates; ++i) std::copy(st[i].begin(), st[i].end(), cur[i].begin());
+    for (int sj = 0; sj < nSeg; ++sj) {
+      for (int b = 0; b < ss->nb; ++b) {
+        ss->segBlocks[sj].push_back(lean_block(lts[sj], segs[sj], nLeaves, leaf, dualCol, cur, b * ss->B,
+                                               std::min(nz, (b + 1) * ss->B), nz, K, Mtot));
+        ss->segBlocks[sj].back().keepEarly = sj + 1 < nSeg ? Mtot : -1;
+      }
+      if (sj + 1 == nSeg) break;
+      std::vector<char> okE(ss->nb, 1);
+      for (int b = 0; b < ss->nb; ++b) okE[b] = lean_extend(ss->segBlocks[sj][b], lts[sj], segs[sj], Mtot, p);
+      for (char o : okE)
+        if (!o) {
+          ss->segBlocks.clear();
+          if (!key.empty()) {
+            std::lock_guard<std::mutex> lk2(g_sess_mu);
+            g_sess.erase(key);
+          }
+          return REV_FORWARD;
+        }
+      for (auto& c : cur) std::fill(c.begin(), c.end(), (u64)0);
+      for (int i = 0; i < nStates; ++i)
+        for (int k = 0; k <= Mtot; ++k)
+          for (int am = 0; am < nM; ++am) {
+            int dst = pbS.shiftSlot(am, sj, k);
+            if (dst < 0) continue;
+            u64* d = cur[i].data() + (size_t)dst * w;
+            for (const LeanJets& J : ss->segBlocks[sj]) {
+              const u64* x = J.early[i][k].data() + (size_t)am * J.wb;
+              if (J.s0 == 0) d[0] = addmod(d[0], x[0], p);
+              for (int c = 1; c < J.wb; ++c) d[J.s0 + c] = addmod(d[J.s0 + c], x[c], p);
+            }
+          }
+    }
+  }
+  if ((int)ss->segBlocks.size() != nSeg) return REV_FORWARD;
+  int nb = ss->nb, nJobs = nSeg * nb;
+  std::vector<char> okB(nJobs, 1);
+  int nThr = std::max(1, std::min(threads, nJobs));
+  OmpGuard guard_;
+  #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1)
+  for (int jb = 0; jb < nJobs; ++jb) {
+    try {
+      int sj = jb / nb, b = jb % nb;
+      LeanJets& J = ss->segBlocks[sj][b];
+      if (J.K < Nrun) okB[jb] = lean_extend(J, lts[sj], segs[sj], Nrun, p);
+    } catch (const std::bad_alloc&) {
+      okB[jb] = 0;                       // the blocked kernel forms them instead
+    } catch (...) {
+      guard_.capture();
+    }
+  }
+  guard_.rethrow();
+  for (char o : okB)
+    if (!o) {
+      if (!key.empty()) {
+        std::lock_guard<std::mutex> lk2(g_sess_mu);
+        g_sess.erase(key);
+      }
+      return REV_FORWARD;
+    }
+  for (int sj = 0; sj < nSeg; ++sj) {
+    int nOut = (int)segs[sj].gOut.size();
+    size_t from = rows.size();
+    for (int gi = 0; gi < nOut; ++gi)
+      for (int k = 0; k <= Nt; ++k)
+        for (int mo = 0; mo < nM; ++mo) {
+          std::vector<u64> r(nz, 0);
+          for (const LeanJets& J : ss->segBlocks[sj]) {
+            const std::vector<u64>& lane = J.rows[((size_t)k * nOut + gi) * nM + mo];
+            std::copy(lane.begin(), lane.end(), r.begin() + J.s0);
+          }
+          rows.push_back(std::move(r));
+        }
+    rows_to_line(rows, from, pbS, lineC, nz, Mtot + 1, p, srows, keepZeroSer);
+  }
+  if (!key.empty()) {
+    size_t by = 0;
+    for (const auto& sb : ss->segBlocks)
+      for (const auto& J : sb) by += J.bytes();
+    ss->bytes = by;
+    session_trim();
+  }
+  return REV_OK;
+}
+
 }  // namespace
 
 // Multi-condition observability over a shared coordinate space. Each element of
@@ -2177,41 +3978,46 @@ List symObsNullMulti(List tapes, int nLeaves, int nStates,
 
   // serial pre-pass into flat vectors: the parallel region reads no Value or List, whose named
   // access can insert and whose conversion copies
-  std::vector<CondRaw> td(T);
-  for (int t = 0; t < T; ++t) td[t] = extract_cond_raw(tapes[t], nStates, w);
+  TapeSet ts(tapes, nStates, w);
 
-  // parallel per-condition build: each thread owns one row block; a vanishing
-  // denominator in any condition marks failure (no early return inside OpenMP).
-  std::vector<std::vector<std::vector<u64> > > perRows(T);
-  std::vector<char> okFlag(T, 1);
-  int inner = chain_inner_threads(cores, T);
-  OmpGuard guard_;
-  #pragma omp parallel for num_threads(cores > 0 ? cores : 1) schedule(dynamic) \
-          if (cores > 1 && T > 1)
-  for (int t = 0; t < T; ++t) {
-    try {
-      if (!build_one_condition_blocked(td[t], leafVal, nLeaves, nStates, nz, Nt, p,
-                                       perRows[t], inner))
-        okFlag[t] = 0;
-    } catch (...) {
-      guard_.capture();
+  // the conditions a chunk at a time, built in parallel; the rows of a chunk join the basis and are
+  // dropped. A vanishing denominator in any condition marks failure (no early return inside OpenMP).
+  int nThr = cores > 0 ? cores : 1;
+  int chunk = std::max(64, 4 * nThr);
+  RrefBasis basis(nz, p);
+  for (int t0 = 0; t0 < T; t0 += chunk) {
+    int t1 = std::min(T, t0 + chunk), nc = t1 - t0;
+    std::vector<std::vector<std::vector<u64> > > perRows(nc);
+    std::vector<char> okFlag(nc, 1);
+    int inner = chain_inner_threads(cores, nc);
+    OmpGuard guard_;
+    #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1 && nc > 1)
+    for (int t = t0; t < t1; ++t) {
+      try {
+        CondRaw tmp;
+        if (!build_one_condition_blocked(ts.get(t, tmp), leafVal, nLeaves, nStates, nz, Nt, p,
+                                         perRows[t - t0], inner))
+          okFlag[t - t0] = 0;
+      } catch (...) {
+        guard_.capture();
+      }
     }
+    guard_.rethrow();
+    for (int t = 0; t < nc; ++t)
+      if (!okFlag[t]) return List::create(_["ok"] = false);
+    std::vector<std::vector<u64> > rows;
+    for (int t = 0; t < nc; ++t)
+      for (auto& r : perRows[t]) rows.push_back(std::move(r));
+    basis.add(rows, nThr);
   }
-  guard_.rethrow();
 
-  for (int t = 0; t < T; ++t)
-    if (!okFlag[t]) return List::create(_["ok"] = false);
-
-  std::vector<std::vector<u64> > rows;
-  for (int t = 0; t < T; ++t)
-    for (size_t i = 0; i < perRows[t].size(); ++i)
-      rows.push_back(std::move(perRows[t][i]));
-
-  std::vector<int> pivots = rref_mod(rows, p);
+  std::vector<std::vector<u64> > R0;
+  std::vector<int> pivots;
+  basis.full(R0, pivots);
   int rank = (int)pivots.size();
   IntegerMatrix R(rank, nz);
   for (int i = 0; i < rank; ++i)
-    for (int c = 0; c < nz; ++c) R(i, c) = (int)rows[i][c];
+    for (int c = 0; c < nz; ++c) R(i, c) = (int)R0[i][c];
   IntegerVector piv(rank);
   for (int i = 0; i < rank; ++i) piv[i] = pivots[i];
 
@@ -2219,8 +4025,252 @@ List symObsNullMulti(List tapes, int nLeaves, int nStates,
                       _["rank"] = rank, _["dim"] = nz);
 }
 
-// Rank of the stacked single-segment rows of `tapes` up to each Lie order 0..Nt, by an
-// incremental echelon in order-major row order. The rows up to order k do not depend
+// Per column of V (nz x D residues) whether every row of every condition annihilates it: the
+// directions in the kernel of the stacked rows, checked condition by condition without stacking.
+List symObsAnnihilates(List tapes, int nLeaves, int nStates, IntegerVector zSlots, IntegerVector point,
+                       double pIn, int Nt, IntegerMatrix V, int cores = 1) {
+  if (V.ncol() < zSlots.size()) {
+    IntegerMatrix pts(1, nLeaves);
+    for (int L = 0; L < nLeaves; ++L) pts(0, L) = point[L];
+    NumericVector pr(1);
+    pr[0] = pIn;
+    SEXP lanes = symObsAnnihilatesBatch(tapes, nLeaves, nStates, zSlots, pts, pr, Nt, V, cores);
+    if (!Rf_isNull(lanes)) return List(List(lanes)[0]);
+  }
+  u64 p = (u64)pIn;
+  int nz = zSlots.size(), w = nz + 1, T = tapes.size(), D = V.ncol();
+  std::vector<int> dualCol(nLeaves, -1);
+  for (int c = 0; c < nz; ++c) dualCol[zSlots[c]] = c;
+  std::vector<std::vector<u64> > leafVal(nLeaves, std::vector<u64>(w, 0));
+  for (int L = 0; L < nLeaves; ++L) {
+    long long pv = (long long)point[L] % (long long)p;
+    if (pv < 0) pv += p;
+    leafVal[L][0] = (u64)pv;
+    if (dualCol[L] >= 0) leafVal[L][1 + dualCol[L]] = 1;
+  }
+  std::vector<std::vector<u64> > Vc(D, std::vector<u64>(nz, 0));
+  for (int d = 0; d < D; ++d)
+    for (int c = 0; c < nz; ++c) Vc[d][c] = red(V(c, d), p);
+  TapeSet ts(tapes, nStates, w);
+  int nThr = cores > 0 ? cores : 1;
+  std::vector<char> okFlag(T, 1);
+  std::vector<std::vector<char> > bad(T, std::vector<char>(D, 0));
+  OmpGuard guard_;
+  #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1 && T > 1)
+  for (int t = 0; t < T; ++t) {
+    try {
+      CondRaw tmp;
+      std::vector<std::vector<u64> > rows;
+      if (!build_one_condition_blocked(ts.get(t, tmp), leafVal, nLeaves, nStates, nz, Nt, p, rows, 1)) {
+        okFlag[t] = 0;
+        continue;
+      }
+      const Barrett br(p);
+      for (const auto& r : rows)
+        for (int d = 0; d < D; ++d) {
+          if (bad[t][d]) continue;
+          u64 acc = 0;
+          for (int c = 0; c < nz; ++c)
+            if (r[c] && Vc[d][c]) acc = br.red(acc + (r[c] % p) * Vc[d][c]);
+          if (acc) bad[t][d] = 1;
+        }
+    } catch (...) {
+      guard_.capture();
+    }
+  }
+  guard_.rethrow();
+  for (int t = 0; t < T; ++t)
+    if (!okFlag[t]) return List::create(_["ok"] = false);
+  LogicalVector zero(D);
+  for (int d = 0; d < D; ++d) {
+    zero[d] = 1;
+    for (int t = 0; t < T; ++t) if (bad[t][d]) { zero[d] = 0; break; }
+  }
+  return List::create(_["ok"] = true, _["zero"] = zero);
+}
+
+// Per point (row of `points`) and column of V (nz x D residues) whether every row of every condition annihilates
+// the column, from jets seeded along V where cheaper than reverse-mode rows, else from the rows. ok is FALSE at a
+// vanishing denominator; NULL where a tape holds a steady-state seed (duals laid out over the coordinates).
+SEXP symObsAnnihilatesBatch(List tapes, int nLeaves, int nStates, IntegerVector zSlots, IntegerMatrix points,
+                            NumericVector primes, int Nt, IntegerMatrix V, int cores) {
+  int nz = zSlots.size(), T = tapes.size(), D = V.ncol(), nB = points.nrow();
+  TapeSet ts(tapes, nStates, nz + 1);
+  for (int t = 0; t < T; ++t)
+    if (ts.td[ts.base[t]].hasIcSeed) return R_NilValue;
+  std::vector<int> colOf(nLeaves, -1);
+  for (int c = 0; c < nz; ++c) colOf[zSlots[c]] = c;
+  // lanes per pass, bounded so that the Taylor values of one condition stay within chain_block_bytes()
+  size_t slots = 0;
+  for (int t = 0; t < T; ++t) slots = std::max(slots, ts.td[ts.base[t]].op.size());
+  double perLane = (double)(nLeaves + nStates + slots) * (Nt + 1) * 8.0;
+  int B = std::max(1, std::min(D, (int)(chain_block_bytes() / perLane) - 1));
+  int nBlk = D > 0 ? (D + B - 1) / B : 0;
+  std::vector<char> lanes(T);
+  bool anyRows = false;
+  for (int t = 0; t < T; ++t) {
+    const CondRaw& cd = ts.td[ts.base[t]];
+    lanes[t] = !(reverse_pays(cd.gOut.size(), nz, Nt) && (double)D + 1 >= (double)cd.gOut.size() * (Nt + 2));
+    anyRows = anyRows || !lanes[t];
+  }
+  // the leaves with one dual per coordinate, per point, for the conditions read from their rows
+  std::vector<std::vector<std::vector<u64> > > oneHot(anyRows ? nB : 0);
+  for (int bi = 0; bi < (int)oneHot.size(); ++bi) {
+    u64 p = (u64)primes[bi];
+    oneHot[bi].assign(nLeaves, std::vector<u64>(nz + 1, 0));
+    for (int L = 0; L < nLeaves; ++L) {
+      long long pv = (long long)points(bi, L) % (long long)p;
+      if (pv < 0) pv += p;
+      oneHot[bi][L][0] = (u64)pv;
+      if (colOf[L] >= 0) oneHot[bi][L][1 + colOf[L]] = 1;
+    }
+  }
+  std::vector<std::atomic<char> > bad((size_t)nB * D);
+  for (auto& x : bad) x.store(0);
+  std::vector<std::atomic<char> > okPt(nB);
+  for (auto& x : okPt) x.store(1);
+  long long nTask = (long long)nB * T * nBlk;
+  int nThr = cores > 0 ? cores : 1;
+  OmpGuard guard_;
+  #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1 && nTask > 1)
+  for (long long k = 0; k < nTask; ++k) {
+    try {
+      int bi = (int)(k / ((long long)T * nBlk)), rem = (int)(k % ((long long)T * nBlk));
+      int t = rem / nBlk, b = rem % nBlk;
+      int d0 = b * B, d1 = std::min(D, d0 + B), nd = d1 - d0;
+      if (!okPt[bi].load() || (!lanes[t] && b > 0)) continue;
+      bool open = false;
+      for (int d = d0; d < d1 && !open; ++d) open = !bad[(size_t)bi * D + d].load();
+      if (!open) continue;
+      u64 p = (u64)primes[bi];
+      if (!lanes[t]) {
+        CondRaw tmp;
+        std::vector<std::vector<u64> > rows;
+        if (!build_one_condition_blocked(ts.get(t, tmp), oneHot[bi], nLeaves, nStates, nz, Nt, p, rows, 1)) {
+          okPt[bi].store(0);
+          continue;
+        }
+        const Barrett br(p);
+        for (int d = 0; d < D; ++d) {
+          if (bad[(size_t)bi * D + d].load()) continue;
+          for (const auto& r : rows) {
+            u64 acc = 0;
+            for (int c = 0; c < nz; ++c)
+              if (r[c] && V(c, d)) acc = br.red(acc + (r[c] % p) * red(V(c, d), p));
+            if (acc) { bad[(size_t)bi * D + d].store(1); break; }
+          }
+        }
+        continue;
+      }
+      std::vector<std::vector<u64> > lv(nLeaves, std::vector<u64>(nd + 1, 0));
+      for (int L = 0; L < nLeaves; ++L) {
+        long long pv = (long long)points(bi, L) % (long long)p;
+        if (pv < 0) pv += p;
+        lv[L][0] = (u64)pv;
+        if (colOf[L] >= 0)
+          for (int d = d0; d < d1; ++d) lv[L][1 + d - d0] = red(V(colOf[L], d), p);
+      }
+      CondRaw tmp;
+      std::vector<std::vector<u64> > rows;
+      if (!build_one_condition(ts.get(t, tmp), lv, nLeaves, nStates, nd, nd + 1, Nt, p, rows)) {
+        okPt[bi].store(0);
+        continue;
+      }
+      for (const auto& r : rows)
+        for (int j = 0; j < nd; ++j)
+          if (r[j] % p) bad[(size_t)bi * D + d0 + j].store(1);
+    } catch (...) {
+      guard_.capture();
+    }
+  }
+  guard_.rethrow();
+  List out(nB);
+  for (int bi = 0; bi < nB; ++bi) {
+    if (!okPt[bi].load()) { out[bi] = List::create(_["ok"] = false); continue; }
+    LogicalVector zero(D);
+    for (int d = 0; d < D; ++d) zero[d] = !bad[(size_t)bi * D + d].load();
+    out[bi] = List::create(_["ok"] = true, _["zero"] = zero);
+  }
+  return out;
+}
+
+// Conditions in `order` (all tapes if empty) join a reduced basis with the rows to Lie order Nt at the point; one is
+// chosen where the rows raise the rank or `keep` marks it, until the rank reaches `target`. Chunks give the choice of
+// one at a time; `gain` is the rank each chosen condition adds, `taken` the conditions read.
+List symObsCover(List tapes, int nLeaves, int nStates, IntegerVector zSlots, IntegerVector point,
+                 double pIn, int Nt, int target, int cores, IntegerVector order, LogicalVector keep) {
+  u64 p = (u64)pIn;
+  int nz = zSlots.size(), w = nz + 1, T = tapes.size();
+  std::vector<int> ord;
+  if (order.size() == 0) {
+    for (int t = 0; t < T; ++t) ord.push_back(t);
+  } else {
+    for (int i = 0; i < order.size(); ++i) {
+      if (order[i] < 0 || order[i] >= T) throw std::invalid_argument("order names no tape");
+      ord.push_back(order[i]);
+    }
+  }
+  int n = (int)ord.size();
+  std::vector<char> forced(T, 0);
+  for (int t = 0; t < keep.size() && t < T; ++t) forced[t] = keep[t] ? 1 : 0;
+  std::vector<int> dualCol(nLeaves, -1);
+  for (int c = 0; c < nz; ++c) dualCol[zSlots[c]] = c;
+  std::vector<std::vector<u64> > leafVal(nLeaves, std::vector<u64>(w, 0));
+  for (int L = 0; L < nLeaves; ++L) {
+    long long pv = (long long)point[L] % (long long)p;
+    if (pv < 0) pv += p;
+    leafVal[L][0] = (u64)pv;
+    if (dualCol[L] >= 0) leafVal[L][1 + dualCol[L]] = 1;
+  }
+  TapeSet ts(tapes, nStates, w);
+  int nThr = cores > 0 ? cores : 1, chunk = std::max(8, 2 * nThr);
+  RrefBasis basis(nz, p);
+  std::vector<int> chosen, gain;
+  int taken = 0;
+  for (int i0 = 0; i0 < n && basis.rank() < target; i0 += chunk) {
+    int i1 = std::min(n, i0 + chunk), nc = i1 - i0;
+    std::vector<std::vector<std::vector<u64> > > perRows(nc);
+    std::vector<char> okFlag(nc, 1);
+    OmpGuard guard_;
+    #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1 && nc > 1)
+    for (int i = i0; i < i1; ++i) {
+      try {
+        CondRaw tmp;
+        if (!build_one_condition_blocked(ts.get(ord[i], tmp), leafVal, nLeaves, nStates, nz, Nt, p,
+                                         perRows[i - i0], 1))
+          okFlag[i - i0] = 0;
+      } catch (...) {
+        guard_.capture();
+      }
+    }
+    guard_.rethrow();
+    for (int i = 0; i < nc; ++i)
+      if (!okFlag[i]) return List::create(_["ok"] = false);
+    std::vector<int> owner;
+    std::vector<std::vector<u64> > rows;
+    for (int i = 0; i < nc; ++i)
+      for (auto& r : perRows[i]) {
+        rows.push_back(std::move(r));
+        owner.push_back(i);
+      }
+    std::vector<int> from;
+    basis.add(rows, nThr, &from);
+    std::vector<int> g(nc, 0);
+    for (int k : from) ++g[owner[k]];
+    for (int i = 0; i < nc; ++i)
+      if (g[i] > 0 || forced[ord[i0 + i]]) {
+        chosen.push_back(ord[i0 + i]);
+        gain.push_back(g[i]);
+      }
+    taken = i1;
+  }
+  IntegerVector out(chosen.begin(), chosen.end()), gv(gain.begin(), gain.end());
+  return List::create(_["ok"] = true, _["conditions"] = out, _["gain"] = gv, _["rank"] = basis.rank(),
+                      _["taken"] = taken);
+}
+
+// Rank of the stacked single-segment rows of `tapes` up to each Lie order 0..Nt: the rows of an
+// order join the reduced basis together, the orders ascending. The rows up to order k do not depend
 // on Nt, so ranks[k] equals the rank of symObsNullMulti at order k.
 List symObsRankProfile(List tapes, int nLeaves, int nStates, IntegerVector zSlots,
                        IntegerVector point, double pIn, int Nt, int cores = 1) {
@@ -2236,17 +4286,17 @@ List symObsRankProfile(List tapes, int nLeaves, int nStates, IntegerVector zSlot
     leafVal[L][0] = (u64)pv;
     if (dualCol[L] >= 0) leafVal[L][1 + dualCol[L]] = 1;
   }
-  std::vector<CondRaw> td(T);
-  for (int t = 0; t < T; ++t) td[t] = extract_cond_raw(tapes[t], nStates, w);
+  TapeSet ts(tapes, nStates, w);
   std::vector<std::vector<std::vector<u64> > > perRows(T);
   std::vector<char> okFlag(T, 1);
   int inner = chain_inner_threads(cores, T);
+  int nThr = cores > 0 ? cores : 1;
   OmpGuard guard_;
-  #pragma omp parallel for num_threads(cores > 0 ? cores : 1) schedule(dynamic) \
-          if (cores > 1 && T > 1)
+  #pragma omp parallel for num_threads(nThr) schedule(dynamic) if (nThr > 1 && T > 1)
   for (int t = 0; t < T; ++t) {
     try {
-      if (!build_one_condition_blocked(td[t], leafVal, nLeaves, nStates, nz, Nt, p,
+      CondRaw tmp;
+      if (!build_one_condition_blocked(ts.get(t, tmp), leafVal, nLeaves, nStates, nz, Nt, p,
                                        perRows[t], inner))
         okFlag[t] = 0;
     } catch (...) {
@@ -2258,32 +4308,16 @@ List symObsRankProfile(List tapes, int nLeaves, int nStates, IntegerVector zSlot
     if (!okFlag[t]) return List::create(_["ok"] = false);
 
   // rows of a condition are ordered by output, then order
-  std::vector<std::vector<u64> > basis;
-  std::vector<int> pivCol;
+  RrefBasis basis(nz, p);
   IntegerVector ranks(Nt + 1);
   for (int k = 0; k <= Nt; ++k) {
+    std::vector<std::vector<u64> > batch;
     for (int t = 0; t < T; ++t) {
       int nOut = (int)(perRows[t].size() / (size_t)(Nt + 1));
-      for (int gi = 0; gi < nOut; ++gi) {
-        std::vector<u64>& r = perRows[t][(size_t)gi * (Nt + 1) + k];
-        for (size_t b = 0; b < basis.size(); ++b) {
-          u64 f = r[pivCol[b]] % p;
-          if (!f) continue;
-          u64 nf = p - f;
-          const std::vector<u64>& bb = basis[b];
-          for (int c = pivCol[b]; c < nz; ++c)
-            if (bb[c]) r[c] = addmod(r[c] % p, mulmod(nf, bb[c], p), p);
-        }
-        int pc = -1;
-        for (int c = 0; c < nz; ++c) if (r[c] % p) { pc = c; break; }
-        if (pc < 0) continue;
-        u64 inv = invmod(r[pc] % p, p);
-        for (int c = pc; c < nz; ++c) r[c] = mulmod(r[c] % p, inv, p);
-        basis.push_back(std::move(r));
-        pivCol.push_back(pc);
-      }
+      for (int gi = 0; gi < nOut; ++gi) batch.push_back(std::move(perRows[t][(size_t)gi * (Nt + 1) + k]));
     }
-    ranks[k] = (int)basis.size();
+    basis.add(batch, nThr);
+    ranks[k] = basis.rank();
   }
   return List::create(_["ok"] = true, _["ranks"] = ranks);
 }
@@ -2302,7 +4336,7 @@ List symObsChainRankProfile(List chain, int nLeaves, int nStates, IntegerVector 
   int nSeg = chain.size();
   std::vector<SegRaw> segs;
   segs.reserve(nSeg);
-  for (int sj = 0; sj < nSeg; ++sj) segs.push_back(extract_seg_raw(chain[sj], nStates, w, p));
+  for (int sj = 0; sj < nSeg; ++sj) segs.push_back(extract_seg_raw(chain[sj], nLeaves, nStates, w, p));
   std::vector<char> moves;
   if (!chain_moves(segs, nLeaves, w, dualCol, leafPt, p, moves))
     return List::create(_["ok"] = false);
@@ -2369,8 +4403,7 @@ List symObsDirectional(List tapes, int nLeaves, int nStates, IntegerVector zSlot
     if (dv < 0) dv += p;
     leafVal[zSlots[c]][1] = (u64)dv;
   }
-  std::vector<CondRaw> td(T);
-  for (int t = 0; t < T; ++t) td[t] = extract_cond_raw(tapes[t], nStates, 2);
+  TapeSet ts(tapes, nStates, 2);
   std::vector<std::vector<std::vector<u64> > > perRows(T);
   std::vector<char> okFlag(T, 1);
   OmpGuard guard_;
@@ -2378,7 +4411,8 @@ List symObsDirectional(List tapes, int nLeaves, int nStates, IntegerVector zSlot
           if (cores > 1 && T > 1)
   for (int t = 0; t < T; ++t) {
     try {
-      if (!build_one_condition(td[t], leafVal, nLeaves, nStates, 1, 2, Nt, p, perRows[t]))
+      CondRaw tmp;
+      if (!build_one_condition(ts.get(t, tmp), leafVal, nLeaves, nStates, 1, 2, Nt, p, perRows[t]))
         okFlag[t] = 0;
     } catch (...) {
       guard_.capture();
@@ -2416,10 +4450,11 @@ List symObsNullBatch(List tapes, int nLeaves, int nStates, IntegerVector zSlots,
   std::vector<u64> pr(nB);
   for (int bi = 0; bi < nB; ++bi) pr[bi] = (u64)primes[bi];
 
-  std::vector<CondRaw> td(T);
-  for (int t = 0; t < T; ++t) td[t] = extract_cond_raw(tapes[t], nStates, w);
+  TapeSet ts(tapes, nStates, w);
 
   std::vector<char> okFlag(nB, 1);
+  // fewer pairs than cores: the rest of the cores build the column blocks of each condition
+  int inner = chain_inner_threads(cores, nB);
   std::vector<std::vector<std::vector<u64> > > redRows(nB);
   std::vector<std::vector<int> > redPiv(nB);
   OmpGuard guard_;
@@ -2436,8 +4471,9 @@ List symObsNullBatch(List tapes, int nLeaves, int nStates, IntegerVector zSlots,
       }
       std::vector<std::vector<u64> > rows;
       bool ok = true;
+      CondRaw tmp;
       for (int t = 0; t < T && ok; ++t)
-        if (!build_one_condition_blocked(td[t], leafVal, nLeaves, nStates, nz, Nt, p, rows, 1))
+        if (!build_one_condition_blocked(ts.get(t, tmp), leafVal, nLeaves, nStates, nz, Nt, p, rows, inner))
           ok = false;
       if (!ok) { okFlag[bi] = 0; continue; }
       std::vector<int> pivots = rref_mod(rows, p);
@@ -2536,7 +4572,7 @@ List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots
     int nSeg = segs.size();
     chainsRaw[t].reserve(nSeg);
     for (int sj = 0; sj < nSeg; ++sj)
-      chainsRaw[t].push_back(extract_seg_raw(segs[sj], nStates, w, p));
+      chainsRaw[t].push_back(extract_seg_raw(segs[sj], nLeaves, nStates, w, p));
   }
   // an optional continuation series of the leaves (nLeaves x T)
   std::vector<std::vector<u64> > leafSer;
@@ -2605,9 +4641,19 @@ List symObsNullChain(List chains, int nLeaves, int nStates, IntegerVector zSlots
 // moves (`plain`) the rows of a lower order are those with a lower tag, in the same
 // sequence; symChainReduce then gives the kernel of that order. With `profile` (gap order
 // 0) the rank per Lie order, as symObsChainRankProfile, is returned as well.
+List chain_rows(List chain, int nLeaves, int nStates, IntegerVector zSlots, IntegerVector point,
+                double pIn, int Nt, int Mtot, int threads, bool profile, std::string session);
+
 List symObsChainRows(List chain, int nLeaves, int nStates, IntegerVector zSlots,
                      IntegerVector point, double pIn, int Nt, int Mtot, int threads = 1,
-                     bool profile = false) {
+                     bool profile = false, std::string session = "") {
+  List out = chain_rows(chain, nLeaves, nStates, zSlots, point, pIn, Nt, Mtot, threads, profile, session);
+  if (Nt >= 200) release_heap();
+  return out;
+}
+
+List chain_rows(List chain, int nLeaves, int nStates, IntegerVector zSlots, IntegerVector point,
+                double pIn, int Nt, int Mtot, int threads, bool profile, std::string session) {
   u64 p = (u64)pIn;
   int nz = zSlots.size();
   std::vector<int> dualCol(nLeaves, -1);
@@ -2617,7 +4663,7 @@ List symObsChainRows(List chain, int nLeaves, int nStates, IntegerVector zSlots,
   int nSeg = chain.size();
   std::vector<SegRaw> segs;
   segs.reserve(nSeg);
-  for (int sj = 0; sj < nSeg; ++sj) segs.push_back(extract_seg_raw(chain[sj], nStates, nz + 1, p));
+  for (int sj = 0; sj < nSeg; ++sj) segs.push_back(extract_seg_raw(chain[sj], nLeaves, nStates, nz + 1, p));
   std::vector<char> moves;
   if (!chain_moves(segs, nLeaves, nz + 1, dualCol, leafPt, p, moves))
     return List::create(_["ok"] = false);
@@ -2629,7 +4675,7 @@ List symObsChainRows(List chain, int nLeaves, int nStates, IntegerVector zSlots,
   int B = chain_block_size(segs, nLeaves, nStates, nz, Nt, Mtot, false, chain_block_bytes());
   std::vector<std::vector<u64> > rows, srows;
   if (!build_chain_blocked(segs, nLeaves, nStates, nz, dualCol, leafPt, Nt, Mtot, p, rows,
-                           srows, nullptr, B, threads, -1, true))
+                           srows, nullptr, B, threads, -1, true, session))
     return List::create(_["ok"] = false);
   int N = Mtot + 1;
   // rows run by segment, output, order and gap monomial; series rows by segment, output, order
@@ -2690,6 +4736,15 @@ List symObsChainRows(List chain, int nLeaves, int nStates, IntegerVector zSlots,
   return out;
 }
 
+// Drops the jets kept for continued calls; returns how many were kept.
+int symClearJets() {
+  std::lock_guard<std::mutex> lk(g_sess_mu);
+  int n = (int)g_sess.size();
+  g_sess.clear();
+  release_heap();
+  return n;
+}
+
 // Sets the bytes of Taylor values per column block when SYMIDENT_BLOCKMB is not set; returns the
 // bytes in effect.
 double symSetBlockBytes(double bytes) {
@@ -2728,10 +4783,24 @@ List symChainReduce(IntegerMatrix rowsIn, IntegerMatrix srowsIn, int nz, int N, 
 // states. Also returns the start states and the field at them. The columns of
 // `dropStates` (the jets of known inputs) are left out of the ranks. With `fromStates`,
 // the initial and event values are not evaluated: the starts are the rows of `stateVals`.
+List segment_ranks(List segs, int nLeaves, int nStates, IntegerVector zSlots, IntegerVector point,
+                   double pIn, int Nt, IntegerMatrix stateVals, int threads, IntegerVector dropStates,
+                   bool fromStates, std::string session);
+
 List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
                      IntegerVector point, double pIn, int Nt,
                      IntegerMatrix stateVals = IntegerMatrix(0, 0), int threads = 1,
-                     IntegerVector dropStates = IntegerVector(0), bool fromStates = false) {
+                     IntegerVector dropStates = IntegerVector(0), bool fromStates = false,
+                     std::string session = "") {
+  List out = segment_ranks(segs, nLeaves, nStates, zSlots, point, pIn, Nt, stateVals, threads, dropStates,
+                           fromStates, session);
+  if (Nt >= 200) release_heap();
+  return out;
+}
+
+List segment_ranks(List segs, int nLeaves, int nStates, IntegerVector zSlots, IntegerVector point,
+                   double pIn, int Nt, IntegerMatrix stateVals, int threads, IntegerVector dropStates,
+                   bool fromStates, std::string session) {
   u64 p = (u64)pIn;
   int nz = zSlots.size(), nSeg = segs.size();
   int wA = nz + nStates + 2, nzA = wA - 1, w0 = nz + 1;
@@ -2745,9 +4814,38 @@ List symSegmentRanks(List segs, int nLeaves, int nStates, IntegerVector zSlots,
   bool givenStates = stateVals.nrow() == nSeg && stateVals.ncol() == nStates;
   IntegerMatrix ranks(nSeg, Nt + 1), start(nSeg, nStates), field(nSeg, nStates);
   LogicalVector moves(nSeg);
+  if (!session.empty() && nSeg == 1 && fromStates && givenStates) {
+    // one segment from given states: the jets kept under `session` are continued
+    SegRaw seg = extract_seg_raw(segs[0], nLeaves, nStates, 1, p);
+    bool mv = false;
+    if (seg.hasTm) {
+      std::vector<std::vector<u64> > tmVal(nLeaves + seg.tmOp.size(), std::vector<u64>(w0, 0));
+      for (int L = 0; L < nLeaves; ++L) {
+        tmVal[L][0] = leaf[L];
+        if (dualCol[L] >= 0) tmVal[L][1 + dualCol[L]] = 1;
+      }
+      if (eval_ic_order0(tmVal, seg.tmOp, seg.tmA, seg.tmB, seg.tmCval, nLeaves, w0, p))
+        for (int c = 1; c < w0; ++c) if (tmVal[seg.tmOut[0]][c]) mv = true;
+    }
+    std::vector<u64> qs(nStates);
+    for (int i = 0; i < nStates; ++i) qs[i] = red(stateVals(0, i), p);
+    std::vector<int> dr(dropStates.begin(), dropStates.end()), rk;
+    std::vector<u64> fv;
+    if (session_ranks(session, seg, nLeaves, nStates, nz, dualCol, leaf, qs, mv, Nt, threads, dr, p,
+                      rk, fv)) {
+      for (int k = 0; k <= Nt; ++k) ranks(0, k) = rk[k];
+      for (int i = 0; i < nStates; ++i) {
+        start(0, i) = (int)qs[i];
+        field(0, i) = i < (int)fv.size() ? (int)fv[i] : 0;
+      }
+      moves[0] = mv;
+      return List::create(_["ok"] = true, _["ranks"] = ranks, _["start"] = start,
+                          _["field"] = field, _["moves"] = moves);
+    }
+  }
   std::vector<u64> q(nStates, 0);
   for (int sj = 0; sj < nSeg; ++sj) {
-    SegRaw seg = extract_seg_raw(segs[sj], nStates, 1, p);
+    SegRaw seg = extract_seg_raw(segs[sj], nLeaves, nStates, 1, p);
     // start state at gap order 0
     if (fromStates && givenStates) {
       // the starts are those of stateVals alone, so each segment of a chain is ranked alone
@@ -2944,7 +5042,7 @@ List symObsNullChainSeedBatch(List chains, IntegerVector evalChain,
     for (int pi = 0; pi < nPr; ++pi) {
       segsRaw[pi][t].reserve(nSeg);
       for (int sj = 0; sj < nSeg; ++sj)
-        segsRaw[pi][t].push_back(extract_seg_raw(segs[sj], nStates, w, distinct[pi]));
+        segsRaw[pi][t].push_back(extract_seg_raw(segs[sj], nLeaves, nStates, w, distinct[pi]));
     }
   }
 
@@ -3054,7 +5152,7 @@ List symObsNullChainPointBatch(List chains, int nLeaves, int nStates, IntegerVec
     for (int pi = 0; pi < nPr; ++pi) {
       segsRaw[pi][t].reserve(nSeg);
       for (int sj = 0; sj < nSeg; ++sj)
-        segsRaw[pi][t].push_back(extract_seg_raw(segs[sj], nStates, w, distinct[pi]));
+        segsRaw[pi][t].push_back(extract_seg_raw(segs[sj], nLeaves, nStates, w, distinct[pi]));
     }
   }
   std::vector<int> pts((size_t)nB * nLeaves);
@@ -3234,6 +5332,65 @@ SEXP symSolveMod(IntegerMatrix A, IntegerVector b, double pIn) {
   for (size_t i = 0; i < pivots.size(); ++i)
     if (pivots[i] < nc) x[pivots[i]] = (int)aug[i][nc];
   return x;
+}
+
+// A B over GF(p) for residues below p (int64 entries), rows of A in parallel.
+NumericMatrix symMatMulMod(NumericMatrix A, NumericMatrix B, double pIn, int cores = 1) {
+  u64 p = (u64)pIn;
+  int n = A.nrow(), m = A.ncol(), k = B.ncol();
+  if (B.nrow() != m) throw std::invalid_argument("matmul: inner dimensions differ");
+  const Barrett br(p);
+  const u64 LIM = (((u64)1 << 63) / p) * p;
+  std::vector<u64> Bt((size_t)k * m);
+  for (int j = 0; j < k; ++j)
+    for (int i = 0; i < m; ++i) {
+      long long v = (long long)B(i, j) % (long long)p;
+      Bt[(size_t)j * m + i] = (u64)(v < 0 ? v + (long long)p : v);
+    }
+  NumericMatrix C(n, k);
+  OmpGuard guard_;
+  #pragma omp parallel for num_threads(cores > 0 ? cores : 1) schedule(dynamic, 8)
+  for (int r = 0; r < n; ++r) {
+    try {
+      std::vector<u64> a(m);
+      std::vector<int> nzc;
+      for (int i = 0; i < m; ++i) {
+        long long v = (long long)A(r, i) % (long long)p;
+        a[i] = (u64)(v < 0 ? v + (long long)p : v);
+        if (a[i]) nzc.push_back(i);
+      }
+      for (int j = 0; j < k; ++j) {
+        const u64* b = &Bt[(size_t)j * m];
+        u64 acc = 0;
+        for (int i : nzc) {
+          u64 t = acc + a[i] * b[i];
+          acc = t >= LIM ? t - LIM : t;
+        }
+        C(r, j) = (double)br.red(acc);
+      }
+    } catch (...) {
+      guard_.capture();
+    }
+  }
+  guard_.rethrow();
+  return C;
+}
+
+// The rows of M (residues below p), in order, that are independent of the rows before them, and the rank.
+List symIndependentRows(NumericMatrix M, double pIn, int cores = 1) {
+  u64 p = (u64)pIn;
+  int nr = M.nrow(), nc = M.ncol();
+  std::vector<std::vector<u64> > X(nr, std::vector<u64>(nc));
+  for (int i = 0; i < nr; ++i)
+    for (int c = 0; c < nc; ++c) {
+      long long v = (long long)M(i, c) % (long long)p;
+      X[i][c] = (u64)(v < 0 ? v + (long long)p : v);
+    }
+  RrefBasis basis(nc, p);
+  std::vector<int> from;
+  basis.add(X, cores > 0 ? cores : 1, &from);
+  IntegerVector out(from.begin(), from.end());
+  return List::create(_["rows"] = out, _["rank"] = basis.rank());
 }
 
 // Compiled twin of gfp.rref_modp (joint/equilibrate path, per sample point).

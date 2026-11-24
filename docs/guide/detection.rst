@@ -2,7 +2,7 @@ Detection
 =========
 
 :func:`symident.detect` computes the rank of the observability-identifiability matrix (OIM,
-:doc:`../method`), whose kernel holds the non-identifiable directions, and returns them as
+:doc:`../method/local`), whose kernel holds the non-identifiable directions, and returns them as
 :class:`~symident.Symmetries`. For the running
 example of :doc:`models`, ``equilibrate=True`` starts every condition at a steady state with
 the inputs at zero, and ``reconstruct=True`` asks for the directions in closed form:
@@ -80,12 +80,12 @@ A direction is proven, checked with an error bound, or checked without one. Its 
 ``res.unproven()`` returns the verified and checked directions. The rank is ``proven``,
 ``verified`` (with a probability) or a ``lower bound``, in which case the model may have fewer
 non-identifiable directions. ``info["rank_status"]`` gives the status and the reason, the
-printout flags an unproven rank, and :doc:`../method` states when each applies.
+printout flags an unproven rank, and :ref:`levels` states when each applies.
 
 ``res.symmetries`` lists :class:`~symident.Symmetry` objects, with the generator, its
 ``level``, ``kind`` (scaling, translation or curved), ``type`` (scaling or general), ``support``,
 the coordinates it moves, and ``route``,
-the way the closed form was obtained (:doc:`../method`). ``res.summary()`` adds the Lie order,
+the way the closed form was obtained (:ref:`general-directions`). ``res.summary()`` adds the Lie order,
 i.e., the highest order of time derivatives of the observables used, the proof of the rank, a
 suggested gauge (the option below) and what stopped part of the detection, and ``to_dict()``
 returns the raw result.
@@ -106,7 +106,7 @@ all of them.
    starts every condition at a steady state, with the inputs at zero. Each conserved total
    adds a free resting value, held by one species of the total, the pivot. A state at rest may
    enter exponentials, logarithms, trigonometric and hyperbolic functions and their inverses,
-   as without ``equilibrate``; :doc:`../method` states the conditions, and an ``InputError``
+   as without ``equilibrate``; :ref:`non-rational` states the conditions, and an ``InputError``
    names a state whose resting value no coordinate outside these terms moves. Before the
    analysis, the resting balances are solved at random parameter values: balances without a
    solution over the complex numbers raise an ``InputError``, and resting states outside the
@@ -158,55 +158,9 @@ all of them.
 ``cores``
    threads and worker processes.
 
-Discrete symmetries
--------------------
+Global analysis
+---------------
 
-A discrete symmetry, such as two rate constants entering only through their sum and product,
-survives local identifiability: another point of the domain gives the same output.
-``detect(model, mode="global")`` analyzes local identifiability first and then counts these
-points in the domain and reconstructs the maps between them where they are rational;
-``res.discrete()`` does the second step on a result, and ``global_options`` passes its
-arguments. The two-compartment
-model of [Godfrey1983]_ with an input :math:`u` into the first compartment, observed in the
-second, is the classical case:
-
-.. code-block:: python
-
-   import symident as si
-
-   m = si.Model({"x1": "-(k21 + k01)*x1 + k12*x2 + u", "x2": "k21*x1 - k12*x2"},
-                {"y": "x2"}, known_inputs=["u"])
-   r = si.detect(m, mode="global")
-   s, = r.discrete_symmetries
-   s["map"], s["level"], s["fixed_set"]
-   r.info["discrete"]["fundamental_domain"]
-
-.. code-block:: text
-
-   ({'k01': 'k12', 'x1': '(k01*x2 - k12*x2 + k21*x1)/k21', 'k12': 'k01'}, 'exact', ['k01 - k12'])
-   ['k01 < k12']
-
-The map exchanges the elimination rate :math:`k_{01}` and the return rate :math:`k_{12}` and
-moves the initial value of :math:`x_1`, so the model is locally but not globally identifiable.
-It is ``exact``: proven by a map of the states. Its image lies in the domain where
-``domain_conditions`` hold, here where the image of :math:`x_1(0)` is positive, so
-``info["discrete"]["counts"]`` gives at each sample point the solutions over the complex
-numbers, over the reals and in the domain, which can differ between regions of the domain. A
-map that never meets the domain, such as :math:`\theta \mapsto -\theta` where only
-:math:`\theta^2` enters, has ``preserves_domain`` False and is not a symmetry of the model on the
-domain. The fundamental domain keeps one point of each orbit; ``reduce()`` lists it in
-``Reduction.discrete``.
-
-A model with directions is reduced first and analyzed in the coordinates of the reduced model
-(``info["discrete"]["reduced"]``). The conditions share the coordinates, and the events at given
-or estimated times enter as in the local analysis (:doc:`../method`). Under ``equilibrate`` a
-condition starts at its resting state, which needs one rational closed form in the coordinates;
-states that no observable reads are left out. A model with switches enters, as in the local
-analysis, with each condition from its start and each allowed regime as a copy that starts on a
-switching surface to an allowed neighbor. The analysis needs msolve (:doc:`../install`); unknown
-inputs, results detected with ``reduce_cq``, switches together with events, under
-``equilibrate`` or on the parameters alone, and root events are not handled, which
-``mode="global"`` reports in ``info["discrete"]["unsupported"]`` with a warning. The counts hold at the sample points, and the
-order of the Taylor coefficients, after an event also in the gap, is raised until the count is
-stable; ``count_final`` is True when exact maps account for every solution. Where the maps are not found within ``budget`` seconds, the counts are reported
-alone. ``res.solution_count()`` gives the count over the algebraic closure at one random point.
+``detect(model, mode="global")`` adds the count of the parameter values with the output of a
+generic one and the discrete symmetries between them; :doc:`global` describes the call and the
+result.

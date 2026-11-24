@@ -15,8 +15,6 @@ settings, with their defaults in parentheses, are:
 ``gap_order_cap``
    the highest gap order, the number of power-series coefficients kept for the time between
    events after the start (8).
-``timeout``
-   the time limit of the reconstruction in seconds, once per detection (no limit).
 ``seed``
    the seed of every random choice (0).
 

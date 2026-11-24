@@ -1,3 +1,105 @@
+# symident 0.18.0
+
+## Global analysis
+
+* The count of `discrete()` is certified. `info["discrete"]["certificate"]["complete"]` is
+  `"exact"`, `"verified"`, `"axiom"`, `"no"` or `"open"`, and `info["discrete"]["count_bound"]`
+  is the probability that a generic point has more values than counted.
+* Exact count: functions of the coordinates are proven to be rational functions of the output
+  coefficients, and the fiber of these functions is the orbit of the exact maps, shown by
+  identities of rational functions over Q. The input-output relations come from elimination of
+  the states by resultants over Z[theta] with python-flint, or from input-output projections per
+  observable whose support is found modulo a prime and whose coefficients are interpolated in the
+  parameters and checked as identities. A projection with more terms is verified at random points
+  with the Schwartz-Zippel bound. Where the search stops, the functions proven so far are counted
+  (`certificate["pinned"]`).
+* Verified count: msolve counts over Q at a random integer point, with an error bound from the
+  Schwartz-Zippel lemma and the degrees of the output coefficients.
+* Points of the fiber are proposed by numerical monodromy and enclosed by the Krawczyk operator;
+  a map read from them counts once it is proven exactly.
+* A model with free starts is counted on several experiments with shared parameters
+  (`experiments=`), which bounds the fiber where the model has no nonconstant rational first
+  integral. The premise is proven at one point of the parameters from the eigenvalues of the
+  Jacobian at an equilibrium, by Galois groups from Frobenius cycle types. `info["experiments"]`
+  reports the route or why it does not apply.
+* Models with unknown inputs are counted, the jets of the inputs as unknowns of the fiber that
+  are no coordinates; a map may change the input (`state_maps`).
+* A result detected with `reduce_cq` is counted on the level sets of the conserved totals, with
+  the species solved through the totals in `info["discrete"]["eliminated"]`.
+* Non-rational terms of the states become new states and new coordinates, the values of the
+  terms at the start (`info["discrete"]["relaxed"]`). Under `equilibrate`, the resting values
+  inside transcendental terms become coordinates of a resting chart. A free power of a state that
+  starts at 0 enters as a series in t and in the power (`info["discrete"]["start_powers"]`).
+* Under `equilibrate`, resting balances whose Bezout number is past 4 or that couple more than 8
+  states are not solved; the result is unsupported and names the cap (`rest_bezout`, `rest_block`).
+* An open or unsupported result names the reason, in `info["discrete"]["unsupported"]`, the
+  certificate or `limits`.
+
+## Work limits instead of time limits
+
+* Nothing in the package stops on a clock: every search and count stops at a cap on steps,
+  points, terms or unknowns, so that the result is the same on every machine. A stage at a limit
+  names the limit and the value of the limit.
+* `timeout` and `budget` are removed from `discrete()`, `solution_count()`, `reduce()` and
+  `reconst_control()`. New arguments of `discrete()` and keys of `global_options`: `memory`,
+  `experiments`, `msolve_entries`, `msolve_terms`, `search_entries` and `elimination_terms`.
+* The switch `DIRECTSECS` is removed. New switches: `MSOLVE_GB`, `FIBER_TERMS`, `JETMB`,
+  `NOSHARED` and `NOSELECT`.
+* `detect(discrete=)` is removed; use `mode="global"` and `global_options`.
+
+## Detection
+
+* The rank of a model with switches, modulo the fresh coordinates of the switch surfaces, is
+  proven on the copies whose start points keep full column rank, where it was a lower bound.
+* Weights rational in the coordinates, such as those of a recast power, enter the proof of exact
+  scalings.
+* A resting state is proven to exist where a simple point modulo a prime at an integer point
+  lifts by Hensel's lemma. Balances without a resting state raise an `InputError` with an error
+  bound.
+
+## Conditions and PEtab
+
+* With many conditions, the analysis runs on the conditions whose rows at a random point raise
+  the rank or first reach a coordinate. Each direction is then proven on the conditions left out
+  (`info["selection"]`).
+* Conditions that differ only in the values of symbols share one tape, compiled once.
+* A PEtab experiment in one period without a preequilibration whose measurements are all at
+  `inf` is read at rest under the condition of that period (`m.petab["at_rest"]`).
+
+## Large models
+
+* The kernel builds the rows in forward or in reverse mode, whichever sweeps fewer residues, and
+  keeps the jets of a detection for calls at higher orders.
+* The state components of a direction are solved modulo a prime on the states the direction
+  reaches and proven by the identities of the field.
+* The degrees of the output coefficients come from the series recursion run on degree bounds.
+* Input-output projections over GF(p) run in C++ (`cpp/ioproj.cpp`).
+* Lifts of many directions run in parallel workers.
+
+## Reduction
+
+* A direction of a model with unknown inputs is reduced where the inputs absorb it, proven per
+  direction by inversion (the input solved from the derivatives of the observables) or by a lift
+  of the field to the states and the input. The printout lists the inputs and the condition under
+  which the section gives the output of a point.
+* `reduce()` prefers charts that cover the whole domain after charts without `sign_conditions`.
+
+## Documentation
+
+* The method is rewritten as a chapter in `docs/method/`: local analysis, conditions, proofs,
+  reduction and global analysis, with references through `refs.bib`.
+* A guide page for the global analysis.
+* The observables are written g(t; theta).
+
+## Packaging and CI
+
+* New dependency python-flint >= 0.7.0; the `docs` extra adds sphinxcontrib-bibtex.
+* `ci.yml` runs the pre-commit hooks and the tests on a source build on Linux, macOS and Windows
+  with Python 3.10 and 3.15. `cd.yml` replaces `wheels.yml` and builds the wheels and the sdist,
+  uploaded to PyPI from the release run. `docs.yml` publishes the documentation to Pages.
+  Dependabot updates the GitHub Actions; `.pre-commit-config.yaml` holds ruff, file checks and a
+  check for em dashes.
+
 # symident 0.17.0
 
 ## Steady states

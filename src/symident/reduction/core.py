@@ -2,7 +2,6 @@
 
 import math
 import re
-import time
 import warnings
 
 import numpy as np
@@ -189,8 +188,8 @@ _SUB = "₀₁₂₃₄₅₆₇₈₉"
 
 # candidate sections the search of one block may try
 WORK_CAP = 4000
-# seconds the section search of one block may take by default
-REDUCE_TIMEOUT = 600
+# the positive transversals tried for scaling pins inside the curved support
+REBASE_CHOICES = 4
 
 
 def model_structure(obj, coords):
@@ -559,11 +558,17 @@ def _signed(res):
     return any(b.get("sign_conditions") for b in res.get("blocks") or [])
 
 
+def _partial(res):
+    """Whether a block of the reduction covers part of the orbits only."""
+    return any(b.get("coverage") == "partial" for b in res.get("blocks") or [])
+
+
 def _chart_rank(res):
-    """Sort key of a reduction: level, directions removed, no sign conditions, rational trafo; ties keep build order."""
+    """Sort key of a reduction: level, directions removed, no sign conditions, total coverage, rational trafo; ties
+    keep build order."""
     lv = res.get("level")
     return (LEVELS.index(lv) if lv in LEVELS else len(LEVELS), -len(res.get("removed") or []),
-            _signed(res), not _rational_chart(res))
+            _signed(res), _partial(res), not _rational_chart(res))
 
 
 def _outside_coordinates(sol, b, coords, states):
@@ -626,8 +631,56 @@ def _reduction_charts(obj, *args, alternatives=False, **kw):
     return best
 
 
+def _rebased(syms, idx, blocks):
+    """`syms` with the directions `idx` combined with the scalings to leave every scaling pin unmoved, or None.
+
+    The combination spans the same distribution where the scalings move the pins; a common polynomial factor of
+    the components is divided out, so the direction vanishes nowhere it did not before."""
+    from .expr import red_locals, red_sympify
+    out = list(syms)
+    scal = [b for b in blocks if b["type"] == "scaling" and b.get("pins") and b.get("Wres") is not None]
+    for i in idx:
+        gen = syms[i].get("generator")
+        if not gen:
+            continue
+        hits = [b for b in scal if any(str(gen.get(t, "0")).strip() not in ("0", "0.0") for t in b["transversal"])]
+        if not hits:
+            continue
+        try:
+            loc = red_locals(list(gen) + [str(v) for v in gen.values()] + [c for b in hits for c in b["Wcols"]])
+            G = {k: red_sympify(str(v).replace("^", "**"), loc) for k, v in gen.items()}
+            for b in hits:
+                W, cols, T = b["Wres"], b["Wcols"], b["transversal"]
+                A = spy.Matrix([[int(W[r, cols.index(t)]) for r in range(W.shape[0])] for t in T])
+                lam = A.LUsolve(spy.Matrix([G.get(t, spy.Integer(0)) / spy.Symbol(t) for t in T]))
+                for j, c in enumerate(cols):
+                    w = sum(lam[r] * int(W[r, j]) for r in range(W.shape[0]))
+                    if w != 0:
+                        G[c] = G.get(c, spy.Integer(0)) - w * spy.Symbol(c)
+            G = {k: spy.cancel(spy.together(e)) for k, e in G.items()}
+            G = {k: e for k, e in G.items() if e != 0}
+            if not G:
+                return None
+            den = spy.Integer(1)
+            for e in G.values():
+                den = spy.lcm(den, spy.fraction(e)[1])
+            num = {k: spy.expand(spy.cancel(e * den)) for k, e in G.items()}
+            g = spy.Integer(0)
+            for e in num.values():
+                g = spy.gcd(g, e)
+            num = {k: spy.cancel(e / g) for k, e in num.items()}
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return None
+        gstr = {k: str(e).replace("**", "^") for k, e in num.items()}
+        d = {k: v for k, v in syms[i].items() if k not in ("complete_generator", "state_components", "display")}
+        d.update(generator=gstr, support=sym_sort(list(gstr)), factor="1", state_components=None)
+        out[i] = d
+    return out
+
+
 def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d_exp=2, separable_=True,
-                        zero_compatibility=False, timeout=REDUCE_TIMEOUT, work_cap=WORK_CAP):
+                        zero_compatibility=False, work_cap=WORK_CAP):
     settings = {"d_poly": int(d_poly), "d_darboux": int(d_darboux), "d_exp": int(d_exp),
                 "separable": bool(separable_), "primes": list(PRIMES)}
     coords = red_coordinates(obj)
@@ -641,7 +694,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
     pos_set = positive_set_of(positive, coords)
     settings["positive"] = True if pos_set is None else (False if not pos_set else pos_set)
     old_pos = set_positive(pos_set)
-    old_dl = DOMAIN["deadline"]
+    old_work = DOMAIN.get("work"), DOMAIN.get("work_cap")
     try:
         if pos_set is not None and zero_compatibility:
             warnings.warn("zero limits are the faces of the positive orthant; "
@@ -664,7 +717,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                                          d_poly=d_poly, d_darboux=d_darboux, d_exp=d_exp,
                                          separable_=separable_,
                                          zero_compatibility=zero_compatibility,
-                                         timeout=timeout, work_cap=work_cap)
+                                         work_cap=work_cap)
             finally:
                 DOMAIN["no_roots"] = old_nr
             return log_back(res, lc)
@@ -682,7 +735,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                                          positive=pos2 if pos2 else False, d_poly=d_poly,
                                          d_darboux=d_darboux, d_exp=d_exp, separable_=separable_,
                                          zero_compatibility=zero_compatibility,
-                                         timeout=timeout, work_cap=work_cap)
+                                         work_cap=work_cap)
             finally:
                 DOMAIN["no_roots"] = old_nr
             return exp_back(res, ec)
@@ -754,13 +807,38 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
             if dm["kept"] and any(b["status"] not in ("reduced", "fixed") for b in blocks):
                 dm = demote(False)
                 blocks = scaling_blocks(dm)
+        syms = o["syms"]
+        if not state.get("reduce_pin_inside") and any(b.get("coverage") == "partial" for b in blocks):
+            # a pin on a signed coordinate misses orbits: a positive pin inside the curved support instead,
+            # the curved directions combined with the scalings to leave it unmoved
+            dm_in = {"scal_rows": list(range(W.shape[0])), "demoted": [], "curved_supp": curved_supp0,
+                     "allowed": None, "kept": []}
+            best = None
+            for skip in range(REBASE_CHOICES):
+                with state.options(transversal_skip=skip or None):
+                    alt = scaling_blocks(dm_in)
+                if not all(b["status"] in ("reduced", "fixed") and b.get("coverage") != "partial" for b in alt):
+                    break
+                if best is not None and [b.get("pins") for b in alt] == [b.get("pins") for b in best[0]]:
+                    break
+                reb = _rebased(syms, curved_idx0, alt)
+                if reb is None:
+                    continue
+                # the pins that leave the shortest curved generators
+                size = sum(len(str(reb[i].get("generator"))) for i in curved_idx0)
+                if best is None or size < best[2]:
+                    best = (alt, reb, size)
+            if best is not None:
+                dm, blocks, syms = dm_in, best[0], best[1]
+        elif state.get("reduce_pin_inside"):
+            syms = _rebased(syms, curved_idx0, blocks) or syms
         curved_idx = sorted(curved_idx0 + [wr["rows"][r] for r in dm["demoted"]])
         scal_pins = {}
         for b in blocks:
             if b["type"] == "scaling" and b.get("pins"):
                 scal_pins.update(b["pins"])
         if curved_idx:
-            blocks += curved(o["syms"], curved_idx, o["labels"], fixed, d_poly, d_darboux, d_exp,
+            blocks += curved(syms, curved_idx, o["labels"], fixed, d_poly, d_darboux, d_exp,
                              separable_, scal_pins, model_structure(obj, coords))
         blocks = verify_blocks(blocks)
         for b in blocks:
@@ -775,7 +853,7 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                     session.note("limits", f"invariants of {', '.join(b['labels'])}: {c}")
         inv_start = 0
         dens = None
-        gen_of = dict(zip(o["labels"], o["syms"]))
+        gen_of = dict(zip(o["labels"], syms))
         for b in blocks:
             if b["type"] != "curved" or not b.get("invariants") or b.get("status") == "reduced":
                 continue
@@ -783,7 +861,6 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                 continue
             if dens is None:
                 dens = model_denominators(obj["info"].get("model_exprs") or [])
-            DOMAIN["deadline"] = time.monotonic() + timeout if math.isfinite(timeout) else None
             DOMAIN["work"], DOMAIN["work_cap"] = 0, work_cap
             try:
                 sol = face_section(b, scal_pins, dens)
@@ -825,9 +902,6 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                     sol = sol_r
             if work_cap is not None and DOMAIN["work"] > work_cap:
                 session.note("limits", f"section search of {', '.join(b['labels'])}: reduce(work_cap={work_cap}) "
-                                       "reached")
-            elif DOMAIN["deadline"] is not None and time.monotonic() > DOMAIN["deadline"]:
-                session.note("limits", f"section search of {', '.join(b['labels'])}: reduce(timeout={timeout}) "
                                        "reached")
             if sol.get("solved"):
                 foreign = _outside_coordinates(sol, b, coords, (obj.get("info") or {}).get("model_rhs") or {})
@@ -874,13 +948,18 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                 b["gauge_note"] = "; ".join(notes)
                 b["new_parameters"] = sol.get("meaning")
                 b["status"] = "reduced"
-                certs = ["solved exactly: each invariant becomes a fresh q_<k> parameter"]
+                certs = ["solved exactly: each invariant becomes a fresh q_<k> parameter"] if not sol.get(
+                    "section_chart") else ["section chart: the balances solve rationally on the section; the new "
+                                           "parameters are the free coordinates of the point where the orbit meets "
+                                           "it, met once by every orbit"]
                 if sol.get("face"):
                     certs.append(f"face section certified: every orbit reaches {', '.join(sol['section'])} "
                                  f"with each other coordinate positive (the face point, solved from the "
                                  f"invariants, is positive on the whole {domain_name()})")
                 elif b["section_monotone"]:
                     certs.append("section: each balance ratio has a derivative of one sign along each generator")
+                elif sol.get("jacobian"):
+                    certs.append("section: the Jacobian of the balance ratios along the generators has one sign")
                 if b["injective"]:
                     certs.append("section met at most once: the solved entries give back every point of "
                                  "the section from the invariants, so two points of one orbit on it coincide")
@@ -926,4 +1005,5 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
         return red_result(obj, blocks, trafo, coords, fixed, settings)
     finally:
         set_positive(old_pos)
-        DOMAIN["deadline"] = old_dl
+        # the work cap of this call ends with it
+        DOMAIN["work"], DOMAIN["work_cap"] = old_work

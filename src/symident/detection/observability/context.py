@@ -1,5 +1,6 @@
 """The shared state of one observability analysis."""
 
+import hashlib
 import os
 import threading
 import time
@@ -8,6 +9,7 @@ import numpy as np
 
 from ... import _core, state
 from ...par import process_map, thread_map
+from ...sym.shared import kernel_tapes
 from ...sym.tape import _OP_SPOW
 
 
@@ -32,17 +34,33 @@ def ok(r):
     return r is not None and bool(r.get("ok"))
 
 
-def tape_fields(t):
-    """The kernel's view of one compiled tape."""
-    out = {"op": ints(t.get("op")), "a": ints(t.get("a")), "b": ints(t.get("b")),
-           "cnum": strs(t.get("cnum")), "cden": strs(t.get("cden")),
-           "state_slots": ints(t.get("state_slots")), "f_out": ints(t.get("f_out")),
-           "g_out": ints(t.get("g_out")), "ic_leaf": ints(t.get("ic_leaf")),
-           "ic_num": strs(t.get("ic_num")), "ic_den": strs(t.get("ic_den"))}
+def tape_fields(t, memo=None):
+    """The kernel's view of one compiled tape; with `memo`, arrays that tapes share are converted once and stay
+    shared."""
+    memo = {} if memo is None else memo
+
+    def conv(x, f):
+        if x is None:
+            return f(x)
+        k = (id(x), f)
+        if k not in memo:
+            memo[k] = (x, f(x))
+        return memo[k][1]
+
+    def iv(k):
+        return conv(t.get(k), ints)
+
+    def sv(k):
+        return conv(t.get(k), strs)
+    out = {"op": iv("op"), "a": iv("a"), "b": iv("b"), "cnum": sv("cnum"), "cden": sv("cden"),
+           "state_slots": iv("state_slots"), "f_out": iv("f_out"), "g_out": iv("g_out"), "ic_leaf": iv("ic_leaf"),
+           "ic_num": sv("ic_num"), "ic_den": sv("ic_den")}
     if t.get("ic_op") is not None:
-        out.update({"ic_op": ints(t["ic_op"]), "ic_a": ints(t["ic_a"]), "ic_b": ints(t["ic_b"]),
-                    "ic_cnum": strs(t["ic_cnum"]), "ic_cden": strs(t["ic_cden"]),
-                    "ic_out": ints(t["ic_out"])})
+        out.update({"ic_op": iv("ic_op"), "ic_a": iv("ic_a"), "ic_b": iv("ic_b"), "ic_cnum": sv("ic_cnum"),
+                    "ic_cden": sv("ic_cden"), "ic_out": iv("ic_out")})
+    if t.get("leaf_slot") is not None:
+        out.update({"leaf_slot": ints(t["leaf_slot"]), "leaf_src": ints(t["leaf_src"]),
+                    "leaf_num": strs(t["leaf_num"]), "leaf_den": strs(t["leaf_den"])})
     if t.get("ev_var_idx") is not None:
         out.update({"ev_op": ints(t["ev_op"]), "ev_a": ints(t["ev_a"]), "ev_b": ints(t["ev_b"]),
                     "ev_cnum": strs(t["ev_cnum"]), "ev_cden": strs(t["ev_cden"]),
@@ -58,7 +76,7 @@ def tape_fields(t):
 
 # tape fields that hold slot indices; a slot below n_leaves is a leaf
 _SLOT_FIELDS = ("a", "b", "f_out", "g_out", "ic_leaf", "ic_a", "ic_b", "ic_out", "ev_a", "ev_b", "ev_out",
-                "tm_a", "tm_b", "tm_out")
+                "tm_a", "tm_b", "tm_out", "leaf_src")
 
 
 def read_columns(tapes, n_leaves, z_slots):
@@ -172,7 +190,8 @@ class Run:
         self.max_gap = int(ctrl["gap_order_cap"]) if self.has_gaps else 0
         units = len(self.chain_groups) if self.has_gaps else len(multi["tapes"])
         self.cores_call = int(max(1, min(self.cores, units)))
-        self.tapes = [tape_fields(t) for t in multi["tapes"]]
+        memo = {}
+        self.tapes = [tape_fields(t, memo) for t in multi["tapes"]]
         self.t0events = list(t0events or [])
         self.cond_zero_states = list(cond_zero_states or [])
         self.equil_zero_states = list(equil_zero_states or [])
@@ -282,8 +301,11 @@ class Run:
             if e0 is None:
                 return None
             return self._keep_rows(key, _with_gap_order(e0, int(Mtot)))
+        # the jets of the chain continue those of a call at a lower order
+        jets = hashlib.sha256(repr((self.chain_content(idx), point.tobytes(), int(p), int(Mtot),
+                                    np.asarray(z, dtype=np.int64).tobytes())).encode()).hexdigest()
         r = _core.sym_obs_chain_rows(self.chain_tapes(idx), self.n_leaves, self.n_states, z, point, p, int(Nt),
-                                     int(Mtot), int(threads), int(Mtot) == 0)
+                                     int(Mtot), int(threads), int(Mtot) == 0, jets)
         if not ok(r):
             return None
         e = {"Nt": int(r["Nt"]), "plain": bool(r["plain"]), "N": int(r["N"]), "nz": len(z),
@@ -293,6 +315,16 @@ class Run:
              "stag": np.atleast_1d(np.asarray(r["stag"], dtype=np.int32)),
              "ranks": None if r.get("ranks") is None else np.atleast_1d(np.asarray(r["ranks"], dtype=np.int64))}
         return self._keep_rows(key, e)
+
+    def chain_content(self, idx):
+        """A digest of what the kernel reads of the tapes `idx`, memoized."""
+        memo = self.__dict__.setdefault("_chain_content", {})
+        key = tuple(idx)
+        if key not in memo:
+            memo[key] = hashlib.sha256(repr([sorted((k, v.tolist() if hasattr(v, "tolist") else v)
+                                                    for k, v in self.tapes[i].items())
+                                             for i in idx]).encode()).hexdigest()
+        return memo[key]
 
     def _keep_rows(self, key, e):
         """Keep the rows `e` of chain_rows under `key`."""
@@ -388,6 +420,13 @@ class Run:
     def block_threads(self):
         """Threads per block call: one with gaps, else all cores."""
         return 1 if self.has_gaps else self.cores
+
+    def kernel_tapes(self):
+        """The tapes for a kernel call over every tape (kernel_tapes), formed once."""
+        kt = self.__dict__.get("_kernel_tapes")
+        if kt is None or kt[0] is not self.tapes:
+            kt = self._kernel_tapes = (self.tapes, kernel_tapes(self.tapes))
+        return kt[1]
 
     def chain_tapes(self, idx):
         """The tapes at the indices `idx`."""

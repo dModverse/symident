@@ -272,3 +272,42 @@ def test_a_skipped_verification_point_widens_the_bound(monkeypatch):
     # three pairs among three draws, one among two
     kernel = [r.info["bound"]["probability"] - r.info["order_bound"] for r in (r0, r1)]
     assert kernel[0] > 0 and kernel[1] == pytest.approx(3 * kernel[0], rel=1e-6)
+
+
+def _has_msolve():
+    from symident.sym.msolve import MsolveMissingError, _msolve_binary
+    try:
+        _msolve_binary()
+    except MsolveMissingError:
+        return False
+    return True
+
+
+needs_msolve = pytest.mark.skipif(not _has_msolve(), reason="needs msolve")
+
+
+@needs_msolve
+def test_a_simple_resting_point_modulo_a_prime_proves_the_resting_state():
+    m = si.Model({"x": "k1 - k2*x*z", "z": "k3 - k4*z"}, {"y": "s*x"})
+    rest = si.detect(m, equilibrate=True).info["resting"]
+    assert rest["exists"] == "proven" and rest["bound"] is None
+
+
+@needs_msolve
+def test_balances_without_a_resting_state_raise_with_an_error_bound():
+    import random
+
+    import sympy as spy
+
+    from symident.errors import InputError
+    from symident.sym.restcheck import modular_decision
+    # z rests at k3/k4, where the balance of x is k1 - k2*k3/k4, nonzero for generic values
+    m = si.Model({"x": "k1 - k2*z", "z": "k3 - k4*z"}, {"y": "s*x"})
+    with pytest.raises(InputError, match="error bound"):
+        si.detect(m, equilibrate=True)
+    k1, k2, k3, k4, z = spy.symbols("k1 k2 k3 k4 z")
+    out = modular_decision([k1 - k2 * z, k3 - k4 * z], ["x", "z"], True, random.Random(1))
+    assert out["exists"] == "no" and out["draws"] == ["no"] * 3 and 0 < out["bound"] < 1
+    # a balance identically zero leaves a resting set of positive dimension: no simple point
+    out = modular_decision([k3 - k4 * z, spy.Integer(0) * z], ["x", "z"], True, random.Random(1))
+    assert out["exists"] == "open"

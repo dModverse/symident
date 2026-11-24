@@ -3,7 +3,6 @@
 import contextlib
 import math
 import re
-import time
 import warnings
 from fractions import Fraction
 
@@ -165,7 +164,7 @@ def positive_set_of(positive, coords):
     return [p for p in positive if p in set(coords)]
 
 
-DOMAIN = {"positive": None, "real_carriers": [], "no_roots": False, "sgn_cache": None, "deadline": None,
+DOMAIN = {"positive": None, "real_carriers": [], "no_roots": False, "sgn_cache": None,
           "bounds": []}
 
 
@@ -340,19 +339,16 @@ def _absorb_exact(expts, cf):
 
 
 def budget_spent():
-    """Whether the work budget or the deadline of the section search is spent, without spending a unit."""
-    cap, d = DOMAIN.get("work_cap"), DOMAIN["deadline"]
-    return (cap is not None and DOMAIN.get("work", 0) > cap) or (d is not None and time.monotonic() > d)
+    """Whether the work cap of the section search is spent, without spending a unit."""
+    cap = DOMAIN.get("work_cap")
+    return cap is not None and DOMAIN.get("work", 0) > cap
 
 
-def time_up():
-    """Whether the work budget of the section search, one unit per call, or the deadline of the search is spent."""
+def work_up():
+    """Whether the work cap of the section search is spent, one unit per call."""
     DOMAIN["work"] = DOMAIN.get("work", 0) + 1
     cap = DOMAIN.get("work_cap")
-    if cap is not None and DOMAIN["work"] > cap:
-        return True
-    d = DOMAIN["deadline"]
-    return d is not None and time.monotonic() > d
+    return cap is not None and DOMAIN["work"] > cap
 
 
 def sgn(pp, depth=0):

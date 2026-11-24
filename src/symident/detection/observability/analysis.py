@@ -1,6 +1,7 @@
 """Observability over GF(p) for all conditions: saturated kernel, certified Lie order, scalings, residual directions."""
 
 import re
+import time
 import warnings
 
 import numpy as np
@@ -10,8 +11,9 @@ from ...errors import SYMPY_FAILS, InapplicableError, RouteError, swallow, sympy
 from ...gfp import PRIMES, SpanTest, in_span, null_residues, random_point, uniform_point, verify_prime
 from ...par import thread_map
 from ...rexpr import sym_sort
-from ...sym.msolve import MsolveMissingError, msolve_timeout
+from ...sym.msolve import MsolveMissingError
 from ...sym.parse import model_sympify
+from ...sym.shared import kernel_tapes
 from ..classify import joint_expand_scal, peel_scalings, report_physical
 from ..closedform import recast_backsub
 from ..conditions import scaling_component
@@ -26,11 +28,13 @@ from ..fields import (
     rank_of,
     rank_score,
     regime_keys,
+    scaling_tapes,
     static_fields,
 )
 from ..rank import nullspace_basis, saturate_certify
 from ..verify import verify_in_nullspace
-from .context import Run, ok, strs
+from . import select
+from .context import Run, ints, ok, strs
 from .guard import saturation_guard
 from .joint import JointSystem
 from .plain import PlainSystem
@@ -60,6 +64,14 @@ def _rational_forms(exprs):
 
 # steps of the search that rewrites a direction from resting states into coordinates
 _REWRITE_STEPS = 64
+
+
+def _int_weight(w, p):
+    """An integer weight modulo p; 0 for a weight symbolic in a coordinate, which leaves the rank a lower bound."""
+    try:
+        return int(str(w)) % p
+    except ValueError:
+        return 0
 
 
 def _in_rational_span(w, ws):
@@ -162,7 +174,7 @@ class Analysis:
         def leaves():
             return np.vstack([np.asarray(pp[:run.n_leaves], dtype=np.int64) for pp in point_list])
         if self.can_batch and n > 0:
-            return _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, run.z_slots, leaves(),
+            return _core.sym_obs_null_batch(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots, leaves(),
                                             list(prime_vec), int(Nt), run.cores)
         if run.has_gaps and not run.ss_constraint and not self.joint and not self.transient and \
                 not run.nuis_cols and n > 0:
@@ -174,7 +186,7 @@ class Analysis:
                                                         list(prime_vec), int(Nt), int(run.mtot), run.cores,
                                                         list(run.nt_cap))
         if self.transient and not self.joint and not run.has_gaps and not run.nuis_cols and n > 0:
-            os_ = _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, run.z_slots, leaves(),
+            os_ = _core.sym_obs_null_batch(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots, leaves(),
                                            list(prime_vec), int(Nt), run.cores)
             return [self.sys.with_relations(os_[i], point_list[i], prime_vec[i]) for i in range(n)]
         if self.chunked and n > 0:
@@ -199,6 +211,68 @@ class Analysis:
             if self.joint:
                 self.sys.warm_off = warm_saved
 
+    def cover_tapes(self):
+        """The tapes of the conditions whose rows reach the rank of all of them at the base point (sym_obs_cover),
+        formed once; None where the path has no cover or every condition is needed. Kernels on them propose
+        values only: every closed form is checked on all conditions."""
+        run, sc = self.run, self.sc
+        if "_cover" in self.__dict__:
+            return self._cover
+        self._cover = None
+        if not self.can_batch or len(run.tapes) < 16:
+            return None
+        r = _core.sym_obs_cover(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots,
+                                np.asarray(sc["point0"][:run.n_leaves], dtype=np.int64), PRIMES[0],
+                                int(sc["nt_used"]), int(sc["rank"]), run.cores)
+        if ok(r) and int(r["rank"]) == int(sc["rank"]) and len(ints(r["conditions"])) < len(run.tapes):
+            self._cover = kernel_tapes([run.tapes[i] for i in ints(r["conditions"])])
+            if run.timing:
+                print(f"[sym] cover: {len(ints(r['conditions']))} of {len(run.tapes)} conditions reach rank "
+                      f"{int(sc['rank'])}", flush=True)
+        return self._cover
+
+    def kbatch_cover(self, point_list, prime_vec, Nt):
+        """kbatch() on the cover of the conditions where there is one."""
+        tapes = self.cover_tapes()
+        if tapes is None or not point_list:
+            return self.kbatch(point_list, prime_vec, Nt)
+        run = self.run
+        M = np.vstack([np.asarray(pp[:run.n_leaves], dtype=np.int64) for pp in point_list])
+        return _core.sym_obs_null_batch(tapes, run.n_leaves, run.n_states, run.z_slots, M, list(prime_vec),
+                                        int(Nt), run.cores)
+
+    def lanes(self):
+        """Whether each column of V annihilates the rows of the cover at each of many points, from jets seeded
+        along the columns (sym_obs_annihilates_batch): per point a boolean array, None at a point without
+        the rows; None without the path."""
+        if not self.can_batch:
+            return None
+        run = self.run
+
+        def f(points, primes, Nt, V, tapes=None):
+            if tapes is None:
+                tapes = self.cover_tapes() or run.kernel_tapes()
+            M = np.vstack([np.asarray(pp[:run.n_leaves], dtype=np.int64) for pp in points])
+            o = _core.sym_obs_annihilates_batch(tapes, run.n_leaves, run.n_states, run.z_slots, M, list(primes),
+                                                int(Nt), np.asarray(V, dtype=np.int64) % int(primes[0]), run.cores)
+            if o is None:
+                return None
+            return [np.asarray(x["zero"], dtype=bool) if ok(x) else None for x in o]
+        return f
+
+    def dir_batch(self):
+        """Whether each column of V annihilates all rows, in one pass over the conditions; None without the path."""
+        run = self.run
+        if run.has_gaps or run.ss_constraint or self.recast or run.nuis_cols or self.transient:
+            return None
+
+        def f(pt, q, Nt, V):
+            o = _core.sym_obs_annihilates(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots,
+                                          np.asarray(pt[:run.n_leaves], dtype=np.int64), q, run.exact_nt(Nt),
+                                          np.asarray(V, dtype=np.int64) % q, run.cores)
+            return [bool(x) for x in np.atleast_1d(o["zero"])] if ok(o) else None
+        return f
+
     def dir_call(self):
         """Whether a direction annihilates all rows, from jets along it; None without the path."""
         run = self.run
@@ -206,7 +280,7 @@ class Analysis:
             return None
 
         def f(pt, q, Nt, v):
-            o = _core.sym_obs_directional(run.tapes, run.n_leaves, run.n_states, run.z_slots,
+            o = _core.sym_obs_directional(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots,
                                           np.asarray(pt[:run.n_leaves], dtype=np.int64), q, run.exact_nt(Nt),
                                           np.asarray(v, dtype=np.float64), run.cores)
             if not ok(o):
@@ -306,7 +380,7 @@ class Analysis:
             x = np.zeros(sys.n_shared, dtype=np.int64)
             for k, w in v.items():
                 if k in shared:
-                    x[shared.index(k)] = int(w) % PRIMES[0]
+                    x[shared.index(k)] = _int_weight(w, PRIMES[0])
             rows.append(x)
         if rows:
             self.rank_cap = self.nz - int(_core.sym_rref_mod(np.vstack(rows).astype(np.float64),
@@ -346,7 +420,8 @@ class Analysis:
                               nt_min_block=nt_min_block, prep=sys.sat_prep if self.joint else None,
                               rank_cap=self.rank_cap, block_profile=block_profile, set_caps=self._sat_caps,
                               checks=not (self.stacked_first and (not self.stacked_quick or run.ss_constraint)),
-                              longest_first=run.has_gaps and not self.joint)
+                              longest_first=run.has_gaps and not self.joint,
+                              stacked_profile=sys.stacked_profile() if self.stacked_first else None)
         if sc is None:
             if run.ss_constraint and run.ss_why is not None:
                 warnings.warn("no steady-state point over the finite field after "
@@ -802,6 +877,8 @@ class Analysis:
         def grows(r2):
             return int(_core.sym_rref_mod(r2.astype(np.float64), P0)["rank"]) > rows.shape[0]
         for v in ws:
+            if any(k in pp and not re.fullmatch(r"-?[0-9]+", str(w)) for k, w in v.items()):
+                continue
             x = np.zeros(len(pp), dtype=np.int64)
             for k, w in v.items():
                 if k in pp:
@@ -840,23 +917,22 @@ class Analysis:
         # under the diagonal start the base point need not solve directly, other points may
         bases = [self.point0_solved] + ([random_point(len(self.point0_solved), seed=k)
                                         for k in range(1, 4)] if sys.diag is not None else [])
-        with msolve_timeout(float(state.env_value("DIRECTSECS", "120"))):
-            pt_d = None
-            for base in bases:
-                try:
-                    pt_d = sys.sat_prep(base, rounds=2)
-                except Exception as exc:
-                    swallow(exc, "direct kernel point")
-                    pt_d = None
-                if pt_d is not None:
-                    break
-            if pt_d is None:
-                pt_d = self.point0_solved
+        pt_d = None
+        for base in bases:
             try:
-                rc = self.kcall4(pt_d, PRIMES[0], sc["nt_used"], sc.get("mtot_used") or 0)
-            except Exception as e:
-                swallow(e, "direct kernel")
-                rc = {"ok": False, "why": str(e)}
+                pt_d = sys.sat_prep(base, rounds=2)
+            except Exception as exc:
+                swallow(exc, "direct kernel point")
+                pt_d = None
+            if pt_d is not None:
+                break
+        if pt_d is None:
+            pt_d = self.point0_solved
+        try:
+            rc = self.kcall4(pt_d, PRIMES[0], sc["nt_used"], sc.get("mtot_used") or 0)
+        except Exception as e:
+            swallow(e, "direct kernel")
+            rc = {"ok": False, "why": str(e)}
         direct = ok(rc) and nz - rank_of(rc) == ker_dim
         if state.env("LIEDIAG"):
             print("[liediag] direct kernel for the continued conditions: " +
@@ -876,8 +952,9 @@ class Analysis:
     def _peel(self):
         """The exact scalings of the model as tangents in the nullspace."""
         from ...sym.scaling import scaling_symmetries_multi
-        model_lines = [strs(t.get("model_lines")) for t in self.multi["tapes"]]
-        obs_lines = [strs(t.get("obs_lines")) for t in self.multi["tapes"]]
+        tapes = self.multi["tapes"] if self.joint else scaling_tapes(self.multi)
+        model_lines = [strs(t.get("model_lines")) for t in tapes]
+        obs_lines = [strs(t.get("obs_lines")) for t in tapes]
         keys = ["\n".join([*m, "\x1f", *o]) for m, o in zip(model_lines, obs_lines)]
         keep = [i for i, k in enumerate(keys) if k not in keys[:i]]
         try:
@@ -890,7 +967,7 @@ class Analysis:
             res = None
         # a scaling is exact where initial values and events are checked too: those of the whole model come first
         ws = self.exact_scalings(self.scal_fixed)
-        states = {l.split("=", 1)[0].strip() for t in self.multi["tapes"] for l in strs(t.get("model_lines"))}
+        states = {l.split("=", 1)[0].strip() for t in tapes for l in strs(t.get("model_lines"))}
 
         def lift(w):
             # a scaling acts on the states by the scaling weights; with unknown inputs the lift gives their change
@@ -908,7 +985,8 @@ class Analysis:
             return [], np.zeros((self.nz, 0), dtype=np.int64)
         peel = peel_scalings(res, self.znames, self.nz, np.asarray(self.sc["point0"])[self.z_slots],
                              PRIMES[0], self.N,
-                             modulo=(self.free_cols, self.run.nuis_cols) if self.run.nuis_cols else None)
+                             modulo=(self.free_cols, self.run.nuis_cols) if self.run.nuis_cols else None,
+                             shifts={str(r["L"]) for r in self.recast or [] if not r.get("inverted")})
         return peel["scaling"], peel["Bmat"]
 
     def _condition_scalings(self, model_lines, obs_lines, keys, keep, known):
@@ -1149,6 +1227,7 @@ class Analysis:
         if not self.joint or not lines or not states:
             return dirs
         coords = {z for z in self.znames if not _CSUFFIX.search(z)}
+        atoms = set(self.atom_names or [])
         try:
             eqs = [model_sympify(ln.split("=", 1)[1]) for ln in lines]
         except SYMPY_FAILS as exc:
@@ -1161,8 +1240,9 @@ class Analysis:
                 out.append(d)
                 continue
             try:
+                # entries of the leaves of terms at rest leave the report, resting states in them stay
                 held = any(states & {str(x) for x in model_sympify(v).free_symbols}
-                           for v in vec.values())
+                           for k, v in vec.items() if k not in atoms)
                 out.append(self._rewrite_in_coords(d, vec, eqs, states, coords) if held else d)
             except SYMPY_FAILS as exc:
                 sympy_fail(exc)
@@ -1506,7 +1586,7 @@ class Analysis:
         for i, v in enumerate(ws):
             for k, w in v.items():
                 if k in coords:
-                    V[i, coords.index(k)] = int(w) % PRIMES[0]
+                    V[i, coords.index(k)] = _int_weight(w, PRIMES[0])
         if self.static_rows is not None and all(c in self.phys_params0 for c in coords):
             V = np.vstack([V, np.asarray(self.static_rows)[:, [self.phys_params0.index(c) for c in coords]]])
         k = int(_core.sym_rref_mod(V.astype(np.float64), PRIMES[0])["rank"]) if V.size else 0
@@ -1582,10 +1662,97 @@ def observability_analytic_multi(multi, closed_form=False, cores=1, equil_zero_s
                                  n_gaps=0, implicit_steady_state=False, control=None, verify=False,
                                  codim_spec=None):
     """The observability analysis of compiled tapes; the raw result or None."""
-    an = Analysis(multi, closed_form, cores, equil_zero_states, cond_zero_states, t0events, n_conditions,
-                  chain_of, n_gaps, implicit_steady_state, control, verify, codim_spec)
-    out = an.execute()
-    if isinstance(out, dict):
-        an.run.stage("done")
-        out["timing"] = list(an.run.stages)
-    return out
+    K = len(multi.get("tapes") or [])
+
+    def build(idx):
+        """The Analysis of the conditions `idx`."""
+        def part(x):
+            x = list(x or [])
+            return [x[i] for i in idx] if len(x) == K else x
+        m = multi if len(idx) == K else select.restrict(multi, idx)
+        return Analysis(m, closed_form, cores, equil_zero_states, part(cond_zero_states), part(t0events),
+                        n_conditions, part(chain_of), n_gaps, implicit_steady_state, control, verify, codim_spec)
+
+    def analyze(idx):
+        an = build(idx)
+        out = an.execute()
+        if isinstance(out, dict):
+            an.run.stage("done")
+            out["timing"] = list(an.run.stages)
+        return out
+    if select.eligible(multi, n_gaps, implicit_steady_state):
+        out = _on_selection(multi, build, analyze, select.resting(multi, implicit_steady_state), cores)
+        if out is not None:
+            return out
+    return analyze(list(range(K)))
+
+
+def _rest_on(build, conds, d):
+    """_rest_proof() of the direction `d` on the resting conditions `conds`, at a point with the first of them seeded
+    forward; the reason where it does not apply."""
+    from .proof import _rest_proof
+    try:
+        an = build(conds)
+        if an.sys.chained:
+            an.sys.unchain()
+        for i in range(len(an.sys.cont_off)):
+            an.sys.cont_off[i] = True
+        pt = random_point(an.run.n_leaves, seed=session.current().seed("selection rest proof") % (1 << 31))
+        pt = an.sys.sat_prep(pt, rounds=2)
+        if pt is None:
+            return "no resting state at a random point"
+        an.sc = {"point0": pt}
+        return _rest_proof(an, d)
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return f"{type(exc).__name__}"
+    except Exception as exc:
+        swallow(exc, "selection rest proof")
+        return f"{type(exc).__name__}"
+
+
+def _on_selection(multi, build, analyze, rest, cores):
+    """The analysis on the conditions that change the rank at a random point, with each direction proven on the
+    others; None where that does not pay or a direction is not shown on a condition left out. With `rest`, the
+    conditions start at rest."""
+    t0 = time.monotonic()
+    K = len(multi["tapes"])
+    if rest:
+        sel = select.choose_resting(build(list(range(K))), *select.taking_order(multi["tapes"]))
+    else:
+        sel = select.choose(multi, cores)
+    if sel is None:
+        return None
+    kept = sel["kept"]
+    for rnd in range(select._ROUNDS):
+        if 2 * len(kept) > K:
+            return None
+        if state.env("TIMING"):
+            print(f"[select] {len(kept)} of {K} conditions ({sel['structures']} structures) at Lie order "
+                  f"{sel['lie_order']}, rank {sel['rank']} at the point, {time.monotonic() - t0:.1f}s", flush=True)
+        out = analyze(kept)
+        if not isinstance(out, dict) or out.get("rerun_blocks"):
+            return out
+        nt = int(out.get("lie_order_used") or 0)
+        if not rest and nt > sel["lie_order"] and out["rank"] < out["dim"]:
+            # the conditions that raise the rank of the kept ones at the order the analysis reached
+            more = select.choose(multi, cores, nt, kept)
+            sel["lie_order"] = nt
+            if more is None:
+                return None
+            if set(more["kept"]) - set(kept):
+                sel["rank"] = more["rank"]
+                kept = more["kept"]
+                continue
+        cov = select.cover(multi, out, kept, cores, rest=(lambda conds, d: _rest_on(build, conds, d)) if rest
+                           else None)
+        if cov is None:
+            return None
+        if cov["ok"]:
+            out["selection"] = {"kept": list(kept), "conditions": K, "structures": sel["structures"],
+                                "lie_order": sel["lie_order"], "rank_at_point": sel["rank"], "rounds": rnd + 1,
+                                "dropped_by": cov["how"], "seconds": round(time.monotonic() - t0, 3)}
+            out["conditions"] = K
+            return out
+        kept = sorted(set(kept) | set(cov["add"]))
+    return None

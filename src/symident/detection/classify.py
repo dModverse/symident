@@ -136,8 +136,9 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
     return result
 
 
-def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None):
-    """Independent scalings of all conditions with tangent in the nullspace (modulo `modulo`), exact per entry."""
+def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None, shifts=()):
+    """Independent scalings of all conditions with tangent in the nullspace (modulo `modulo`), exact per entry; a
+    coordinate in `shifts` is translated by the weight."""
     scaling = []
     Bmat = np.zeros((nz, 0), dtype=np.int64)
     env = {z: int(v) for z, v in zip(znames, zval)}
@@ -164,7 +165,12 @@ def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None):
             v[zi[k]] = w % P
         if not np.any(v):
             continue
-        tangent = (v * (np.asarray(zval, dtype=np.int64) % P)) % P
+        moved = set(names) & set(shifts)
+        if moved and not d.get("exact"):
+            continue
+        scale = np.asarray(zval, dtype=np.int64) % P
+        scale[[zi[k] for k in moved]] = 1
+        tangent = (v * scale) % P
         if modulo is not None and N.shape[1]:
             free, nuis = modulo
             proj = (N.astype(object) @ tangent[free].astype(object)) % P
@@ -177,6 +183,12 @@ def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None):
         Bmat = np.concatenate([Bmat, tangent.reshape(nz, 1)], axis=1)
         order = sorted(range(len(names)), key=lambda i: names[i].encode())
         supp = [names[i] for i in order]
+        if moved:
+            # a translated coordinate: the generator itself, not weights
+            vec = {names[i]: wsym[i] if names[i] in shifts else scaling_component(wsym[i], names[i]) for i in order}
+            scaling.append({"support": supp, "vector": vec, "type": "general", "closed_form": True,
+                            "exact": bool(d.get("exact", False))})
+            continue
         scaling.append({"support": supp, "vector": {names[i]: wsym[i] for i in order},
                         "type": "scaling", "closed_form": True, "exact": bool(d.get("exact", False)),
                         **({"state_components": d["state_components"],

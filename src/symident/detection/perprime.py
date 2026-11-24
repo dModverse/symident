@@ -5,7 +5,7 @@ import numpy as np
 from .. import _core
 from ..gfp import PRIMES, invmod, mono_table, mulmod, null_residues, rat_recon
 from ..rexpr import sym_sort
-from .closedform import expired, poly_string, simplify
+from .closedform import poly_string, simplify
 from .relevance import direction_relevance
 from .sparse import _pivots_eq
 
@@ -95,7 +95,6 @@ def _fallback(pool_next, znames, base_nv, reason):
                       "type": "general", "closed_form": False, "reason": reason}}
 
 
-_TIMEOUT = "reconstruction time budget (reconst_control(timeout=)) exceeded"
 
 
 def _lift_const(vals, prs):
@@ -122,8 +121,6 @@ def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, 
         support_cols = [support_cols[i] for i in keep]
         rel_by_entry = [rel_by_entry[i] for i in keep]
     relevant = sorted({x for r in rel_by_entry for x in r})
-    if expired(ctrl):
-        return _fallback(pool_next, znames, base_nv, _TIMEOUT)
 
     def ex(v):
         return [x for x in v if x not in aux]
@@ -167,8 +164,6 @@ def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, 
     def ensure_prime(j, need):
         p = PRIMES[j]
         while bank_u[j].shape[0] < need and not dead_p[j]:
-            if expired(ctrl):
-                break
             have = bank_u[j].shape[0]
             chunk = max(1, min(need - have + 4, 128))
             uv = []
@@ -209,8 +204,6 @@ def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, 
         cols_i = [relevant.index(r) for r in reli]
         fitted = None
         for degree in range(ctrl["degree_cap"] + 1):
-            if expired(ctrl):
-                return _fallback(box["pool_next"], znames, base_nv, _TIMEOUT)
             mons = mono_table(len(reli), degree)
             need = 2 * mons.shape[0] - 1 + ctrl["sample_slack"]
             if need > ctrl["perprime_cap"]:

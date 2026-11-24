@@ -65,12 +65,54 @@ def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, po
     return False
 
 
+def verify_batch(entries, anchors, znames, leaf_names, n_point, nt_used, batch_fn, nz, tries=6, need=2):
+    """verify_in_nullspace of several closed forms at the same fresh seeded points, each point one pass of
+    `batch_fn(point, q, Nt, V)` over every condition for all of them: per entry True or False, None where an
+    entry does not evaluate on the leaves (checked alone)."""
+    q = verify_prime()
+    leaves = set(leaf_names)
+    out = [None] * len(entries)
+    todo = [i for i, e in enumerate(entries)
+            if all(nm in znames and set(_IDENT.findall(str(ex))) <= leaves for nm, ex in e["vector"].items())]
+    passed = {i: 0 for i in todo}
+    off = set()
+    for k in range(tries):
+        live = [i for i in todo if out[i] is None and i not in off]
+        if not live:
+            break
+        pt = uniform_point(n_point, q, session.current().seed("verify kernel batch", k))
+        env = {nm: int(pt[j]) for j, nm in enumerate(leaf_names)}
+        V = np.zeros((nz, len(live)), dtype=np.int64)
+        for col, i in enumerate(live):
+            V[anchors[i], col] = 1
+            for nm, ex in entries[i]["vector"].items():
+                got = eval_modq(ex, env, q)
+                if got is None:
+                    off.add(i)
+                    break
+                V[znames.index(nm), col] = got % q
+        res = batch_fn(pt, q, int(nt_used), V)
+        if res is None:
+            continue
+        for col, i in enumerate(live):
+            if i in off:
+                continue
+            if not res[col]:
+                out[i] = False
+                continue
+            passed[i] += 1
+            if passed[i] >= need:
+                out[i] = True
+                session.note("draws", k + 1)
+    for i in todo:
+        if out[i] is None and i not in off:
+            out[i] = False
+    return out
+
+
 def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_call, q, cols=None, env_fn=None):
     """The check of verify_in_nullspace() at one point: True, False, "partial" when only the entries it can
     evaluate pass, or None where the kernel does not exist."""
-    rq = kcall(pt, q, int(nt_used))
-    if not rq.get("ok"):
-        return None
     env = {nm: int(pt[i]) for i, nm in enumerate(leaf_names)}
     if env_fn is not None:
         # the states at the point are the resting states the kernel was taken at
@@ -95,13 +137,17 @@ def _in_nullspace_at(entry, f, znames, leaf_names, pt, nt_used, kcall, nz, dir_c
             known[col] = False
         else:
             v[col] = got % q
-    free = _free_cols(rq, nz)
-    if not free:
-        return False
+    # with every entry known, the direction is in the kernel where it annihilates every row
     if dir_call is not None and known.all():
         ok = dir_call(pt, q, int(nt_used), v)
         if ok is not None:
             return bool(ok)
+    rq = kcall(pt, q, int(nt_used))
+    if not rq.get("ok"):
+        return None
+    free = _free_cols(rq, nz)
+    if not free:
+        return False
     basis = np.stack([null_residues(rq, fcol, q) for fcol in free]) % q
     if known.all() or all(known[c] for c in free):
         recon = np.zeros(nz, dtype=np.int64)

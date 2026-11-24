@@ -33,7 +33,7 @@ def kwargs_of(spec):
         kw["scalings_only"] = True
     if s.get("control"):
         c = {snake(k): (math.inf if v == "Inf" else v) for k, v in s["control"].items()
-             if k not in ("certifyPoly", "certifyPolyDeg")}
+             if k not in ("certifyPoly", "certifyPolyDeg", "timeout")}
         kw["control"] = reconst_control(**c)
     return kw
 
@@ -73,13 +73,11 @@ def kw_of(a):
         # the specs pass arguments the reduction no longer has
         if k == "verbose":
             continue
-        if isinstance(v, list) and len(v) == 1 and k in ("d_poly", "d_darboux", "d_exp", "timeout"):
+        # the reduction has no time limit
+        if k == "timeout":
+            continue
+        if isinstance(v, list) and len(v) == 1 and k in ("d_poly", "d_darboux", "d_exp"):
             v = v[0]
-        if k == "timeout" and v == "Inf":
-            v = math.inf
-        # a time limit this short stops the section search; zero stops it on any machine
-        if k == "timeout" and isinstance(v, (int, float)) and v < 1:
-            v = 0
         if k in ("fixed", "positive") and isinstance(v, list) and v and isinstance(v[0], bool):
             v = v[0]
         kw[k] = v

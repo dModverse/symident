@@ -10,8 +10,14 @@ from ..errors import SYMPY_FAILS, InputError, sympy_fail
 from ..rexpr import eval_numeric, get_symbols, replace_symbols
 from ..sym.parse import _is_rational_expr, _make_local_parse
 
+# the pivot sets that tie with the chosen one by structure, at most this many in all
+PIVOT_CHOICES = 6
+# rays of the cone of nonnegative conservation laws past which the order of the species decides the basis
+_RAY_CAP = 400
+
 
 def _coef_matrix(totals, states, shift=0.0):
+    """(C, species, sets): the coefficients of the species in the linear totals, other symbols at a generic point."""
     stset = set(states)
     sets = [[s for s in get_symbols(e) if s in stset] for e in totals.values()]
     species = list(dict.fromkeys(s for st in sets for s in st))
@@ -28,10 +34,6 @@ def _coef_matrix(totals, states, shift=0.0):
             env1[s] = 1.0
             C[i, species.index(s)] = eval_numeric(e, env1) - base
     return C, species, sets
-
-
-# the pivot sets that tie with the chosen one by structure, at most this many in all
-PIVOT_CHOICES = 6
 
 
 def _rank(M):
@@ -279,10 +281,6 @@ def check_conserved(totals, f):
                          f"the right-hand sides is {str(d).replace('**', '^')}, not zero")
 
 
-# rays of the cone of nonnegative conservation laws past which the order of the species decides the basis
-_RAY_CAP = 400
-
-
 def _primitive(v):
     """The integer vector of the direction of the rational vector `v`, coprime entries."""
     v = [Fraction(x) for x in v]
@@ -437,10 +435,18 @@ def conserved_totals(smatrix, species):
     from sympy.polys.domains import QQ
     from sympy.polys.matrices import DomainMatrix
     n = len(species)
-    rows = [[QQ(_exact(x).numerator, _exact(x).denominator) for x in r] for r in smatrix]
-    if not rows:
+    rows = {}
+    for i, r in enumerate(smatrix):
+        nz = {}
+        for j, x in enumerate(r):
+            if x:
+                q = _exact(x)
+                nz[j] = QQ(q.numerator, q.denominator)
+        if nz:
+            rows[i] = nz
+    if not len(smatrix):
         return {}
-    red, piv = DomainMatrix(rows, (len(rows), n), QQ).to_sparse().rref()
+    red, piv = DomainMatrix(rows, (len(smatrix), n), QQ).rref()
     R = red.rep
     laws = []
     for free in (c for c in range(n) if c not in set(piv)):
@@ -560,35 +566,66 @@ def _sink_cluster(M):
     return zero, [r for r in drained if len(r) > 1 and not set(r) & set(zero)]
 
 
+def _one_way(smatrix, rates):
+    """The reactions with each net rate whose numerator has terms of both signs split into a forward and a backward
+    reaction, the terms of each sign over the denominator: every rate then runs one way."""
+    S = np.nan_to_num(np.asarray(smatrix, dtype=float))
+    rows, out = [], []
+    for i, r in enumerate(rates):
+        r = str(r)
+        parts = None
+        try:
+            _, parse = _make_local_parse([r])
+            e = parse(r)
+            if _is_rational_expr(e):
+                num, den = spy.fraction(spy.together(e))
+                terms = spy.Add.make_args(spy.expand(num))
+                pos = spy.Add(*[t for t in terms if t.as_coeff_Mul()[0] > 0])
+                neg = -spy.Add(*[t for t in terms if t.as_coeff_Mul()[0] < 0])
+                if pos != 0 and neg != 0:
+                    parts = [str(pos / den), str(neg / den)]
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+        if parts is None:
+            rows.append(S[i])
+            out.append(r)
+            continue
+        rows += [S[i], -S[i]]
+        out += parts
+    return np.asarray(rows, dtype=float).reshape(-1, S.shape[1] if S.ndim == 2 else 0), out
+
+
 def _zero_states(smatrix, species, rates, forcings):
     """(zero, branches): the states forced to zero at rest with the forcings at zero, and _sink_cluster() branches."""
     S = np.nan_to_num(np.asarray(smatrix, dtype=float))
     if S.size == 0:
         return [], []
-    rates = [str(r) for r in rates]
+    S, rates = _one_way(S, rates)
     vs = [set(get_symbols(r)) for r in rates]
     allv = set().union(*vs) if vs else set()
     dead = [f for f in forcings if f in set(species) | allv]
     live = [True] * len(rates)
     check = list(range(len(rates)))
     branches = []
+    col = {sp: j for j, sp in enumerate(species)}
     while True:
         for i in check:
             live[i] = not _expr_is_zero(rates[i], set(dead))
         L = np.array(live, dtype=bool)
-        consumed = [sp for j, sp in enumerate(species) if np.any(S[L, j] < 0)]
-        alive = [s for s in species if s not in dead]
+        consumed = {sp for j, sp in enumerate(species) if np.any(S[L, j] < 0)}
+        alive = [s for s in species if s not in set(dead)]
+        # the alive reactants of each reaction
+        reactants = (S[:, [col[a] for a in alive]] < 0).sum(axis=1)
         newdead = []
         for sp in [s for s in alive if s in consumed]:
-            j = species.index(sp)
+            j = col[sp]
             prod = np.nonzero(S[:, j] > 0)[0]
             # consumed but no longer produced: zero where it is the single reactant of a consuming reaction
-            single = any(live[i] and S[i, j] < 0 and
-                         all(S[i, species.index(o)] >= 0 for o in alive if o != sp) for i in range(len(rates)))
-            if len(prod) and not any(live[k] for k in prod) and single:
+            single = bool(np.any(L & (S[:, j] < 0) & (reactants == 1)))
+            if len(prod) and not np.any(L[prod]) and single:
                 newdead.append(sp)
         if not newdead:
-            cl, br = _sink_cluster(S[L][:, [species.index(a) for a in alive]])
+            cl, br = _sink_cluster(S[L][:, [col[a] for a in alive]])
             branches = [[alive[k] for k in r] for r in br]
             newdead = [alive[k] for k in cl if alive[k] in consumed]
         newdead = [s for s in newdead if s not in dead]
@@ -611,3 +648,23 @@ def equil_zero_branches(smatrix, species, rates, forcings):
         notes.append(f"the reaction of {' + '.join(r)} drains them: at rest one of them is zero "
                      f"({' or '.join(f'{x} = 0' for x in r)}); the result holds for {r[0]} = 0")
         taken.append(r[0])
+
+
+def reduced_by_totals(odes, observables, events, totals, eliminated):
+    """The model on the level sets of the conserved `totals`: the species `eliminated` solved through the totals as
+    parameters, and an event on a species of a total changing that total, which becomes a state without dynamics.
+    Returns the right-hand sides, the observables (a dict or a list of dicts), the events and the solved species."""
+    cq = substitute_cq(totals, dict(odes), list(odes), [], prefer=list(eliminated))
+    recon = {ci["elim_state"]: ci["recon_expr"] for ci in cq["cq_info"]}
+    if set(recon) != set(eliminated):
+        raise ValueError("the conserved totals do not solve for the eliminated species " + ", ".join(eliminated))
+    keys, vals = list(recon), list(recon.values())
+
+    def through(o):
+        return None if o is None else {str(k): replace_symbols(keys, vals, str(v)) for k, v in dict(o).items()}
+    f = {k: v for k, v in cq["f"].items() if k not in recon}
+    obs = [through(o) for o in observables] if isinstance(observables, (list, tuple)) else through(observables)
+    events, moved = cq_events(events, totals, cq["cq_info"]) if events else ([], [])
+    for t in moved:
+        f[t] = "0"
+    return f, obs, events, recon
