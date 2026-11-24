@@ -6,7 +6,6 @@ import numpy as np
 
 from .. import state
 from ..gfp import PRIMES, null_residues
-from .closedform import expired
 from .sparse import _ints, _pivots_eq
 
 
@@ -70,8 +69,6 @@ def build_shared_bank(union, need_pts, point0, pool, pool_next, kbatch, pivots, 
     while len(points) < need_pts and tries < 30 * need_pts:
         if not points and tries >= min(2 * need_pts, 48):
             break
-        if ctrl is not None and expired(ctrl):
-            return {"ok": False, "pool_next": pool_next}
         chunk = max(1, min(need_pts - len(points) + 5, 30 * need_pts - tries))
         if not points:
             chunk = min(chunk, 24)

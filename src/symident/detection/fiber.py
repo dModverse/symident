@@ -1,7 +1,6 @@
 """The number of parameter values with the output of a generic one: a count of discrete symmetries."""
 
 import os
-import subprocess
 import tempfile
 
 import sympy as spy
@@ -29,20 +28,20 @@ def output_coefficients(f, g, ic, order):
     return out
 
 
-def _msolve_degree(eqs, names, p, timeout):
-    """(dimension, degree) of the ideal of `eqs` over GF(p) from msolve, or None on failure."""
+def _msolve_degree(eqs, names, p):
+    """(dimension, degree) of the ideal of `eqs` over GF(p) from msolve, or None on failure or a system past the caps
+    of msolve."""
     import ast
 
     from ..sym.msolve import _msolve_binary
+    from . import work
+    if work.msolve_too_large(names, eqs):
+        return None
     with tempfile.TemporaryDirectory() as td:
         fi, fo = os.path.join(td, "in.ms"), os.path.join(td, "out.ms")
         with open(fi, "w") as fh:
             fh.write(", ".join(names) + "\n" + str(p) + "\n" + ",\n".join(eqs) + "\n")
-        try:
-            r = subprocess.run([_msolve_binary(), "-f", fi, "-o", fo, "-P", "1"], capture_output=True,
-                               text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return None
+        r = work.run_msolve([_msolve_binary(), "-f", fi, "-o", fo, "-P", "1"])
         txt = ""
         if os.path.exists(fo):
             with open(fo) as fh:
@@ -55,7 +54,7 @@ def _msolve_degree(eqs, names, p, timeout):
     return (0, int(data[1][2]))
 
 
-def solution_count(f, g, ic, coords, order, p=1000003, timeout=600):
+def solution_count(f, g, ic, coords, order, p=1000003):
     """{"count", "order", "prime"} of points over GF(p) sharing the output coefficients of a random one, or None."""
     try:
         eqs, names = _fiber_equations(f, g, ic, coords, order, p)
@@ -64,7 +63,7 @@ def solution_count(f, g, ic, coords, order, p=1000003, timeout=600):
         return None
     if eqs is None:
         return None
-    out = _msolve_degree(eqs, names, p, timeout)
+    out = _msolve_degree(eqs, names, p)
     if out is None or out[1] is None:
         return None
     return {"count": out[1], "order": int(order), "prime": int(p)}
@@ -102,4 +101,3 @@ def _fiber_equations(f, g, ic, coords, order, p):
     # msolve reads no brackets: the saturation as an expanded polynomial
     eqs.append(str(spy.expand(spy.Symbol(w) * sat - 1)).replace("**", "^").replace(" ", ""))
     return eqs, names + [w]
-

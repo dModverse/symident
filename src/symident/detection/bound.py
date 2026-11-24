@@ -175,17 +175,6 @@ def no_degree(exprs):
     return None
 
 
-def state_degrees(model_lines, obs_lines, states):
-    """field_degrees() of the right-hand sides and observables in the states, every other symbol a constant."""
-    try:
-        f = [model_sympify(str(l).split("=", 1)[1]) for l in model_lines]
-        g = [model_sympify(str(l).split("=", 1)[1]) for l in obs_lines]
-    except SYMPY_FAILS as exc:
-        sympy_fail(exc)
-        return None
-    return field_degrees(f, g, [spy.Symbol(str(x)) for x in states])
-
-
 def total_degrees(model_lines, obs_lines):
     """field_degrees() of the right-hand sides and observables in all their symbols, None where not rational."""
     try:

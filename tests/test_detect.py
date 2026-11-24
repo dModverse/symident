@@ -353,6 +353,18 @@ def test_only_drained_species_rest_at_zero():
     assert set(_zero_states(rx["stoichiometry"], rx["species"], rx["rates"], [])[0]) == {"A", "B"}
 
 
+def test_a_reversible_net_rate_drains_neither_side():
+    # a reaction whose net rate has terms of both signs runs both ways and drains neither side
+    assert _zero_states([[-1, 1]], ["A", "B"], ["(kf * A - kb * B)*(1)"], [])[0] == []
+    assert _zero_states([[-1, 1]], ["A", "B"], ["(Vf*A - Vr*B)/(1 + A + B)"], [])[0] == []
+    assert sorted(_zero_states([[-1, 1], [0, -1]], ["A", "B"], ["kf*A - kb*B", "kd*B"], [])[0]) == ["A", "B"]
+    m = si.Model({"A": "-(kf*A - kb*B)", "B": "kf*A - kb*B"}, {"y": "A"}, equilibrate=True, reduce_cq=True,
+                 reactions={"species": ["A", "B"], "smatrix": [[-1, 1]], "rates": ["kf*A - kb*B"]},
+                 totals={"T": "A + B"}, trafo={"kf": "kf", "kb": "kb", "T": "4"})
+    res = si.detect(m, cores=1)
+    assert res.rank == 1 and [sorted(d["support"]) for d in res.symmetries] == [["kb", "kf"]]
+
+
 def test_a_drained_reaction_with_several_reactants_forces_no_zero():
     from symident.detection.core import _ode_zeros
     # a drained reaction with two reactants rests where one of them is zero
@@ -1174,6 +1186,27 @@ def test_stacked_rank_proven_by_fields():
     assert gd.rank == ref.rank
     assert gd.info.get("rank_proven") is not None
     assert gd.gauge == ["K"]
+
+
+def test_stacked_narrowing_reads_off_and_closes_columns_without_rows(monkeypatch):
+    # many conditions: the narrow route reads a cover of them; a state no output reads leaves columns without rows
+    f = {"x": "k1*u - k2*x", "w": "k3*x - k4*w", "z": "k5*x - k6*z"}
+    g = {"y": "s*x + o1 + o2", "yz": "z"}
+    cg = {"rows": [f"c{i}" for i in range(20)], "cols": {"u": list(range(1, 21))}}
+    monkeypatch.setenv("SYMIDENT_NOJET", "1")
+    with state.options(stacked_min=0):
+        res = detect(f, g, conditions=cg, reconstruct=True)
+    routes = {d.get("route") for d in res.symmetries}
+    assert {"narrow (a column without rows)", "narrow read-off (constant)"} <= routes
+    assert res.info["rank_status"]["status"] == "proven"
+    assert res.rank == res.dim - 5
+    # the lifts in forked workers prove the same directions
+    from symident.detection.observability import proof
+    monkeypatch.setattr(proof, "_PAR_LIFTS", 1)
+    with state.options(stacked_min=0):
+        par = detect(f, g, conditions=cg, reconstruct=True, cores=2)
+    assert sorted(map(str, par.symmetries)) == sorted(map(str, res.symmetries))
+    assert par.info["rank_status"]["status"] == "proven"
 
 
 def test_constant_state_events_per_segment():

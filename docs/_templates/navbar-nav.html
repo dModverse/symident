@@ -1,0 +1,25 @@
+{# The top-level pages in the header; a page with chapters opens a menu of them. #}
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+  {%- for doc, title, chapters in symident_nav %}
+    {%- set active = pagename == doc or pagename.startswith(doc ~ "/") %}
+    {%- if chapters %}
+    <li class="nav-item dropdown{{ ' current active' if active }}">
+      <button class="btn dropdown-toggle nav-item nav-link" type="button" data-bs-toggle="dropdown"
+              aria-expanded="false" aria-controls="nav-{{ doc }}">{{ title }}</button>
+      <ul id="nav-{{ doc }}" class="dropdown-menu">
+        <li><a class="nav-link dropdown-item nav-internal" href="{{ pathto(doc) }}">Overview</a></li>
+        {%- for chapter, name in chapters %}
+        <li><a class="nav-link dropdown-item nav-internal{{ ' current active' if pagename == chapter }}"
+               href="{{ pathto(chapter) }}">{{ name }}</a></li>
+        {%- endfor %}
+      </ul>
+    </li>
+    {%- else %}
+    <li class="nav-item{{ ' current active' if active }}">
+      <a class="nav-link nav-internal" href="{{ pathto(doc) }}">{{ title }}</a>
+    </li>
+    {%- endif %}
+  {%- endfor %}
+  </ul>
+</nav>

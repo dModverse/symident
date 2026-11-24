@@ -10,23 +10,11 @@ from .. import session
 from ..install import find_msolve
 from .gfpoly import _dp_coeffs, _dp_subst_rat, _dp_value, _gf_roots, note_branch
 
-_MSOLVE_TIMEOUT = 600
 _MSOLVE_THREADS = 1
 
 
 class MsolveMissingError(RuntimeError):
     """Raised when the msolve executable is not available."""
-
-
-@contextlib.contextmanager
-def msolve_timeout(seconds):
-    """Time limit of one msolve call in seconds within the block."""
-    global _MSOLVE_TIMEOUT
-    old, _MSOLVE_TIMEOUT = _MSOLVE_TIMEOUT, seconds
-    try:
-        yield
-    finally:
-        _MSOLVE_TIMEOUT = old
 
 
 @contextlib.contextmanager
@@ -79,10 +67,12 @@ def _const_reduce(dps, nv, p):
 
 
 def _msolve_points(polys, vars_idx, p):
-    """Interior points of `polys` over GF(p) as a list of {index: value}, or a fail-dict."""
+    """Interior points of `polys` over GF(p) as a list of {index: value}, or a fail-dict, also for a system past the
+    caps of msolve (detection.work.CAPS)."""
     import ast
-    import subprocess
     import tempfile
+
+    from ..detection import work
     names = {i: "x%d" % i for i in vars_idx}
 
     def pstr(d):
@@ -94,16 +84,18 @@ def _msolve_points(polys, vars_idx, p):
 
     eqs = [pstr(d) for d in polys] + ["w*" + "*".join(names[i] for i in vars_idx) + "-1"]
     vs = [names[i] for i in vars_idx] + ["w"]
+    why = work.msolve_too_large(vs, eqs)
+    if why:
+        session.note("limits", f"msolve: a resting state was not solved: {why}")
+        return {'ok': False, 'why': why}
     with tempfile.TemporaryDirectory() as td:
         fi, fo = os.path.join(td, "in.ms"), os.path.join(td, "out.ms")
         with open(fi, "w") as fh:
             fh.write(", ".join(vs) + "\n" + str(p) + "\n" + ",\n".join(eqs) + "\n")
-        try:
-            r = subprocess.run([_msolve_binary(), "-f", fi, "-o", fo, "-P", "1", "-t", str(_MSOLVE_THREADS)],
-                               capture_output=True, text=True, timeout=_MSOLVE_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            session.note("limits", f"msolve: a resting state was not solved within {_MSOLVE_TIMEOUT:g} s")
-            raise
+        r = work.run_msolve([_msolve_binary(), "-f", fi, "-o", fo, "-P", "1", "-t", str(_MSOLVE_THREADS)])
+        if r.capped:
+            session.note("limits", f"msolve: a resting state was not solved: {r.capped}")
+            return {'ok': False, 'why': r.capped}
         txt = ""
         if os.path.exists(fo):
             with open(fo) as fh:

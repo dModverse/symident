@@ -1,26 +1,16 @@
 """Closed-form entries: monomial strings, rational fits from residues, back-substitution."""
 
 import re
-import time
 
 import numpy as np
 import sympy as spy
 
-from .. import _core, session
+from .. import _core
 from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import rat_recon
 from ..sym.charts import recast_backsub_expr
 from ..sym.modp import eval_rational_mod
 from ..sym.parse import _RPrinter, model_sympify
-
-
-def expired(ctrl):
-    """Whether the deadline in `ctrl` has passed; a passed deadline is recorded as a limit."""
-    d = ctrl.get("deadline")
-    if d is None or time.monotonic() <= d:
-        return False
-    session.note("limits", f"timeout: the reconstruction stopped after {ctrl.get('timeout')} s")
-    return True
 
 
 def mono_string(expo, vars_):
@@ -94,10 +84,15 @@ def recast_backsub(vector, recast):
     return out
 
 
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+
+
 def eval_modq(expr, env, q):
     """Rational expression at the integer point env modulo q; None if the denominator vanishes."""
+    # the names the expression holds: a point over many coordinates adds no symbol to the parse
+    names = [nm for nm in dict.fromkeys(_NAME.findall(str(expr))) if nm in env]
     try:
-        v = eval_rational_mod(str(expr), list(env.keys()), [int(x) for x in env.values()], int(q))
+        v = eval_rational_mod(str(expr), names, [int(env[nm]) for nm in names], int(q))
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None

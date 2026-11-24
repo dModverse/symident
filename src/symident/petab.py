@@ -495,6 +495,35 @@ def _start(t):
     return -math.inf if t.strip().lower() == "-inf" else float(t)
 
 
+def _at_inf(t):
+    return str(t).strip().lower() in ("inf", "+inf")
+
+
+def _resting(exps, of_row, rows, is_state):
+    """`exps` with each experiment that starts without a preequilibration, in one period, and whose measurements are
+    all at t = inf read at rest under the condition of that period, when every other experiment starts with a
+    preequilibration; and the names of those experiments."""
+    times = {}
+    for r, e in zip(rows, of_row):
+        times.setdefault(e, []).append(r.get("time", ""))
+    rest = [e for e, per in exps.items() if len(per) == 1 and _start(per[0][0]) > -math.inf
+            and all(_at_inf(t) for t in times.get(e, ["0"]))]
+    if not rest:
+        return exps, []
+    other = [e for e, per in exps.items() if e not in set(rest) and _start(per[0][0]) > -math.inf]
+    if other:
+        warnings.warn(f"{len(rest)} experiment(s) measured only at t = inf are read as a trajectory, since "
+                      f"{len(other)} other(s) start without a preequilibration and symident starts all conditions "
+                      "alike", stacklevel=3)
+        return exps, []
+    out = dict(exps)
+    for e in rest:
+        t, c = exps[e][0]
+        # the parameters keep their values after the rest, so that no period changes them
+        out[e] = [("-inf", c), (t, {k: v for k, v in c.items() if k not in is_state})]
+    return out, rest
+
+
 def _periods_v2(tabs):
     """Experiments as {name: [(start, {target: value}), ...]} from the v2 experiment table."""
     cond = {}
@@ -513,6 +542,23 @@ def _periods_v2(tabs):
     return exps, of_row
 
 
+def _drop_species(net, values):
+    """The network `net` without the species of `values`, their values substituted in the rates."""
+    cols = [j for j, x in enumerate(net["species"]) if x not in values]
+    return dict(net, species=[net["species"][j] for j in cols],
+                stoichiometry=[[r[j] for j in cols] for r in net["stoichiometry"]],
+                rates=[_sub(r, values) for r in net["rates"]])
+
+
+def _retotal(net, trafos, starts):
+    """The conserved totals of `net`, with the value of each total at the start entered in the trafos."""
+    from .detection.cq import conserved_totals
+    totals = conserved_totals(net["stoichiometry"], net["species"]) or None
+    for tr, x0 in zip(trafos, starts):
+        tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
+    return totals
+
+
 def read_petab(path):
     """A :class:`Model` from a PEtab problem.
 
@@ -527,11 +573,12 @@ def read_petab(path):
         One condition per experiment (v1: per pair of preequilibration and simulation
         condition) with measurements. The estimated parameters stay symbols; every other
         parameter takes the nominal or SBML value. ``Model.equilibrate`` is set when every
-        experiment starts with a preequilibration, and ``Model.reduce_cq`` when the
-        preequilibrated network has conserved totals. ``Model.positive`` holds the estimated
-        parameters of the model on a log scale or with a positive lower bound. ``m.petab``
-        lists the experiments, the estimated parameters, the fixed values, the renamed ids and,
-        under ``without_effect``, the estimated parameters that no remaining term holds.
+        experiment starts with a preequilibration or is a readout at rest, and
+        ``Model.reduce_cq`` when the preequilibrated network has conserved totals.
+        ``Model.positive`` holds the estimated parameters of the model on a log scale or with a
+        positive lower bound. ``m.petab`` lists the experiments, the estimated parameters, the
+        fixed values, the renamed ids, under ``without_effect`` the estimated parameters that no
+        remaining term holds and under ``at_rest`` the experiments read at rest.
 
     Raises
     ------
@@ -568,6 +615,14 @@ def read_petab(path):
     between two expressions at a time that every experiment fixes becomes a step state, off
     during a preequilibration, that an event switches on at that time or at the start.
 
+    An experiment in one period without a preequilibration whose measurements are all at time
+    ``inf`` is a readout at rest: the system starts from the values of the condition, rests
+    under that condition, and only the resting values of the observables enter. The reading
+    assumes that a resting state exists and is the one the experiment reaches. An experiment
+    with a finite measurement time is a trajectory; so is every experiment when one
+    of them starts without a preequilibration and is not a readout at rest, with a warning,
+    since all conditions start alike.
+
     A parameter value that names another parameter, such as an initial assignment, takes the
     value of that parameter in each experiment. States that start at 0 in every experiment,
     that no event sets and whose rates vanish where all of them are 0 leave the model.
@@ -603,6 +658,7 @@ def read_petab(path):
         odes[k], initial[k] = "0", value.pop(k)
         states.append(k)
     is_state = set(states)
+    exps, at_rest = _resting(exps, of_row, tabs["measurements"], is_state)
     pre = [per[0][0].strip().lower() == "-inf" for per in exps.values()]
     if any(pre) and not all(pre):
         raise PEtabError("some experiments start with a preequilibration and others do not; "
@@ -636,8 +692,7 @@ def read_petab(path):
         net = None
     totals = None
     if net is not None and all(pre):
-        from .detection.cq import conserved_totals
-        totals = conserved_totals(net["stoichiometry"], net["species"]) or None
+        totals = _retotal(net, [], [])
     trafos, events, starts = [], [], []
     for i, per in enumerate(exps.values()):
         first = per[0][1]
@@ -737,10 +792,7 @@ def read_petab(path):
         net = dict(net, rates=[_sub(net["rates"][j], const) for j in keep],
                    stoichiometry=[net["stoichiometry"][j] for j in keep]) if keep else None
         if net is not None and all(pre):
-            from .detection.cq import conserved_totals
-            totals = conserved_totals(net["stoichiometry"], net["species"]) or None
-            for tr, x0 in zip(trafos, starts):
-                tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
+            totals = _retotal(net, trafos, starts)
     # states that start at 0 in every experiment, that no event sets and whose rates vanish where all of them are 0
     # stay 0, also through a preequilibration that starts from these values: they leave the model
     hit = {e["var"] for e in events}
@@ -761,15 +813,9 @@ def read_petab(path):
                 tr.pop(x, None)
                 x0.pop(x, None)
         if net is not None:
-            cols = [j for j, x in enumerate(net["species"]) if x not in nil]
-            net = dict(net, species=[net["species"][j] for j in cols],
-                       stoichiometry=[[r[j] for j in cols] for r in net["stoichiometry"]],
-                       rates=[_sub(r, zero) for r in net["rates"]])
+            net = _drop_species(net, zero)
             if all(pre):
-                from .detection.cq import conserved_totals
-                totals = conserved_totals(net["stoichiometry"], net["species"]) or None
-                for tr, x0 in zip(trafos, starts):
-                    tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
+                totals = _retotal(net, trafos, starts)
         states = [x for x in states if x not in nil]
     # a species without dynamics, events or inputs that starts at one value everywhere is that value
     moved = {e["var"] for e in events} | set(inputs) | set(steps)
@@ -780,15 +826,9 @@ def read_petab(path):
         observables = [{k: _sub(f, still) for k, f in o.items()} for o in observables]
         events = [dict(e, value=_sub(str(e["value"]), still)) for e in events]
         if net is not None:
-            cols = [j for j, x in enumerate(net["species"]) if x not in still]
-            net = dict(net, species=[net["species"][j] for j in cols],
-                       stoichiometry=[[r[j] for j in cols] for r in net["stoichiometry"]],
-                       rates=[_sub(r, still) for r in net["rates"]])
+            net = _drop_species(net, still)
             if all(pre):
-                from .detection.cq import conserved_totals
-                totals = conserved_totals(net["stoichiometry"], net["species"]) or None
-                for tr, x0 in zip(trafos, starts):
-                    tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
+                totals = _retotal(net, trafos, starts)
     if all(pre):
         # a state without dynamics stays at the initial value through the preequilibration
         for tr, x0 in zip(trafos, starts):
@@ -843,5 +883,5 @@ def read_petab(path):
                       "coordinates of the detection; m.petab['without_effect'] lists them", stacklevel=2)
     m.petab = {"experiments": names, "estimated": estimated,
                "fixed": {k: v for k, v in value.items() if k != v}, "renamed": sb["renamed"],
-               "without_effect": without}
+               "without_effect": without, "at_rest": at_rest}
     return m

@@ -82,13 +82,21 @@ SWITCHES = {
     "NOGROUP": ("route", "no translation groups in the narrow route"),
     "NOFWDSEED": ("route", "no forward seed of the resting states"),
     "NODIAG": ("route", "no diagonal start: resting conditions continued from the forward one only"),
+    "NOSHARED": ("route", "a tape per condition also where the conditions differ only in the values of symbols"),
+    "NOSELECT": ("route", "every condition analyzed, also where many conditions add nothing to the rank"),
     "LIEPLATEAU": ("number", "orders the rank stays flat before the saturation ends (3)"),
     "LIEPLATEAU_BLOCK": ("number", "the plateau per condition block; 0 for one plateau"),
     "VERIFY_MARGIN": ("number", "orders the saturation guard checks past the reported one (6)"),
     "JETWORK": ("number", "characters of jets the jet route may form (1000000)"),
-    "DIRECTSECS": ("number", "seconds msolve may take for the direct kernel (120)"),
     "BLOCKMB": ("number", "megabytes of Taylor values per column block of the kernel (an eighth of the physical "
                           "memory over the cores, 256 to 1024); environment only"),
+    "JETMB": ("number", "megabytes of the jets the kernel keeps for calls at higher orders (eight column blocks); "
+                        "environment only"),
+    "KERNEL_MODE": ("debug", "forward or reverse fixes the mode of the kernel rows, check builds every call in "
+                             "both and raises where the rows differ; environment only"),
+    "MSOLVE_GB": ("number", "gigabytes of address space of one call of msolve in discrete() where memory is "
+                            "not given (8)"),
+    "FIBER_TERMS": ("number", "terms of the equations of the fiber that one count of discrete() takes (400000)"),
     "MSOLVE": ("install", "path of the msolve executable"),
     "CACHE": ("install", "directory of the symident cache"),
     "MSOLVE_VERSION": ("install", "msolve version install_msolve() builds"),

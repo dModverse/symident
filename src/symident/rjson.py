@@ -121,8 +121,6 @@ def reduce_json(obj, args, env=None):
     a = json.loads(args) if args else {}
     kw = {}
     for k, v in a.items():
-        if k == "timeout" and v == "Inf":
-            v = math.inf
         kw["separable_" if k == "separable" else k] = v
     if kw.get("positive") is None:
         kw["positive"] = detection_positive(o)

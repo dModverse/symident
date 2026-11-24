@@ -8,8 +8,11 @@ from ... import _core, session, state
 from ...errors import SYMPY_FAILS, swallow, sympy_fail
 from ...gfp import PRIMES, invmod, mulmod
 from ...rexpr import sym_sort
+from ...sym.shared import kernel_tapes
 from ..groups import shift_groups, translation_groups
 from ..interp import exp_backsub, interpolate_direction
+from ..perprime import _lift_const
+from ..relevance import direction_relevance
 from ..verify import verify_in_nullspace
 from .context import ints, ok, strs
 
@@ -30,6 +33,8 @@ class Narrow:
         self.nt = an.sc["nt_used"]
         self.conds = None
         self.fpos = None
+        self.sub = None
+        self.wide = False
 
         def res(rp, p, zvals=None):
             return self.residue(rp, p)
@@ -60,7 +65,8 @@ class Narrow:
                                                        run.exact_nt(Nt, run.mtot), int(run.mtot), run.cores,
                                                        list(run.nt_cap))
             return [run.modulo_nuisance(o, q, nc) for o, q in zip(os_, prime_vec)] if nc else os_
-        os_ = _core.sym_obs_null_batch(run.tapes, run.n_leaves, run.n_states, self.zs, M, list(prime_vec),
+        tapes = run.kernel_tapes() if self.sub is None else self.sub[1]
+        os_ = _core.sym_obs_null_batch(tapes, run.n_leaves, run.n_states, self.zs, M, list(prime_vec),
                                        run.exact_nt(Nt), run.cores)
         if not an.transient:
             return [run.modulo_nuisance(o, q, nc) for o, q in zip(os_, prime_vec)] if nc else os_
@@ -80,6 +86,29 @@ class Narrow:
                         "pivots": np.atleast_1d(rr["piv"]).astype(np.int64),
                         "rank": int(rr["rank"]), "dim": self.m})
         return [run.modulo_nuisance(o, q, nc) for o, q in zip(out, prime_vec)] if nc else out
+
+    def _cover(self):
+        """The conditions whose rows on the support reach the rank of all of them at the base point (sym_obs_cover):
+        their kernel on the support is the kernel of all conditions there, so the fits read them alone; the
+        closed form is checked on every condition afterwards."""
+        an, run = self.an, self.an.run
+        if an.joint or run.has_gaps or an.transient or run.nuis_cols or len(run.tapes) < 16:
+            return
+        r = _core.sym_obs_cover(run.kernel_tapes(), run.n_leaves, run.n_states, self.zs,
+                                np.asarray(an.sc["point0"][:run.n_leaves], dtype=np.int64), PRIMES[0],
+                                run.exact_nt(self.nt), self.m - 1, run.cores)
+        if not ok(r) or int(r["rank"]) != self.m - 1:
+            return
+        idx = ints(r["conditions"])
+        self.sub = (idx, kernel_tapes([run.tapes[i] for i in idx]))
+
+    def lanes(self):
+        """Analysis.lanes on the conditions the kernels of the support read, at the Lie order of the support."""
+        f = self.an.lanes()
+        if f is None or self.an.joint:
+            return None
+        tapes = self.an.run.kernel_tapes() if self.sub is None else self.sub[1]
+        return lambda points, primes, Nt, V: f(points, primes, min(Nt, self.nt), V, tapes)
 
     def kc(self, point, p, Nt):
         """The kernel on the column subset at `point` mod `p`, Lie order `Nt`."""
@@ -128,7 +157,8 @@ class Narrow:
         if state.env("NOJET") or self.m > 6:
             return None
         from ...sym.jets import jet_generator
-        chains = run.chain_groups if run.has_gaps else [[i] for i in range(len(an.multi["tapes"]))]
+        chains = run.chain_groups if run.has_gaps else \
+            [[i] for i in (range(len(an.multi["tapes"])) if self.sub is None else self.sub[0])]
         conds = []
         for idx in chains:
             segs = []
@@ -172,11 +202,24 @@ class Narrow:
                 "vector": {k: str(x).replace("**", "^") for k, x in jg["vector"].items()},
                 "type": "general", "closed_form": True, "route": f"jets (order {int(jg['order'])})"}
 
+    def _entries_fit(self, ref, rel):
+        """Whether, past the direction cap, every entry stays within the cap of the sparse fit, so that no
+        translation group is needed."""
+        if not self.wide:
+            return False
+        an = self.an
+        r = direction_relevance(self.anchor, ref, ref["pivots"], an.z_slots, an.n_aug, an.sc["point0"], rel,
+                                self.res)
+        aux = set(an.aux_leaves)
+        return max([0] + [len([x for x in e if x not in aux]) for e in r["rel_by_entry"]]) <= \
+            an.ctrl["relevance_cap_sparse"]
+
     def _fit(self, ref, base0, rel):
         an, rec = self.an, self.rec
+        ctrl = dict(an.ctrl, relevance_cap_dir=an.n_aug) if self.wide else an.ctrl
         d = interpolate_direction(self.anchor, ref, ref["pivots"], an.znames, an.z_slots, an.leaf_names_aug,
                                   an.n_aug, base0, an.sc["pool"], rec.pool_next, an.sc["nt_used"], self.kc,
-                                  rel, self.res, an.ctrl, self.kb, aux_leaves=an.aux_leaves)
+                                  rel, self.res, ctrl, self.kb, aux_leaves=an.aux_leaves)
         rec.pool_next = d["pool_next"]
         r = dict(d["entry"])
         r.pop("relevant_leaves", None)
@@ -185,30 +228,88 @@ class Narrow:
         r.pop("fit_how", None)
         return r
 
+    def _read_off(self, want):
+        """The direction where the entries are constants, or constants times the coordinate (a scaling on the
+        support, the direction times the anchor coordinate): read at the base point, held at two fresh points and
+        lifted from the primes; None otherwise."""
+        an, sc, P = self.an, self.an.sc, PRIMES[0]
+        zs = an.z_slots
+        if not len(zs):
+            return None
+        a = self.anchor
+
+        def logw(v, pt, p):
+            z = np.asarray(pt, dtype=np.int64)[zs] % p
+            if not np.all(z[self.cols]):
+                return None
+            return np.array([mulmod(v[c], mulmod(z[a], invmod(int(z[c]), p), p), p) for c in self.cols],
+                            dtype=np.int64)
+        base0 = np.asarray(sc["point0"], dtype=np.int64)
+        w0 = logw(want, base0, P)
+        kinds = {"constant": want[self.cols] % P, "scaling": w0}
+        for _ in range(2):
+            pt = np.asarray(sc["pool"](self.rec.pool_next + np.arange(len(base0))), dtype=np.int64)
+            self.rec.pool_next += len(base0)
+            v = self.res(self.kc(pt, P, self.nt), P)
+            if v is None:
+                return None
+            got = {"constant": v[self.cols] % P, "scaling": logw(v, pt, P)}
+            kinds = {kd: x for kd, x in kinds.items()
+                     if x is not None and got[kd] is not None and np.array_equal(got[kd], x)}
+            if not kinds:
+                return None
+        kd = "constant" if "constant" in kinds else "scaling"
+        per = []
+        for p in PRIMES:
+            v = self.res(self.kc(base0, p, self.nt), p)
+            if v is None:
+                continue
+            per.append((v[self.cols] % p if kd == "constant" else logw(v, base0, p), p))
+        if not per or any(x is None for x, _ in per):
+            return None
+        vec = {}
+        for j, c in enumerate(self.cols):
+            w = _lift_const([int(x[j]) for x, _ in per], [p for _, p in per])
+            if w is None:
+                return None
+            nm = an.znames[c]
+            if w != "0":
+                vec[nm] = w if kd == "constant" else (nm if w == "1" else f"({w})*{nm}")
+        return {"support": sym_sort(list(vec)), "vector": vec, "type": "general", "closed_form": True,
+                "route": f"narrow read-off ({kd})"}
+
     def _shorter_order(self, ref, want):
-        """The lowest Lie order among 4, 8, 16, 32 that still gives the direction."""
-        for k in (4, 8, 16, 32):
-            if k >= self.nt:
-                break
+        """The lowest Lie order among the powers of two from 4 below the order of the kernel that still gives the
+        direction."""
+        k = 4
+        while k < self.nt:
             rk = self.kc(self.an.sc["point0"], PRIMES[0], k)
             bk = self.res(rk, PRIMES[0])
             if bk is not None and np.array_equal(bk, want):
                 self.nt = k
                 return rk
+            k *= 2
         return ref
 
     def run(self):
         """The direction as an entry, or None when the support does not contain it."""
         an, rec, sc, P = self.an, self.rec, self.an.sc, PRIMES[0]
         run, ctrl = an.run, an.ctrl
-        if self.m < 2:
+        if not self.m:
             return None
         if an.joint and any(_CSUFFIX.search(an.znames[c]) for c in self.cols):
             return None
+        if self.m == 1:
+            # a column without rows at the base point: the direction of the coordinate itself
+            nm = an.znames[self.anchor]
+            rec.tlog(f"narrow dir (anchor {nm}): a column without rows")
+            return self._checked({"support": [nm], "vector": {nm: "1"}, "type": "general", "closed_form": True,
+                                  "route": "narrow (a column without rows)"})
         self.fpos = self.cols.index(self.anchor)
         if an.joint and not self._touched():
             return None
         res = self.res
+        self._cover()
         ref = self.kc(sc["point0"], P, sc["nt_used"])
         base = res(ref, P)
         want = mulmod(self.bf % P, invmod(int(self.bf[self.anchor]) % P, P), P)
@@ -220,9 +321,26 @@ class Narrow:
             ref = self._shorter_order(ref, want)
         rec.tlog(f"narrow dir (anchor {an.znames[self.anchor]}): support {self.m} of {an.nz} columns, "
                  f"Lie order {self.nt}" + (f", {len(self.conds)} of {an.sys.kc} conditions" if an.joint else ""))
-        rel = rec.probe_groups(self.kb, ref["pivots"], rec.pool_next, res, ref)
+        # a support past the jets is fitted only within the relevance cap, so the probe stops past it; where the
+        # probe runs along the direction (Narrow.lanes) a sample costs one support kernel, and each entry is
+        # bounded by the caps of an entry alone
+        lanes = self.lanes()
+        cap = ctrl["relevance_cap_dir"] if self.m > 6 or state.env("NOJET") else None
+        if cap is not None:
+            e = self._read_off(want)
+            if e is not None:
+                return self._checked(e)
+            if lanes is not None:
+                cap, self.wide = an.n_aug, True
+        rel = rec.probe_groups(self.kb, ref["pivots"], rec.pool_next, res, ref, stop_above=cap,
+                               vecs=want.reshape(-1, 1), lanes=lanes)
         rec.pool_next += an.n_aug * (ctrl["probe_retries"] + 16)
-        groups = [] if state.env("NOGROUP") else translation_groups(rel, ref, res, self.kb, sc, P, run.n_leaves)
+        if rel is None:
+            return {"support": sym_sort([an.znames[c] for c in self.cols]), "type": "general", "closed_form": False,
+                    "reason": f"direction couples more than {cap} parameters, above relevance_cap_dir={cap}; "
+                              f"raise the relevant cap"}
+        groups = [] if state.env("NOGROUP") or self._entries_fit(ref, rel) else \
+            translation_groups(rel, ref, res, self.kb, sc, P, run.n_leaves)
         rec.pool_next += 4 * run.n_leaves
         base0 = np.array(sc["point0"], dtype=np.int64)
         mul = [v for g in groups if g.get("type") == "mul" for v in g["members"]]
@@ -232,7 +350,13 @@ class Narrow:
             ref1 = self.kc(pt1, P, sc["nt_used"])
             if res(ref1, P) is not None:
                 base0, ref = pt1, ref1
-                rel = rec.probe_groups(self.kb, ref["pivots"], rec.pool_next, res, ref, base0)
+                rel = rec.probe_groups(self.kb, ref["pivots"], rec.pool_next, res, ref, base0, stop_above=cap,
+                                       vecs=res(ref, P).reshape(-1, 1), lanes=lanes)
+                if rel is None:
+                    return {"support": sym_sort([an.znames[c] for c in self.cols]), "type": "general",
+                            "closed_form": False,
+                            "reason": f"direction couples more than {cap} parameters, above relevance_cap_dir={cap}; "
+                                      f"raise the relevant cap"}
                 rec.pool_next += an.n_aug * (ctrl["probe_retries"] + 16)
             else:
                 groups = [g for g in groups if g.get("type") != "mul"]
@@ -265,13 +389,26 @@ class Narrow:
                 return {"support": e["support"], "type": "general", "closed_form": False,
                         "reason": "translation-group back-substitution failed"}
             e["route"] = f"{e['route']}, {len(groups)} exchange group" + ("s" if len(groups) > 1 else "")
+        return self._checked(e)
+
+    def _checked(self, e):
+        """The closed form `e` checked at fresh points, or marked for the joint check of the narrow route."""
+        an, rec, sc = self.an, self.rec, self.an.sc
+        if rec.dir_batch is not None and not an.joint:
+            e["pending_check"] = self.anchor
+            return e
         if not verify_in_nullspace(e, self.anchor, an.znames, an.leaf_names_aug, sc["point0"], sc["nt_used"],
                                    an.kcall, rec.pool_next, an.nz, rec.dir_call,
                                    env_fn=an.sys.rest_env if an.joint else None):
             return {"support": e["support"], "type": "general", "closed_form": False,
                     "reason": "a closed form was reconstructed but failed verification at a fresh prime"}
-        eb = an.multi.get("exp_back") or {}
-        if eb.get("names"):
-            e.setdefault("checked", dict(e["vector"]))
-            e["vector"] = exp_backsub(e["vector"], eb, an.multi.get("exp_atoms"))
-        return e
+        return back_substituted(an, e)
+
+
+def back_substituted(an, e):
+    """The closed form `e` in the coordinates of the model, the checked form kept."""
+    eb = an.multi.get("exp_back") or {}
+    if eb.get("names"):
+        e.setdefault("checked", dict(e["vector"]))
+        e["vector"] = exp_backsub(e["vector"], eb, an.multi.get("exp_atoms"))
+    return e

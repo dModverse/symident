@@ -13,7 +13,7 @@ from ..rexpr import sym_sort
 from .darboux import apply_x
 from .expr import free_syms, red_locals, red_sympify, tri_solve
 from .scaling import mono_string
-from .sign import DOMAIN, is_real, num_sign, positive_set, set_positive, sgn, sgn_real, time_up
+from .sign import DOMAIN, is_real, num_sign, positive_set, set_positive, sgn, sgn_real, work_up
 
 
 def mono_parts(m):
@@ -190,6 +190,49 @@ def section_monotone(pr, preps, xi_of, loc, pts):
     return row
 
 
+def split_products(invariants, support):
+    """Balances u*v = 1 for an invariant A - B with A, B of one sign, u a positive coordinate of A and v one of B.
+
+    The orbits leave the domain where A or B vanishes, by the sign of the invariant; u*v tends to 0 at both exits."""
+    pos = positive_set()
+    sup = [v for v in support if pos is None or v in set(pos)]
+    out = []
+    for Ie in invariants:
+        try:
+            terms = spy.Add.make_args(spy.expand(spy.fraction(spy.together(Ie))[0]))
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            continue
+        if len(terms) != 2 or sgn(terms[0]) * sgn(terms[1]) != -1:
+            continue
+        own = [[v for v in sup if spy.Symbol(v) in t.free_symbols] for t in terms]
+        for u in own[0]:
+            for v in own[1]:
+                pr = ["*".join(sym_sort([u, v])), "1"]
+                if u != v and pr not in out:
+                    out.append(pr)
+    return out
+
+
+def section_jacobian(prs, preps, xi_of, loc):
+    """Whether the balance ratios `prs`, as many as the generators, have a Jacobian along them of one sign."""
+    if len(prs) != len(preps) or not prs:
+        return False
+    rows = []
+    for pr in prs:
+        ms = [red_sympify(m.replace("^", "**"), loc) for m in pr]
+        if sgn(ms[0] * ms[1]) == 0:
+            return False
+        rows.append([spy.expand(apply_x(xi_of[g], ms[0], loc) * ms[1] - ms[0] * apply_x(xi_of[g], ms[1], loc))
+                     for g in range(len(preps))])
+    try:
+        det = spy.expand(spy.Matrix(rows).det(method="berkowitz"))
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return False
+    return not det.is_zero and sgn(det) != 0
+
+
 def _monomial_section(pairs, sym):
     """The positive points with m1 = m2 for each pair of Laurent monomials as theta0 * u^K, or None."""
     rows, cs, names = [], [], []
@@ -253,7 +296,12 @@ def _owned(extra=()):
 
 
 def _vanishes(e):
-    return spy.cancel(e) == 0 or spy.simplify(e) == 0
+    if spy.cancel(e) == 0:
+        return True
+    # a radicand factored lets a square under the root leave it, by the signs of the symbols
+    rads = {a: spy.Pow(spy.factor(a.base), a.exp) for a in e.atoms(spy.Pow)
+            if a.exp.is_Rational and not a.exp.is_Integer}
+    return (bool(rads) and spy.cancel(e.xreplace(rads)) == 0) or spy.simplify(e) == 0
 
 
 def _linear_section(pairs):
@@ -784,7 +832,7 @@ def face_section(b, pins, dens=()):
     conditional = []
     pos = positive_set()
     for s in itertools.combinations(range(len(z_cand)), r):
-        if time_up():
+        if work_up():
             break
         Z = [z_ord[i] for i in s]
         sub_z = [(spy.Symbol(v), spy.Integer(0)) for v in Z]

@@ -6,7 +6,8 @@ Installation
    pip install symident
 
 Wheels exist for Linux (x86_64, aarch64, glibc 2.28 or newer; tested on Debian and
-Fedora), macOS (arm64) and Windows (x86_64), Python 3.10 to 3.15. Elsewhere, such as on
+Fedora), macOS (arm64) and Windows (x86_64), Python 3.10 to 3.15. They depend on NumPy, SciPy,
+SymPy and python-flint, which pip installs with them. Elsewhere, such as on
 Intel Macs, pip builds from source with a C++17 compiler and CMake; with OpenMP the kernel
 runs on several threads. Development version:
 ``pip install git+https://github.com/dModverse/symident``.
@@ -23,8 +24,8 @@ PEtab support
 The msolve solver
 -----------------
 
-`msolve <https://msolve.lip6.fr>`_ serves :meth:`~symident.Symmetries.discrete`,
-:meth:`~symident.Symmetries.solution_count` and
+`msolve <https://msolve.lip6.fr>`_ serves the global analysis (``detect(mode="global")``,
+:meth:`~symident.Symmetries.discrete`), :meth:`~symident.Symmetries.solution_count` and
 steady-state analyses (``equilibrate=True``) whose resting states need a coupled nonlinear
 polynomial solve. Without it these stop with :class:`~symident.sym.msolve.MsolveMissingError`;
 all other analyses run without it. On Linux and macOS

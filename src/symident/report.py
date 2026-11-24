@@ -220,13 +220,35 @@ def global_lines(res, width=None):
         return ["", _wrap(f"Global: not analyzed, {info['unsupported']}", "", width)]
     k = info.get("count")
     dom = sorted({c["in_domain"] for c in info.get("counts") or [] if c.get("in_domain") is not None})
+    route = (info.get("certificate") or {}).get("route")
+    order = f"{route['experiments']} experiments, order {max(route['orders'])}" if route else \
+        f"order {info.get('order')}"
     head = (f"{k} over the algebraic closure" if k is not None else "no finite count") + \
         (f", {' or '.join(map(str, dom))} in the domain" if dom else "") + \
-        f" (order {info.get('order')}" + (f", gap order {info['gap_order']}" if info.get("gap_order") else "") + \
+        f" ({order}" + (f", gap order {info['gap_order']}" if info.get("gap_order") else "") + \
         (", stable)" if info.get("order_stable") else ")")
     where = " of the reduced model" if info.get("reduced") else ""
     out = ["", f"Global: values{where} with the output of a generic one, counted at random points",
            _wrap(head, "  ", width)]
+    cert = info.get("certificate") or {}
+    if k is not None:
+        cb = cert.get("count_bound")
+        text = (f"exactly {k} values at a generic point, proven" if cert.get("complete") == "exact" else
+                f"at most {k} values at a generic point, error bound {cb:.3g}" if cb is not None else
+                "the count at a generic point rests on the axiom of the count" +
+                (f" ({cert['count_bound_why']})" if cert.get("count_bound_why") else ""))
+        out.append(_wrap(text, "  ", width))
+    if route:
+        out.append(_wrap("counted on experiments with shared parameters and free starts; no rational first "
+                         "integral, proven at one point of the parameters", "  ", width))
+    pin = cert.get("pinned") or {}
+    if not route and pin.get("count_bound") is not None:
+        rel = pin.get("relation") or {}
+        some = [f for f in pin["functions"] if f in (rel.get("checks") or {})] if pin.get("relation_bound") else []
+        out.append(_wrap(f"counted on {len(pin['functions'])} functions proven in the field of the output "
+                         f"coefficients and the output coefficients up to order {max(pin['orders'].values())}"
+                         + (f"; {len(some)} of the functions are coefficients of a relation of {rel.get('terms')} "
+                            "terms, verified at random points" if some else ""), "  ", width))
     for i, s in enumerate(res.get("discrete_symmetries") or [], 1):
         pd = s.get("preserves_domain")
         side = "maps the domain into itself" if pd is True else "leaves the domain" if pd is False else \
@@ -297,6 +319,10 @@ def summary_lines(res, verbose=False, width=None):
     if info.get("conditions") and info["conditions"] > 1:
         comp.append(f"{plural(info['conditions'], 'condition', 'conditions')}, "
                     f"{plural(info['segments'], 'segment', 'segments')}")
+    sel = info.get("selection")
+    if sel:
+        comp.append(f"selection: {len(sel['kept'])} of {sel['conditions']} conditions analyzed, each direction proven "
+                    "on the others (info['selection'])")
     sw = info.get("switching")
     if sw:
         comp.append("switches: " + ", ".join(
@@ -598,7 +624,8 @@ def reduction_lines(x, width=None, detail_call=DETAIL_CALL):
     if not x["removed"] and not x["remaining"]:
         return ["Nothing to reduce."] + branch_lines(x, width)
     out = [red_verdict(x)] + _level_lines(x, width) + red_chart_lines(x, width) + \
-        red_section_lines(x, width, detail_call=detail_call) + red_zero_lines(x, width) + branch_lines(x, width)
+        red_section_lines(x, width, detail_call=detail_call) + red_input_lines(x, width) + red_zero_lines(x, width) + \
+        branch_lines(x, width)
     for b in x["blocks"]:
         if b["status"] in ("reduced", "fixed"):
             continue
@@ -612,6 +639,22 @@ def reduction_lines(x, width=None, detail_call=DETAIL_CALL):
             out.append(f"  split orbits: {', '.join(sp['positive'])} where {sp['invariant']} > 0, "
                        f"{', '.join(sp['negative'])} where it is < 0")
     return out
+
+
+def red_input_lines(x, width=None):
+    """Per reduced block that unknown inputs absorb: the inputs, the proof and the condition of the section."""
+    groups = {}
+    for b in x.get("blocks") or []:
+        ui = b.get("inputs")
+        if not ui or b.get("status") != "reduced":
+            continue
+        proof = ui["proof"] if isinstance(ui["proof"], str) else " and ".join(ui["proof"])
+        how = {"inversion": "solved from the derivatives of the observables", "lift": "changed along a pointwise lift",
+               "inversion and lift": "solved from the observables or changed along a lift"}.get(proof, proof)
+        groups.setdefault((", ".join(ui["absorb"]), how, ui["condition"]), []).extend(b["labels"])
+    out = [_wrap(f"{{{', '.join(labs)}}}  {w} {how}: {cond}.", "  ", width)
+           for (w, how, cond), labs in groups.items()]
+    return ["", "Unknown inputs:"] + out if out else []
 
 
 def branch_lines(x, width=None):
@@ -658,7 +701,8 @@ def reduction_summary_lines(x, verbose=False, width=None, detailed=False, detail
     if not n_dir:
         return out + ["Nothing to reduce."]
     out += [red_verdict(x)] + red_chart_lines(x, width) + \
-        red_section_lines(x, width, detailed=detailed, detail_call=detail_call) + red_zero_lines(x, width)
+        red_section_lines(x, width, detailed=detailed, detail_call=detail_call) + red_input_lines(x, width) + \
+        red_zero_lines(x, width)
     out += ["", "Blocks"]
     rows = []
     for b in x["blocks"]:

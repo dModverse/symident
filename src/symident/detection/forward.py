@@ -21,7 +21,7 @@ from ..gfp import (
 from ..rexpr import sym_sort
 from ..sym.linalg import sym_rat_recon_big
 from ..sym.restforward import solve_forward_modular
-from .closedform import _strip_name, eval_modq, expired, poly_string, simplify
+from .closedform import _strip_name, eval_modq, poly_string, simplify
 
 
 def _nonzero_rows(B, p):
@@ -91,6 +91,8 @@ def _basis(rp, nz, p):
 
 # points of the shared bank of the forward route, each a kernel call
 _BANK_MAX = 600
+# leaves of all entries past which each entry has a separate bank
+_UNION_CAP = 48
 
 
 def _fit_entry(primes, bankU_rows, reli_cols, mons, vals_of, vars_):
@@ -142,7 +144,7 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
             supp = sym_sort([znames[i] for i in np.nonzero(v)[0]])
         return {"support": supp, "type": "general", "closed_form": False, "reason": reason}
 
-    if kcall_fwd is None or expired(ctrl):
+    if kcall_fwd is None:
         return [] if list_anchors else fb("forward path unavailable")
     rdiag = state.env("ROUTEDIAG")
     npt = len(sc["point0"])
@@ -263,14 +265,10 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
     groups = [cand[i:i + gsz] for i in range(0, len(cand), gsz)]
     single = []
     for gi, g in enumerate(groups, start=1):
-        if expired(ctrl):
-            return fb("forward: timeout in relevance")
         m = (moved(g, 7919 * gi + 1), moved(g, 7919 * gi + 2))
         if m[0] is not False or m[1] is not False:
             single.extend(g)
     for l in single:
-        if expired(ctrl):
-            return fb("forward: timeout in relevance")
         ch = np.zeros(len(phys_supp), dtype=bool)
         for dv in (3, 7, 11):
             pt = np.array(base0, dtype=np.int64)
@@ -299,8 +297,6 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
     def fill_bank_to(n):
         tries = 0
         while bank["V"][0].shape[0] < n and tries < 12 * n:
-            if expired(ctrl):
-                break
             tries += 1
             pt = np.array(base0, dtype=np.int64)
             pt[union_rel] = draw(len(union_rel))
@@ -328,8 +324,6 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
     entries = {znames[ac]: "1"}
     entry_reli = {znames[ac]: []}
     for i, c9 in enumerate(phys_supp):
-        if expired(ctrl):
-            return fb("forward: timeout in fitting")
         nm = znames[c9]
         reli = rel_by[i]
         if not reli:
@@ -347,8 +341,6 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
             entry_reli[nm] = []
             continue
         rr = rec_entry(reli, c9)
-        if rr is None and expired(ctrl):
-            return fb("forward: timeout in fitting")
         if rr is None:
             return fb(f"forward: entry {nm} not a bounded rational (deg>{d_cap})")
         entries[nm] = simplify(rr["expr"])
@@ -397,7 +389,7 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
     rprimes = all_primes()
     n_prime_fwd = max(2, min(3, len(rprimes) - 1))
     P1 = rprimes[0]
-    if kcall_fwd is None or expired(ctrl):
+    if kcall_fwd is None:
         return None
     rdiag = state.env("ROUTEDIAG")
     t_f = time.monotonic()
@@ -532,8 +524,6 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             """Leaves that move each entry, by halving the groups that move one, a level at a time."""
             level = [(lis, seed)]
             while level:
-                if expired(ctrl):
-                    return False
                 if map_fn is None:
                     chs = [shift_test(g, sd) for g, sd in level]
                 else:
@@ -567,17 +557,27 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             return None
         if rdiag:
             print(f"[fwds] relevance in {n_calls['n']} kernel calls ({el()})")
-        fwd_cap_dir = max(int(ctrl["relevance_cap_dir"]), 48)
-        ok_a = []
-        for a in range(len(acs)):
-            u = {x for r in rel_by[a] for x in r}
-            m = max((len(r) for r in rel_by[a]), default=0)
-            ok_a.append(len(u) <= fwd_cap_dir and m <= ctrl["relevance_cap_sparse"])
+        fwd_cap_dir = max(int(ctrl["relevance_cap_dir"]), _UNION_CAP)
+        ok_a = [max((len(r) for r in rel_by[a]), default=0) <= ctrl["relevance_cap_sparse"] for a in range(len(acs))]
         union_rel = sorted({x for a in range(len(acs)) if ok_a[a] for r in rel_by[a] for x in r})
+        # past the cap, a bank per entry moves only the leaves of the entry from the base point: a point that
+        # draws every leaf of a wide direction rarely solves the resting balances
+        local = len(union_rel) > fwd_cap_dir
+        if rdiag:
+            print(f"[fwds] leaves per anchor {[len({x for r in rel_by[a] for x in r}) for a in range(len(acs))]}, "
+                  f"entries up to {max((len(r) for rb in rel_by for r in rb), default=0)}, union "
+                  f"{len(union_rel)}{' (banks per entry)' if local else ''}")
 
         # an entry of a leaf solved from a resting balance has the degree of that balance plus one
         d_cap = max(1, min(4, int(ctrl["degree_cap"])))
-        bank = {"U": np.zeros((0, len(union_rel)), dtype=np.int64), "V": [[] for _ in primes]}
+        banks = {}
+
+        def bank_of(reli):
+            key = tuple(reli) if local else tuple(union_rel)
+            if key not in banks:
+                banks[key] = {"cols": list(key), "U": np.zeros((0, len(key)), dtype=np.int64),
+                              "V": [[] for _ in primes]}
+            return banks[key]
 
         def need_of(k, d):
             return 2 * mono_table(k, d).shape[0] + 6
@@ -585,44 +585,43 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
         def sample(pt):
             return [kx_all(pt, pp, acs, solve_rates) for pp in primes]
 
-        def fill_bank_to(n):
-            tries = 0
+        def fill_bank_to(bank, n):
+            cols, tries = bank["cols"], 0
             while len(bank["V"][0]) < n and tries < 12 * n:
-                if expired(ctrl):
-                    break
                 k = 1 if map_fn is None else n - len(bank["V"][0])
                 tries += k
                 pts = []
                 for _ in range(k):
                     pt = np.array(base0, dtype=np.int64)
-                    pt[union_rel] = draw(len(union_rel))
+                    pt[cols] = draw(len(cols))
                     pts.append(pt)
                 for pt, vs in zip(pts, [sample(pts[0])] if map_fn is None else map_fn(sample, pts)):
                     if vs is None or any(v is None for v in vs):
                         continue
-                    bank["U"] = np.vstack([bank["U"], pt[union_rel].reshape(1, -1)])
+                    bank["U"] = np.vstack([bank["U"], pt[cols].reshape(1, -1)])
                     for jp in range(len(primes)):
                         bank["V"][jp].append(vs[jp])
             return len(bank["V"][0]) >= n
 
-        def val_of(jp, a, c9, n):
+        def val_of(bank, jp, a, c9, n):
             return [int(bank["V"][jp][r][a][c9]) for r in range(n)]
 
         def rec_entry(a, reli, c9):
-            reli_cols = [union_rel.index(r) for r in reli]
+            bank = bank_of(reli)
+            reli_cols = [bank["cols"].index(r) for r in reli]
             vars_ = [leaf_names[r] for r in reli]
             for d in range(d_cap + 1):
                 # a degree whose fit needs more points than the bank may hold is past reach, and so are the higher ones
                 if need_of(len(reli), d) > _BANK_MAX:
                     break
                 mons = mono_table(len(reli), d)
-                if not fill_bank_to(need_of(len(reli), d)):
+                if not fill_bank_to(bank, need_of(len(reli), d)):
                     if rdiag:
                         print(f"[fwds] entry {znames[c9]}: {len(reli)} leaves, degree {d}: bank of "
                               f"{len(bank['V'][0])} of {need_of(len(reli), d)} points")
                     continue
                 expr = _fit_entry(primes, bank["U"], reli_cols, mons,
-                                  lambda jp, need: val_of(jp, a, c9, need), vars_)
+                                  lambda jp, need: val_of(bank, jp, a, c9, need), vars_)
                 if expr is not None:
                     return {"expr": expr, "reli": vars_}
             if rdiag:
@@ -651,16 +650,14 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             entry_reli = {znames[ac]: []}
             res = None
             for i, c9 in enumerate(phys_supp_of[a]):
-                if expired(ctrl):
-                    res = opn("forward: timeout")
-                    break
                 nm = znames[c9]
                 reli = rel_by[a][i]
                 if not reli:
-                    if not fill_bank_to(1):
+                    bank = bank_of([])
+                    if not fill_bank_to(bank, 1):
                         res = opn("forward: empty bank")
                         break
-                    resc = [val_of(jp, a, c9, 1)[0] for jp in range(len(primes))]
+                    resc = [val_of(bank, jp, a, c9, 1)[0] for jp in range(len(primes))]
                     try:
                         rc = sym_rat_recon_big(np.array([resc], dtype=np.int64), [int(p) for p in primes])
                     except Exception as exc:
@@ -674,8 +671,7 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                     continue
                 rr = rec_entry(a, reli, c9)
                 if rr is None:
-                    res = opn("forward: timeout in fitting" if expired(ctrl)
-                              else f"forward: entry {nm} not a bounded rational")
+                    res = opn(f"forward: entry {nm} not a bounded rational")
                     break
                 entries[nm] = simplify(rr["expr"])
                 entry_reli[nm] = rr["reli"]
@@ -753,7 +749,7 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             res = run_group([acs[i] for i in gidx], [supp_of[i] for i in gidx], g["ts"])
         if res is None:
             res = [{"support": sym_sort(supp_of[i]), "type": "general", "closed_form": False,
-                    "reason": "forward: timeout"} for i in gidx]
+                    "reason": "forward: no closed form"} for i in gidx]
         again = [k for k, e in enumerate(res) if not e.get("closed_form")]
         if again and g["ts"] is not None:
             res2 = run_group([acs[gidx[k]] for k in again], [supp_of[gidx[k]] for k in again],
@@ -776,6 +772,9 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                         if res[k].get("closed_form"):
                             out[i] = res[k]
     if rdiag:
+        for e in out:
+            if not e.get("closed_form"):
+                print(f"[fwds] open: {e.get('reason')}")
         n_k = track["n_k"]
         print(f"[fwds] closed {sum(1 for e in out if e.get('closed_form'))} of {len(out)} ({el()}; "
               f"{n_k} kernel calls, {track['t_k'] / n_k if n_k else 0:.1f} s each)")

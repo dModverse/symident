@@ -360,3 +360,99 @@ def test_a_parameter_that_no_period_changes_leaves_no_input(tmp_path, xi0):
     assert ("xi" in m.odes) == (xi0 == 1)
     # a parameter that only vanishing terms hold has no effect
     assert m.petab["without_effect"] == ["kb"]
+
+
+def _rest_problem(tmp_path, times, conditions="conditionId\tks\nc1\t1\nc2\t2\n"):
+    """A v1 problem of x' = ks*kp - k*x, observed as x, with the measurements `times` [(condition, time)]."""
+    libsbml = pytest.importorskip("libsbml")
+    doc = libsbml.SBMLDocument(3, 2)
+    model = doc.createModel()
+    c = model.createCompartment()
+    c.setId("V"), c.setSize(1), c.setConstant(True)
+    x = model.createSpecies()
+    x.setId("x"), x.setCompartment("V"), x.setInitialConcentration(1), x.setHasOnlySubstanceUnits(False)
+    x.setBoundaryCondition(False), x.setConstant(False)
+    for name, value in (("k", 1), ("ks", 1)):
+        p = model.createParameter()
+        p.setId(name), p.setValue(value), p.setConstant(True)
+    r = model.createReaction()
+    r.setId("syn"), r.setReversible(False)
+    ref = r.createProduct()
+    ref.setSpecies("x"), ref.setStoichiometry(1), ref.setConstant(True)
+    r.createKineticLaw().setMath(libsbml.parseL3Formula("ks*kp - k*x"))
+    p = model.createParameter()
+    p.setId("kp"), p.setValue(1), p.setConstant(True)
+    libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
+    (tmp_path / "conditions.tsv").write_text(conditions)
+    (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tx\t1\n")
+    (tmp_path / "measurements.tsv").write_text("observableId\tsimulationConditionId\ttime\tmeasurement\n" +
+                                               "".join(f"obs\t{c}\t{t}\t1\n" for c, t in times))
+    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\nkp\tlog10\t0.1\t10\t1\t1\n")
+    (tmp_path / "p.yaml").write_text("format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
+                                     "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
+                                     "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n")
+    return si.read_petab(str(tmp_path / "p.yaml"))
+
+
+def test_an_experiment_measured_only_at_inf_is_a_readout_at_rest(tmp_path):
+    # a readout at rest sees the resting value only, where the trajectory from a known start sees more
+    m = _rest_problem(tmp_path, [("c1", "inf"), ("c1", "inf"), ("c2", "Inf")])
+    assert m.equilibrate is True and m.petab["at_rest"] == ["c1", "c2"]
+    assert not m.events and not m.inputs
+    r = detect(m)
+    assert r.rank == 1 and r.info["rank_status"]["status"] == "proven"
+    assert [sorted(s.support) for s in r.symmetries] == [["k", "kp"]]
+
+
+@pytest.mark.parametrize("times", [[("c1", "1"), ("c1", "inf"), ("c2", "1")],
+                                   [("c1", "inf"), ("c2", "2")]])
+def test_an_experiment_with_a_finite_time_keeps_the_trajectory(tmp_path, times):
+    # an experiment with a finite measurement time is a trajectory; with one of them in the problem, an
+    # experiment measured only at inf is a trajectory as well, since every condition starts alike
+    if all(t == "inf" for c, t in times if c == "c1") and len({c for c, _ in times}) > 1:
+        with pytest.warns(UserWarning, match="as a trajectory"):
+            m = _rest_problem(tmp_path, times)
+    else:
+        m = _rest_problem(tmp_path, times)
+    assert m.equilibrate is False and m.petab["at_rest"] == []
+    assert detect(m).rank == 2
+
+
+def test_a_readout_at_rest_starts_from_the_values_of_its_condition(tmp_path):
+    # a species target of the condition sets the start, not a jump after the rest: the total of a moiety at rest
+    libsbml = pytest.importorskip("libsbml")
+    doc = libsbml.SBMLDocument(3, 2)
+    model = doc.createModel()
+    c = model.createCompartment()
+    c.setId("V"), c.setSize(1), c.setConstant(True)
+    for sp in ("A", "B"):
+        x = model.createSpecies()
+        x.setId(sp), x.setCompartment("V"), x.setInitialConcentration(1), x.setHasOnlySubstanceUnits(False)
+        x.setBoundaryCondition(False), x.setConstant(False)
+    for name in ("kf", "kb"):
+        p = model.createParameter()
+        p.setId(name), p.setValue(1), p.setConstant(True)
+    r = model.createReaction()
+    r.setId("conv"), r.setReversible(True)
+    ref = r.createReactant()
+    ref.setSpecies("A"), ref.setStoichiometry(1), ref.setConstant(True)
+    ref = r.createProduct()
+    ref.setSpecies("B"), ref.setStoichiometry(1), ref.setConstant(True)
+    r.createKineticLaw().setMath(libsbml.parseL3Formula("kf*A - kb*B"))
+    libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
+    (tmp_path / "conditions.tsv").write_text("conditionId\tA\nc1\t3\nc2\t5\n")
+    (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tA\t1\n")
+    (tmp_path / "measurements.tsv").write_text("observableId\tsimulationConditionId\ttime\tmeasurement\n"
+                                               "obs\tc1\tinf\t1\nobs\tc2\tinf\t1\n")
+    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+                                             "\testimate\nkf\tlog10\t0.1\t10\t1\t1\nkb\tlog10\t0.1\t10\t1\t1\n")
+    (tmp_path / "p.yaml").write_text("format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
+                                     "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
+                                     "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n")
+    m = si.read_petab(str(tmp_path / "p.yaml"))
+    assert m.equilibrate is True and not m.events and m.totals
+    tot = next(iter(m.totals))
+    assert [str(t[tot]).replace(" ", "") for t in m.trafo] == ["(3)+(1)", "(5)+(1)"]
+    r = detect(m)
+    assert r.rank == 1 and [sorted(s.support) for s in r.symmetries] == [["kb", "kf"]]

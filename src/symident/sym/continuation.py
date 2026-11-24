@@ -131,4 +131,3 @@ def continue_resting_state(model, state_names, param_names, param_vals, dirs, re
             'df_jx': df_jx, 'df_jt': df_jt,
             'df_state_cols': [str(solve_states[j]) for j in keep],
             'df_param_cols': [str(x) for x in param_syms] + [str(solve_states[j]) for j in held_idx]}
-

@@ -7,8 +7,8 @@ from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import PRIMES, mono_table, null_residues
 from ..rexpr import sym_sort
 from ..sym.recast import drop_monomial_content, exp_backsub_expr, trig_full_angle
-from .closedform import expired, poly_string, simplify
-from .perprime import _TIMEOUT, _fallback, _lift_const, pinned_monomials
+from .closedform import poly_string, simplify
+from .perprime import _fallback, _lift_const, pinned_monomials
 from .relevance import dense_need, direction_relevance
 from .sparse import _default_kbatch, _pivots_eq, general_rational_entry, sparse_entry
 
@@ -85,8 +85,6 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
 
     def fallback(reason=None):
         return _fallback(box["pool_next"], znames, base_nv, reason)
-    if expired(ctrl):
-        return fallback(_TIMEOUT)
 
     def const_entry(col):
         if box["const_base"] is None:
@@ -158,8 +156,6 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
             tries = 0
             rows_u, rows_r = [], [[] for _ in support_cols]
             while len(rows_u) < max_need and tries < 30 * max_need:
-                if expired(ctrl):
-                    return fallback(_TIMEOUT)
                 if not rows_u and tries >= 2 * max_need:
                     return fallback("no valid steady state under perturbation of the relevant leaves")
                 # the hit rate so far cannot fill the need within the budget: stop early
@@ -223,8 +219,6 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
                 e = general_rational_entry(reli, c, f, point0, leaf_names, nt_used, kcall, pivots,
                                            residue_fn, ctrl, z_slots, kbatch)
                 how[-1] = "sparse rational"
-            if e is None and expired(ctrl):
-                return fallback(_TIMEOUT)
             if e is None:
                 return fallback(f"an entry couples {len(reli)} variables and the sparse fit hit the caps "
                                 f"(laurent_deg_num={ctrl['laurent_deg_num']}, general_deg_num="

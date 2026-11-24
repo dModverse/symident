@@ -12,7 +12,7 @@ from .. import session, state
 from ..errors import SYMPY_FAILS, sympy_fail
 from ..gfp import Pool
 from ..rexpr import sym_sort
-from .expr import free_syms, red_locals, red_sympify, tri_solve
+from .expr import _nodes_above, free_syms, red_locals, red_sympify, tri_solve
 from .invariants import certified_rank
 from .sections import (
     inv_summands,
@@ -20,7 +20,9 @@ from .sections import (
     orbits_reach,
     section_cands,
     section_injective,
+    section_jacobian,
     section_monotone,
+    split_products,
 )
 from .sign import (
     DOMAIN,
@@ -39,9 +41,9 @@ from .sign import (
     sgn,
     shift_fix,
     shifted_meaning,
-    time_up,
     translates,
     translation_gauge,
+    work_up,
 )
 
 
@@ -78,6 +80,32 @@ def _negative(entries):
         return any(sgn(e) == -1 for e in entries)
 
 
+# the size of a system that the unbounded sympy solver may still take when the triangular elimination misses a branch
+SMALL_SOLVE_DEGREE, SMALL_SOLVE_NODES = 4, 120
+
+
+def _carrier_branches(eqs, carriers, bezout):
+    """The carriers solved from `eqs` by triangular elimination, bounded by the work budget; None when it fails.
+
+    A system small in degree and size goes to the sympy solver when the elimination misses a branch."""
+    info = {"complete": True}
+    try:
+        out = tri_solve(eqs, list(carriers), info)
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        out, info["complete"] = [], False
+    out = [d for d in out if len(d) == len(carriers)]
+    if info["complete"] and out:
+        return out
+    if bezout > SMALL_SOLVE_DEGREE or any(_nodes_above(e, SMALL_SOLVE_NODES) for e in eqs):
+        return out or None
+    try:
+        return [_str_keys(d) for d in spy.solve(eqs, [spy.Symbol(v) for v in carriers], dict=True)]
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return out or None
+
+
 def _str_keys(d):
     return {str(k): v for k, v in d.items()}
 
@@ -94,7 +122,7 @@ def solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_p
 def _memo_solve(b, pins, coords, inv_start, prefer_real, split_pair, gens, signed_ok):
     args = (b, pins, coords, inv_start, prefer_real, split_pair, gens, signed_ok)
     ses = state.get("session")
-    if ses is None or DOMAIN["deadline"] is not None:
+    if ses is None:
         return _solve_invariants(*args)
     # the alternative reparametrizations of one reduction search equal blocks again; the work spent is replayed
     try:
@@ -199,6 +227,63 @@ def _solve_invariants(b, pins, coords=(), inv_start=0, prefer_real=False, split_
         DOMAIN["real_carriers"] = old_rc
 
 
+def _section_chart(support, unknowns, es, pairs, tmp_n, inv_n, Ies, pins, pinned):
+    """The section, met once by every orbit, parametrized by the coordinates of the section where the balances solve
+    rationally.
+
+    The new parameters are the free coordinates of the section point: the trafo is rational, and the section point of
+    an orbit, solved from the invariants, gives their meaning. None where the balances do not solve so."""
+    from .sections import _linear_section
+    try:
+        param = _linear_section(pairs)
+    except SYMPY_FAILS as exc:
+        sympy_fail(exc)
+        return None
+    if param is None:
+        return None
+    solved = {str(k): v for k, v in param.items()}
+    free = [v for v in unknowns if v not in solved]
+    if len(free) != len(inv_n) or set(solved) - set(unknowns):
+        return None
+    pos = positive_set()
+    sub = {spy.Symbol(v): spy.Symbol(q) for v, q in zip(free, inv_n)}
+    ent = {}
+    for v, e in solved.items():
+        # in the free coordinates, which keep their declared signs as new parameters
+        e = spy.cancel(e)
+        if (pos is None or v in set(pos)) and sgn(e) != 1:
+            return None
+        ent[v] = str(e.xreplace(sub)).replace("**", "^")
+    ent.update({v: q for v, q in zip(free, inv_n)})
+    back = {spy.Symbol(t): Ie for t, Ie in zip(tmp_n, Ies)}
+    meaning = {q: str(es[v].xreplace(back)).replace("**", "^") for v, q in zip(free, inv_n)}
+    return {"pins": dict(ent, **{v: pins[v] for v in pinned}), "meaning": meaning, "shifted": [],
+            "root_note": None, "section_chart": True,
+            "solved_domain": {q: ("positive" if pos is None or v in set(pos) else "real") for v, q in zip(free, inv_n)}}
+
+
+def _split_sets(Ies, b, gauge0, cands, tried, own_of, touches):
+    """Sets of balances with a split product among them, untried so far, whose Jacobian along the generators has
+    one sign."""
+    preps = b.get("preps")
+    if preps is None or len(preps) != len(gauge0) or len(gauge0) > 2:
+        return []
+    prods = [p for p in split_products(Ies, b["support"]) if own_of(p) and touches(p)]
+    if not prods:
+        return []
+    pool = prods if len(gauge0) == 1 else [[p, c] for i, p in enumerate(prods) for c in cands + prods[i + 1:]
+                                           if c != p]
+    sets = [[p] for p in pool] if len(gauge0) == 1 else pool
+    sets = [st for st in sets if st not in tried][:SPLIT_SETS]
+    loc = red_locals([x for g in preps for x in g["comps"].values()] + [x for st in sets for pr in st for x in pr])
+    xi_of = [{v: red_sympify(x, loc) for v, x in g["comps"].items()} for g in preps]
+    return [st for st in sets if section_jacobian(st, preps, xi_of, loc)]
+
+
+# the sets of balances with a split product checked for a Jacobian of one sign
+SPLIT_SETS = 20
+
+
 def _carrier_choices(adm, support, first, cap=8):
     """Carrier matchings that leave different coordinates of `support` as gauge, `first` first, at most `cap`."""
     out = [first]
@@ -229,11 +314,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                                f"degree up to {bezout} in the carriers, above {SOLVE_DEGREE_CAP}")
         out["reason"] = f"the system of the invariants has degree up to {bezout}, above the cap {SOLVE_DEGREE_CAP}"
         return out
-    try:
-        sol_carr = [_str_keys(d) for d in spy.solve(eqs, [spy.Symbol(v) for v in carriers], dict=True)]
-    except SYMPY_FAILS as exc:
-        sympy_fail(exc)
-        sol_carr = None
+    sol_carr = _carrier_branches(eqs, carriers, bezout)
     gauge_all = [v for v in b["support"] if v not in carriers]
     reach = []
 
@@ -280,7 +361,7 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
         return [(spy.Symbol(v), e) for v, e in vals.items()]
     # the pass with sign conditions tries the constant pin only
     for gauge0 in [] if signed_ok else keep_sets:
-        if best_root is not None or time_up():
+        if best_root is not None or work_up():
             break
         pinned1 = [v for v in gauge_all if v not in gauge0]
         pins = dict(pins_in, **{v: pin_val(v) for v in pinned1})
@@ -431,9 +512,10 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
         n_try = 40 + sum(not own_of(st[0]) for st in sets) if len(gauge0) == 1 else 40
         if len(sets) > n_try:
             cut.append(f"{len(sets) - n_try} of {len(sets)} sets of balances are not tried")
-        for st in sets[:n_try]:
+        jac_sets = _split_sets(Ies, b, gauge0, cands, sets[:n_try], own_of, touches)
+        for st in sets[:n_try] + jac_sets:
             for order in ("carriers", "sections"):
-                if best_root is not None or time_up():
+                if best_root is not None or work_up():
                     continue
                 if order == "sections" and not carr_br:
                     continue
@@ -508,7 +590,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                             sympy_fail(exc)
                             secs.append(f"{pr[0]} = {pr[1]}")
                     cand["section"] = secs + [f"{v} = {pins[v]}" for v in pinned1]
-                    cand["monotone"] = b.get("preps") is not None
+                    cand["monotone"] = b.get("preps") is not None and st not in jac_sets
+                    cand["jacobian"] = st in jac_sets
                     cand["root_note"] = ("a solved entry contains a square root; the branch is the "
                                          "certified positive one") if has_root else None
                     cand["meaning"] = shifted_meaning(b["invariants"], inv_n, tmp_n, sh)
@@ -523,6 +606,13 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
                         Ies, {v: br[v] for v in all_unk}, tmp_n, scal_pin_pairs,
                         [(red_sympify(pr[0], loc), red_sympify(pr[1], loc)) for pr in st])
                     cand["reach"] = reaches()
+                    if has_root and not partial and cand["injective"] and state.get("section_charts"):
+                        sc = _section_chart(b["support"], all_unk, es, [(red_sympify(pr[0], loc).subs(
+                            scal_pin_pairs), red_sympify(pr[1], loc).subs(scal_pin_pairs)) for pr in st],
+                            tmp_n, inv_n, Ies, pins, pinned1)
+                        if sc is not None:
+                            cand.update(sc)
+                            return cand
                     if not partial and not has_root:
                         return cand
                     if not partial and best_root is None:
@@ -641,8 +731,8 @@ def _solve_invariants_inner(b, pins, coords, Ies, inv_n, carriers, tmp_n, real_t
         return best
     if signed is not None:
         return signed
-    if time_up():
-        out["reason"] = "the section search stopped at reduce(work_cap=) or reduce(timeout=)"
+    if work_up():
+        out["reason"] = "the section search stopped at reduce(work_cap=)"
         return out
     tried = ""
     if any("exp(" in s for s in b["invariants"]):

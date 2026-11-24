@@ -522,6 +522,36 @@ def test_fresh_coordinates_that_drop_rank_together_are_checked_at_a_random_point
     assert st["status"] == "verified" and 0 < st["probability"] < 1e-4
 
 
+def test_rows_of_full_rank_without_fresh_coordinates_prove_the_rank():
+    k = "piecewise(k1, w > 1, k2)"
+    r = det({"w": "-w", "x1": f"-{k}*x1", "x2": f"-{k}*x2"}, {"y1": "w", "y2": "x1 + x2"},
+            trafo={"w": "2", "x1": "1"})
+    assert r.identifiable and r.dim == 3
+    assert r.info["projection"] is None and r.info["rank_status"]["status"] == "proven"
+
+
+def test_a_fresh_value_that_a_held_state_hides_enters_no_row():
+    ev = [{"var": "U", "root": "U - c", "value": "0", "method": "replace"}]
+    r = det({"U": "-p*V*U", "V": "-d*V"}, {"y": "s*U"}, trafo={"U": "u0", "V": "1"}, events=ev)
+    assert (r.rank, r.dim) == (4, 5) and r.symmetries[0].support == ["c", "s", "u0"]
+    assert r.info["projection"] is None and r.info["rank_status"]["status"] == "proven"
+
+
+def test_start_points_whose_fresh_columns_drop_rank_are_left_out_of_the_proof():
+    k = "piecewise(k1, w > 1, k2)"
+    r = det({"w": "-w", "x1": f"-{k}*x1", "x2": f"-{k}*x2"}, {"y1": "w", "y2": "x1 + x2"}, trafo={"w": "2"})
+    assert (r.rank, r.dim) == (3, 4) and r.symmetries[0].support == ["x1", "x2"]
+    assert r.info["projection"]["status"] == "proven" and r.info["rank_status"]["status"] == "proven"
+
+
+def test_an_event_of_one_condition_acts_in_that_condition_only():
+    f = {"x": "-k*x", "w": "piecewise(-a*w, w > h, -b*w)"}
+    ev = [{"var": "x", "time": 1, "value": "1", "method": "replace", "cond": [0]}]
+    r = det(f, [{"y1": "x", "y2": "w"}, {"y1": "s*x", "y2": "w"}], trafo=[{"x": "1", "w": "1"}, {"x": "x0", "w": "1"}],
+            events=ev, conditions={"rows": ["A", "B"], "cols": {}})
+    assert (r.rank, r.dim) == (5, 6)
+
+
 def test_a_state_that_every_regime_keeps_at_zero_leaves_the_model():
     f = {"x1": "-c*x1", "x2": "piecewise(0, x1 > h, -k*x2)"}
     g = {"y1": "x1", "y2": "x2"}

@@ -787,7 +787,7 @@ def _detection(kw):
         st = res["info"].setdefault("settings", {})
         if getattr(ses, "rest_leaves", None):
             st["rest_leaves"] = ses.rest_leaves
-        st.update(control={k: v for k, v in ses.control.items() if k != "deadline"},
+        st.update(control=dict(ses.control),
                   switches={n: v for n, v in state.active().items()
                             if state.SWITCHES.get(n, ("",))[0] != "install"},
                   primes=ses.primes, version=__version__)
@@ -1235,14 +1235,19 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
         res["info"]["model_inputs"] = list(forcings)
         if jets:
             every = {x for names in jets.values() for x in names}
+            # a jet under a log chart is a nuisance coordinate in the log coordinate of the chart
+            charted = {m["L"] for m in (log_arg or {}).get("map") or [] if m["v"] in every}
             for s in res["symmetries"]:
                 # the input change of a proven field; a kernel vector holds it only at the start
                 lift = s.get("state_components") or {}
                 ch = lift if any(w in lift for w in jets) else (s.get("input_change") or {})
+                # a lift in the log coordinate of an input has no closed form in the input here
                 s["input_change"] = {w: _log_back(ch.get(w, "0"), log_arg) for w in jets} \
-                    if s.get("level") == "exact" else None
+                    if s.get("level") == "exact" and not charted & set(lift) else None
                 if lift:
-                    s["state_components"] = {k: v for k, v in lift.items() if k not in every} or None
+                    # the states of the model, without the jets and the atoms of a recast
+                    s["state_components"] = {k: v for k, v in lift.items()
+                                             if k in model_exprs_box["rhs"] and k not in every} or None
             nu = raw.get("nuisance") or {}
             res["info"]["unknown_inputs"] = {
                 "names": list(jets), "jets": jets, "jet_order": int(jet_order),
@@ -1736,10 +1741,14 @@ def _symmetry_detection(f=None, g=None, trafo=None, parameters=None, fixed=None,
                 "of the Lie order does not apply there, so the order is not proven sufficient")
     if multi.get("ok") and jets:
         # the k-th Lie derivative of an observable holds the input and the input derivatives up to order k
-        nm = jet_start.get
-        _mark_nuisance(multi, {"states": [nm(x, x) for names in jets.values() for x in names],
-                               "kept": [nm(w, w) for w in jets],
-                               "tops": [nm(names[-1], names[-1]) for names in jets.values()],
+        # a jet state under a log chart is a nuisance coordinate in the log coordinate of the chart
+        logs = {m["v"]: m["L"] for m in (log_arg or {}).get("map") or []}
+
+        def nm(x):
+            return logs.get(jet_start.get(x, x), jet_start.get(x, x))
+        _mark_nuisance(multi, {"states": [nm(x) for names in jets.values() for x in names],
+                               "kept": [nm(w) for w in jets],
+                               "tops": [nm(names[-1]) for names in jets.values()],
                                "exact_order": int(jet_order) - 1, "prolonged": not jet_start,
                                "jet_states": list(jet_start)})
     elif multi.get("ok") and nuisance:

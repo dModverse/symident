@@ -18,6 +18,13 @@ REGIME = {"f": ["x = -k*x + b", "z = c*x - d*z"], "g": ["y = s*z"]}
 SCALE = {"x": "x", "z": "z", "b": "b", "c": "0", "s": "-s"}
 
 
+@pytest.fixture
+def without_support_lift(monkeypatch):
+    """The proofs without the lift solved on the support, which proves the directions of the models below."""
+    from symident.detection import fields
+    monkeypatch.setattr(fields, "support_lift", lambda *a: None)
+
+
 def test_a_symmetry_and_its_lift_pass():
     assert certify(regime_identities(REGIME, SCALE))["ok"] is True
     assert certify(initial_identities(["x = x0", "z = 0"], dict(SCALE, x0="x0")))["ok"] is True
@@ -166,7 +173,7 @@ def test_without_a_certified_lie_order_the_symbolic_engine_proves_by_lifts():
     assert st["status"] == "lower bound" and st["why"].endswith("stay below the generic rank")
 
 
-def test_a_direction_of_the_reachable_set_says_why_it_stays_below_exact():
+def test_a_direction_of_the_reachable_set_says_why_it_stays_below_exact(without_support_lift):
     r = si.detect(_fields_model(), reconstruct=True)
     (p,) = r.info["proof"]
     assert p["reason"].startswith("lift of the closed form: [Y, F] on")
@@ -208,7 +215,7 @@ def test_directions_below_exact_get_the_bound():
     assert 0 < r.info["bound"]["probability"] < 1e-5 and r.info["bound"]["points"] == 2
 
 
-def test_the_regime_detections_of_the_combined_lift_keep_to_their_budget():
+def test_the_regime_detections_of_the_combined_lift_keep_to_their_budget(without_support_lift):
     m = si.Model({"A": "-(ka + kb)*A", "B1": "ka*A - k1*B1", "B2": "kb*A - k2*B2", "C": "k3*B1 + k4*B2 - kc*C^2"},
                  {"y": "C"}, trafo={"A": "A0", "B1": "0", "B2": "0", "C": "0"}, fixed=["A0"])
     r = si.detect(m, reconstruct=True, control=si.reconst_control(exact_work_cap=1))
@@ -217,7 +224,7 @@ def test_the_regime_detections_of_the_combined_lift_keep_to_their_budget():
     assert [s.level for s in si.detect(m, reconstruct=True).symmetries] == ["exact"]
 
 
-def test_unproven_directions_are_listed_and_printed_with_their_level():
+def test_unproven_directions_are_listed_and_printed_with_their_level(without_support_lift):
     r = si.detect(_fields_model(), reconstruct=True)
     assert [s.level for s in r.unproven()] == ["verified"] and r.unproven()[0].explicit
     text = repr(r)
@@ -336,14 +343,19 @@ def test_the_bound_needs_proven_orders():
 
 
 def _fields_model():
-    # the nonlinear balance keeps its direction below exact: the lift needs a state component that is no
-    # combination of the states
+    # a nonlinear balance and a start event: only the lift on the support proves the direction, with state
+    # components affine in the states and rational in the parameters
     f = {"A": "-k1*A*B + k2*C", "B": "-k1*A*B + k2*C", "C": "k1*A*B - k2*C"}
     return si.Model(f, {"Aobs": "alpha*A"}, trafo={"k1": "k2*C/(A*B)"},
                     events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
 
 
-def test_a_rank_through_invariant_fields_is_verified():
+def test_a_direction_through_a_start_event_is_proven_by_the_lift_on_the_support():
+    r = si.detect(_fields_model(), reconstruct=True)
+    assert [s.level for s in r.symmetries] == ["exact"] and r.info["rank_proof"] == "proven symmetries"
+
+
+def test_a_rank_through_invariant_fields_is_verified(without_support_lift):
     r = si.detect(_fields_model(), reconstruct=True)
     assert r.info["rank_fields"] == 1 and r.info["rank_proven"] is None
     b = r.info["rank_fields_bound"]
@@ -354,7 +366,8 @@ def test_a_rank_through_invariant_fields_is_verified():
     assert "rank: verified (1 directions, invariant fields at random points, probability" in str(r.summary())
 
 
-def test_a_field_wrong_over_q_but_right_modulo_the_engine_prime_does_not_verify_the_rank(monkeypatch):
+def test_a_field_wrong_over_q_but_right_modulo_the_engine_prime_does_not_verify_the_rank(monkeypatch,
+                                                                                         without_support_lift):
     from symident.detection import fields
     from symident.detection.observability import analysis, proof, reconstruct
     setup = fields.field_setup
@@ -456,6 +469,45 @@ def test_a_lift_whose_parameter_components_move_along_the_flow_is_refused():
              "tapes": [{"ver_ic": ["x = x"], "ver_t0": [], "ver_ev": []}]}
     assert exact_direction(light, field, [[0]], False)["ok"] is not True
     assert exact_direction(light, {"c": "-c", "x": "x"}, [[0]], False)["ok"] is True
+
+
+def _light(f, g, ic):
+    """The setup of exact_direction for one regime without regime fields."""
+    return {"regimes": [{"f": f, "g": g}], "gens": [[{}]], "regime_of": [1], "joins": [],
+            "states": [line.split("=", 1)[0].strip() for line in f],
+            "tapes": [{"ver_ic": ic, "ver_t0": [], "ver_ev": []}]}
+
+
+def test_a_scaling_that_rate_sums_absorb_is_lifted_on_the_states_it_reaches():
+    # more regimes than the combined lift takes, a start at 0 and a nonlinear regime: only the support holds the lift
+    f = {"x1": "u - (k1 + k2)*x1 + kd*x2", "x2": "k1*x1 - (kd + k3)*x2", "x3": "k4*x2^2 - k5*x3"}
+    cg = {"rows": [f"c{i}" for i in range(10)], "cols": {"u": list(range(1, 11))}}
+    m = si.Model(f, {"y": "e*x3", "y1": "x1"}, trafo={"x1": "0", "x2": "0", "x3": "0"}, conditions=cg)
+    r = si.detect(m, reconstruct=True)
+    assert [s.level for s in r.symmetries] == ["exact", "exact"]
+    assert r.info["rank_status"]["status"] == "proven"
+    curved = [s for s in r.symmetries if s.state_components]
+    assert len(curved) == 1 and set(curved[0].state_components) == {"x2", "x3"}
+
+
+def test_a_lift_rational_in_the_parameters_is_solved_on_the_support():
+    from symident.detection.fields import exact_direction
+    # a change of basis of the linear block x5, x3 that keeps the input on x5 and the readout c*x3
+    f = ["x5 = u - (a + k)*x5 + kd*x3", "x3 = k*x5 - (b + kd)*x3", "w = c*x3 - m*w^2"]
+    field = {"a": "1", "b": "-kd/(a + k - b)", "k": "(b + kd - a - k)/(a + k - b)",
+             "c": "c*(a + k - b - kd)/(k*(a + k - b))"}
+    ex = exact_direction(_light(f, ["y = w"], ["x5 = 0", "x3 = 0", "w = 0"]), field, [[0]], False)
+    assert ex["ok"] is True and set(ex["states"]) == {"x5", "x3"}
+    assert "kd" in ex["states"]["x5"]
+
+
+def test_a_lift_quadratic_in_the_states_is_solved_on_the_support():
+    from symident.detection.fields import exact_direction
+    # z + q*x^2 is observed: z moves by x^2, the start of z by x0^2
+    f = ["x = -k*x", "z = p*x^2 - m*z"]
+    field = {"q": "-1", "p": "m - 2*k", "z0": "x0^2"}
+    ex = exact_direction(_light(f, ["y = z + q*x^2"], ["x = x0", "z = z0"]), field, [[0]], False)
+    assert ex["ok"] is True and ex["states"] == {"z": "x**2"}
 
 
 def test_a_conserved_total_reads_the_initial_value_on_all_its_states():

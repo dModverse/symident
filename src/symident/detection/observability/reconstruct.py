@@ -20,16 +20,16 @@ from ...gfp import (
 )
 from ...rexpr import sym_sort
 from ...sym.restforward import excluding_rates
-from ..closedform import expired, recast_backsub, simplify
+from ..closedform import recast_backsub, simplify
 from ..fields import field_directions, field_setup
 from ..forward import fwd_adopt, perprime_forward_multi, perprime_forward_shared
 from ..interp import entry_degrees, exp_backsub, interpolate_direction
 from ..perprime import interpolate_perprime
 from ..relevance import build_shared_bank, dense_need, direction_relevance
-from ..verify import verify_direction, verify_in_nullspace
+from ..verify import verify_batch, verify_direction, verify_in_nullspace
 from .context import ints, ok, strs
 from .homotopy import Homotopy
-from .narrow import _CSUFFIX, Narrow
+from .narrow import _CSUFFIX, Narrow, back_substituted
 
 # minimal supports the narrow route tries beyond one per residual direction
 _CIRCUIT_CAP = 16
@@ -47,7 +47,7 @@ def _coord(nm):
 
 def _actionable(reason):
     """Whether a reason names a cap or setting to change."""
-    return reason is not None and any(w in str(reason) for w in ("raise", "cap", "timeout", "time limit"))
+    return reason is not None and any(w in str(reason) for w in ("raise", "cap"))
 
 
 # samples of a dense fit past which the log-coordinate gauge is tried first
@@ -62,15 +62,12 @@ class Reconstruction:
         self.residual = list(residual)
         self.ctrl = an.ctrl
         self.dir_call = an.dir_call()
+        # the kernels that propose closed forms: on a cover of the conditions where the path has one
+        self.kb = an.kbatch_cover if an.can_batch else an.kbatch
+        # the closed forms of the narrow route are checked together after the route, where the path allows it and
+        # many directions are open
+        self.dir_batch = an.dir_batch() if len(residual) >= 8 else None
         self.t0 = time.monotonic()
-        to = self.ctrl.get("timeout")
-        # one deadline per detection: reruns and nested analyses share it
-        ses = state.get("session")
-        dl = self.t0 + to if to is not None and np.isfinite(to) else None
-        if ses is not None and dl is not None:
-            ses.deadline = dl if ses.deadline is None else ses.deadline
-            dl = ses.deadline
-        self.ctrl["deadline"] = dl
         self.probe_next = self.sc["pool_next"]
         self.pool_next = self.probe_next + an.n_aug * (self.ctrl["probe_retries"] + 16)
         self.zvals0 = np.asarray(self.sc["point0"])[an.z_slots] if len(an.z_slots) else None
@@ -145,7 +142,7 @@ class Reconstruction:
         pending = list(leaves)
         piv0 = ints(piv0)
         for att in range(ctrl["probe_retries"]):
-            if not pending or expired(ctrl):
+            if not pending:
                 break
             perts = []
             for li in pending:
@@ -162,9 +159,18 @@ class Reconstruction:
             pending = [li for li, r in zip(pending, resolved) if not r]
         return rp
 
-    def probe_groups(self, kb, piv0, first, res_fn, ref, base=None):
-        """Relevance probe by bisection over leaf groups; a group that leaves the residues unchanged is irrelevant."""
+    def probe_groups(self, kb, piv0, first, res_fn, ref, base=None, stop_above=None, vecs=None, lanes=None):
+        """Relevance probe by bisection over leaf groups; a group that leaves the residues unchanged is irrelevant.
+        With `stop_above`, the groups halve down to single leaves, and None is returned as soon as more leaves off
+        the auxiliary ones are relevant. With `vecs` (the kernel vectors of the residues at `base`, nz x D), a
+        group leaves the residues unchanged where the vectors annihilate the rows at the point of the group
+        (Analysis.lanes), and the kernel is formed only where a single leaf moves them; `lanes` replaces
+        Analysis.lanes."""
         an, sc, ctrl, P = self.an, self.sc, self.ctrl, PRIMES[0]
+        if vecs is None:
+            lanes = None
+        elif lanes is None:
+            lanes = an.lanes()
         if base is None:
             base = sc["point0"]
         bv = res_fn(ref, P)
@@ -176,6 +182,11 @@ class Reconstruction:
         rp = [{"rp": ref, "zvals": zb, "pertval": base[li]} for li in range(an.n_aug)]
         off = first + an.n_aug * ctrl["probe_retries"]
         groups = [list(range(an.n_aug))]
+        if stop_above is not None:
+            # parallel groups first, then halves: the rounds stay few and the found leaves are counted as they come
+            per = max(1, -(-an.n_aug // 64))
+            groups = [list(range(i, min(an.n_aug, i + per))) for i in range(0, an.n_aug, per)]
+            aux, found = set(an.aux_leaves), 0
         single = []
         while groups:
             perts = []
@@ -184,13 +195,24 @@ class Reconstruction:
                 pt[g] = sc["pool"](off + np.arange(len(g)))
                 off += len(g)
                 perts.append(pt)
-            cands = kb(perts, [P] * len(perts), sc["nt_used"])
+            zero = lanes(perts, [P] * len(perts), sc["nt_used"], vecs) if lanes is not None else None
+            if zero is None:
+                cands = kb(perts, [P] * len(perts), sc["nt_used"])
+            else:
+                moved = [gi for gi, g in enumerate(groups) if zero[gi] is None or not zero[gi].all()]
+                need = [gi for gi in moved if len(groups[gi]) == 1]
+                cands = [None] * len(groups)
+                for gi, cd in zip(need, kb([perts[gi] for gi in need], [P] * len(need), sc["nt_used"])
+                                  if need else []):
+                    cands[gi] = cd
             nxt = []
             for gi, g in enumerate(groups):
                 cd = cands[gi]
                 piv_ok = ok(cd) and ints(cd["pivots"]) == piv0
                 v = res_fn(cd, P) if piv_ok else None
-                if v is not None and np.array_equal(np.asarray(v), np.asarray(bv)):
+                stays = v is not None and np.array_equal(np.asarray(v), np.asarray(bv)) if zero is None else \
+                    zero[gi] is not None and bool(zero[gi].all())
+                if stays:
                     # the kernel stays, but a residue fn in log coordinates divides by z
                     for li in g:
                         own = [c for c, nm in enumerate(an.znames) if nm == an.leaf_names_aug[li]]
@@ -205,9 +227,14 @@ class Reconstruction:
                 elif piv_ok:
                     rp[g[0]] = {"rp": cd, "zvals": perts[gi][zs] if len(zs) else None,
                                 "pertval": perts[gi][g[0]]}
+                    if stop_above is not None and g[0] not in aux:
+                        found += 1
                 else:
                     single.append(g[0])
-            if len(nxt) > len(groups):
+            if stop_above is not None:
+                if found + len([x for x in single if x not in aux]) > stop_above:
+                    return None
+            elif len(nxt) > len(groups):
                 nxt = [[x] for g in nxt for x in g]
             groups = nxt
         if single:
@@ -248,7 +275,7 @@ class Reconstruction:
         span = an.scal_rows.T.copy() if an.scal_rows.shape[0] else np.zeros((nz, 0), dtype=np.int64)
         out, tried = [], set()
         for i, (v, anchor) in enumerate(cands):
-            if len(out) >= len(self.residual) or expired(self.ctrl):
+            if len(out) >= len(self.residual):
                 break
             v = np.asarray(v, dtype=np.int64) % P
             key = mulmod(v, invmod(int(v[np.nonzero(v)[0][0]]), P), P).tobytes()
@@ -272,10 +299,37 @@ class Reconstruction:
             if e is not None and e.get("closed_form"):
                 out.append(e)
                 span = np.concatenate([span, np.asarray(v, dtype=np.int64).reshape(nz, 1)], axis=1)
+        if any("pending_check" in e for e in out):
+            out, span = self._confirm(out, span)
         self.tlog(f"narrow: {len(out)} of {len(self.residual)} closed")
         self.closed = np.concatenate([self.closed, span[:, an.scal_rows.shape[0]:]], axis=1)
         self.drop_spanned(span)
         return out
+
+    def _confirm(self, out, span):
+        """The closed forms of the narrow route checked together on every condition (verify_batch); one that fails
+        is left open and leaves the span of the closed directions."""
+        an = self.an
+        n0 = span.shape[1] - len(out)
+        pend = [i for i, e in enumerate(out) if "pending_check" in e]
+        res = verify_batch([out[i] for i in pend], [out[i]["pending_check"] for i in pend], an.znames,
+                           an.leaf_names_aug, len(self.sc["point0"]), self.sc["nt_used"], self.dir_batch, an.nz)
+        good = {i: r for i, r in zip(pend, res)}
+        kept, cols = [], list(range(n0))
+        for i, e in enumerate(out):
+            f = e.pop("pending_check", None)
+            if f is not None and good[i] is None:
+                good[i] = verify_in_nullspace(e, f, an.znames, an.leaf_names_aug, self.sc["point0"],
+                                              self.sc["nt_used"], an.kcall, self.pool_next, an.nz, self.dir_call)
+            if f is not None and not good[i]:
+                self.attempt("narrow", {"support": e["support"], "type": "general", "closed_form": False,
+                                        "reason": "a closed form was reconstructed but failed verification at a "
+                                                  "fresh prime"})
+                continue
+            kept.append(back_substituted(an, e) if f is not None else e)
+            cols.append(n0 + i)
+        self.tlog(f"narrow: {len(kept)} of {len(out)} closed forms hold on every condition")
+        return kept, span[:, cols]
 
     def statics(self):
         """Static subsystem fields that lie in the kernel, the residual reduced by them."""
@@ -506,8 +560,7 @@ class Reconstruction:
                "not run where the kernel depends on the time between events"
                if run.has_gaps and not run.series_gaps and (self.sc.get("ref") or {}).get("at_one") else
                "not run where an event time depends on the parameters" if run.has_gaps and self._moving_times() else
-               "not run in transient recast coordinates" if getattr(an, "transient", False) else
-               "timeout" if expired(self.ctrl) else None)
+               "not run in transient recast coordinates" if getattr(an, "transient", False) else None)
         if open_ and why is not None:
             self.attempt("homotopy", reason=why)
         if not (open_ and why is None and len(interp) == len(self.residual)):
@@ -573,16 +626,14 @@ class Reconstruction:
                 v = self.residues(fc)
             return {"support": sym_sort([an.znames[i] for i in np.nonzero(v)[0]]), "type": "general",
                     "closed_form": False, "reason": reason}
-        if expired(self.ctrl):
-            return open_entry("reconstruction time budget (reconst_control(timeout=)) exceeded")
         args = (an.znames, an.z_slots, an.leaf_names_aug, an.n_aug, sc["point0"], sc["pool"],
                 self.pool_next, sc["nt_used"], an.kcall)
         if per_prime:
-            d = interpolate_perprime(fc, sc["ref"], sc["pivots"], *args, an.kbatch, self.rel_probe,
+            d = interpolate_perprime(fc, sc["ref"], sc["pivots"], *args, self.kb, self.rel_probe,
                                      self.ctrl, aux_leaves=an.aux_leaves, phys_cols=self.phys_cols)
         else:
             d = interpolate_direction(fc, sc["ref"], sc["pivots"], *args, self.rel_probe, rfn, self.ctrl,
-                                      an.kbatch, bank, fast_only, aux_leaves=an.aux_leaves, degrees=degrees)
+                                      self.kb, bank, fast_only, aux_leaves=an.aux_leaves, degrees=degrees)
         self.pool_next = d["pool_next"]
         e = dict(d["entry"])
         e.pop("relevant_leaves", None)
@@ -632,8 +683,10 @@ class Reconstruction:
             def all_res(rp, p, zvals=None):
                 v = [null_residues(rp, fc, p) for fc in self.residual]
                 return np.concatenate(v) if v else np.zeros(0, dtype=np.int64)
-            return self.probe_groups(an.kbatch, self.sc["pivots"], self.probe_next, all_res, self.sc["ref"])
-        return self.probe(an.kbatch, self.sc["pivots"], self.probe_next)
+            vecs = np.stack([self.residues(fc) for fc in self.residual], axis=1) if self.residual else None
+            return self.probe_groups(self.kb, self.sc["pivots"], self.probe_next, all_res, self.sc["ref"],
+                                     vecs=vecs)
+        return self.probe(self.kb, self.sc["pivots"], self.probe_next)
 
     def peeled(self):
         """Minimal-support directions read off in log coordinates."""
@@ -684,7 +737,7 @@ class Reconstruction:
         needs, degrees = [], []
         for fc, m in zip(self.residual, metas):
             degs = entry_degrees(fc, sc["pivots"], sc["point0"], lambda rp, p, z, fc=fc: null_residues(rp, fc, p),
-                                 zvals_of, m, an.kbatch, sc["nt_used"], self.ctrl)
+                                 zvals_of, m, self.kb, sc["nt_used"], self.ctrl)
             degrees.append(degs)
             # a direction with an entry past degree_cap cannot use the bank
             needs.append(0 if "over" in degs else
@@ -692,7 +745,7 @@ class Reconstruction:
                                     [d if isinstance(d, int) else None for d in degs])["max_need"])
         # where the log-coordinate gauge closes a direction of large need, the gauge fit is the cheaper one
         early = [None] * len(self.residual)
-        if any(nd > _LOG_FIRST for nd in needs) and not expired(self.ctrl):
+        if any(nd > _LOG_FIRST for nd in needs):
             lg = logcoord_gauge(self.residual, an.scal_rows, PRIMES[0], an.nz, sc, self.zvals0)
             for ii in range(len(self.residual) if len(lg["anchors"]) == len(self.residual) else 0):
                 if needs[ii] > _LOG_FIRST and lg["residue_fns"][ii] is not None:
@@ -705,7 +758,7 @@ class Reconstruction:
         if dense_dir:
             union = sorted({x for i in dense_dir for x in metas[i]["relevant"]})
             bk = build_shared_bank(union, max(needs[i] for i in dense_dir), sc["point0"], sc["pool"],
-                                   self.pool_next, an.kbatch, sc["pivots"], sc["nt_used"], len(PRIMES), self.ctrl)
+                                   self.pool_next, self.kb, sc["pivots"], sc["nt_used"], len(PRIMES), self.ctrl)
             self.pool_next = bk["pool_next"]
             if bk.get("ok"):
                 bank = bk
@@ -736,7 +789,7 @@ class Reconstruction:
             if len(gauge["anchors"]) != len(self.residual):
                 return
             for ii in [i for i, e in enumerate(interp) if not e.get("closed_form")]:
-                if gauge["residue_fns"][ii] is None or expired(self.ctrl):
+                if gauge["residue_fns"][ii] is None:
                     continue
                 rec = self.one(gauge["anchors"][ii], gauge["residue_fns"][ii], log_coords=log_coords)
                 self.attempt("log-coordinate gauge" if log_coords else "canonical gauge", rec)
@@ -801,8 +854,8 @@ class Reconstruction:
             def ms_res(rp, p, zvals=None):
                 v = [f(rp, p) for f in ms_early["residue_fns"]]
                 return None if any(x is None for x in v) else np.concatenate(v)
-            self.rel_probe = self.probe_groups(an.kbatch, self.sc["pivots"], self.probe_next, ms_res,
-                                               self.sc["ref"])
+            self.rel_probe = self.probe_groups(self.kb, self.sc["pivots"], self.probe_next, ms_res,
+                                               self.sc["ref"], vecs=np.asarray(ms_early["vectors"]))
         else:
             self.rel_probe = self.full_probe()
         self.tlog("relevance probe done" + (" (minimal-support gauge)" if ms_early is not None else ""))

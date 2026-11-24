@@ -11,9 +11,10 @@ symident
 :doc:`quickstart`
    one model from detection to reduction.
 :doc:`guide`
-   models and expressions, detection, reduction, PEtab, inputs, switches, settings.
+   models and expressions, detection, reduction, global analysis, PEtab, inputs, switches,
+   settings.
 :doc:`method`
-   the mathematics, the levels of a result, references.
+   the mathematics: local analysis, proofs, reduction, global analysis, conditions and inputs.
 :doc:`api`
    every exported function, class and switch.
 :doc:`changelog`

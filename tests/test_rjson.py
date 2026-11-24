@@ -1,7 +1,6 @@
 """The JSON interface for host languages: arguments in, results out, state restored."""
 
 import json
-import math
 import os
 from fractions import Fraction
 
@@ -14,11 +13,11 @@ SPEC = {"f": {"x": "-k*x"}, "g": {"y": "s*x"}, "reconstruct": True}
 
 def test_kwargs_of_maps_host_spellings():
     kw = rjson.kwargs_of({"f": {"x": "-k*x"}, "trafo": None, "gauge_preference": "AUTO",
-                          "control": {"timeout": "Inf", "term_cap": 7, "degree_cap": None},
+                          "control": {"term_cap": 7, "degree_cap": None},
                           "unknown": 1})
     assert set(kw) == {"f", "gauge_preference", "control"}
     assert kw["gauge_preference"] is None
-    assert kw["control"]["timeout"] == math.inf and kw["control"]["term_cap"] == 7
+    assert kw["control"]["term_cap"] == 7
     assert rjson.kwargs_of({"gauge_preference": ["k"]})["gauge_preference"] == ["k"]
 
 
@@ -39,7 +38,7 @@ def test_detect_and_reduce_round_trip(monkeypatch):
     assert (res["rank"], res["dim"], res["identifiable"]) == (2, 3, False)
     assert res["info"]["kernel"] is None and res["warnings"] == []
     assert [d["weights"] for d in res["symmetries"]] == [{"s": "1", "x": "-1"}]
-    red = json.loads(rjson.reduce_json(out, json.dumps({"timeout": "Inf"})))
+    red = json.loads(rjson.reduce_json(out, json.dumps({"work_cap": 4000})))
     assert (red["removed"], red["remaining"], red["warnings"]) == (["X₁"], [], [])
 
 

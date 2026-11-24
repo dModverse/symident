@@ -133,6 +133,13 @@ def certify_transversal(W, cols, T):
     return Mr
 
 
+def _signed_coordinates(names):
+    """The coordinates among `names` outside the declared positive set."""
+    from .sign import positive_set
+    pos = positive_set()
+    return set() if pos is None else {c for c in names if c not in set(pos)}
+
+
 def transversal(Wres, cols, fixed, allowed=None):
     """A certified transversal, the family of valid transversals and the survivor meanings."""
     k = Wres.shape[0]
@@ -144,11 +151,14 @@ def transversal(Wres, cols, fixed, allowed=None):
     if not k:
         return out
     occ = {c: int(np.sum(Wres[:, cols.index(c)] != 0)) for c in supp}
-    ordc = sorted(supp, key=lambda c: (occ[c], cols.index(c)))
+    signed = _signed_coordinates(supp)
+    # a scaling keeps the sign of a coordinate, so a pin on a positive one meets every orbit
+    ordc = sorted(supp, key=lambda c: (c in signed, occ[c], cols.index(c)))
     enumerate_ = len(supp) <= 30 and math.comb(len(supp), k) <= 200
     if enumerate_:
         combos = [list(c) for c in itertools.combinations(supp, k)]
         adm = [T for T in combos if rank_modp(Wres[:, [cols.index(t) for t in T]]) == k]
+        adm.sort(key=lambda T: len(set(T) & signed))
         out["choices"] = adm
         # reduce() asks for a later certified transversal when it collects alternative trafos
         skip = int(state.get("transversal_skip") or 0)

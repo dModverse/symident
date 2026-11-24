@@ -107,7 +107,7 @@ class PlainSystem:
                                              run.n_states, run.z_slots, pt, p, run.exact_nt(Nt, Mtot), int(Mtot),
                                              run.cores_call, caps)
         else:
-            o = _core.sym_obs_null_multi(run.tapes, run.n_leaves, run.n_states, run.z_slots, pt, p,
+            o = _core.sym_obs_null_multi(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots, pt, p,
                                          run.exact_nt(Nt), run.cores_call)
         return run.modulo_nuisance(self.with_relations(o, point, p) if self.transient else o, p)
 
@@ -214,3 +214,15 @@ class PlainSystem:
     def block_profiles(self):
         """The rank per Lie order of a block from one jet."""
         return self.run.obs_block_profiles()
+
+    def stacked_profile(self):
+        """The rank per Lie order of the rows of every tape from one jet, None where kcall adds further rows or the
+        tapes have gaps."""
+        run = self.run
+        if run.has_gaps or run.nuis_cols or self.transient:
+            return None
+
+        def f(point, p, Nt):
+            return _core.sym_obs_rank_profile(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots,
+                                              np.asarray(point, dtype=np.int64), p, int(Nt), run.cores_call)
+        return f

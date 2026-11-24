@@ -1,4 +1,4 @@
-"""The state one detection shares across nested analyses: seed, reconstruction deadline, limits that fired."""
+"""The state one detection shares across nested analyses: seed and limits that fired."""
 
 import contextlib
 import hashlib
@@ -13,7 +13,6 @@ class Session:
 
     def __init__(self, seed=0, model=""):
         self.root = hashlib.blake2b(f"{int(seed)}\0{model}".encode(), digest_size=16).digest()
-        self.deadline = None
         # draws: per passing kernel check, the number of points it drew
         self.notes = {"limits": [], "errors": [], "branches": [], "draws": []}
         self.control = None

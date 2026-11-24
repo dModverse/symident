@@ -162,7 +162,10 @@ py::object run(F f) {
 
 }  // namespace
 
+void register_ioproj(py::module_& m);
+
 PYBIND11_MODULE(_core, m) {
+  register_ioproj(m);
   m.doc() = "GF(p) observability kernel";
 #if defined(__SIZEOF_INT128__) && !defined(SYMIDENT_NO_INT128)
   m.attr("has_int128") = true;
@@ -184,6 +187,32 @@ PYBIND11_MODULE(_core, m) {
     return run([&] { return Value(symObsRankProfile(t, nLeaves, nStates, z, pt, p, Nt, cores)); });
   }, arg("tapes"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
      arg("Nt"), arg("cores") = 1);
+
+  m.def("sym_obs_annihilates", [](py::object tapes, int nLeaves, int nStates, py::object zSlots,
+                                  py::object point, double p, int Nt, py::object V, int cores) {
+    List t = cv<List>(tapes); IntegerVector z = cv<IntegerVector>(zSlots), pt = cv<IntegerVector>(point);
+    IntegerMatrix v = cv<IntegerMatrix>(V);
+    return run([&] { return Value(symObsAnnihilates(t, nLeaves, nStates, z, pt, p, Nt, v, cores)); });
+  }, arg("tapes"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
+     arg("Nt"), arg("V"), arg("cores") = 1);
+
+  m.def("sym_obs_annihilates_batch", [](py::object tapes, int nLeaves, int nStates, py::object zSlots,
+                                        py::object points, py::object primes, int Nt, py::object V, int cores) {
+    List t = cv<List>(tapes); IntegerVector z = cv<IntegerVector>(zSlots);
+    IntegerMatrix pts = cv<IntegerMatrix>(points), v = cv<IntegerMatrix>(V);
+    NumericVector pr = cv<NumericVector>(primes);
+    return run([&] { return Value(symObsAnnihilatesBatch(t, nLeaves, nStates, z, pts, pr, Nt, v, cores)); });
+  }, arg("tapes"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("points"), arg("primes"),
+     arg("Nt"), arg("V"), arg("cores") = 1);
+
+  m.def("sym_obs_cover", [](py::object tapes, int nLeaves, int nStates, py::object zSlots, py::object point,
+                            double p, int Nt, int target, int cores, py::object order, py::object keep) {
+    List t = cv<List>(tapes); IntegerVector z = cv<IntegerVector>(zSlots), pt = cv<IntegerVector>(point);
+    IntegerVector o = order.is_none() ? IntegerVector() : cv<IntegerVector>(order);
+    LogicalVector k = keep.is_none() ? LogicalVector() : cv<LogicalVector>(keep);
+    return run([&] { return Value(symObsCover(t, nLeaves, nStates, z, pt, p, Nt, target, cores, o, k)); });
+  }, arg("tapes"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
+     arg("Nt"), arg("target"), arg("cores") = 1, arg("order") = py::none(), arg("keep") = py::none());
 
   m.def("sym_obs_chain_rank_profile", [](py::object chain, int nLeaves, int nStates,
                                          py::object zSlots, py::object point, double p, int Nt,
@@ -223,11 +252,13 @@ PYBIND11_MODULE(_core, m) {
 
   m.def("sym_obs_chain_rows", [](py::object chain, int nLeaves, int nStates, py::object zSlots,
                                  py::object point, double p, int Nt, int Mtot, int threads,
-                                 bool profile) {
+                                 bool profile, std::string session) {
     List c = cv<List>(chain); IntegerVector z = cv<IntegerVector>(zSlots), pt = cv<IntegerVector>(point);
-    return run([&] { return Value(symObsChainRows(c, nLeaves, nStates, z, pt, p, Nt, Mtot, threads, profile)); });
+    return run([&] {
+      return Value(symObsChainRows(c, nLeaves, nStates, z, pt, p, Nt, Mtot, threads, profile, session));
+    });
   }, arg("chain"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
-     arg("Nt"), arg("Mtot"), arg("threads") = 1, arg("profile") = false);
+     arg("Nt"), arg("Mtot"), arg("threads") = 1, arg("profile") = false, arg("session") = "");
 
   m.def("sym_chain_reduce", [](py::object rows, py::object srows, int nz, int N, double p) {
     IntegerMatrix r = cv<IntegerMatrix>(rows), s = cv<IntegerMatrix>(srows);
@@ -235,17 +266,20 @@ PYBIND11_MODULE(_core, m) {
   }, arg("rows"), arg("srows"), arg("nz"), arg("N"), arg("p_in"));
 
   m.def("sym_set_block_bytes", [](double bytes) { return symSetBlockBytes(bytes); }, arg("bytes"));
+  m.def("sym_clear_jets", []() { return symClearJets(); });
 
   m.def("sym_segment_ranks", [](py::object segs, int nLeaves, int nStates, py::object zSlots,
                                 py::object point, double p, int Nt, py::object stateVals,
-                                int threads, py::object dropStates, bool fromStates) {
+                                int threads, py::object dropStates, bool fromStates, std::string session) {
     List s = cv<List>(segs); IntegerVector z = cv<IntegerVector>(zSlots), pt = cv<IntegerVector>(point);
     IntegerMatrix sv = stateVals.is_none() ? IntegerMatrix(0, 0) : cv<IntegerMatrix>(stateVals);
     IntegerVector dr = dropStates.is_none() ? IntegerVector(0) : cv<IntegerVector>(dropStates);
-    return run([&] { return Value(symSegmentRanks(s, nLeaves, nStates, z, pt, p, Nt, sv, threads, dr, fromStates)); });
+    return run([&] {
+      return Value(symSegmentRanks(s, nLeaves, nStates, z, pt, p, Nt, sv, threads, dr, fromStates, session));
+    });
   }, arg("segs"), arg("n_leaves"), arg("n_states"), arg("z_slots"), arg("point"), arg("p_in"),
      arg("Nt"), arg("state_vals") = py::none(), arg("threads") = 1, arg("drop_states") = py::none(),
-     arg("from_states") = false);
+     arg("from_states") = false, arg("session") = "");
 
   m.def("sym_obs_null_chain_seed_batch", [](py::object chains, py::object evalChain, py::object seeds,
                                             py::object primes, int nLeaves, int nStates,
@@ -287,6 +321,16 @@ PYBIND11_MODULE(_core, m) {
     IntegerMatrix a = cv<IntegerMatrix>(A); IntegerVector bb = cv<IntegerVector>(b);
     return run([&] { return symSolveMod(a, bb, p); });
   }, arg("A"), arg("b"), arg("p_in"));
+
+  m.def("sym_matmul_mod", [](py::object A, py::object B, double p, int cores) {
+    NumericMatrix a = cv<NumericMatrix>(A), b = cv<NumericMatrix>(B);
+    return run([&] { return Value(symMatMulMod(a, b, p, cores)); });
+  }, arg("A"), arg("B"), arg("p_in"), arg("cores") = 1);
+
+  m.def("sym_independent_rows", [](py::object M, double p, int cores) {
+    NumericMatrix mm = cv<NumericMatrix>(M);
+    return run([&] { return Value(symIndependentRows(mm, p, cores)); });
+  }, arg("M"), arg("p_in"), arg("cores") = 1);
 
   m.def("sym_rref_mod", [](py::object M, double p) {
     NumericMatrix mm = cv<NumericMatrix>(M);

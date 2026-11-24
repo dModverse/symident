@@ -48,7 +48,7 @@ gives the output of the orbit.
 
 A direction that shifts some coordinates and rescales positive ones at rates that depend only on
 coordinates it does not move, such as an unknown offset of a measurement that also shifts other
-coordinates, is a *linear flow* (:doc:`../method`, "Linear flows"). It is removed by fixing as
+coordinates, is a *linear flow* (:ref:`red-linear`). It is removed by fixing as
 many moved coordinates as the block has directions, a coordinate that enters only the observables
 first: a linear one to 0, a positive one to 1. The other moved coordinates keep their names and
 stand for the invariants listed under ``Invariants``.
@@ -97,13 +97,12 @@ Options
 ``zero_limits``
    checks for each block whether coordinates can be set to zero in a limit, printed under
    ``Zero limits`` and returned in ``to_dict()["zero_compatibility"]``.
-``timeout``, ``work_cap``
-   the wall time in seconds (600 by default, ``math.inf`` for none) and the work per block of the
-   search for a section; reaching either is named in ``red.limits``.
+``work_cap``
+   the work per block of the search for a section; reaching it is named in ``red.limits``.
 ``check``
    runs the detection again on the reduced model (``red.checks["loop"]``).
 ``branch``
-   with a discrete symmetry of a detection with ``mode="global"`` (:doc:`detection`), the side of
+   with a discrete symmetry of a detection with ``mode="global"`` (:doc:`global`), the side of
    its fixed set, such as ``"k01 > k12"``, whose chart becomes the trafo: free values in the positive
    orthant map one to one onto that side, e.g. ``k01 = delta + k12`` with ``delta > 0``, chained with
    the section of the continuous symmetries. Without it every branch is listed in

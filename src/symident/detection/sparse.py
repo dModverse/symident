@@ -6,7 +6,7 @@ import numpy as np
 
 from .. import _core
 from ..gfp import PRIMES, mono_table, null_residues, rat_recon, sieve
-from .closedform import expired, mono_string, poly_string
+from .closedform import mono_string, poly_string
 
 
 def _ints(x):
@@ -81,8 +81,6 @@ def sparse_entry(reli, support_col, f, point0, leaf_names, nt_used, kcall, pivot
     cur = [[1] * nvar for _ in range(np_)]
     have = 0
     while True:
-        if expired(ctrl):
-            return None
         target = min(16 if have == 0 else 2 * have, max_len)
         pl, pv, slot = [], [], []
         for pj in range(np_):
@@ -94,8 +92,6 @@ def sparse_entry(reli, support_col, f, point0, leaf_names, nt_used, kcall, pivot
                 pv.append(p)
                 slot.append((pj, k))
                 cur[pj] = [c * b % p for c, b in zip(cur[pj], bases)]
-        if expired(ctrl):
-            return None
         res = kbatch(pl, pv, nt_used)
         for i, pt in enumerate(pl):
             rp, p = res[i], pv[i]
@@ -188,8 +184,6 @@ def general_rational_entry(reli, support_col, f, point0, leaf_names, nt_used, kc
     deg = None
     ray0 = ray_samples([u0], [P1], ctrl["general_deg_num"] + ctrl["general_deg_den"] + 4)[0]
     for tot in range(2, ctrl["general_deg_num"] + ctrl["general_deg_den"] + 1):
-        if expired(ctrl):
-            return None
         for a in range(max(1, tot - ctrl["general_deg_den"]), min(tot - 1, ctrl["general_deg_num"]) + 1):
             b_d = tot - a
             if b_d < 1 or b_d > ctrl["general_deg_den"]:
@@ -212,8 +206,6 @@ def general_rational_entry(reli, support_col, f, point0, leaf_names, nt_used, kc
     cur = [[1] * nvar for _ in range(np_)]
     have = 0
     while True:
-        if expired(ctrl):
-            return None
         target = min(16 if have == 0 else 2 * have, max_len)
         u_l, p_v, slot = [], [], []
         for pj in range(np_):
@@ -223,8 +215,6 @@ def general_rational_entry(reli, support_col, f, point0, leaf_names, nt_used, kc
                 p_v.append(p)
                 slot.append((pj, k))
                 cur[pj] = [c * b % p for c, b in zip(cur[pj], bases)]
-        if expired(ctrl):
-            return None
         rays = ray_samples(u_l, p_v, d_n + d_d + 4)
         for i in range(len(u_l)):
             e = from_ray(rays[i], p_v[i], d_n, d_d)

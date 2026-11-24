@@ -238,6 +238,24 @@ def test_power_with_a_second_state():
     assert supports(res) == [("g", "p")]
 
 
+@pytest.mark.parametrize("f, g", [
+    (F_POW, {"y": "x^a/(g^a + x^a)"}),
+    ({"x": "p - m*x", "z": "n*x^a/(g^a + x^a) - k*z"}, {"y": "z"}),
+])
+def test_power_scaling_exact(f, g):
+    # the scaling of the base moves the power by the weight times the exponent; it bounds the rank
+    res = det(f, g, trafo={x: "0" for x in f})
+    assert res.dim - res.rank == 1
+    assert res.info["rank_status"]["status"] == "proven"
+    assert [(d["level"], d["generator"]) for d in res.symmetries] == [("exact", {"g": "g", "p": "p"})]
+
+
+def test_power_scaling_refused():
+    # a term linear in the base forbids the scaling of the power
+    res = det(F_POW, {"y": "x^a/(g^a + x^a) + x"}, trafo={"x": "0"})
+    assert res.rank == res.dim
+
+
 def test_power_order_not_proven():
     res = det(F_POW, {"y": "x^a/(g^a + x^a)"}, trafo={"x": "0"})
     assert not res.info["lie_certified"]
