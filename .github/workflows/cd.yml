@@ -40,9 +40,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: pypa/cibuildwheel@v4.3.5
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
@@ -50,9 +50,9 @@ jobs:
   sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: pipx run build --sdist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -78,8 +78,8 @@ jobs:
             apt-get update && apt-get install -y --no-install-recommends \
               python3 python3-venv ca-certificates
           fi
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: wheels-ubuntu-latest
           path: wheelhouse
@@ -101,7 +101,7 @@ jobs:
     steps:
       - name: Install build tools
         run: dnf install -y --setopt=install_weak_deps=False gcc make m4 diffutils curl xz tar
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Build msolve
         run: SYMIDENT_LIBS_CACHE=/tmp/msolve SYMIDENT_JOBS=4 sh src/symident/tools/build-msolve.sh
 
@@ -113,7 +113,7 @@ jobs:
     steps:
       - name: Install Python and the compilers
         run: dnf install -y --setopt=install_weak_deps=False python3 python3-devel python3-pip gcc-c++ cmake
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install from source
         run: |
           python3 -m venv /opt/venv
@@ -131,12 +131,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheels-*
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sdist
           path: dist
