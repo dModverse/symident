@@ -1,3 +1,8 @@
+# symident 0.18.1
+
+* `discrete()` closes the output pipes of every msolve call and the output file of msolve in the
+  input-output projections; Python no longer warns about unclosed files.
+
 # symident 0.18.0
 
 ## Global analysis

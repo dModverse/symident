@@ -712,6 +712,25 @@ def test_a_process_past_its_address_space_fails_and_not_the_one_that_waits():
         assert r.returncode != 0
 
 
+def test_run_msolve_closes_the_pipes_of_the_process(monkeypatch):
+    import subprocess
+    import sys
+
+    from symident.detection import work
+    procs = []
+
+    class Recorded(subprocess.Popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            procs.append(self)
+
+    monkeypatch.setattr(work.subprocess, "Popen", Recorded)
+    code = "import sys; print('[0]'); sys.stderr.write('3 x 4 50.0%\\n')"
+    r = work.run_msolve([sys.executable, "-c", code])
+    assert r.returncode == 0 and r.stdout.strip() == "[0]" and r.entries == 6
+    assert procs and procs[0].stdout.closed and procs[0].stderr.closed
+
+
 def test_the_symbols_of_the_package_hold_no_clock():
     import pathlib
     import re

@@ -479,7 +479,10 @@ def _msolve_count(names, polys, p):
         with work.local_caps(msolve_entries=work.cap("msolve_entries") / 10):
             r = work.run_msolve([binary, "-f", fi, "-o", fo, "-P", "1", "-t", str(_threads())])
         work.tick(int(r.entries))
-        txt = open(fo).read().strip() if os.path.exists(fo) else ""
+        txt = ""
+        if os.path.exists(fo):
+            with open(fo) as fh:
+                txt = fh.read().strip()
     if r.returncode != 0 or not txt:
         return None
     data = ast.literal_eval(txt.rstrip(":"))

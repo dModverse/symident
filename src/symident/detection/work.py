@@ -203,27 +203,31 @@ def run_msolve(cmd, text=True):
     result has returncode 1 and `capped` the reason. The count of a finished call decides as well, so the outcome
     does not depend on when the output is read."""
     most = cap("msolve_entries")
-    proc = subprocess.Popen(list(cmd) + ["-v", "2"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            preexec_fn=_limiter(MSOLVE_MEMORY))
     out = []
-    reader = threading.Thread(target=lambda: out.append(proc.stdout.read()))
-    reader.start()
     total, buf, done = 0, b"", 0
-    fd = proc.stderr.fileno()
-    while True:
-        chunk = os.read(fd, 1 << 16)
-        if not chunk:
-            break
-        buf += chunk
-        for m in _MATRIX.finditer(buf, done):
-            total += int(m.group(1)) * int(m.group(2)) * float(m.group(3)) / 100
-            done = m.end()
-        if total > most:
+    # leaving the block closes both pipes and waits for the process
+    with subprocess.Popen(list(cmd) + ["-v", "2"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          preexec_fn=_limiter(MSOLVE_MEMORY)) as proc:
+        reader = threading.Thread(target=lambda: out.append(proc.stdout.read()))
+        reader.start()
+        try:
+            fd = proc.stderr.fileno()
+            while True:
+                chunk = os.read(fd, 1 << 16)
+                if not chunk:
+                    break
+                buf += chunk
+                for m in _MATRIX.finditer(buf, done):
+                    total += int(m.group(1)) * int(m.group(2)) * float(m.group(3)) / 100
+                    done = m.end()
+                if total > most:
+                    proc.kill()
+                    break
+        except BaseException:
             proc.kill()
-            break
-    proc.stderr.close()
-    proc.wait()
-    reader.join()
+            raise
+        finally:
+            reader.join()
     stdout, stderr = out[0] if out else b"", buf
     if text:
         stdout, stderr = stdout.decode(errors="replace"), stderr.decode(errors="replace")
