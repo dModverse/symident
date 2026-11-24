@@ -72,8 +72,9 @@ def _classify_factored(infis, gens):
             cleared.append((cn / cd, {f: m for f, m in fm.items() if m}))
         common = None
         for _, fm in cleared:
-            common = dict(fm) if common is None else \
-                {f: min(m, fm.get(f, 0)) for f, m in common.items() if fm.get(f, 0)}
+            common = (
+                dict(fm) if common is None else {f: min(m, fm.get(f, 0)) for f, m in common.items() if fm.get(f, 0)}
+            )
         coeffs = [c for c, _ in cleared]
         # integer-primitive: clear the rational coefficients, divide by their gcd
         dl = 1
@@ -97,16 +98,15 @@ def _classify_factored(infis, gens):
                 d += m * spy.Poly(f, *gens).total_degree()
             prim[i] = e
             degs.append(d)
-        is_scaling = all(degs[k] == 1 and prim[i].free_symbols == {gens[i]}
-                         and spy.Poly(prim[i], gens[i]).total_degree() == 1
-                         for k, i in enumerate(nz))
+        is_scaling = all(
+            degs[k] == 1 and prim[i].free_symbols == {gens[i]} and spy.Poly(prim[i], gens[i]).total_degree() == 1
+            for k, i in enumerate(nz)
+        )
         comp_out = {str(gens[i]): str(prim[i]) for i in nz}
         if is_scaling:
             weights = {str(gens[i]): int(spy.Poly(prim[i], gens[i]).LC()) for i in nz}
-            return {'type': 'scaling', 'weights': weights,
-                    'components': comp_out, 'degree': 1}
-        return {'type': 'general', 'weights': None, 'components': comp_out,
-                'degree': int(max(degs)) if degs else 0}
+            return {"type": "scaling", "weights": weights, "components": comp_out, "degree": 1}
+        return {"type": "general", "weights": None, "components": comp_out, "degree": int(max(degs)) if degs else 0}
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
@@ -118,15 +118,14 @@ _CLASSIFY_MAX_CHARS = 20000
 def classify_generator(vector):
     """{'type', 'weights', 'components', 'degree'}: scaling or general, and the canonical generator."""
     items = [(str(k), str(v)) for k, v in vector.items()]
-    fallback = {'type': 'general', 'weights': None,
-                'components': {k: v for k, v in items}, 'degree': -1}
+    fallback = {"type": "general", "weights": None, "components": {k: v for k, v in items}, "degree": -1}
     if not items:
-        return {'type': 'general', 'weights': None, 'components': {}, 'degree': 0}
+        return {"type": "general", "weights": None, "components": {}, "degree": 0}
     # one moved coordinate: z*d/dz spans the same direction
-    moved = [(k, v) for k, v in items if v.strip() != '0']
+    moved = [(k, v) for k, v in items if v.strip() != "0"]
     if len(moved) == 1:
         z = moved[0][0]
-        return {'type': 'scaling', 'weights': {z: 1}, 'components': {z: z}, 'degree': 1}
+        return {"type": "scaling", "weights": {z: 1}, "components": {z: z}, "degree": 1}
     # very long components skip the canonical form
     if sum(len(v) for _, v in items) > _CLASSIFY_MAX_CHARS:
         return fallback
@@ -164,7 +163,7 @@ def classify_generator(vector):
             L = spy.lcm(L, d)
         nums = [spy.expand(spy.cancel(e * L)) for e in infis]
         for e in nums:
-            spy.Poly(e, *gens)                 # raises if not polynomial in gens
+            spy.Poly(e, *gens)  # raises if not polynomial in gens
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return fallback
@@ -196,7 +195,5 @@ def classify_generator(vector):
             if prim[i] != 0:
                 key = tuple(1 if j == i else 0 for j in range(n))
                 weights[str(gens[i])] = int(spy.Poly(prim[i], *gens).as_dict()[key])
-        return {'type': 'scaling', 'weights': weights,
-                'components': comp_out, 'degree': 1}
-    return {'type': 'general', 'weights': None,
-            'components': comp_out, 'degree': int(maxdeg)}
+        return {"type": "scaling", "weights": weights, "components": comp_out, "degree": 1}
+    return {"type": "general", "weights": None, "components": comp_out, "degree": int(maxdeg)}

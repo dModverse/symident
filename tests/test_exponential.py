@@ -70,12 +70,10 @@ def test_modular_state_in_exp():
 
 
 def test_bases_offsets_hyperbolic():
-    g10 = general(det({"A": "kA - kd*A", "B": "kB - kE*exp10(A)*B"}, G_AB,
-                      reconstruct=True))[0]["generator"]
+    g10 = general(det({"A": "kA - kd*A", "B": "kB - kE*exp10(A)*B"}, G_AB, reconstruct=True))[0]["generator"]
     assert expr_equal(g10["kE"], f"-log(10)*kE*({g10['A']})")
 
-    mixed = det({"A": "kA - kd*A", "B": "kB - kE*exp((10 - A)/10)*B + 2^(A/3)*c"}, G_AB,
-                reconstruct=True)
+    mixed = det({"A": "kA - kd*A", "B": "kB - kE*exp((10 - A)/10)*B + 2^(A/3)*c"}, G_AB, reconstruct=True)
     assert (mixed.rank, mixed.dim) == (6, 8)
     gm = general(mixed)[0]["generator"]
     assert expr_equal(gm["c"], f"-log(2)/3*c*({gm['A']})")
@@ -139,8 +137,14 @@ def test_exp_stage_wide_block():
     rne = "Ane*exp(-tsei/tref)*exp(-Ene/T)*cneg"
     rpe = "Ape*exp(-Epe/T)*alpha*(1 - alpha)"
     re_ = "Ae*exp(-Ee/T)*ce"
-    f = {"csei": f"-{rsei}", "cneg": f"-{rne}", "tsei": rne, "alpha": rpe, "ce": f"-{re_}",
-         "T": f"(Hsei*Wc*{rsei} + Hne*Wc*{rne} + Hpe*Wp*{rpe} + He*We*{re_} - hA*(T - Ta))/rhocp"}
+    f = {
+        "csei": f"-{rsei}",
+        "cneg": f"-{rne}",
+        "tsei": rne,
+        "alpha": rpe,
+        "ce": f"-{re_}",
+        "T": f"(Hsei*Wc*{rsei} + Hne*Wc*{rne} + Hpe*Wp*{rpe} + He*We*{re_} - hA*(T - Ta))/rhocp",
+    }
     obs = det(f, {"y": "T"}, reconstruct=True)
     assert len(obs.symmetries) == 8
     red = si.reduce(obs)
@@ -284,8 +288,9 @@ def test_a_numeric_base_with_a_free_exponent_adds_no_coordinate():
 
 
 def test_numeric_bases_with_shared_primes():
-    m = si.Model({"x": "-k*D^n/(D^n+h)*x"}, {"y": "x"},
-                 conditions={"rows": list("abcd"), "cols": {"D": [1, 3, 10, 30]}})
+    m = si.Model(
+        {"x": "-k*D^n/(D^n+h)*x"}, {"y": "x"}, conditions={"rows": list("abcd"), "cols": {"D": [1, 3, 10, 30]}}
+    )
     assert si.detect(m, cores=1).identifiable
 
 
@@ -303,8 +308,10 @@ def test_a_free_exponent_of_a_sum_and_of_its_summand():
 
 
 def test_a_free_exponent_of_a_condition_value_and_of_zero():
-    odes = {"S": "kg*S - (kd + Emax*C^gam/(EC50^gam + C^gam))*S - (kg-kd)*(S+R)/Bmax*S",
-            "R": "(kg-kd)*(S+R)/Bmax*S - kd*R"}
+    odes = {
+        "S": "kg*S - (kd + Emax*C^gam/(EC50^gam + C^gam))*S - (kg-kd)*(S+R)/Bmax*S",
+        "R": "(kg-kd)*(S+R)/Bmax*S - kd*R",
+    }
     grid = {"rows": ["c0", "c1", "c4", "c16"], "cols": {"C": [0, 1, 4, 16]}}
     m = si.Model(odes, {"cfu": "S + R"}, trafo={"S": "S0", "R": "0"}, conditions=grid, fixed=["C"])
     assert si.detect(m, cores=1).identifiable
@@ -334,8 +341,13 @@ def test_a_declared_positive_expression_charts_the_logarithm():
 
 
 def test_powers_of_a_sum_with_symbolic_and_high_exponents():
-    odes = {"Ac": "-ke*Ac", "x1": "l0*x1/(1 + (l0/l1*(x1+x2+x3+x4))^psi)^(1/psi) - k2*Ac*x1",
-            "x2": "k2*Ac*x1 - k1*x2", "x3": "k1*(x2 - x3)", "x4": "k1*(x3 - x4)"}
+    odes = {
+        "Ac": "-ke*Ac",
+        "x1": "l0*x1/(1 + (l0/l1*(x1+x2+x3+x4))^psi)^(1/psi) - k2*Ac*x1",
+        "x2": "k2*Ac*x1 - k1*x2",
+        "x3": "k1*(x2 - x3)",
+        "x4": "k1*(x3 - x4)",
+    }
     ev = [{"var": "Ac", "time": 1, "value": 1, "method": "add"}]
     tr = {"Ac": "0", "x2": "0", "x3": "0", "x4": "0"}
     assert si.detect(si.Model(odes, {"y": "x1+x2+x3+x4"}, events=ev, trafo=tr, fixed=["ke"]), cores=1).identifiable
@@ -345,8 +357,11 @@ def test_powers_of_a_sum_with_symbolic_and_high_exponents():
 
 def test_a_high_power_of_a_state_beside_a_free_scale():
     base = {"h": "(-p0*(h^8 - p1) + p2*(h - p1) - (T - p3))/C", "T": "kT", "I": "T"}
-    r = si.detect(si.Model(base, {"y": "a + b*h + g*I"}, trafo={"T": "1/3", "kT": "2/7", "I": "0"}, fixed=["kT"]),
-                  reconstruct=True, cores=1)
+    r = si.detect(
+        si.Model(base, {"y": "a + b*h + g*I"}, trafo={"T": "1/3", "kT": "2/7", "I": "0"}, fixed=["kT"]),
+        reconstruct=True,
+        cores=1,
+    )
     assert (r.rank, r.dim) == (7, 9) and {s.level for s in r.symmetries} == {"exact"}
 
 
@@ -363,33 +378,42 @@ def test_a_free_exponent_of_a_parameter_keeps_the_exponent_as_a_coordinate():
 
 def test_a_large_integer_power_costs_a_logarithmic_tape():
     from symident.sym.tape import _emit_tape_shared
+
     x = spy.Symbol("x")
-    n = 10 ** 13
-    op = _emit_tape_shared([x ** n], [x ** (-n)], {"x": 0}, 1)[0]
+    n = 10**13
+    op = _emit_tape_shared([x**n], [x ** (-n)], {"x": 0}, 1)[0]
     # square and multiply: below 2 log2(n) products per power, the inverse shared
     assert len(op) <= 2 * n.bit_length() + 2
 
 
 def test_degrees_past_the_dense_limit_come_from_the_expression_tree():
     from symident.detection.bound import _total_degree, _vector_degree
+
     x, y = spy.symbols("x y")
-    n = 10 ** 13
-    assert _total_degree(x ** n * (1 - y) - x ** (n // 3) * y, [x, y]) == n + 1
-    assert _vector_degree([(x ** n * (1 - y) - x ** (n // 3) * y) / (1 + x ** (n // 2))]) == n + 1
+    n = 10**13
+    assert _total_degree(x**n * (1 - y) - x ** (n // 3) * y, [x, y]) == n + 1
+    assert _vector_degree([(x**n * (1 - y) - x ** (n // 3) * y) / (1 + x ** (n // 2))]) == n + 1
 
 
 # the sodium current of Luo-Rudy 1991 with the gates h and j in the branch V >= -40, and the inward rectifier
 LR91_RATES = {
-    "am": "0.32*(V+47.13)/(1-exp(-0.1*(V+47.13)))", "bm": "0.08*exp(-V/11)",
-    "bh": "1/(0.13*(1+exp((V+10.66)/(-11.1))))", "bj": "0.3*exp(-2.535e-7*V)/(1+exp(-0.1*(V+32)))",
+    "am": "0.32*(V+47.13)/(1-exp(-0.1*(V+47.13)))",
+    "bm": "0.08*exp(-V/11)",
+    "bh": "1/(0.13*(1+exp((V+10.66)/(-11.1))))",
+    "bj": "0.3*exp(-2.535e-7*V)/(1+exp(-0.1*(V+32)))",
     "aK": "1.02/(1+exp(0.2385*(V-EK1-59.215)))",
-    "bK": "(0.49124*exp(0.08032*(V-EK1+5.476)) + exp(0.06175*(V-EK1-594.31)))/(1+exp(-0.5143*(V-EK1+4.753)))"}
+    "bK": "(0.49124*exp(0.08032*(V-EK1+5.476)) + exp(0.06175*(V-EK1-594.31)))/(1+exp(-0.5143*(V-EK1+4.753)))",
+}
 
 
 def test_a_heart_model_with_unround_rates_keeps_to_small_degrees():
     r = LR91_RATES
-    f = {"V": f"-(gNa*m^3*h*j*(V - ENa) + gK1*({r['aK']})/(({r['aK']}) + ({r['bK']}))*(V - EK1))/Cm",
-         "m": f"{r['am']}*(1-m) - {r['bm']}*m", "h": f"-{r['bh']}*h", "j": f"-{r['bj']}*j"}
+    f = {
+        "V": f"-(gNa*m^3*h*j*(V - ENa) + gK1*({r['aK']})/(({r['aK']}) + ({r['bK']}))*(V - EK1))/Cm",
+        "m": f"{r['am']}*(1-m) - {r['bm']}*m",
+        "h": f"-{r['bh']}*h",
+        "j": f"-{r['bj']}*j",
+    }
     res = det(f, {"y": "V"})
     assert (res.rank, res.dim) == (6, 9)
     gens = sorted(sorted(d["generator"]) for d in res.symmetries)

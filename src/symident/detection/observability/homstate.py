@@ -76,6 +76,7 @@ def reduce_relations(lines, states, zero=()):
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             return None
+
     if all(all(degree(e, x) in (0, 1) for x in syms if x in e.free_symbols) for e in eqs):
         return list(states), [str(e) for e in eqs]
     core = list(syms)
@@ -124,8 +125,7 @@ class StateFit:
             used.append(mi)
             zero = set(sys.zero_of(ci)) | set(getattr(sys, "solve_held", []))
             st = sys.hom_states[mi] if len(getattr(sys, "hom_states", [])) > mi else {}
-            cand = [nm for nm in sys.real_state_names
-                    if nm in st and nm not in zero and st[nm][0] % PRIMES[0] != 0]
+            cand = [nm for nm in sys.real_state_names if nm in st and nm not in zero and st[nm][0] % PRIMES[0] != 0]
             core, rel = reduce_relations(sys.models[ci], cand, sorted(zero))
             self.relations[mi] = rel
             for nm in cand:
@@ -147,7 +147,6 @@ class StateFit:
     def names(self, reli):
         """The variables of a fit: the resting states, then the relevant parameters `reli`."""
         return list(self.states) + list(reli)
-
 
     def resting_subs(self):
         """Resting states as rational functions of the parameters where their equations are linear, else {}."""
@@ -192,8 +191,7 @@ class StateFit:
         out = []
         for mi in self.mis:
             ren = {nm: v for v, (m, nm) in self.var.items() if m == mi}
-            lines = [_IDENT.sub(lambda m: ren.get(m.group(0), m.group(0)), rhs)
-                     for rhs in self.relations.get(mi, [])]
+            lines = [_IDENT.sub(lambda m: ren.get(m.group(0), m.group(0)), rhs) for rhs in self.relations.get(mi, [])]
             out += _leading(lines, names)
         return out
 
@@ -261,8 +259,11 @@ class StateFit:
         n = len(hom.base)
         out = (None, None)
         for j in range(_N_BASES + 1):
-            base = self.good_base.get(p, hom.base) if j == 0 else \
-                np.array(hom.an.sc["pool"](self.pool0 + (j - 1) * (n + 1) + np.arange(n)), dtype=np.int64)
+            base = (
+                self.good_base.get(p, hom.base)
+                if j == 0
+                else np.array(hom.an.sc["pool"](self.pool0 + (j - 1) * (n + 1) + np.arange(n)), dtype=np.int64)
+            )
             Sw = self.sys.hom_line(base, d, T, p, hom.nt)
             if Sw is None:
                 continue
@@ -334,9 +335,11 @@ class StateFit:
             for p in cands:
                 R = self._rows(a, i, reli, mons, dg, p, T, need, 9973)
                 v = None if R is None else self._null(R, p, order)
-                self.hom.diag(f"states {','.join(self.states)}: degree {dg}, {nm} monomials "
-                              f"({len(banned)} leading terms out), rows {None if R is None else R.shape[0]}, "
-                              f"nullity {getattr(self, 'nullity', None) if R is not None else None}")
+                self.hom.diag(
+                    f"states {','.join(self.states)}: degree {dg}, {nm} monomials "
+                    f"({len(banned)} leading terms out), rows {None if R is None else R.shape[0]}, "
+                    f"nullity {getattr(self, 'nullity', None) if R is not None else None}"
+                )
                 if R is None:
                     continue
                 if v is None:
@@ -357,8 +360,10 @@ class StateFit:
                     rec = None
                 lifted = rec is not None and not any(dd == "0" for dd in rec["den"])
                 good = lifted and self._verified(a, i, reli, rec, mons, T + 4)
-                self.hom.diag(f"degree {dg}, {len(primes)} prime(s): " +
-                              ("verified" if good else "lifted, not verified" if lifted else "no lift"))
+                self.hom.diag(
+                    f"degree {dg}, {len(primes)} prime(s): "
+                    + ("verified" if good else "lifted, not verified" if lifted else "no lift")
+                )
                 if good:
                     return {"expr": self._expr(rec, mons, self.names(reli)), "reli": reli}
                 if len(primes) >= 6:

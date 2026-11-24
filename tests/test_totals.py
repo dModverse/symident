@@ -27,18 +27,22 @@ class Case:
         self.events, self.inputs, self.fixed = events, list(inputs), list(fixed)
 
     def renamed(self, ren):
-        return Case({ren.get(k, k): _sub(v, ren) for k, v in self.odes.items()},
-                    {k: _sub(v, ren) for k, v in self.obs.items()},
-                    {k: _sub(v, ren) for k, v in self.totals.items()},
-                    {ren.get(k, k): v for k, v in self.point.items()},
-                    [dict(e, var=ren.get(e["var"], e["var"]), value=_sub(e["value"], ren)) for e in self.events],
-                    [ren.get(x, x) for x in self.inputs], [ren.get(x, x) for x in self.fixed])
+        return Case(
+            {ren.get(k, k): _sub(v, ren) for k, v in self.odes.items()},
+            {k: _sub(v, ren) for k, v in self.obs.items()},
+            {k: _sub(v, ren) for k, v in self.totals.items()},
+            {ren.get(k, k): v for k, v in self.point.items()},
+            [dict(e, var=ren.get(e["var"], e["var"]), value=_sub(e["value"], ren)) for e in self.events],
+            [ren.get(x, x) for x in self.inputs],
+            [ren.get(x, x) for x in self.fixed],
+        )
 
     def detect(self, order=None, totals_order=None, **kw):
         odes = self.odes if order is None else {k: self.odes[k] for k in order}
         totals = self.totals if totals_order is None else {k: self.totals[k] for k in totals_order}
-        m = si.Model(odes=odes, observables=self.obs, totals=totals, events=self.events, inputs=self.inputs,
-                     fixed=self.fixed)
+        m = si.Model(
+            odes=odes, observables=self.obs, totals=totals, events=self.events, inputs=self.inputs, fixed=self.fixed
+        )
         kw.setdefault("equilibrate", True)
         kw.setdefault("reconstruct", True)
         kw.setdefault("cores", 1)
@@ -56,9 +60,12 @@ class Case:
             at[sym[t]] = spy.sympify(e.replace("^", "**"), locals=sym).subs(at)
         free = [c for c in coords if c in states]
         Y = [s for s in states if s not in free]
-        eqs = [spy.sympify(self.odes[s].replace("^", "**"), locals=sym).subs({sym.get(u, spy.Symbol(u)): 0
-                                                                           for u in self.inputs})
-               for s in states]
+        eqs = [
+            spy.sympify(self.odes[s].replace("^", "**"), locals=sym).subs(
+                {sym.get(u, spy.Symbol(u)): 0 for u in self.inputs}
+            )
+            for s in states
+        ]
         eqs += [spy.sympify(self.totals[c].replace("^", "**"), locals=sym) - sym[c] for c in coords if c in self.totals]
         GY = spy.Matrix([[spy.diff(e, sym[y]) for y in Y] for e in eqs]).subs(at)
         Gc = spy.Matrix([[spy.diff(e, sym[c]) for c in coords] for e in eqs]).subs(at)
@@ -90,15 +97,42 @@ def _rest_ab(k1, k2, a):
     return {"A": a, "B": k1 * a / k2}
 
 
-EXCHANGE = Case({"A": "-k1*(1+u)*A + k2*B", "B": "k1*(1+u)*A - k2*B", "u": "0"}, {"y": "s*B"}, {"T": "A + B"},
-                dict(k1=R(3, 7), k2=R(5, 11), s=R(13, 3), **_rest_ab(R(3, 7), R(5, 11), R(17, 5))))
-VOLUMES = Case({"A": "(-k1*(1+u)*A + k2*B)/V1", "B": "(k1*(1+u)*A - k2*B)/V2", "u": "0"}, {"y": "s*B"},
-               {"T": "V1*A + V2*B"},
-               dict(k1=R(3, 7), k2=R(5, 11), s=R(13, 3), V1=R(2, 3), V2=R(7, 5), **_rest_ab(R(3, 7), R(5, 11), R(4))))
-TWO = Case({"A": "(-k1*(1+u)*A + k2*B)/V1", "B": "(k1*(1+u)*A - k2*B)/V2", "C": "(-k3*B*C + k4*D)/V1",
-            "D": "(k3*B*C - k4*D)/V2", "u": "0"}, {"y1": "s1*B", "y2": "D"}, {"T1": "V1*A + V2*B", "T2": "V1*C + V2*D"},
-           dict(k1=R(3, 7), k2=R(5, 11), k3=R(2, 9), k4=R(7, 4), s1=R(13, 3), V1=R(2, 3), V2=R(7, 5),
-                A=R(4), B=R(3, 7) * 4 / R(5, 11), C=R(6), D=R(2, 9) * (R(3, 7) * 4 / R(5, 11)) * 6 / R(7, 4)))
+EXCHANGE = Case(
+    {"A": "-k1*(1+u)*A + k2*B", "B": "k1*(1+u)*A - k2*B", "u": "0"},
+    {"y": "s*B"},
+    {"T": "A + B"},
+    dict(k1=R(3, 7), k2=R(5, 11), s=R(13, 3), **_rest_ab(R(3, 7), R(5, 11), R(17, 5))),
+)
+VOLUMES = Case(
+    {"A": "(-k1*(1+u)*A + k2*B)/V1", "B": "(k1*(1+u)*A - k2*B)/V2", "u": "0"},
+    {"y": "s*B"},
+    {"T": "V1*A + V2*B"},
+    dict(k1=R(3, 7), k2=R(5, 11), s=R(13, 3), V1=R(2, 3), V2=R(7, 5), **_rest_ab(R(3, 7), R(5, 11), R(4))),
+)
+TWO = Case(
+    {
+        "A": "(-k1*(1+u)*A + k2*B)/V1",
+        "B": "(k1*(1+u)*A - k2*B)/V2",
+        "C": "(-k3*B*C + k4*D)/V1",
+        "D": "(k3*B*C - k4*D)/V2",
+        "u": "0",
+    },
+    {"y1": "s1*B", "y2": "D"},
+    {"T1": "V1*A + V2*B", "T2": "V1*C + V2*D"},
+    dict(
+        k1=R(3, 7),
+        k2=R(5, 11),
+        k3=R(2, 9),
+        k4=R(7, 4),
+        s1=R(13, 3),
+        V1=R(2, 3),
+        V2=R(7, 5),
+        A=R(4),
+        B=R(3, 7) * 4 / R(5, 11),
+        C=R(6),
+        D=R(2, 9) * (R(3, 7) * 4 / R(5, 11)) * 6 / R(7, 4),
+    ),
+)
 
 
 @pytest.mark.parametrize("case", [EXCHANGE, VOLUMES, TWO], ids=["exchange", "volumes", "two totals"])
@@ -129,13 +163,20 @@ def test_the_result_does_not_depend_on_pivots_names_or_order(case):
 LINEAR = {"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}
 
 
-@pytest.mark.parametrize("var, time, method", [("A", 0, "add"), ("B", 0, "replace"), ("A", 1, "add"),
-                                                ("B", 0, "multiply")])
+@pytest.mark.parametrize(
+    "var, time, method", [("A", 0, "add"), ("B", 0, "replace"), ("A", 1, "add"), ("B", 0, "multiply")]
+)
 def test_reduce_cq_applies_an_event_on_a_species_of_a_total(var, time, method):
     # the total changes by E(x) - x at the event; with y = s*B, A is eliminated
-    case = Case(LINEAR, {"y": "s*B"}, {"T": "A + B"},
-                dict(k1=R(3, 7), k2=R(5, 11), s=R(13, 3), dose=R(2), **_rest_ab(R(3, 7), R(5, 11), R(17, 5))),
-                events=[{"var": var, "time": time, "value": "dose", "method": method}], inputs=(), fixed=("dose",))
+    case = Case(
+        LINEAR,
+        {"y": "s*B"},
+        {"T": "A + B"},
+        dict(k1=R(3, 7), k2=R(5, 11), s=R(13, 3), dose=R(2), **_rest_ab(R(3, 7), R(5, 11), R(17, 5))),
+        events=[{"var": var, "time": time, "value": "dose", "method": method}],
+        inputs=(),
+        fixed=("dose",),
+    )
     pivots, reduced = case.detect(), case.detect(reduce_cq=True)
     assert reduced.info["settings"]["eliminated"] == ["A"] and "T" in reduced.info["coordinates"]
     assert summary(pivots) == summary(reduced) and pivots.rank == 3
@@ -144,8 +185,13 @@ def test_reduce_cq_applies_an_event_on_a_species_of_a_total(var, time, method):
 
 def test_a_dose_on_a_species_changes_the_total_in_later_segments():
     # the dose at t = 1 raises the total: without it the total and the rates would share a scaling
-    m = si.Model(odes=LINEAR, observables={"y": "B"}, totals={"T": "A + B"},
-                 events=[{"var": "A", "time": 1, "value": "dose", "method": "add"}], fixed=["dose"])
+    m = si.Model(
+        odes=LINEAR,
+        observables={"y": "B"},
+        totals={"T": "A + B"},
+        events=[{"var": "A", "time": 1, "value": "dose", "method": "add"}],
+        fixed=["dose"],
+    )
     r = si.detect(m, equilibrate=True, reduce_cq=True, cores=1)
     assert (r.rank, r.dim) == (3, 3) and r.info["rank_status"]["status"] == "proven"
 
@@ -154,8 +200,13 @@ BINDING = {"A": "-kon*A*B + koff*C", "B": "-kon*A*B + koff*C", "C": "kon*A*B - k
 
 
 def _binding(**kw):
-    m = si.Model(odes=BINDING, observables={"y": "s*C"}, totals=kw.pop("totals", {"TA": "A + C", "TB": "B + C"}),
-                 events=[{"var": "A", "time": 0, "value": "dose", "method": "add"}], fixed=["dose"])
+    m = si.Model(
+        odes=BINDING,
+        observables={"y": "s*C"},
+        totals=kw.pop("totals", {"TA": "A + C", "TB": "B + C"}),
+        events=[{"var": "A", "time": 0, "value": "dose", "method": "add"}],
+        fixed=["dose"],
+    )
     return si.detect(m, equilibrate=True, cores=1, **kw)
 
 
@@ -168,11 +219,14 @@ def test_every_valid_pivot_set_of_totals_sharing_a_species_solves(pivots):
         assert sorted(r.info["settings"]["free_initial"]) == sorted(pivots)
 
 
-@pytest.mark.parametrize("pivots, match", [
-    (["C", "C"], "names C twice"),
-    (["A", "Z"], "Z, which is not a state"),
-    (["A", "C", "B"], "do not leave independent"),
-])
+@pytest.mark.parametrize(
+    "pivots, match",
+    [
+        (["C", "C"], "names C twice"),
+        (["A", "Z"], "Z, which is not a state"),
+        (["A", "C", "B"], "do not leave independent"),
+    ],
+)
 def test_an_invalid_free_initial_is_refused(pivots, match):
     with pytest.raises(InputError, match=match):
         _binding(free_initial=pivots)
@@ -192,8 +246,13 @@ ACR = {"A": "-k1*A*B + k2*B", "B": "k1*A*B - k2*B"}
 
 def test_a_state_at_zero_at_rest_takes_the_free_value_where_free_initial_names_it():
     # A + B -> 2B, B -> A: B rests at zero, or A = k2/k1 with B free
-    m = si.Model(odes=ACR, observables={"y": "s*B"}, totals={"T": "A + B"},
-                 events=[{"var": "B", "time": 0, "value": "dose", "method": "add"}], fixed=["dose"])
+    m = si.Model(
+        odes=ACR,
+        observables={"y": "s*B"},
+        totals={"T": "A + B"},
+        events=[{"var": "B", "time": 0, "value": "dose", "method": "add"}],
+        fixed=["dose"],
+    )
     zero = si.detect(m, equilibrate=True, reconstruct=True, cores=1)
     assert any("B rests at zero" in b and "free_initial=['B']" in b for b in zero.info["branches"])
     assert zero.info["settings"]["free_initial"] == ["A"]
@@ -202,14 +261,20 @@ def test_a_state_at_zero_at_rest_takes_the_free_value_where_free_initial_names_i
     away = si.detect(m, equilibrate=True, free_initial=["B"], cores=1)
     assert away.info["settings"]["free_initial"] == ["B"] and away.rank != zero.rank
     assert any("free_initial: B rests away from zero" in b for b in away.info["branches"])
-    lost = si.Model(odes={"x": "-k*x", "y": "k*x"}, observables={"o": "s*y"}, totals={"T": "x + y"},
-                    events=[{"var": "x", "time": 0, "value": "d", "method": "add"}], fixed=["d"])
+    lost = si.Model(
+        odes={"x": "-k*x", "y": "k*x"},
+        observables={"o": "s*y"},
+        totals={"T": "x + y"},
+        events=[{"var": "x", "time": 0, "value": "d", "method": "add"}],
+        fixed=["d"],
+    )
     with pytest.raises(InputError, match="x, which rests at zero at every resting state"):
         si.detect(lost, equilibrate=True, free_initial=["x"])
 
 
 def test_the_totals_of_odes_are_nonnegative_in_every_order():
     import itertools
+
     seen = set()
     for order in itertools.permutations(BINDING):
         m = si.Model(odes={k: BINDING[k] for k in order}, observables={"y": "s*C"})
@@ -218,9 +283,17 @@ def test_the_totals_of_odes_are_nonnegative_in_every_order():
             assert "-" not in t
             laws.add(frozenset(re.findall(r"[A-Z]", t)))
         seen.add(frozenset(laws))
-        rx = si.Model(reactions={"species": list(order), "stoichiometry": [
-            [{"A": -1, "B": -1, "C": 1}[s] for s in order], [{"A": 1, "B": 1, "C": -1}[s] for s in order]],
-            "rates": ["kon*A*B", "koff*C"]}, observables={"y": "s*C"})
+        rx = si.Model(
+            reactions={
+                "species": list(order),
+                "stoichiometry": [
+                    [{"A": -1, "B": -1, "C": 1}[s] for s in order],
+                    [{"A": 1, "B": 1, "C": -1}[s] for s in order],
+                ],
+                "rates": ["kon*A*B", "koff*C"],
+            },
+            observables={"y": "s*C"},
+        )
         assert {frozenset(re.findall(r"[A-Z]", t)) for t in rx.totals.values()} == laws
     assert seen == {frozenset({frozenset("AC"), frozenset("BC")})}
     # one relation between four nonnegative laws: three of them, all nonnegative
@@ -229,8 +302,7 @@ def test_the_totals_of_odes_are_nonnegative_in_every_order():
 
 
 def test_a_total_of_both_signs_is_noted_under_reduce_cq():
-    m = si.Model(odes={"A": "k*(1+u)", "B": "k*(1+u)", "u": "0"}, observables={"y": "A + s*B"}, inputs=["u"],
-                 events=U)
+    m = si.Model(odes={"A": "k*(1+u)", "B": "k*(1+u)", "u": "0"}, observables={"y": "A + s*B"}, inputs=["u"], events=U)
     assert m.totals["total1"] == "A - B"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

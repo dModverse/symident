@@ -12,8 +12,23 @@ from .parse import model_function, to_r
 
 _SWITCHY = re.compile(r"\b(piecewise|ifelse|Heaviside|max|min|pmax|pmin)\s*\(|[<>!&|=]")
 _SIGNY = re.compile(r"\b(abs|sign)\s*\(")
-_BIN = {"||": 1, "|": 1, "&&": 2, "&": 2, "<": 4, ">": 4, "<=": 4, ">=": 4, "==": 4, "!=": 4,
-        "+": 5, "-": 5, "*": 6, "/": 6, "^": 8}
+_BIN = {
+    "||": 1,
+    "|": 1,
+    "&&": 2,
+    "&": 2,
+    "<": 4,
+    ">": 4,
+    "<=": 4,
+    ">=": 4,
+    "==": 4,
+    "!=": 4,
+    "+": 5,
+    "-": 5,
+    "*": 6,
+    "/": 6,
+    "^": 8,
+}
 TIME = spy.Symbol("time")
 # pi and Euler's number in a model with switches, as fixed symbols
 CONSTS = {spy.pi: spy.Symbol("si_pi"), spy.E: spy.Symbol("si_e")}
@@ -68,16 +83,14 @@ class Switches:
 
     def is_pos(self, name):
         """Whether the coordinate `name` is declared positive."""
-        return self.positive is True or (self.positive not in (False, None) and
-                                         name in self.positive)
+        return self.positive is True or (self.positive not in (False, None) and name in self.positive)
 
     def _assume(self, e):
         rep = {}
         for s in e.free_symbols:
             if s in self.ind:
                 continue
-            rep[s] = spy.Dummy(s.name, positive=True) if self.is_pos(s.name) else \
-                spy.Dummy(s.name, real=True)
+            rep[s] = spy.Dummy(s.name, positive=True) if self.is_pos(s.name) else spy.Dummy(s.name, real=True)
         return e.xreplace(rep)
 
     def sign_of(self, e):
@@ -145,8 +158,7 @@ class Switches:
         """The indicator of e > 0 in the H_j; the boundary e = 0 has measure zero."""
         e = spy.sympify(e)
         if e.free_symbols & set(self.ind):
-            raise InapplicableError(f"a condition on a switched expression ({to_str(e)}) is not "
-                             "supported")
+            raise InapplicableError(f"a condition on a switched expression ({to_str(e)}) is not supported")
         s = self.sign_of(e)
         if s is not None:
             if self.positive is True and {str(x) for x in e.free_symbols} & self.states:
@@ -184,8 +196,7 @@ class Switches:
             # unless a - b vanishes identically, equality holds on a set of measure zero
             eq = spy.Integer(1 if self.sign_of(a - b) == 0 else 0)
             return _Bool(eq if op == "==" else 1 - eq)
-        return {"+": lambda: a + b, "-": lambda: a - b, "*": lambda: a * b,
-                "/": lambda: a / b, "^": lambda: a ** b}[op]()
+        return {"+": lambda: a + b, "-": lambda: a - b, "*": lambda: a * b, "/": lambda: a / b, "^": lambda: a**b}[op]()
 
     def _extreme(self, args, sign):
         args = [_val(a) for a in args]
@@ -371,28 +382,38 @@ def hybrid_model(f, g, positive, events=None, inputs=(), taken=()):
             nm += "_"
         used.add(nm)
         return nm
+
     sw = Switches(pos, namer, states=f)
     F = {k: sw.parse(v) for k, v in f.items()}
     Gs = [{k: sw.parse(v) for k, v in x.items()} for x in gl]
     if sw.by_default:
-        warnings.warn("the default positive=True decides the sign of " + ", ".join(dict.fromkeys(sw.by_default)) +
-                      ", which holds a state, and removes the switch; pass `positive` without that state to keep "
-                      "the switch", stacklevel=4)
+        warnings.warn(
+            "the default positive=True decides the sign of "
+            + ", ".join(dict.fromkeys(sw.by_default))
+            + ", which holds a state, and removes the switch; pass `positive` without that state to keep "
+            "the switch",
+            stacklevel=4,
+        )
     root_of = []
     for e in roots:
         h = sw.indicator(sw.parse(str(e["root"])))
         hit = [j for j, s in enumerate(sw.ind) if s in h.free_symbols]
-        single = len(hit) == 1 and (spy.expand(h - sw.ind[hit[0]]) == 0 or
-                                    spy.expand(h - 1 + sw.ind[hit[0]]) == 0)
+        single = len(hit) == 1 and (spy.expand(h - sw.ind[hit[0]]) == 0 or spy.expand(h - 1 + sw.ind[hit[0]]) == 0)
         if not single:
-            raise InapplicableError(f"the root {e['root']} of an event is not one switching surface; "
-                             "give the event a root that changes sign on a single surface")
+            raise InapplicableError(
+                f"the root {e['root']} of an event is not one switching surface; "
+                "give the event a root that changes sign on a single surface"
+            )
         root_of.append({"event": e, "surface": hit[0]})
     if not sw.funcs:
         if any(_SWITCHY.search(str(e)) for e in exprs):
-            return {"hybrid": False, "f": {k: to_str(v) for k, v in F.items()},
-                    "g": [{k: to_str(v) for k, v in x.items()} or None for x in Gs]
-                    if obs_list else ({k: to_str(v) for k, v in Gs[0].items()} or None)}
+            return {
+                "hybrid": False,
+                "f": {k: to_str(v) for k, v in F.items()},
+                "g": [{k: to_str(v) for k, v in x.items()} or None for x in Gs]
+                if obs_list
+                else ({k: to_str(v) for k, v in Gs[0].items()} or None),
+            }
         return None
     sw.consts = CONSTS
     sw.funcs = [q.xreplace(CONSTS) for q in sw.funcs]

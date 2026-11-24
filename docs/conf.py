@@ -65,9 +65,13 @@ def _chapters(doc):
 
 
 # the header lists the pages of the root toctree; the guide and the method also open a menu of their chapters
-html_context = {"symident_nav": [(d, _title(d), _chapters(d) if d in ("guide", "method") else [])
-                                 for d in ("install", "quickstart", "guide", "method", "api")]
-                + [("changelog", "Changelog", [])]}
+html_context = {
+    "symident_nav": [
+        (d, _title(d), _chapters(d) if d in ("guide", "method") else [])
+        for d in ("install", "quickstart", "guide", "method", "api")
+    ]
+    + [("changelog", "Changelog", [])]
+}
 
 # citations: numbered in the order cited, in the reference format of IEEE, as on the dMod2 and cppDE sites
 
@@ -107,22 +111,55 @@ class _IEEE(_Unsrt):
 
     def get_article_template(self, e):
         return join[
-            _authors(), ", ", self._title(), tag("em")[field("journal")],
-            optional[", vol. ", field("volume")], optional[", no. ", field("number")],
-            optional[", pp. ", _pages()], optional[", Art. no. ", field("eid")], ", ", field("year"),
-            self._doi(), "."]
+            _authors(),
+            ", ",
+            self._title(),
+            tag("em")[field("journal")],
+            optional[", vol. ", field("volume")],
+            optional[", no. ", field("number")],
+            optional[", pp. ", _pages()],
+            optional[", Art. no. ", field("eid")],
+            ", ",
+            field("year"),
+            self._doi(),
+            ".",
+        ]
 
     def get_inproceedings_template(self, e):
         return join[
-            _authors(), ", ", self._title(), "in ", tag("em")[field("booktitle")], self._series(),
-            ", ", field("address"), ": ", field("publisher"), ", ", field("year"),
-            optional[", pp. ", _pages()], self._doi(), "."]
+            _authors(),
+            ", ",
+            self._title(),
+            "in ",
+            tag("em")[field("booktitle")],
+            self._series(),
+            ", ",
+            field("address"),
+            ": ",
+            field("publisher"),
+            ", ",
+            field("year"),
+            optional[", pp. ", _pages()],
+            self._doi(),
+            ".",
+        ]
 
     def get_book_template(self, e):
         return join[
-            _authors(), ", ", tag("em")[field("title")], optional[", ", field("edition"), " ed."],
-            self._series(), ". ", field("address"), ": ", field("publisher"), ", ", field("year"),
-            self._doi(), "."]
+            _authors(),
+            ", ",
+            tag("em")[field("title")],
+            optional[", ", field("edition"), " ed."],
+            self._series(),
+            ". ",
+            field("address"),
+            ": ",
+            field("publisher"),
+            ", ",
+            field("year"),
+            self._doi(),
+            ".",
+        ]
 
 
 register_plugin("pybtex.style.formatting", "ieee", _IEEE)

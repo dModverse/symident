@@ -32,9 +32,9 @@ def quotient(o, cols, p, drop=()):
         # the rows that hold no dropped column once those are eliminated first
         rest = [c for c in range(nz) if c not in set(drop)]
         Rd, pv = _rref(R[:, drop + rest], p)
-        keep = Rd[pv >= len(drop)][:, len(drop):]
+        keep = Rd[pv >= len(drop)][:, len(drop) :]
         R = np.zeros((keep.shape[0] + len(drop), nz), dtype=np.int64)
-        R[:keep.shape[0], rest] = keep
+        R[: keep.shape[0], rest] = keep
         R[np.arange(keep.shape[0], R.shape[0]), drop] = 1
     R, pv = _rref(R, p)
     out = dict(o, R=R, pivots=pv, rank=int(R.shape[0]), nuisance_pinned=len(free), nuisance_block=block)
@@ -57,6 +57,7 @@ def _series_quotient(o, cols, free, p):
         E = np.zeros((len(fr), nz * N), dtype=np.int64)
         E[np.arange(len(fr)), np.asarray(fr, dtype=np.int64) * N] = 1
         return np.vstack([S, E])
+
     if _series_rank(pinned(free), nz, N, p) != want:
         basis = []
         for c in cols:

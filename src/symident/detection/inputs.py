@@ -20,7 +20,7 @@ def _dicts(x):
 
 
 # texts that passed _expression during one check_arguments call: conditions repeat the same entries
-_PASSED = set()
+_PASSED: set = set()
 # a plain name or decimal number always parses
 _PLAIN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?")
 
@@ -42,8 +42,10 @@ def _expression(text, where):
     except (SyntaxError, TokenError) as exc:
         kws = [w for w in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", text) if keyword.iskeyword(w)]
         if kws:
-            raise InputError(f"{where} cannot be parsed: {text!r}; {kws[0]} is a Python keyword and cannot "
-                             f"name a state, parameter or input, rename it") from exc
+            raise InputError(
+                f"{where} cannot be parsed: {text!r}; {kws[0]} is a Python keyword and cannot "
+                f"name a state, parameter or input, rename it"
+            ) from exc
         raise InputError(f"{where} cannot be parsed: {text!r}") from exc
     except Exception:  # an expression the engine handles or refuses by name later
         return

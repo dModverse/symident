@@ -37,6 +37,7 @@ def test_process_map_gives_on_error_on_the_serial_path_too():
         if x == 1:
             raise ValueError("bad item")
         return x
+
     with state.switches(DEBUG="0"):
         assert process_map(fn, range(3), 1, on_error=lambda x: None) == [0, None, 2]
     with pytest.raises(ValueError):
@@ -51,5 +52,6 @@ def test_process_map_raises_when_a_worker_dies():
         if x == 1:
             os._exit(1)
         return x
+
     with pytest.raises(RuntimeError, match="died"):
         process_map(fn, range(4), 2)

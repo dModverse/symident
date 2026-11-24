@@ -73,10 +73,12 @@ def _poly_monomials(expr, zvars):
                     if e:
                         a[idx[k]] = e
                 elif k.free_symbols & zset:
-                    raise InapplicableError('not a monomial in the coordinates: %s' % spy.Mul(
-                        *[b ** e for b, e in powers]))
+                    raise InapplicableError(
+                        "not a monomial in the coordinates: %s" % spy.Mul(*[b**e for b, e in powers])
+                    )
             out.setdefault(tuple(sorted(a.items())), a)
         return list(out.values())
+
     p, q = _expanded(expr)
     return mons(p), mons(q)
 
@@ -118,14 +120,15 @@ def _exp_split(expr, logs=False):
         be = _exp_atom(e)
         if be is not None:
             exps.append(rec(be[1]))
-            return spy.Dummy('exp')
+            return spy.Dummy("exp")
         if isinstance(e, _TRIG) or type(e) in _TRIG_RECIPROCAL:
             exps.append(rec(e.args[0]))
-            return spy.Dummy('trig')
+            return spy.Dummy("trig")
         if logs and isinstance(e, spy.log):
             exps.append(rec(e.args[0]))
-            return spy.Dummy('log')
+            return spy.Dummy("log")
         return e.func(*[rec(a) for a in e.args])
+
     return rec(_hyp_to_exp(expr)), exps
 
 
@@ -139,7 +142,7 @@ def _power_atoms(exprs, states, frozen):
                 continue
             if at.exp.free_symbols & states:
                 continue
-            out[at] = spy.Symbol('_P%d_%s' % (len(out), at.base))
+            out[at] = spy.Symbol("_P%d_%s" % (len(out), at.base))
     return out
 
 
@@ -159,9 +162,8 @@ def _scaling_rows(diff_equations, obs_functions, m, zvars, logs=False, seen=None
     obs_new = [g for g in obs_functions if fresh(g, -1)]
     eq_new = [i for i in range(m) if fresh(diff_equations[i], i)]
     split = [_exp_split(e, logs) for e in obs_new + [diff_equations[i] for i in eq_new]]
-    obs_functions = ([s[0] for s in split[:len(obs_new)]] +
-                    [u for s in split for u in s[1]])
-    eq_split = {i: s[0] for i, s in zip(eq_new, split[len(obs_new):])}
+    obs_functions = [s[0] for s in split[: len(obs_new)]] + [u for s in split for u in s[1]]
+    eq_split = {i: s[0] for i, s in zip(eq_new, split[len(obs_new) :])}
 
     zkey = tuple(zvars)
     rows, keys = [], set()
@@ -198,8 +200,7 @@ def _materialize_rows(rows, ncols):
 def _scaling_gens(rows, nz):
     """Primitive integer generators of the scaling kernel over the nz weight columns."""
     basis = exact_nullspace(rows, nz) if rows else []
-    cvecs = [[v[j] for j in range(nz)] for v in basis
-             if any(v[j] != 0 for j in range(nz))]
+    cvecs = [[v[j] for j in range(nz)] for v in basis if any(v[j] != 0 for j in range(nz))]
     gens = []
     if cvecs:
         red, _ = spy.Matrix(cvecs).rref()
@@ -256,33 +257,31 @@ def verify_scalings(scalings, tapes, shifts=()):
     scaled coordinate) is translated, not scaled: it may occur only in the constant equation and value of itself."""
     lines = []
     for t in tapes:
-        lines += _as_list(t.get('model_lines', [])) + _as_list(t.get('obs_lines', []))
-        lines += _as_list(t.get('ver_ic', [])) + _as_list(t.get('ver_rest', []))
-        lines += ['_ = %s' % e['value'] for e in _as_list(t.get('ver_ev', [])) +
-                  _as_list(t.get('ver_t0', []))]
-        if t.get('ver_time'):
-            lines.append('_ = %s' % t['ver_time'])
+        lines += _as_list(t.get("model_lines", [])) + _as_list(t.get("obs_lines", []))
+        lines += _as_list(t.get("ver_ic", [])) + _as_list(t.get("ver_rest", []))
+        lines += ["_ = %s" % e["value"] for e in _as_list(t.get("ver_ev", [])) + _as_list(t.get("ver_t0", []))]
+        if t.get("ver_time"):
+            lines.append("_ = %s" % t["ver_time"])
     _, parse = _make_local_parse(lines)
 
     def split(line):
-        lhs, rhs = _clean(line).split('=', 1)
+        lhs, rhs = _clean(line).split("=", 1)
         return lhs.strip(), spy.sympify(parse(rhs))
 
-    checks = []                       # (expression, target: state name, None for 0)
+    checks = []  # (expression, target: state name, None for 0)
     for t in tapes:
-        for l in _as_list(t.get('model_lines', [])) + _as_list(t.get('ver_ic', [])) + \
-                _as_list(t.get('ver_rest', [])):
-            if '=' in l:
+        for l in _as_list(t.get("model_lines", [])) + _as_list(t.get("ver_ic", [])) + _as_list(t.get("ver_rest", [])):
+            if "=" in l:
                 x, e = split(l)
                 checks.append((e, x))
-        for l in _as_list(t.get('obs_lines', [])):
-            if '=' in l:
+        for l in _as_list(t.get("obs_lines", [])):
+            if "=" in l:
                 checks.append((split(l)[1], None))
-        for ev in _as_list(t.get('ver_ev', [])) + _as_list(t.get('ver_t0', [])):
-            e = spy.sympify(parse(str(ev['value'])))
-            checks.append((e, None if str(ev['method']) == 'multiply' else str(ev['var'])))
-        if t.get('ver_time'):
-            checks.append((spy.sympify(parse(t['ver_time'])), None))
+        for ev in _as_list(t.get("ver_ev", [])) + _as_list(t.get("ver_t0", [])):
+            e = spy.sympify(parse(str(ev["value"])))
+            checks.append((e, None if str(ev["method"]) == "multiply" else str(ev["var"])))
+        if t.get("ver_time"):
+            checks.append((spy.sympify(parse(t["ver_time"])), None))
     # each distinct check once, with the symbols of the check; one free of the support has degree 0
     checks = list(dict.fromkeys(checks))
     syms = [{str(x) for x in e.free_symbols} for e, _ in checks]
@@ -296,7 +295,7 @@ def verify_scalings(scalings, tapes, shifts=()):
         for (e, target), es in zip(checks, syms):
             if not ok:
                 break
-            if e == 0:                # zero has every weight
+            if e == 0:  # zero has every weight
                 continue
             if es & moved:
                 if target in moved and e.is_Symbol and str(e) == target:
@@ -307,8 +306,7 @@ def verify_scalings(scalings, tapes, shifts=()):
             if d is None or spy.expand(d - (w.get(target, 0) if target else 0)) != 0:
                 ok = False
                 if state.env("LIEDIAG"):
-                    print('[liediag] scaling fails at %s -> %s: degree %s' %
-                          (target, str(e)[:120], d), flush=True)
+                    print("[liediag] scaling fails at %s -> %s: degree %s" % (target, str(e)[:120], d), flush=True)
                 break
         out.append(ok)
     return out
@@ -319,9 +317,9 @@ def _scaling_nonid(gens, znames, nz):
     non_id = []
     for c in gens:
         comp = {znames[j]: c[j] for j in range(nz) if c[j] != 0}
-        non_id.append({'support': sorted(comp.keys()),
-                       'vector': {k: str(v) for k, v in comp.items()},
-                       'type': 'scaling'})
+        non_id.append(
+            {"support": sorted(comp.keys()), "vector": {k: str(v) for k, v in comp.items()}, "type": "scaling"}
+        )
     return non_id
 
 
@@ -329,11 +327,11 @@ def _scaling_gens_recast(gens, znames, nz, recast):
     """Generators of span(gens) with c_E = exp * c_base imposed, weights possibly symbolic in exp."""
     if not gens:
         return []
-    G = spy.Matrix(gens)                      # rows = basis vectors, cols = coords
+    G = spy.Matrix(gens)  # rows = basis vectors, cols = coords
     idx = {nm: j for j, nm in enumerate(znames)}
     rel_rows = []
     for rc in recast:
-        E, base, exp = str(rc['E']), str(rc['base']), str(rc['exp'])
+        E, base, exp = str(rc["E"]), str(rc["base"]), str(rc["exp"])
         if E not in idx or base not in idx:
             continue
         exp_sym = spy.sympify(exp)
@@ -342,15 +340,14 @@ def _scaling_gens_recast(gens, znames, nz, recast):
         rel_rows.append([G[i, j_e] - exp_sym * G[i, j_b] for i in range(G.rows)])
     if not rel_rows:
         return [[spy.Integer(x) for x in g] for g in gens]
-    alphas = spy.Matrix(rel_rows).nullspace()   # over Q(exp)
+    alphas = spy.Matrix(rel_rows).nullspace()  # over Q(exp)
     out = []
     for a in alphas:
-        v = [spy.together(sum(a[i] * G[i, j] for i in range(G.rows)))
-             for j in range(nz)]
+        v = [spy.together(sum(a[i] * G[i, j] for i in range(G.rows))) for j in range(nz)]
         # L = log(base) shifts by c_base*log(lam) under the scaling; the kernel above
         # leaves it at 0, the joint nullspace contains the shift
         for rc in recast:
-            base, L = str(rc['base']), str(rc.get('L'))
+            base, L = str(rc["base"]), str(rc.get("L"))
             if base in idx and L in idx:
                 v[idx[L]] = v[idx[base]]
         # clear denominators so the weights are polynomial in the exponents
@@ -364,8 +361,9 @@ def _scaling_gens_recast(gens, znames, nz, recast):
     return out
 
 
-def scaling_symmetries_per_condition(per_cond_model, per_cond_obs, inputs=None, fixed=None,
-                                     extra_model=None, extra_obs=None):
+def scaling_symmetries_per_condition(
+    per_cond_model, per_cond_obs, inputs=None, fixed=None, extra_model=None, extra_obs=None
+):
     """Scalings whose state weights may differ between conditions, as {'params': {name: w}, 'states': [{state: w}]}
     with one state dict per condition and integer weights.
 
@@ -382,25 +380,25 @@ def scaling_symmetries_per_condition(per_cond_model, per_cond_obs, inputs=None, 
         return []
     inputset, fixedset = set(_as_list(inputs)), set(_as_list(fixed))
     local, parse = _make_local_parse([l for ls in per_cond_model + per_cond_obs + extra_model + extra_obs for l in ls])
-    state_names = [_clean(l).split('=', 1)[0].strip() for l in per_cond_model[0]]
+    state_names = [_clean(l).split("=", 1)[0].strip() for l in per_cond_model[0]]
     state_syms = [local.get(nm, spy.Symbol(nm)) for nm in state_names]
     m = len(state_syms)
     systems, paramset = [], set()
     for c in range(K):
         rhs = {}
         for l in per_cond_model[c]:
-            lhs, expr = _clean(l).split('=', 1)
+            lhs, expr = _clean(l).split("=", 1)
             rhs[lhs.strip()] = spy.sympify(parse(expr))
         if set(rhs) != set(state_names):
             return []
         f = [rhs[nm] for nm in state_names]
-        g = [spy.sympify(parse(_clean(l).split('=', 1)[1])) for l in per_cond_obs[c]]
+        g = [spy.sympify(parse(_clean(l).split("=", 1)[1])) for l in per_cond_obs[c]]
         xf = []
         for l in extra_model[c]:
-            lhs, expr = _clean(l).split('=', 1)
+            lhs, expr = _clean(l).split("=", 1)
             if lhs.strip() in state_names:
                 xf.append((state_names.index(lhs.strip()), spy.sympify(parse(expr))))
-        xg = [spy.sympify(parse(_clean(l).split('=', 1)[1])) for l in extra_obs[c]]
+        xg = [spy.sympify(parse(_clean(l).split("=", 1)[1])) for l in extra_obs[c]]
         for e in f + g + [e for _, e in xf] + xg:
             paramset |= set(e.free_symbols)
         systems.append((f, g, xf, xg))
@@ -461,13 +459,26 @@ def scaling_symmetries_per_condition(per_cond_model, per_cond_obs, inputs=None, 
                 scale = spy.ilcm(scale, spy.Rational(x).q)
         if sts is None:
             continue
-        out.append({'params': {str(params[j]): int(pv[j] * scale) for j in range(npar) if pv[j] != 0},
-                    'states': [{state_names[i]: int(s[i] * scale) for i in range(m) if s[i] != 0} for s in sts]})
+        out.append(
+            {
+                "params": {str(params[j]): int(pv[j] * scale) for j in range(npar) if pv[j] != 0},
+                "states": [{state_names[i]: int(s[i] * scale) for i in range(m) if s[i] != 0} for s in sts],
+            }
+        )
     return out
 
 
-def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=None,
-                           recast=None, logs=False, extra_model=None, extra_obs=None, powers=False):
+def scaling_symmetries_multi(
+    per_cond_model,
+    per_cond_obs,
+    inputs=None,
+    fixed=None,
+    recast=None,
+    logs=False,
+    extra_model=None,
+    extra_obs=None,
+    powers=False,
+):
     """Scaling symmetries common to every condition; `inputs` and `fixed` do not scale. With `powers`, a power of a
     coordinate with a free exponent has the weight of the exponent times that of the coordinate."""
     per_cond_model = [_as_list(m) for m in per_cond_model]
@@ -478,24 +489,22 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
     fixedset = set(_as_list(fixed))
     K = len(per_cond_model)
     if K == 0:
-        return {'method': 'scaling', 'count': 0, 'non_identifiable': [],
-                'coordinates': []}
+        return {"method": "scaling", "count": 0, "non_identifiable": [], "coordinates": []}
 
-    all_lines = [l for lines in per_cond_model + per_cond_obs + extra_model + extra_obs
-                 for l in lines]
+    all_lines = [l for lines in per_cond_model + per_cond_obs + extra_model + extra_obs for l in lines]
     local, parse = _make_local_parse(all_lines)
 
-    state_names = [_clean(l).split('=', 1)[0].strip() for l in per_cond_model[0]]
+    state_names = [_clean(l).split("=", 1)[0].strip() for l in per_cond_model[0]]
     state_syms = [local.get(nm, spy.Symbol(nm)) for nm in state_names]
 
     per_f, per_g, paramset = [], [], set()
     for c in range(K):
         rhs = {}
         for l in per_cond_model[c]:
-            lhs, expr = _clean(l).split('=', 1)
+            lhs, expr = _clean(l).split("=", 1)
             rhs[lhs.strip()] = spy.sympify(parse(expr))
         f = [rhs[nm] for nm in state_names]
-        g = [spy.sympify(parse(_clean(l).split('=', 1)[1])) for l in per_cond_obs[c]]
+        g = [spy.sympify(parse(_clean(l).split("=", 1)[1])) for l in per_cond_obs[c]]
         per_f.append(f)
         per_g.append(g)
         for e in f + g:
@@ -504,12 +513,12 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
     for c in range(K):
         xf = []
         for l in extra_model[c]:
-            lhs, expr = _clean(l).split('=', 1)
+            lhs, expr = _clean(l).split("=", 1)
             if lhs.strip() in state_names:
                 e = spy.sympify(parse(expr))
                 xf.append((state_names.index(lhs.strip()), e))
                 paramset |= set(e.free_symbols)
-        xg = [spy.sympify(parse(_clean(l).split('=', 1)[1])) for l in extra_obs[c]]
+        xg = [spy.sympify(parse(_clean(l).split("=", 1)[1])) for l in extra_obs[c]]
         for e in xg:
             paramset |= set(e.free_symbols)
         per_xf.append(xf)
@@ -518,24 +527,32 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
     paramset -= set(state_syms)
     paramset -= {local.get(nm, spy.Symbol(nm)) for nm in inputset}
     recast = list(_as_list(recast))
-    powers = _power_atoms([e for f in per_f + per_g + per_xg for e in f] +
-                          [e for xf in per_xf for _, e in xf], set(state_syms), inputset | fixedset) if powers else {}
+    powers = (
+        _power_atoms(
+            [e for f in per_f + per_g + per_xg for e in f] + [e for xf in per_xf for _, e in xf],
+            set(state_syms),
+            inputset | fixedset,
+        )
+        if powers
+        else {}
+    )
     if powers:
+
         def sub(e):
             return e.xreplace(powers) if e.has(*powers) else e
+
         per_f = [[sub(e) for e in f] for f in per_f]
         per_g = [[sub(e) for e in g] for g in per_g]
         per_xf = [[(i, sub(e)) for i, e in xf] for xf in per_xf]
         per_xg = [[sub(e) for e in xg] for xg in per_xg]
         paramset |= set(powers.values())
-        recast += [{'E': str(P), 'base': str(at.base), 'exp': str(at.exp)} for at, P in powers.items()]
+        recast += [{"E": str(P), "base": str(at.base), "exp": str(at.exp)} for at, P in powers.items()]
     params = sorted(paramset, key=spy.default_sort_key)
     # re-add free-exponent bases the recast eliminated, so _scaling_gens_recast can
     # impose c_E = exp*c_base on them
     for rc in recast:
-        b = local.get(str(rc['base']), spy.Symbol(str(rc['base'])))
-        if (b not in set(state_syms) and b not in params
-                and str(b) not in inputset and str(b) not in fixedset):
+        b = local.get(str(rc["base"]), spy.Symbol(str(rc["base"])))
+        if b not in set(state_syms) and b not in params and str(b) not in inputset and str(b) not in fixedset:
             params.append(b)
     params = sorted(params, key=spy.default_sort_key)
     zvars = state_syms + params
@@ -567,8 +584,10 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
             rows.extend(sparse)
             skipped += sk
     if skipped and state.env("LIEDIAG"):
-        print('[liediag] scaling_symmetries_multi: %d non-polynomial term(s) skipped '
-              '(a scaling they would forbid may be over-reported)' % skipped)
+        print(
+            "[liediag] scaling_symmetries_multi: %d non-polynomial term(s) skipped "
+            "(a scaling they would forbid may be over-reported)" % skipped
+        )
     dense = _materialize_rows(rows, nz)
     # a coordinate in a free exponent does not scale: base^e is a monomial only for e invariant
     in_exp = {str(x) for at in powers for x in at.exp.free_symbols}
@@ -588,8 +607,13 @@ def scaling_symmetries_multi(per_cond_model, per_cond_obs, inputs=None, fixed=No
     aux = {str(P) for P in powers.values()}
     if aux:
         for d in non_id:
-            d['vector'] = {k: v for k, v in d['vector'].items() if k not in aux}
-            d['support'] = [k for k in d['support'] if k not in aux]
-        non_id = [d for d in non_id if d['vector']]
-    return {'method': 'scaling', 'count': len(non_id), 'non_identifiable': non_id,
-            'coordinates': [z for z in znames if z not in aux], 'skipped': skipped}
+            d["vector"] = {k: v for k, v in d["vector"].items() if k not in aux}
+            d["support"] = [k for k in d["support"] if k not in aux]
+        non_id = [d for d in non_id if d["vector"]]
+    return {
+        "method": "scaling",
+        "count": len(non_id),
+        "non_identifiable": non_id,
+        "coordinates": [z for z in znames if z not in aux],
+        "skipped": skipped,
+    }

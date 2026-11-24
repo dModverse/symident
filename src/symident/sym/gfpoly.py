@@ -78,8 +78,7 @@ def _eval_bipoly_dict(bip, paramvals, p):
 def _dp_mul(a, b, nv, p):
     """Product of two dict polynomials mod p."""
     if len(a) * len(b) * nv < 4096:
-        pairs = ((tuple(ma[k] + mb[k] for k in range(nv)), ca * cb)
-                 for ma, ca in a.items() for mb, cb in b.items())
+        pairs = ((tuple(ma[k] + mb[k] for k in range(nv)), ca * cb) for ma, ca in a.items() for mb, cb in b.items())
     else:
         A = np.array(list(a), dtype=np.int64).reshape(len(a), nv)
         B = np.array(list(b), dtype=np.int64).reshape(len(b), nv)
@@ -117,7 +116,7 @@ def _dp_subst(d, i, expr, nv, p):
     return out
 
 
-_REDUCE_TERMS_CAP = 2000    # past this polynomial size msolve is faster than the reduction
+_REDUCE_TERMS_CAP = 2000  # past this polynomial size msolve is faster than the reduction
 
 
 def _dp_add(a, b, p):
@@ -136,7 +135,7 @@ def _dp_coeffs(d, i):
     """Coefficients {k: dict poly free of var i} of d as a polynomial in var i."""
     cs = {}
     for m, c in d.items():
-        cs.setdefault(m[i], {})[m[:i] + (0,) + m[i + 1:]] = c
+        cs.setdefault(m[i], {})[m[:i] + (0,) + m[i + 1 :]] = c
     return cs
 
 
@@ -207,9 +206,14 @@ def _reduce_system(dps, nv, p):
                     continue
                 cs = _dp_coeffs(dps[j], i)
                 a = cs[1]
-                key = (0 if all(not any(m) for m in a) else 1, 0 if i == j else 1,
-                       max(sum(m) for m in a) + occ[i] - 1,
-                       len(a) + len(cs.get(0, {})), i, j)
+                key = (
+                    0 if all(not any(m) for m in a) else 1,
+                    0 if i == j else 1,
+                    max(sum(m) for m in a) + occ[i] - 1,
+                    len(a) + len(cs.get(0, {})),
+                    i,
+                    j,
+                )
                 if best is None or key < best[0]:
                     best = (key, j, i, a, cs.get(0, {}))
         if best is None:
@@ -229,7 +233,7 @@ def _reduce_system(dps, nv, p):
 def _pow_mod(base, e, f, p):
     """base^e modulo the monic dense polynomial f over GF(p), highest degree first."""
     n = len(f) - 1
-    low = [c % p for c in f[1:]]                 # x^n = -(low) in the quotient ring
+    low = [c % p for c in f[1:]]  # x^n = -(low) in the quotient ring
 
     def mulmod(a, b):
         # a, b highest degree first, padded to n; the reduced product highest degree first
@@ -239,7 +243,7 @@ def _pow_mod(base, e, f, p):
             if ai:
                 for j, bj in enumerate(b):
                     prod[i + j] += ai * bj
-        for k in range(2 * n - 2, n - 1, -1):    # reduce the degrees >= n from the top
+        for k in range(2 * n - 2, n - 1, -1):  # reduce the degrees >= n from the top
             c = prod[k] % p
             if c:
                 for j, lj in enumerate(low):
@@ -267,6 +271,7 @@ def _x_pow_mod(f, p):
 def _split_roots(g, p, a=1):
     """The roots over GF(p) of the monic g, a product of distinct linear factors."""
     from ..gfp import sqrt_mod
+
     if len(g) == 2:
         return [(-g[1]) % p]
     if len(g) == 3:
@@ -281,8 +286,9 @@ def _split_roots(g, p, a=1):
         d = _gft.gf_gcd(g, h, p, _ZZ)
         if 1 < len(d) < len(g):
             q = _gft.gf_quo(g, d, p, _ZZ)
-            return _split_roots(_gft.gf_monic(d, p, _ZZ)[1], p, a + 1) + \
-                _split_roots(_gft.gf_monic(q, p, _ZZ)[1], p, a + 1)
+            return _split_roots(_gft.gf_monic(d, p, _ZZ)[1], p, a + 1) + _split_roots(
+                _gft.gf_monic(q, p, _ZZ)[1], p, a + 1
+            )
         a += 1
 
 
@@ -369,8 +375,10 @@ def _core_candidates(resid, core, p):
         return None
     bound = max(sum(k) for k in P1) * max(sum(k) for k in P2)
     rng = session.current().rng("gfpoly.gcd", p)
-    dg = min(len(_gft.gf_gcd(_bi_at_u(P1, a, p), _bi_at_u(P2, a, p), p, _ZZ)) - 1
-             for a in (rng.randrange(1, p), rng.randrange(1, p)))
+    dg = min(
+        len(_gft.gf_gcd(_bi_at_u(P1, a, p), _bi_at_u(P2, a, p), p, _ZZ)) - 1
+        for a in (rng.randrange(1, p), rng.randrange(1, p))
+    )
     n1, n2 = max(k[1] for k in P1), max(k[1] for k in P2)
     xs, ys = [], []
     a = 0
@@ -381,7 +389,7 @@ def _core_candidates(resid, core, p):
             continue
         G = _gft.gf_gcd(f1, f2, p, _ZZ)
         if len(G) - 1 > dg:
-            r = 0                      # a common root on top of g: a root of the resultant
+            r = 0  # a common root on top of g: a root of the resultant
         else:
             r = _gf_resultant(_gft.gf_quo(f1, G, p, _ZZ), _gft.gf_quo(f2, G, p, _ZZ), p)
         xs.append(a)
@@ -437,7 +445,7 @@ def _solve_states_reduced(dps, solve_states, p, on_branch=None, accept=None):
                 break
     # a pinned branch without a root here leaves the point out, as a point without any root
     if first is None or (accept is not None and taken is None):
-        return None, {'ok': False, 'why': 'no consistent interior point'}
+        return None, {"ok": False, "why": "no consistent interior point"}
     if several:
         (on_branch or note_branch)(solve_states)
     taken = first if taken is None else taken
@@ -447,5 +455,10 @@ def _solve_states_reduced(dps, solve_states, p, on_branch=None, accept=None):
 def note_branch(states):
     """Record that the resting states have several interior roots modulo p and the first is taken."""
     from .. import session
-    session.note("branches", "resting states " + ", ".join(sorted(map(str, states))) +
-                 ": several interior roots modulo p, the first is taken")
+
+    session.note(
+        "branches",
+        "resting states "
+        + ", ".join(sorted(map(str, states)))
+        + ": several interior roots modulo p, the first is taken",
+    )

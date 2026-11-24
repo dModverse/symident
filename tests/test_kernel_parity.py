@@ -42,8 +42,7 @@ def same(a, b, path="result"):
     if aa.size == 0 and bb.size == 0:
         return
     assert aa.size == bb.size, f"{path}: size {aa.size} != {bb.size}"
-    np.testing.assert_array_equal(aa.reshape(bb.shape) if aa.shape != bb.shape else aa, bb,
-                                  err_msg=path)
+    np.testing.assert_array_equal(aa.reshape(bb.shape) if aa.shape != bb.shape else aa, bb, err_msg=path)
 
 
 def snake_keys(x):
@@ -106,9 +105,12 @@ def test_the_line_mode_of_one_segment_matches_the_shared_series_axis():
     assert line["rank_s"] == shared["rank_s"] and line["N"] == shared["N"] == T + 1
     # the same series row space: the same kernel along the line
     from symident.detection.series import series_null
+
     p, nz = int(args["p_in"]), len(args["z_slots"])
-    ks = [series_null(np.asarray(o["S"], dtype=np.int64).reshape(int(o["rank_s"]), -1), nz, T + 1, p)
-          for o in (line, shared)]
+    ks = [
+        series_null(np.asarray(o["S"], dtype=np.int64).reshape(int(o["rank_s"]), -1), nz, T + 1, p)
+        for o in (line, shared)
+    ]
     assert ks[0]["free"] == ks[1]["free"]
     for a, b in zip(ks[0]["V"], ks[1]["V"]):
         np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
@@ -119,6 +121,7 @@ def test_the_line_mode_of_one_segment_matches_the_shared_series_axis():
 
 def test_the_line_mode_keeps_the_gaps_formal_and_truncates_consistently():
     from symident.detection.series import series_null
+
     args = _chain_call("Detection_symObsNullChain_1762441_01")
     plain = _core.sym_obs_null_chain(**dict(args, Mtot=2))
     zero = np.zeros((args["n_leaves"], 3), dtype=np.int64)
@@ -140,8 +143,9 @@ def test_the_line_mode_keeps_the_gaps_formal_and_truncates_consistently():
 
 def test_the_line_mode_refuses_an_event_time_that_moves_along_the_line():
     args = _chain_call("Detection_symObsNullChain_1762441_01")
-    seg = dict(args["chains"][0][1], tm_op=[1], tm_a=[0], tm_b=[0], tm_cnum=["0"], tm_cden=["1"],
-               tm_out=[args["n_leaves"]])
+    seg = dict(
+        args["chains"][0][1], tm_op=[1], tm_a=[0], tm_b=[0], tm_cnum=["0"], tm_cden=["1"], tm_out=[args["n_leaves"]]
+    )
     args = dict(args, chains=[[args["chains"][0][0], seg]])
     ser = np.ones((args["n_leaves"], 2), dtype=np.int64)
     assert not _core.sym_obs_null_chain(**dict(args, Mtot=1, point_ser=ser, ser_order=2))["ok"]

@@ -83,6 +83,7 @@ def _assign(C, rows, species, basis):
                     match[j] = r
                     return True
         return False
+
     for r in rows:
         augment(r, set())
     return {r: species[j] for j, r in match.items()}
@@ -95,11 +96,15 @@ def _free_initial_error(prefer, C, rows, species, totals):
     shared = [names[i] for i in rows if sum(abs(C[i, j]) > 1e-12 for j in cols) >= 2]
     within = [names[i] for i in rows if all(abs(C[k, j]) <= 1e-12 for k in rows if k != i for j in cols)]
     if len(shared) == 1 and shared[0] in within:
-        return InputError(f"`free_initial` names {', '.join(prefer)}, which the single total {shared[0]} = "
-                          f"{totals[shared[0]]} holds; give one state per total")
-    return InputError(f"`free_initial` names {', '.join(prefer)}, whose resting values the totals "
-                      f"{', '.join(names[i] for i in rows)} do not leave independent; give one state per total, "
-                      "with the coefficients of the chosen states linearly independent")
+        return InputError(
+            f"`free_initial` names {', '.join(prefer)}, which the single total {shared[0]} = "
+            f"{totals[shared[0]]} holds; give one state per total"
+        )
+    return InputError(
+        f"`free_initial` names {', '.join(prefer)}, whose resting values the totals "
+        f"{', '.join(names[i] for i in rows)} do not leave independent; give one state per total, "
+        "with the coefficients of the chosen states linearly independent"
+    )
 
 
 def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=(), extra=None):
@@ -120,8 +125,9 @@ def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=(), extr
             keep.append(i)
     rows = keep
     avoid, parameters = set(avoid), set(parameters)
-    w = _pivot_weight(C, _coef_matrix(totals, states, shift=0.377)[0], species, rows, avoid | parameters,
-                      dict(extra or {}))
+    w = _pivot_weight(
+        C, _coef_matrix(totals, states, shift=0.377)[0], species, rows, avoid | parameters, dict(extra or {})
+    )
     pos = {s: k for k, s in enumerate(states)}
     order = sorted(species, key=lambda s: (w[s], pos.get(s, len(pos))))
     prefer = [str(s) for s in prefer or []]
@@ -129,12 +135,12 @@ def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=(), extr
         dup = [s for k, s in enumerate(prefer) if s in prefer[:k]]
         if dup:
             raise InputError(f"`free_initial` names {dup[0]} twice; give one state per total")
-        bad = [s for s in prefer if s not in species or
-               not any(abs(C[i, species.index(s)]) > 1e-12 for i in rows)]
+        bad = [s for s in prefer if s not in species or not any(abs(C[i, species.index(s)]) > 1e-12 for i in rows)]
         if bad:
             held = ", ".join(f"{names[i]} = {totals[names[i]]}" for i in rows)
-            raise InputError(f"`free_initial` names {bad[0]}, which is in no conserved total"
-                             + (f" ({held})" if rows else ""))
+            raise InputError(
+                f"`free_initial` names {bad[0]}, which is in no conserved total" + (f" ({held})" if rows else "")
+            )
         if _rank(C[np.ix_(rows, [species.index(s) for s in prefer])]) < len(prefer):
             raise _free_initial_error(prefer, C, rows, species, totals)
     basis = _greedy_basis(C, rows, species, order, prefer)
@@ -142,8 +148,8 @@ def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=(), extr
     def exchanges(b):
         """(position, species) pairs whose exchange keeps the columns `b` a basis."""
         X = np.linalg.solve(C[np.ix_(rows, [species.index(x) for x in b])], C[rows])
-        return [(k, s) for s in order if s not in b for k in range(len(b))
-                if abs(X[k, species.index(s)]) > 1e-9]
+        return [(k, s) for s in order if s not in b for k in range(len(b)) if abs(X[k, species.index(s)]) > 1e-9]
+
     ties, more = [], []
     if not prefer and rows:
         # bases one exchange apart, breadth first from the greedy one: those of equal weight tie with it
@@ -151,7 +157,7 @@ def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=(), extr
         while queue and len(ties) < PIVOT_CHOICES - 1:
             b = queue.pop(0)
             for k, s in exchanges(b):
-                alt = sorted(b[:k] + [s] + b[k + 1:], key=lambda x: pos.get(x, len(pos)))
+                alt = sorted(b[:k] + [s] + b[k + 1 :], key=lambda x: pos.get(x, len(pos)))
                 if frozenset(alt) in seen:
                     continue
                 seen.add(frozenset(alt))
@@ -162,12 +168,20 @@ def pivot_decomposition(totals, states, parameters=(), avoid=(), prefer=(), extr
                     more.append(alt)
         more.sort(key=lambda b: sum(w[x] for x in b))
     basis = sorted(basis, key=lambda x: pos.get(x, len(pos)))
-    ties = ties[:PIVOT_CHOICES - 1]
-    more = more[:max(0, PIVOT_CHOICES - 1 - len(ties))]
+    ties = ties[: PIVOT_CHOICES - 1]
+    more = more[: max(0, PIVOT_CHOICES - 1 - len(ties))]
     match = _assign(C, rows, species, basis)
     pivots = [match.get(i) for i in range(len(names))]
-    return {"C": C, "species": species, "pivots": pivots, "sets": sets, "rows": rows, "basis": basis,
-            "ties": ties, "valid": more}
+    return {
+        "C": C,
+        "species": species,
+        "pivots": pivots,
+        "sets": sets,
+        "rows": rows,
+        "basis": basis,
+        "ties": ties,
+        "valid": more,
+    }
 
 
 def substitute_cq(totals, f, states, parameters, avoid=(), prefer=(), extra=None):
@@ -191,8 +205,12 @@ def substitute_cq(totals, f, states, parameters, avoid=(), prefer=(), extra=None
         sympy_fail(exc)
         sol = None
     if sol is None or any(x.free_symbols & set(unknowns) for x in sol):
-        raise InputError("the conserved totals " + ", ".join(names[i] for i in rows) +
-                         " cannot be solved for the species " + ", ".join(elim))
+        raise InputError(
+            "the conserved totals "
+            + ", ".join(names[i] for i in rows)
+            + " cannot be solved for the species "
+            + ", ".join(elim)
+        )
     recon = {e: "(" + str(spy.cancel(x)).replace("**", "^") + ")" for e, x in zip(elim, sol)}
     cq_info = []
     for i in rows:
@@ -221,6 +239,7 @@ def cq_events(events, totals, cq_info):
     through the totals.
     """
     from .conditions import compose_event
+
     recon = {ci["elim_state"]: ci["recon_expr"] for ci in cq_info}
     names = [ci["total_name"] for ci in cq_info]
     held = {t: set(get_symbols([str(totals[t])])) for t in names}
@@ -228,6 +247,7 @@ def cq_events(events, totals, cq_info):
 
     def through(text):
         return replace_symbols(keys, vals, str(text)) if keys else str(text)
+
     out, changed, groups = [], [], {}
     for e in events:
         key = (str(e["time"]), tuple(e["cond"]) if e.get("cond") is not None else None, e.get("root"))
@@ -255,8 +275,10 @@ def cq_events(events, totals, cq_info):
                 v = " + ".join(parts)
             if v == 0:
                 continue
-            out.append({k: e0[k] for k in e0 if k not in ("var", "value", "method", "time")} |
-                       {"var": t, "time": through(e0["time"]), "value": str(v).replace("**", "^"), "method": "add"})
+            out.append(
+                {k: e0[k] for k in e0 if k not in ("var", "value", "method", "time")}
+                | {"var": t, "time": through(e0["time"]), "value": str(v).replace("**", "^"), "method": "add"}
+            )
             changed.append(t)
     return out, list(dict.fromkeys(changed))
 
@@ -277,8 +299,10 @@ def check_conserved(totals, f):
         sympy_fail(exc)
     if bad is not None:
         name, e, d = bad
-        raise InputError(f"the total {name} = {e} is not conserved: the time derivative under "
-                         f"the right-hand sides is {str(d).replace('**', '^')}, not zero")
+        raise InputError(
+            f"the total {name} = {e} is not conserved: the time derivative under "
+            f"the right-hand sides is {str(d).replace('**', '^')}, not zero"
+        )
 
 
 def _primitive(v):
@@ -325,6 +349,7 @@ def _extreme_rays(basis, n):
 
     def dot(a, y):
         return sum(x * z for x, z in zip(a, y))
+
     for a in A:
         if a in start:
             continue
@@ -372,6 +397,7 @@ def canonical_laws(vectors, n):
             block[i] = block[block[i]]
             i = block[i]
         return i
+
     for i in range(k):
         for j in range(i):
             if supp[i] & supp[j]:
@@ -406,6 +432,7 @@ def canonical_laws(vectors, n):
             return False
         ech.append((pc, [x / v[pc] for x in v]))
         return True
+
     for r in rays:
         if len(chosen) == k:
             break
@@ -434,6 +461,7 @@ def conserved_totals(smatrix, species):
     """Conserved quantities of a stoichiometry (rows reactions, columns species) as totals."""
     from sympy.polys.domains import QQ
     from sympy.polys.matrices import DomainMatrix
+
     n = len(species)
     rows = {}
     for i, r in enumerate(smatrix):
@@ -476,14 +504,22 @@ def exact_totals(totals, odes):
 def conserved_totals_of_odes(odes):
     """The linear conservation laws of the right-hand sides `odes` (state to expression) as totals."""
     from ..sym.exact import _conserved
+
     try:
         laws = _conserved([f"{k} = {v}" for k, v in odes.items()], {spy.Symbol(str(k)) for k in odes})
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return {}
     states = list(odes)
-    vecs = [[Fraction(int(spy.Rational(law.get(spy.Symbol(str(k)), 0)).p),
-                      int(spy.Rational(law.get(spy.Symbol(str(k)), 0)).q)) for k in states] for law in laws]
+    vecs = [
+        [
+            Fraction(
+                int(spy.Rational(law.get(spy.Symbol(str(k)), 0)).p), int(spy.Rational(law.get(spy.Symbol(str(k)), 0)).q)
+            )
+            for k in states
+        ]
+        for law in laws
+    ]
     out = {}
     for v in canonical_laws(vecs, len(states)):
         total = _total_text(states, v)
@@ -525,8 +561,10 @@ def _exact_lp(M, c):
     zero, one = Fraction(0), Fraction(1)
     # columns: w, then the slacks of M w <= 0, then those of w <= 1, then the right-hand side
     T = [list(row) + [one if k == i else zero for k in range(m)] + [zero] * (n + 1) for i, row in enumerate(M)]
-    T += [[one if k == j else zero for k in range(n)] + [zero] * m + [one if k == j else zero for k in range(n)] + [one]
-          for j in range(n)]
+    T += [
+        [one if k == j else zero for k in range(n)] + [zero] * m + [one if k == j else zero for k in range(n)] + [one]
+        for j in range(n)
+    ]
     basis = list(range(n, 2 * n + m))
     z = list(c) + [zero] * (m + n + 1)
     while True:
@@ -645,8 +683,10 @@ def equil_zero_branches(smatrix, species, rates, forcings):
         if not br:
             return list(dict.fromkeys(taken + zero)), notes
         r = br[0]
-        notes.append(f"the reaction of {' + '.join(r)} drains them: at rest one of them is zero "
-                     f"({' or '.join(f'{x} = 0' for x in r)}); the result holds for {r[0]} = 0")
+        notes.append(
+            f"the reaction of {' + '.join(r)} drains them: at rest one of them is zero "
+            f"({' or '.join(f'{x} = 0' for x in r)}); the result holds for {r[0]} = 0"
+        )
         taken.append(r[0])
 
 
@@ -662,6 +702,7 @@ def reduced_by_totals(odes, observables, events, totals, eliminated):
 
     def through(o):
         return None if o is None else {str(k): replace_symbols(keys, vals, str(v)) for k, v in dict(o).items()}
+
     f = {k: v for k, v in cq["f"].items() if k not in recon}
     obs = [through(o) for o in observables] if isinstance(observables, (list, tuple)) else through(observables)
     events, moved = cq_events(events, totals, cq["cq_info"]) if events else ([], [])

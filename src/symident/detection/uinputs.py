@@ -15,6 +15,7 @@ def unknown_chain(f, g, ic, unknown, length, unsupported, what):
     """(f, ic, jets): the right-hand sides with each unknown input a chain of `length` jet states, their starts free
     (None), and per jet name the input and the order; ValueError for a setting the count does not handle."""
     from .core import _input_jets
+
     if unsupported:
         raise ValueError(f"{what} handles unknown inputs in one condition without events, switches and equilibrate")
     taken = set(get_symbols(list(f.values()) + list(g.values()))) | set(f)
@@ -101,6 +102,7 @@ def isolated(fib, p):
     the input jets they read of full column rank at a random point modulo p, and the number of those jets. Then the
     points of the fiber are isolated in the coordinates and these jets (Step 1 of the verified count)."""
     from .discrete import _Dual
+
     series = fib.series
     zero = unread_jets(series, fib.orders)
     free = [key for key in series.inputs if key not in zero]
@@ -110,8 +112,9 @@ def isolated(fib, p):
     cv = [_Dual(rng.randint(2, p - 1), [int(i == j) for j in range(m)], p) for i in range(n)]
     old = series.input_values
     series.input_values = {key: _Dual(0, [0] * m, p) for key in zero}
-    series.input_values.update({key: _Dual(rng.randint(2, p - 1), [int(n + k == j) for j in range(m)], p)
-                                for k, key in enumerate(free)})
+    series.input_values.update(
+        {key: _Dual(rng.randint(2, p - 1), [int(n + k == j) for j in range(m)], p) for k, key in enumerate(free)}
+    )
     try:
         ys = series._outputs(cv, fib.order, 0, _Dual(1, [0] * m, p), _Dual(0, [0] * m, p))
     except ZeroDivisionError:
@@ -129,6 +132,7 @@ def _degrees(fib):
     jets of the inputs as coordinates of the point."""
     from ..sym.degrees import Atoms, Deg, common
     from .discrete import _sparse, _sparse_deg
+
     A = Atoms()
     series = fib.series
     old = series.input_values
@@ -163,11 +167,14 @@ def count_certificate(fib, k, out):
     the coordinates, the points isolated in the coordinates and the jets that the output reads, and the Bezout number
     of the whole system."""
     from .discrete import _MIN_BITS, _VERIFIED_AIM, _VERIFIED_BITS, q_count
+
     series = fib.series
     ok, nread = isolated(fib, PRIMES[0])
     if not ok:
-        out["why"] = ("the output coefficients do not determine the coordinates and the jets of the unknown inputs "
-                      "they read at a random point modulo a prime")
+        out["why"] = (
+            "the output coefficients do not determine the coordinates and the jets of the unknown inputs "
+            "they read at a random point modulo a prime"
+        )
         return out
     degs = _degrees(fib)
     if degs is None:
@@ -183,10 +190,10 @@ def count_certificate(fib, k, out):
         return out
     out["bits"] = bits
     rng = session.current().rng("verified count", tuple(fib.coords))
-    pt = {s: spy.Integer(rng.randint(1, 2 ** bits)) for s in fib.syms}
+    pt = {s: spy.Integer(rng.randint(1, 2**bits)) for s in fib.syms}
     old = series.input_values
     zero = unread_jets(series, fib.orders)
-    series.input_values = {key: spy.Integer(0 if key in zero else rng.randint(1, 2 ** bits)) for key in series.inputs}
+    series.input_values = {key: spy.Integer(0 if key in zero else rng.randint(1, 2**bits)) for key in series.inputs}
     try:
         k2 = q_count(fib, pt)
     finally:
@@ -209,6 +216,7 @@ def preserved(fib, sig, points=2, deeper=0):
     the jets of the states and the inputs."""
     from ..sym.modp import _modp_rational
     from .discrete import Fiber, _gb_count
+
     p = PRIMES[0]
     rng = session.current().rng("input check", tuple(fib.coords))
     deep = Fiber(fib.series, [n + deeper for n in fib.orders], fib.positive)
@@ -234,6 +242,7 @@ def input_state_map(parts, sig, states):
     h(x, theta, w) where these are linear in psi; every identity holds over Q(x, theta, w), and phi maps the given
     initial values. (phi(x(t)), psi(t)) is then a solution at sigma(theta) with the output of the solution at theta."""
     from ..errors import SYMPY_FAILS, sympy_fail
+
     if len(parts) != 1 or len(parts[0]["segments"]) != 1:
         return None
     seg = parts[0]["segments"][0]
@@ -249,8 +258,10 @@ def input_state_map(parts, sig, states):
             # an input that enters through a derivative
             return None
         th = {s: e for s, e in sig.items() if s not in set(X)}
-        phi = {x: sig.get(ic[x], ic[x]).xreplace({ic[y]: y for y in X if ic.get(y) == y}) if ic.get(x) == x else x
-               for x in X}
+        phi = {
+            x: sig.get(ic[x], ic[x]).xreplace({ic[y]: y for y in X if ic.get(y) == y}) if ic.get(x) == x else x
+            for x in X
+        }
         psi = [spy.Dummy(str(w)) for w in W]
         img = {**th, **phi, **dict(zip(W, psi))}
         eqs = [F[x].xreplace(img) - sum((spy.diff(phi[x], y) * F[y] for y in X), spy.Integer(0)) for x in X]
@@ -265,8 +276,11 @@ def input_state_map(parts, sig, states):
         if any(spy.cancel(e.xreplace(sub)) != 0 for e in eqs):
             return None
         for x in X:
-            if x in ic and ic[x] != x and spy.cancel(phi[x].xreplace({y: ic[y] for y in X if y in ic}) -
-                                                     ic[x].xreplace(th)) != 0:
+            if (
+                x in ic
+                and ic[x] != x
+                and spy.cancel(phi[x].xreplace({y: ic[y] for y in X if y in ic}) - ic[x].xreplace(th)) != 0
+            ):
                 return None
     except SYMPY_FAILS as exc:
         sympy_fail(exc)

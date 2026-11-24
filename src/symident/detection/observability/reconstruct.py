@@ -53,6 +53,7 @@ def _actionable(reason):
 # samples of a dense fit past which the log-coordinate gauge is tried first
 _LOG_FIRST = 2000
 
+
 class Reconstruction:
     """The residual directions of one analysis, closed in turn by each route."""
 
@@ -101,8 +102,7 @@ class Reconstruction:
                 out.append(e)
                 continue
             supp = set(e.get("support") or [])
-            att = list(dict.fromkeys((r, why) for r, why, s in self.attempts
-                                     if s is None or not supp or supp & set(s)))
+            att = list(dict.fromkeys((r, why) for r, why, s in self.attempts if s is None or not supp or supp & set(s)))
             e = dict(e, attempts=att)
             if not _actionable(e.get("reason")):
                 better = [why for _, why in att if _actionable(why)]
@@ -202,16 +202,18 @@ class Reconstruction:
                 moved = [gi for gi, g in enumerate(groups) if zero[gi] is None or not zero[gi].all()]
                 need = [gi for gi in moved if len(groups[gi]) == 1]
                 cands = [None] * len(groups)
-                for gi, cd in zip(need, kb([perts[gi] for gi in need], [P] * len(need), sc["nt_used"])
-                                  if need else []):
+                for gi, cd in zip(need, kb([perts[gi] for gi in need], [P] * len(need), sc["nt_used"]) if need else []):
                     cands[gi] = cd
             nxt = []
             for gi, g in enumerate(groups):
                 cd = cands[gi]
                 piv_ok = ok(cd) and ints(cd["pivots"]) == piv0
                 v = res_fn(cd, P) if piv_ok else None
-                stays = v is not None and np.array_equal(np.asarray(v), np.asarray(bv)) if zero is None else \
-                    zero[gi] is not None and bool(zero[gi].all())
+                stays = (
+                    v is not None and np.array_equal(np.asarray(v), np.asarray(bv))
+                    if zero is None
+                    else zero[gi] is not None and bool(zero[gi].all())
+                )
                 if stays:
                     # the kernel stays, but a residue fn in log coordinates divides by z
                     for li in g:
@@ -225,8 +227,7 @@ class Reconstruction:
                     h = len(g) // 2
                     nxt.extend([g[:h], g[h:]])
                 elif piv_ok:
-                    rp[g[0]] = {"rp": cd, "zvals": perts[gi][zs] if len(zs) else None,
-                                "pertval": perts[gi][g[0]]}
+                    rp[g[0]] = {"rp": cd, "zvals": perts[gi][zs] if len(zs) else None, "pertval": perts[gi][g[0]]}
                     if stop_above is not None and g[0] not in aux:
                         found += 1
                 else:
@@ -249,9 +250,11 @@ class Reconstruction:
         """Whether the reconstruction may narrow onto column subsets."""
         an, run = self.an, self.an.run
         return (
-            an.can_batch or (run.has_gaps and not run.ss_constraint and not an.joint and not an.transient)
+            an.can_batch
+            or (run.has_gaps and not run.ss_constraint and not an.joint and not an.transient)
             or (an.transient and not run.has_gaps and not run.ss_constraint and not an.recast)
-            or an.chunked)
+            or an.chunked
+        )
 
     def narrowed(self):
         """Directions closed on their own support, minimal-support candidates first."""
@@ -288,6 +291,7 @@ class Reconstruction:
                 swallow(exc, "narrow route")
                 if state.env("ROUTEDIAG"):
                     import traceback
+
                     traceback.print_exc()
                 e = None
             if i >= first and not (e is not None and e.get("closed_form")):
@@ -302,7 +306,7 @@ class Reconstruction:
         if any("pending_check" in e for e in out):
             out, span = self._confirm(out, span)
         self.tlog(f"narrow: {len(out)} of {len(self.residual)} closed")
-        self.closed = np.concatenate([self.closed, span[:, an.scal_rows.shape[0]:]], axis=1)
+        self.closed = np.concatenate([self.closed, span[:, an.scal_rows.shape[0] :]], axis=1)
         self.drop_spanned(span)
         return out
 
@@ -312,19 +316,43 @@ class Reconstruction:
         an = self.an
         n0 = span.shape[1] - len(out)
         pend = [i for i, e in enumerate(out) if "pending_check" in e]
-        res = verify_batch([out[i] for i in pend], [out[i]["pending_check"] for i in pend], an.znames,
-                           an.leaf_names_aug, len(self.sc["point0"]), self.sc["nt_used"], self.dir_batch, an.nz)
+        res = verify_batch(
+            [out[i] for i in pend],
+            [out[i]["pending_check"] for i in pend],
+            an.znames,
+            an.leaf_names_aug,
+            len(self.sc["point0"]),
+            self.sc["nt_used"],
+            self.dir_batch,
+            an.nz,
+        )
         good = {i: r for i, r in zip(pend, res)}
         kept, cols = [], list(range(n0))
         for i, e in enumerate(out):
             f = e.pop("pending_check", None)
             if f is not None and good[i] is None:
-                good[i] = verify_in_nullspace(e, f, an.znames, an.leaf_names_aug, self.sc["point0"],
-                                              self.sc["nt_used"], an.kcall, self.pool_next, an.nz, self.dir_call)
+                good[i] = verify_in_nullspace(
+                    e,
+                    f,
+                    an.znames,
+                    an.leaf_names_aug,
+                    self.sc["point0"],
+                    self.sc["nt_used"],
+                    an.kcall,
+                    self.pool_next,
+                    an.nz,
+                    self.dir_call,
+                )
             if f is not None and not good[i]:
-                self.attempt("narrow", {"support": e["support"], "type": "general", "closed_form": False,
-                                        "reason": "a closed form was reconstructed but failed verification at a "
-                                                  "fresh prime"})
+                self.attempt(
+                    "narrow",
+                    {
+                        "support": e["support"],
+                        "type": "general",
+                        "closed_form": False,
+                        "reason": "a closed form was reconstructed but failed verification at a fresh prime",
+                    },
+                )
                 continue
             kept.append(back_substituted(an, e) if f is not None else e)
             cols.append(n0 + i)
@@ -340,7 +368,7 @@ class Reconstruction:
         Np = N[p_cols, :] % P
         span = an.scal_tangents.copy()
         out = []
-        for f in (stf or []):
+        for f in stf or []:
             val = [int(f["val"][pp.index(an.znames[c])]) for c in p_cols]
             cc = _core.sym_solve_mod(Np, val, P)
             if cc is None:
@@ -352,8 +380,11 @@ class Reconstruction:
                 continue
             span = np.concatenate([span, vw.reshape(nz, 1)], axis=1)
             self.closed = np.concatenate([self.closed, vw.reshape(nz, 1)], axis=1)
-            an.static_rows = np.asarray(f["lval"]).reshape(1, -1) if an.static_rows is None else \
-                np.vstack([an.static_rows, f["lval"]])
+            an.static_rows = (
+                np.asarray(f["lval"]).reshape(1, -1)
+                if an.static_rows is None
+                else np.vstack([an.static_rows, f["lval"]])
+            )
             out.append({k: v for k, v in f.items() if k not in ("val", "lval")})
         if out:
             self.drop_spanned(span)
@@ -377,9 +408,19 @@ class Reconstruction:
                     trial = dict(e, vector=vec)
                     # the form states the columns off the resting states
                     phys = [i for i, z in enumerate(an.znames) if not _CSUFFIX.search(z)]
-                    held = verify_in_nullspace(trial, col, an.znames, an.leaf_names_aug, self.sc["point0"],
-                                               self.sc["nt_used"], an.kcall, self.pool_next, an.nz,
-                                               cols=phys, env_fn=an.sys.rest_env)
+                    held = verify_in_nullspace(
+                        trial,
+                        col,
+                        an.znames,
+                        an.leaf_names_aug,
+                        self.sc["point0"],
+                        self.sc["nt_used"],
+                        an.kcall,
+                        self.pool_next,
+                        an.nz,
+                        cols=phys,
+                        env_fn=an.sys.rest_env,
+                    )
                     e["random_checked"] = held is True and not trial.get("partial_check")
                 except Exception as exc:
                     swallow(exc, "forward form at random points")
@@ -402,8 +443,11 @@ class Reconstruction:
             v = an._phys_vector(e.get("checked") or e["vector"], env) if e.get("closed_form") else None
             if v is not None and (not np.any(v) or in_span(span, v, len(phys), P)):
                 n_open += 1
-                self.attempt("forward", reason="the forward form lies in the span of the directions found",
-                             support=e.get("support"))
+                self.attempt(
+                    "forward",
+                    reason="the forward form lies in the span of the directions found",
+                    support=e.get("support"),
+                )
                 continue
             if v is not None:
                 span = np.concatenate([span, v.reshape(-1, 1)], axis=1)
@@ -416,14 +460,19 @@ class Reconstruction:
                 free.append(fc)
                 span = np.concatenate([span, r.reshape(-1, 1)], axis=1)
         if len(free) < n_open:
-            free = self.residual[len(self.residual) - n_open:]
+            free = self.residual[len(self.residual) - n_open :]
         out = []
         for fc in self.residual:
             if fc in free:
                 res = self.residues(fc)
-                out.append({"support": sym_sort([an.znames[i] for i in phys if res[i] % P]),
-                            "type": "general", "closed_form": False,
-                            "reason": "the forward form lies in the span of the directions found"})
+                out.append(
+                    {
+                        "support": sym_sort([an.znames[i] for i in phys if res[i] % P]),
+                        "type": "general",
+                        "closed_form": False,
+                        "reason": "the forward form lies in the span of the directions found",
+                    }
+                )
             else:
                 out.append(kept.pop(0))
         return out
@@ -469,9 +518,23 @@ class Reconstruction:
         an, sys = self.an, self.an.sys
         try:
             return perprime_forward_multi(
-                self.residual, self.sc, an.kcall, sys.kcall_fwd, an.znames, an.z_slots, an.leaf_names_aug,
-                an.nz, an.scaling, strs(an.multi.get("z_state_names")), self.ctrl, self.phys_cols,
-                sys.models, sys.real_state_names, sys.solve_param_names, sys.held_of(0))
+                self.residual,
+                self.sc,
+                an.kcall,
+                sys.kcall_fwd,
+                an.znames,
+                an.z_slots,
+                an.leaf_names_aug,
+                an.nz,
+                an.scaling,
+                strs(an.multi.get("z_state_names")),
+                self.ctrl,
+                self.phys_cols,
+                sys.models,
+                sys.real_state_names,
+                sys.solve_param_names,
+                sys.held_of(0),
+            )
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             return None
@@ -501,23 +564,42 @@ class Reconstruction:
     def forward_first(self, stacked_ss, late=False):
         """Residual directions from the forward route, first under msolve, after the fast routes under a resultant."""
         an, sys = self.an, self.an.sys
-        if not (an.run.ss_constraint and not stacked_ss and self.residual and an.joint
-                and len({sys.model_key[c] for c in sys.equil_conds}) == 1):
+        if not (
+            an.run.ss_constraint
+            and not stacked_ss
+            and self.residual
+            and an.joint
+            and len({sys.model_key[c] for c in sys.equil_conds}) == 1
+        ):
             return []
         kind = self.rest_kind()
         # the leaves of non-rational terms at rest: the entries are simple in the drawn resting states
         leaves = bool(an.multi.get("rest_aux"))
         if (kind != ("core" if late else "msolve")) and not (leaves and not late):
             return []
+
         def run():
             try:
                 fwd = perprime_forward_shared(
-                    self.sc, an.kcall, sys.kcall_fwd, an.znames, an.z_slots, an.leaf_names_aug, an.nz,
-                    an.scaling, strs(an.multi.get("z_state_names")), self.ctrl, self.phys_cols,
-                    sys.models, sys.real_state_names, sys.solve_param_names, sys.held_of(0),
+                    self.sc,
+                    an.kcall,
+                    sys.kcall_fwd,
+                    an.znames,
+                    an.z_slots,
+                    an.leaf_names_aug,
+                    an.nz,
+                    an.scaling,
+                    strs(an.multi.get("z_state_names")),
+                    self.ctrl,
+                    self.phys_cols,
+                    sys.models,
+                    sys.real_state_names,
+                    sys.solve_param_names,
+                    sys.held_of(0),
                     kcall_fwd_sh=sys.kcall_fwd_shared,
                     select_fn=sys.fwd_select,
-                    map_fn=self.fork_map)
+                    map_fn=self.fork_map,
+                )
             except SYMPY_FAILS as err:
                 sympy_fail(err)
                 if state.env("ROUTEDIAG"):
@@ -529,10 +611,13 @@ class Reconstruction:
                     print(f"[fwds] error: {err}")
                 fwd = None
             return self._forward_multi() if fwd is None else fwd
+
         fwd = self._forward_retrying(run)
         closed = self._forward_adopt(fwd)
-        self.tlog(f"forward {'after the fast routes' if late else 'first'} (resting state: {kind}): " +
-                  ("not adopted" if closed is None else "every direction closed"))
+        self.tlog(
+            f"forward {'after the fast routes' if late else 'first'} (resting state: {kind}): "
+            + ("not adopted" if closed is None else "every direction closed")
+        )
         if closed is None:
             for d in fwd or []:
                 self.attempt("forward", d)
@@ -555,12 +640,19 @@ class Reconstruction:
         """`interp` with the open directions closed along parameter lines through the base point."""
         an, run = self.an, self.an.run
         open_ = [i for i, e in enumerate(interp) if not e.get("closed_form")]
-        why = ("switched off (reconst_control(homotopy=False))" if not self.ctrl.get("homotopy", True) else
-               "needs the joint resting state" if run.ss_constraint and not an.joint else
-               "not run where the kernel depends on the time between events"
-               if run.has_gaps and not run.series_gaps and (self.sc.get("ref") or {}).get("at_one") else
-               "not run where an event time depends on the parameters" if run.has_gaps and self._moving_times() else
-               "not run in transient recast coordinates" if getattr(an, "transient", False) else None)
+        why = (
+            "switched off (reconst_control(homotopy=False))"
+            if not self.ctrl.get("homotopy", True)
+            else "needs the joint resting state"
+            if run.ss_constraint and not an.joint
+            else "not run where the kernel depends on the time between events"
+            if run.has_gaps and not run.series_gaps and (self.sc.get("ref") or {}).get("at_one")
+            else "not run where an event time depends on the parameters"
+            if run.has_gaps and self._moving_times()
+            else "not run in transient recast coordinates"
+            if getattr(an, "transient", False)
+            else None
+        )
         if open_ and why is not None:
             self.attempt("homotopy", reason=why)
         if not (open_ and why is None and len(interp) == len(self.residual)):
@@ -578,8 +670,9 @@ class Reconstruction:
                 d["vector"] = recast_backsub(d["vector"], an.recast)
         for i in open_:
             if self.residual[i] not in found:
-                self.attempt("homotopy", reason="no closed form along parameter lines",
-                             support=interp[i].get("support"))
+                self.attempt(
+                    "homotopy", reason="no closed form along parameter lines", support=interp[i].get("support")
+                )
         out = [found.get(self.residual[i], e) if i in open_ else e for i, e in enumerate(interp)]
         self.tlog(f"homotopy: {len(found)} of {len(open_)} open direction(s) closed")
         return out
@@ -597,11 +690,18 @@ class Reconstruction:
         if fs is not None:
             try:
                 # a field is taken only outside the scalings and the directions closed before
-                out = field_directions(fs, an.N, len(self.residual),
-                                       np.vstack([an.scal_rows, self.closed.T]) if self.closed.shape[1]
-                                       else an.scal_rows, an.znames,
-                                       an.run.leaf_names, an.point0_solved, an.field_chains,
-                                       an.field_joint, partial=partial)
+                out = field_directions(
+                    fs,
+                    an.N,
+                    len(self.residual),
+                    np.vstack([an.scal_rows, self.closed.T]) if self.closed.shape[1] else an.scal_rows,
+                    an.znames,
+                    an.run.leaf_names,
+                    an.point0_solved,
+                    an.field_chains,
+                    an.field_joint,
+                    partial=partial,
+                )
             except RouteError as err:
                 self.attempt("invariant fields", reason=str(err))
                 out = None
@@ -609,9 +709,15 @@ class Reconstruction:
                 swallow(exc, "field directions")
                 out = None
         is_partial = isinstance(out, dict) and out.get("partial")
-        self.tlog("global symmetries: " + ("no close" if out is None else
-                  f"{len(out['dirs'] if is_partial else out)} direction(s) closed" +
-                  (", the rest sampled" if is_partial else "")))
+        self.tlog(
+            "global symmetries: "
+            + (
+                "no close"
+                if out is None
+                else f"{len(out['dirs'] if is_partial else out)} direction(s) closed"
+                + (", the rest sampled" if is_partial else "")
+            )
+        )
         return out
 
     # ---- interpolation ----------------------------------------------------------------
@@ -624,16 +730,51 @@ class Reconstruction:
             v = rfn(sc["ref"], P, self.zvals0) if rfn is not None else self.residues(fc)
             if v is None:
                 v = self.residues(fc)
-            return {"support": sym_sort([an.znames[i] for i in np.nonzero(v)[0]]), "type": "general",
-                    "closed_form": False, "reason": reason}
-        args = (an.znames, an.z_slots, an.leaf_names_aug, an.n_aug, sc["point0"], sc["pool"],
-                self.pool_next, sc["nt_used"], an.kcall)
+            return {
+                "support": sym_sort([an.znames[i] for i in np.nonzero(v)[0]]),
+                "type": "general",
+                "closed_form": False,
+                "reason": reason,
+            }
+
+        args = (
+            an.znames,
+            an.z_slots,
+            an.leaf_names_aug,
+            an.n_aug,
+            sc["point0"],
+            sc["pool"],
+            self.pool_next,
+            sc["nt_used"],
+            an.kcall,
+        )
         if per_prime:
-            d = interpolate_perprime(fc, sc["ref"], sc["pivots"], *args, self.kb, self.rel_probe,
-                                     self.ctrl, aux_leaves=an.aux_leaves, phys_cols=self.phys_cols)
+            d = interpolate_perprime(
+                fc,
+                sc["ref"],
+                sc["pivots"],
+                *args,
+                self.kb,
+                self.rel_probe,
+                self.ctrl,
+                aux_leaves=an.aux_leaves,
+                phys_cols=self.phys_cols,
+            )
         else:
-            d = interpolate_direction(fc, sc["ref"], sc["pivots"], *args, self.rel_probe, rfn, self.ctrl,
-                                      self.kb, bank, fast_only, aux_leaves=an.aux_leaves, degrees=degrees)
+            d = interpolate_direction(
+                fc,
+                sc["ref"],
+                sc["pivots"],
+                *args,
+                self.rel_probe,
+                rfn,
+                self.ctrl,
+                self.kb,
+                bank,
+                fast_only,
+                aux_leaves=an.aux_leaves,
+                degrees=degrees,
+            )
         self.pool_next = d["pool_next"]
         e = dict(d["entry"])
         e.pop("relevant_leaves", None)
@@ -642,9 +783,17 @@ class Reconstruction:
         verified = False
         if e.get("closed_form"):
             vargs = (e, fc, an.znames, an.leaf_names_aug, sc["point0"], sc["nt_used"], an.kcall)
+
             def in_null(cols=None):
-                return verify_in_nullspace(*vargs, self.pool_next, an.nz, self.dir_call, cols=cols,
-                                           env_fn=an.sys.rest_env if an.joint else None)
+                return verify_in_nullspace(
+                    *vargs,
+                    self.pool_next,
+                    an.nz,
+                    self.dir_call,
+                    cols=cols,
+                    env_fn=an.sys.rest_env if an.joint else None,
+                )
+
             if per_prime:
                 # a fit per prime states only the columns off the resting states and the anchor
                 verified = in_null(None if self.phys_cols is None else self.phys_cols + [fc])
@@ -655,9 +804,11 @@ class Reconstruction:
         if e.get("closed_form") and not verified:
             e = open_entry("a closed form was reconstructed but failed verification at a fresh prime")
         if e.get("closed_form"):
-            e["route"] = ("fit per prime" if per_prime else "read-off" if fast_only else "fit") + \
-                (" in log coordinates" if log_coords else "") + \
-                (f" ({e['fit_how']})" if e.get("fit_how") else "")
+            e["route"] = (
+                ("fit per prime" if per_prime else "read-off" if fast_only else "fit")
+                + (" in log coordinates" if log_coords else "")
+                + (f" ({e['fit_how']})" if e.get("fit_how") else "")
+            )
             e.pop("fit_how", None)
             eb = an.multi.get("exp_back") or {}
             if an.recast or eb.get("names"):
@@ -672,20 +823,31 @@ class Reconstruction:
         """The residual directions of minimal support, computed once per residual."""
         an, key = self.an, tuple(self.residual)
         if self._gauge is None or self._gauge[0] != key:
-            self._gauge = (key, minsupport_gauge(self.residual, an.scal_rows, PRIMES[0], an.nz, self.sc,
-                                                 an.free_cols, cand_cap=self.ctrl["minsupport_cand_cap"]))
+            self._gauge = (
+                key,
+                minsupport_gauge(
+                    self.residual,
+                    an.scal_rows,
+                    PRIMES[0],
+                    an.nz,
+                    self.sc,
+                    an.free_cols,
+                    cand_cap=self.ctrl["minsupport_cand_cap"],
+                ),
+            )
         return self._gauge[1]
 
     def full_probe(self):
         """The probe over all leaves, by bisection over leaf groups when there are many."""
         an = self.an
         if an.n_aug > 150:
+
             def all_res(rp, p, zvals=None):
                 v = [null_residues(rp, fc, p) for fc in self.residual]
                 return np.concatenate(v) if v else np.zeros(0, dtype=np.int64)
+
             vecs = np.stack([self.residues(fc) for fc in self.residual], axis=1) if self.residual else None
-            return self.probe_groups(self.kb, self.sc["pivots"], self.probe_next, all_res, self.sc["ref"],
-                                     vecs=vecs)
+            return self.probe_groups(self.kb, self.sc["pivots"], self.probe_next, all_res, self.sc["ref"], vecs=vecs)
         return self.probe(self.kb, self.sc["pivots"], self.probe_next)
 
     def peeled(self):
@@ -712,16 +874,23 @@ class Reconstruction:
     def ms_try(self, ms, fast_only):
         """All directions in the minimal-support gauge, or None unless all close."""
         if not fast_only:
-            self.tlog(f"ms gauge: {len(ms['anchors'])} anchor(s) for {len(self.residual)} residual "
-                      f"direction(s), {sum(f is not None for f in ms['residue_fns'])} residue fn(s)")
+            self.tlog(
+                f"ms gauge: {len(ms['anchors'])} anchor(s) for {len(self.residual)} residual "
+                f"direction(s), {sum(f is not None for f in ms['residue_fns'])} residue fn(s)"
+            )
         if len(ms["anchors"]) != len(self.residual) or all(f is None for f in ms["residue_fns"]):
             if not fast_only:
                 n_ms = 0 if ms.get("vectors") is None else np.asarray(ms["vectors"]).shape[1]
-                self.attempt("minimal-support fit", reason=f"{n_ms} direction(s) of minimal support found for "
-                             f"{len(self.residual)} within minsupport_cand_cap; raise it")
+                self.attempt(
+                    "minimal-support fit",
+                    reason=f"{n_ms} direction(s) of minimal support found for "
+                    f"{len(self.residual)} within minsupport_cand_cap; raise it",
+                )
             return None
-        rec = [self.one(anchor, ms["residue_fns"][gi], log_coords=True, fast_only=fast_only)
-               for gi, anchor in enumerate(ms["anchors"])]
+        rec = [
+            self.one(anchor, ms["residue_fns"][gi], log_coords=True, fast_only=fast_only)
+            for gi, anchor in enumerate(ms["anchors"])
+        ]
         for e in rec:
             self.attempt("minimal-support " + ("read-off" if fast_only else "fit"), e)
         return rec if all(e.get("closed_form") for e in rec) else None
@@ -729,20 +898,36 @@ class Reconstruction:
     def dense(self, ms):
         """Each direction from a shared sample bank, per prime where it is missing, then in canonical and log gauges."""
         an, sc, run = self.an, self.sc, self.an.run
-        metas = [direction_relevance(fc, sc["ref"], sc["pivots"], an.z_slots, an.n_aug, sc["point0"],
-                                     self.rel_probe, None) for fc in self.residual]
+        metas = [
+            direction_relevance(fc, sc["ref"], sc["pivots"], an.z_slots, an.n_aug, sc["point0"], self.rel_probe, None)
+            for fc in self.residual
+        ]
 
         def zvals_of(pt):
             return np.asarray(pt)[an.z_slots] if len(an.z_slots) else None
+
         needs, degrees = [], []
         for fc, m in zip(self.residual, metas):
-            degs = entry_degrees(fc, sc["pivots"], sc["point0"], lambda rp, p, z, fc=fc: null_residues(rp, fc, p),
-                                 zvals_of, m, self.kb, sc["nt_used"], self.ctrl)
+            degs = entry_degrees(
+                fc,
+                sc["pivots"],
+                sc["point0"],
+                lambda rp, p, z, fc=fc: null_residues(rp, fc, p),
+                zvals_of,
+                m,
+                self.kb,
+                sc["nt_used"],
+                self.ctrl,
+            )
             degrees.append(degs)
             # a direction with an entry past degree_cap cannot use the bank
-            needs.append(0 if "over" in degs else
-                         dense_need(m["rel_by_entry"], self.ctrl,
-                                    [d if isinstance(d, int) else None for d in degs])["max_need"])
+            needs.append(
+                0
+                if "over" in degs
+                else dense_need(m["rel_by_entry"], self.ctrl, [d if isinstance(d, int) else None for d in degs])[
+                    "max_need"
+                ]
+            )
         # where the log-coordinate gauge closes a direction of large need, the gauge fit is the cheaper one
         early = [None] * len(self.residual)
         if any(nd > _LOG_FIRST for nd in needs):
@@ -757,8 +942,18 @@ class Reconstruction:
         bank = None
         if dense_dir:
             union = sorted({x for i in dense_dir for x in metas[i]["relevant"]})
-            bk = build_shared_bank(union, max(needs[i] for i in dense_dir), sc["point0"], sc["pool"],
-                                   self.pool_next, self.kb, sc["pivots"], sc["nt_used"], len(PRIMES), self.ctrl)
+            bk = build_shared_bank(
+                union,
+                max(needs[i] for i in dense_dir),
+                sc["point0"],
+                sc["pool"],
+                self.pool_next,
+                self.kb,
+                sc["pivots"],
+                sc["nt_used"],
+                len(PRIMES),
+                self.ctrl,
+            )
             self.pool_next = bk["pool_next"]
             if bk.get("ok"):
                 bank = bk
@@ -769,8 +964,11 @@ class Reconstruction:
             if early[ii] is not None:
                 interp.append(early[ii])
                 continue
-            r = self.one(fc, None, per_prime=True) if bank_missing else \
-                self.one(fc, None, bank=bank, degrees=degrees[ii])
+            r = (
+                self.one(fc, None, per_prime=True)
+                if bank_missing
+                else self.one(fc, None, bank=bank, degrees=degrees[ii])
+            )
             if not r.get("closed_form") and run.ss_constraint and not bank_missing:
                 self.attempt("dense fit", r)
                 r = self.one(fc, None, per_prime=True)
@@ -780,8 +978,9 @@ class Reconstruction:
             closed = self._forward_adopt(self._forward_retrying(self._forward_multi))
             if closed is not None:
                 interp = self._forward_checked(self._forward_entries(closed))
-                self.tlog(f"forward-multi closed {sum(bool(e.get('closed_form')) for e in interp)} "
-                          "residual direction(s)")
+                self.tlog(
+                    f"forward-multi closed {sum(bool(e.get('closed_form')) for e in interp)} residual direction(s)"
+                )
         if bank_missing:
             return interp
 
@@ -795,6 +994,7 @@ class Reconstruction:
                 self.attempt("log-coordinate gauge" if log_coords else "canonical gauge", rec)
                 if rec.get("closed_form"):
                     interp[ii] = rec
+
         P, nz, scal_rows = PRIMES[0], an.nz, an.scal_rows
         if not all(e.get("closed_form") for e in interp):
             rescue(canon_gauge(self.residual, scal_rows, P, nz, sc))
@@ -817,13 +1017,22 @@ class Reconstruction:
         skip = set(state.get("open_coords") or ())
         held = [fc for fc in self.residual if an.znames[fc] in skip]
         self.residual = [fc for fc in self.residual if an.znames[fc] not in skip]
-        held = [{"support": sym_sort([an.znames[i] for i in np.nonzero(self.residues(fc))[0]]), "type": "general",
-                 "closed_form": False, "reason": "a direction of the fresh coordinates of a switch surface",
-                 "kernel_residue": self.residues(fc).tolist()} for fc in held]
+        held = [
+            {
+                "support": sym_sort([an.znames[i] for i in np.nonzero(self.residues(fc))[0]]),
+                "type": "general",
+                "closed_form": False,
+                "reason": "a direction of the fresh coordinates of a switch surface",
+                "kernel_residue": self.residues(fc).tolist(),
+            }
+            for fc in held
+        ]
         if an.joint and self.residual:
             self.tlog("solve fill: " + ("serial" if run.cores <= 1 else f"fork, {run.cores} cores"))
-        self.tlog(f"start: {len(self.residual)} residual direction(s)" +
-                  (f", {len(held)} of fresh coordinates left open" if held else ""))
+        self.tlog(
+            f"start: {len(self.residual)} residual direction(s)"
+            + (f", {len(held)} of fresh coordinates left open" if held else "")
+        )
         static_part = self.statics() if an.joint and self.residual else []
         stacked_ss = an.stacked_first and run.ss_constraint
         fwd_first = self.forward_first(stacked_ss)
@@ -851,11 +1060,19 @@ class Reconstruction:
         if not self.residual or fields_closed:
             self.rel_probe = [None] * an.n_aug
         elif ms_early is not None:
+
             def ms_res(rp, p, zvals=None):
                 v = [f(rp, p) for f in ms_early["residue_fns"]]
                 return None if any(x is None for x in v) else np.concatenate(v)
-            self.rel_probe = self.probe_groups(self.kb, self.sc["pivots"], self.probe_next, ms_res,
-                                               self.sc["ref"], vecs=np.asarray(ms_early["vectors"]))
+
+            self.rel_probe = self.probe_groups(
+                self.kb,
+                self.sc["pivots"],
+                self.probe_next,
+                ms_res,
+                self.sc["ref"],
+                vecs=np.asarray(ms_early["vectors"]),
+            )
         else:
             self.rel_probe = self.full_probe()
         self.tlog("relevance probe done" + (" (minimal-support gauge)" if ms_early is not None else ""))
@@ -884,8 +1101,18 @@ class Reconstruction:
         if interp is None:
             interp = self.homotopy(self.dense(ms))
             # an open direction keeps the kernel vector found for it, so that the kernel fill does not repeat it
-            interp = [e if e.get("closed_form") else dict(e, kernel_residue=self.residues(fc).tolist())
-                      for e, fc in zip(interp, self.residual)]
+            interp = [
+                e if e.get("closed_form") else dict(e, kernel_residue=self.residues(fc).tolist())
+                for e, fc in zip(interp, self.residual)
+            ]
         self.tlog(f"reconstruction done: {sum(bool(e.get('closed_form')) for e in interp)}/{len(interp)} closed")
-        return (an.scaling + narrowed + peeled + static_part + list(field_part) + fwd_first
-                + self.with_attempts(list(interp)) + held)
+        return (
+            an.scaling
+            + narrowed
+            + peeled
+            + static_part
+            + list(field_part)
+            + fwd_first
+            + self.with_attempts(list(interp))
+            + held
+        )

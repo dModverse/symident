@@ -19,9 +19,11 @@ def fake_msolve(path, version="0.10.1", answer=GOOD):
     # a script that answers the test system of msolve_check and reports `version`
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:
-        fh.write(f'#!/bin/sh\nif [ "$1" = "-V" ]; then echo "{version}"; exit 0; fi\n'
-                 'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\n'
-                 f"printf '%s' '{answer}' > \"$out\"\n")
+        fh.write(
+            f'#!/bin/sh\nif [ "$1" = "-V" ]; then echo "{version}"; exit 0; fi\n'
+            'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\n'
+            f"printf '%s' '{answer}' > \"$out\"\n"
+        )
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
     return path
 
@@ -85,20 +87,22 @@ def test_cache_bins_complete_builds_only(tmp_path):
     for v in ("0.9.9", "0.10.1"):
         (cache / f"deps-msolve-{v}" / ".msolve-complete").touch()
     name = "msolve.exe" if sys.platform == "win32" else "msolve"
-    assert install._cache_bins() == [str(cache / f"deps-msolve-{v}" / "bin" / name)
-                                     for v in ("0.10.1", "0.9.9")]
+    assert install._cache_bins() == [str(cache / f"deps-msolve-{v}" / "bin" / name) for v in ("0.10.1", "0.9.9")]
 
 
 def tools(monkeypatch, have):
     monkeypatch.setattr(install.shutil, "which", lambda t: f"/bin/{t}" if t in have else None)
 
 
-@pytest.mark.parametrize("platform, have, match", [
-    ("win32", {"curl", "make", "m4"}, "does not build on Windows"),
-    ("linux", {"make", "m4"}, "needs curl or wget"),
-    ("linux", {"wget"}, "needs make and m4"),
-    ("linux", {"curl", "make"}, "needs m4 for"),
-])
+@pytest.mark.parametrize(
+    "platform, have, match",
+    [
+        ("win32", {"curl", "make", "m4"}, "does not build on Windows"),
+        ("linux", {"make", "m4"}, "needs curl or wget"),
+        ("linux", {"wget"}, "needs make and m4"),
+        ("linux", {"curl", "make"}, "needs m4 for"),
+    ],
+)
 def test_install_msolve_preconditions(monkeypatch, platform, have, match):
     monkeypatch.setattr(sys, "platform", platform)
     tools(monkeypatch, have)
@@ -126,6 +130,7 @@ def stub_build(monkeypatch, returncode=0, working=True):
         fake_msolve(os.path.join(prefix, "bin", "msolve"), answer=GOOD if working else "[1]")
         open(os.path.join(prefix, ".msolve-complete"), "w").close()
         return subprocess.CompletedProcess(args, returncode, stdout=f"building\n{prefix}\n")
+
     monkeypatch.setattr(install.subprocess, "run", run)
 
 
@@ -142,10 +147,13 @@ def test_install_msolve_builds_into_the_cache(monkeypatch, tmp_path, capsys):
 
 
 @posix_only
-@pytest.mark.parametrize("returncode, working, match", [
-    (1, True, "the msolve build failed"),
-    (0, False, "produced no working msolve"),
-])
+@pytest.mark.parametrize(
+    "returncode, working, match",
+    [
+        (1, True, "the msolve build failed"),
+        (0, False, "produced no working msolve"),
+    ],
+)
 def test_install_msolve_build_errors(monkeypatch, returncode, working, match):
     tools(monkeypatch, {"curl", "make", "m4"})
     stub_build(monkeypatch, returncode, working)
@@ -155,6 +163,7 @@ def test_install_msolve_build_errors(monkeypatch, returncode, working, match):
 
 def test_install_msolve_takes_version_and_jobs_from_the_switches(monkeypatch, tmp_path):
     import symident as si
+
     monkeypatch.setattr(sys, "platform", "linux")
     tools(monkeypatch, {"curl", "make", "m4"})
     seen = {}
@@ -162,6 +171,7 @@ def test_install_msolve_takes_version_and_jobs_from_the_switches(monkeypatch, tm
     def run(args, **kw):
         seen.update(kw["env"])
         return subprocess.CompletedProcess(args, 1, stdout="")
+
     monkeypatch.setattr(install.subprocess, "run", run)
     with si.switches(MSOLVE_VERSION="0.9.9", JOBS=3), pytest.raises(RuntimeError, match="build failed"):
         install.install_msolve(dir=str(tmp_path), ask=False, quiet=True)

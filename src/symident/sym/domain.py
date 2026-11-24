@@ -20,6 +20,7 @@ def declared(positive):
             names.add(p)
         else:
             from .parse import model_sympify
+
             exprs.append(model_sympify(p))
     return names, exprs
 

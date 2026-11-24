@@ -15,8 +15,16 @@ import sympy as spy
 import symident as si
 from symident import report
 
-_FUNS = {"exp": math.exp, "log": math.log, "sqrt": math.sqrt, "atan": math.atan, "abs": abs,
-         "exp10": lambda x: 10.0 ** x, "log10": math.log10, "log1p": math.log1p}
+_FUNS = {
+    "exp": math.exp,
+    "log": math.log,
+    "sqrt": math.sqrt,
+    "atan": math.atan,
+    "abs": abs,
+    "exp10": lambda x: 10.0**x,
+    "log10": math.log10,
+    "log1p": math.log1p,
+}
 _IDENT = re.compile(r"[A-Za-z_.][A-Za-z0-9_.]*")
 
 
@@ -44,8 +52,13 @@ def mkdir(gen, type="polynomial", weights=None):
 
 
 def mkobj(dirs, coords):
-    return {"identifiable": False, "rank": 1, "dim": len(coords), "symmetries": dirs,
-            "info": {"engine": "modular", "settings": {}, "coordinates": list(coords)}}
+    return {
+        "identifiable": False,
+        "rank": 1,
+        "dim": len(coords),
+        "symmetries": dirs,
+        "info": {"engine": "modular", "settings": {}, "coordinates": list(coords)},
+    }
 
 
 def network(*reactions):
@@ -70,8 +83,7 @@ def ev(expr, pt):
 
 
 def variables(expr):
-    return [m.group(0) for m in _IDENT.finditer(str(expr))
-            if not str(expr)[m.end():].lstrip().startswith("(")]
+    return [m.group(0) for m in _IDENT.finditer(str(expr)) if not str(expr)[m.end() :].lstrip().startswith("(")]
 
 
 def expr_equal(a, b):
@@ -91,8 +103,11 @@ def lie_at(gen, inv, pt, eps=1e-7):
 
 
 def replace_symbols(expr, table):
-    return re.sub(r"(?<![A-Za-z0-9_.])[A-Za-z_.][A-Za-z0-9_.]*(?![A-Za-z0-9_.])",
-                  lambda m: table.get(m.group(0), m.group(0)), expr)
+    return re.sub(
+        r"(?<![A-Za-z0-9_.])[A-Za-z_.][A-Za-z0-9_.]*(?![A-Za-z0-9_.])",
+        lambda m: table.get(m.group(0), m.group(0)),
+        expr,
+    )
 
 
 def compose(tr, trafo):
@@ -193,11 +208,20 @@ def test_darboux_rational_invariant_and_degree_cap_certificate():
 
 
 def test_module_reduction_collapses_pair():
-    X12 = {"C": "Ci*rr + Ci", "Ci": "-(Ci*rr - Ci)", "k2i": "-(k2*rr - k2 + k2i*rr + k2i)",
-           "r1": "r1*rr + r1", "r2": "r2*rr + r2 + rr"}
-    X13 = {"C": "Ci*r2*rr + Ci*r2", "Ci": "-(Ci*r2*rr - Ci*r2)",
-           "k2i": "-(k2*r2*rr - k2*r2 + k2i*r2*rr + k2i*r2)", "r1": "-r1*rr",
-           "rr": "-(r2*rr**3 - 2*r2*rr**2 - r2*rr - rr**3 - rr**2)"}
+    X12 = {
+        "C": "Ci*rr + Ci",
+        "Ci": "-(Ci*rr - Ci)",
+        "k2i": "-(k2*rr - k2 + k2i*rr + k2i)",
+        "r1": "r1*rr + r1",
+        "r2": "r2*rr + r2 + rr",
+    }
+    X13 = {
+        "C": "Ci*r2*rr + Ci*r2",
+        "Ci": "-(Ci*r2*rr - Ci*r2)",
+        "k2i": "-(k2*r2*rr - k2*r2 + k2i*r2*rr + k2i*r2)",
+        "r1": "-r1*rr",
+        "rr": "-(r2*rr**3 - 2*r2*rr**2 - r2*rr - rr**3 - rr**2)",
+    }
     obj = mkobj([mkdir(X12), mkdir(X13)], ["C", "Ci", "k2", "k2i", "r1", "r2", "rr"])
     b = red(obj).blocks[0]
     # the combination (-r2)*X1 + X2 lives on 3 coordinates
@@ -205,8 +229,7 @@ def test_module_reduction_collapses_pair():
 
 
 def test_multi_generator_block_common_invariants_only():
-    obj = mkobj([mkdir({"a": "a", "b": "-b"}, "general"), mkdir({"b": "b", "c": "-c"}, "general")],
-                ["a", "b", "c"])
+    obj = mkobj([mkdir({"a": "a", "b": "-b"}, "general"), mkdir({"b": "b", "c": "-c"}, "general")], ["a", "b", "c"])
     b = red(obj).blocks[0]
     assert len(b["invariants"]) == 1
     assert expr_equal(b["invariants"][0], "a*b*c") or expr_equal(b["invariants"][0], "1/(a*b*c)")
@@ -218,23 +241,33 @@ def test_multi_generator_block_common_invariants_only():
 
 def test_a_level_set_is_one_orbit_when_it_is_a_connected_graph_over_the_gauge():
     from symident.reduction.sections import _interval, orbits_reach
+
     a, b, k1, k2, t, u = spy.symbols("a b k1 k2 t u")
     rot = [{"a": "b", "b": "-a"}]
     assert orbits_reach([a**2 + b**2], [{"b": spy.sqrt(t - a**2)}], ["b"], ["a"], ["t"], rot, [])
     assert not orbits_reach([a**2 + b**2], [{"b": -spy.sqrt(t - a**2)}], ["b"], ["a"], ["t"], rot, [])
-    assert not orbits_reach([a**2 + b**2], [{"b": spy.sqrt(t - a**2)}], ["b"], ["a"], ["t"],
-                            [{"a": "b - a", "b": "a"}], [])
-    assert orbits_reach([k1 + k2, (b + 1) * k2], [{"k2": t - k1, "b": (u - t + k1) / (t - k1)}],
-                        ["k2", "b"], ["k1"], ["t", "u"], [{"k1": "k2", "k2": "-k2", "b": "1 + b"}], [])
+    assert not orbits_reach(
+        [a**2 + b**2], [{"b": spy.sqrt(t - a**2)}], ["b"], ["a"], ["t"], [{"a": "b - a", "b": "a"}], []
+    )
+    assert orbits_reach(
+        [k1 + k2, (b + 1) * k2],
+        [{"k2": t - k1, "b": (u - t + k1) / (t - k1)}],
+        ["k2", "b"],
+        ["k1"],
+        ["t", "u"],
+        [{"k1": "k2", "k2": "-k2", "b": "1 + b"}],
+        [],
+    )
     x = spy.Symbol("x")
     assert _interval(spy.Poly((u - t) * x**2 + t * x - u, x), True)
     assert not _interval(spy.Poly(x**2 - 3 * x + 2, x), True)
     assert not _interval(spy.Poly(x**2 - 3 * x + 2, x), True)
-    assert _interval(spy.Poly(-x**2 + u * x - t, x), False)
+    assert _interval(spy.Poly(-(x**2) + u * x - t, x), False)
 
 
 def test_a_gauge_set_is_connected_by_eliminating_an_affine_coordinate():
     from symident.reduction.sections import _connected
+
     g, h, p, r = spy.symbols("g h p r")
     assert _connected([p - g, (r - h) * (p - g) - 1], [g, h])
     assert not _connected([(g - 1) * (g - 2) * (h - g)], [g, h])
@@ -242,15 +275,31 @@ def test_a_gauge_set_is_connected_by_eliminating_an_affine_coordinate():
 
 def test_a_root_in_the_gauge_is_removed_by_a_square_substitution():
     from symident.reduction.sections import _rational_gauges, orbits_reach
+
     names = ["k_bind", "EGF_EGFR", "k_phos_MEK", "k_unbind"]
-    inv = [spy.sympify(x) for x in ["EGFR*k_bind**2", "EGF_EGFR*k_bind", "EGFR*k_phos_MEK**2",
-                                    "(EGFR**2*k_bind + EGFR*k_bind + EGFR*k_unbind + EGF_EGFR*k_unbind)/EGFR"]]
+    inv = [
+        spy.sympify(x)
+        for x in [
+            "EGFR*k_bind**2",
+            "EGF_EGFR*k_bind",
+            "EGFR*k_phos_MEK**2",
+            "(EGFR**2*k_bind + EGFR*k_bind + EGFR*k_unbind + EGF_EGFR*k_unbind)/EGFR",
+        ]
+    ]
     tmp = [f"si_red_c{i}" for i in range(1, 5)]
-    brs = [{str(k): v for k, v in d.items()} for d in
-           spy.solve([e - spy.Symbol(t) for e, t in zip(inv, tmp)], spy.symbols(names), dict=True)]
-    gens = [{"EGFR": "2*EGFR*(EGFR + EGF_EGFR)", "EGF_EGFR": "EGF_EGFR*(EGFR + EGF_EGFR)",
-             "k_bind": "-k_bind*(EGFR + EGF_EGFR)", "k_phos_MEK": "-k_phos_MEK*(EGFR + EGF_EGFR)",
-             "k_unbind": "-EGFR**2*k_bind + EGFR*k_bind + EGF_EGFR*k_unbind"}]
+    brs = [
+        {str(k): v for k, v in d.items()}
+        for d in spy.solve([e - spy.Symbol(t) for e, t in zip(inv, tmp)], spy.symbols(names), dict=True)
+    ]
+    gens = [
+        {
+            "EGFR": "2*EGFR*(EGFR + EGF_EGFR)",
+            "EGF_EGFR": "EGF_EGFR*(EGFR + EGF_EGFR)",
+            "k_bind": "-k_bind*(EGFR + EGF_EGFR)",
+            "k_phos_MEK": "-k_phos_MEK*(EGFR + EGF_EGFR)",
+            "k_unbind": "-EGFR**2*k_bind + EGFR*k_bind + EGF_EGFR*k_unbind",
+        }
+    ]
     assert orbits_reach(inv, brs, names, ["EGFR"], tmp, gens, []) is not None
     forms = [f for br in brs for f, _ in _rational_gauges(br, ["EGFR"])]
     assert any(all("sqrt" not in str(v) for v in f.values()) for f in forms)
@@ -258,6 +307,7 @@ def test_a_root_in_the_gauge_is_removed_by_a_square_substitution():
 
 def test_a_section_is_met_at_most_once_when_the_invariants_give_back_its_points():
     from symident.reduction.sections import section_injective
+
     a, b, c, t = spy.symbols("a b c t")
     root = {"a": spy.sqrt(t), "b": spy.sqrt(t)}
     assert section_injective([a * b], root, ["t"], [], [(a, b)])
@@ -265,7 +315,7 @@ def test_a_section_is_met_at_most_once_when_the_invariants_give_back_its_points(
     assert section_injective([a * b * c], root, ["t"], [(c, 1)], [(a, b), (c, 1)])
     assert not section_injective([a * b], root, ["t"], [], [(a, b * c)])
     assert not section_injective([a * b], root, ["t"], [], [(a + b, 2)])
-    assert not section_injective([(a - 1)**2], {"a": 1 + spy.sqrt(t)}, ["t"], [])
+    assert not section_injective([(a - 1) ** 2], {"a": 1 + spy.sqrt(t)}, ["t"], [])
 
 
 def test_support_only_directions_and_missing_coordinates():
@@ -327,12 +377,14 @@ def test_print_lean_summary_holds_block_report():
 
 
 def test_egf_mek_erk_cascade_reduced_end_to_end():
-    reactions = network(("EGF + EGFR", "EGF_EGFR", "k_bind * EGF * EGFR"),
-                        ("EGF_EGFR", "EGF + EGFR", "k_unbind * EGF_EGFR"),
-                        ("MEK", "pMEK", "k_phos_MEK * EGF_EGFR * MEK"),
-                        ("pMEK", "MEK", "k_dephos_MEK * pMEK"),
-                        ("ERK", "pERK", "k_phos_ERK * pMEK * ERK"),
-                        ("pERK", "ERK", "k_dephos_ERK * pERK"))
+    reactions = network(
+        ("EGF + EGFR", "EGF_EGFR", "k_bind * EGF * EGFR"),
+        ("EGF_EGFR", "EGF + EGFR", "k_unbind * EGF_EGFR"),
+        ("MEK", "pMEK", "k_phos_MEK * EGF_EGFR * MEK"),
+        ("pMEK", "MEK", "k_dephos_MEK * pMEK"),
+        ("ERK", "pERK", "k_phos_ERK * pMEK * ERK"),
+        ("pERK", "ERK", "k_dephos_ERK * pERK"),
+    )
     obs = {"pMEK_obs": "scale_pMEK * pMEK", "pERK_obs": "scale_pERK * pERK"}
     egf = det(None, obs, reactions=reactions, reduce_cq=False, reconstruct=True)
     r = red(egf)
@@ -366,8 +418,10 @@ def test_egf_mek_erk_cascade_reduced_end_to_end():
     for nm, m in cb["new_parameters"].items():
         assert ev(m, z) == pytest.approx(u[nm], rel=1e-8)
     # the invariants behind the new parameters are positive at arbitrary inner points
-    for z0 in ({"EGF": 1.3, "EGFR": 0.2, "EGF_EGFR": 2.5, "k_bind": 0.8, "k_phos_MEK": 0.3, "k_unbind": 1.9},
-               {"EGF": 1e-4, "EGFR": 1e-4, "EGF_EGFR": 50, "k_bind": 3, "k_phos_MEK": 2, "k_unbind": 1e-3}):
+    for z0 in (
+        {"EGF": 1.3, "EGFR": 0.2, "EGF_EGFR": 2.5, "k_bind": 0.8, "k_phos_MEK": 0.3, "k_unbind": 1.9},
+        {"EGF": 1e-4, "EGFR": 1e-4, "EGF_EGFR": 50, "k_bind": 3, "k_phos_MEK": 2, "k_unbind": 1e-3},
+    ):
         for m in cb["new_parameters"].values():
             assert ev(m, z0) > 0
 
@@ -401,14 +455,14 @@ def test_section_from_product_of_two_summand_balances():
     assert "certified positive" in curved["gauge_note"]
     # the pinned scaling coordinate is out of the ansatz and of the block report
     assert not any("ktx" in s for s in curved["invariants"] + (curved.get("section") or []))
-    z = {nm: ev(e, {"q_1": 2.3, "q_2": 0.7, "pP": 1.4, "s": 0.9, "dm": 1.1, "m": 0.5})
-         for nm, e in r.trafo.items()}
+    z = {nm: ev(e, {"q_1": 2.3, "q_2": 0.7, "pP": 1.4, "s": 0.9, "dm": 1.1, "m": 0.5}) for nm, e in r.trafo.items()}
     assert all(z[k] > 0 for k in ("P", "k_p", "k_d"))
     assert identifiable(f, g, trafo=r.trafo)
 
 
 def test_section_candidates_put_summand_balances_before_monomial_pairs():
     from symident.reduction.sections import section_cands
+
     cands = section_cands(["x", "y", "z"], [["F*x", "y", "x*z"]])
     first_pair = cands.index(["x", "y"])
     assert cands[:3] == [["x", "1"], ["y", "1"], ["z", "1"]]
@@ -426,8 +480,7 @@ def test_balances_through_fixed_names_push_no_coordinate_section_out():
 
 
 def test_invariants_verified_against_other_blocks():
-    f = {"P1": "-k1*P1 + k2*pP1", "pP1": "k1*P1 - k2*pP1",
-         "P2": "-k3*P2 + k4*pP2", "pP2": "k3*P2 - k4*pP2"}
+    f = {"P1": "-k1*P1 + k2*pP1", "pP1": "k1*P1 - k2*pP1", "P2": "-k3*P2 + k4*pP2", "pP2": "k3*P2 - k4*pP2"}
     g = {"y1": "pP1", "y2": "pP2"}
     r = red(det(f, g, reconstruct=True))
     curved = blocks_of(r, "curved")
@@ -715,8 +768,9 @@ def test_face_section_switches_leaks_off():
     assert any("face section" in c for c in b["certificates"])
     # the face is a zero set every orbit reaches
     zb = blocks_of(red(res, zero_limits=True), "curved")[0]
-    assert any(row["verdict"] == "yes" and row["coordinates"] == ", ".join(sorted(zeros))
-               for row in zb["zero_compatibility"])
+    assert any(
+        row["verdict"] == "yes" and row["coordinates"] == ", ".join(sorted(zeros)) for row in zb["zero_compatibility"]
+    )
     tr2 = {**tr, **{k: v for k, v in r.trafo.items() if k not in tr}}
     assert identifiable(f, {"y": "x1"}, trafo=tr2)
     # each rate the face keeps becomes a fresh q_<k>
@@ -751,8 +805,10 @@ def test_translation_group_searched_in_sum():
     assert not r.remaining
     cb = blocks_of(r, "curved")[0]
     assert any("translation-group" in c for c in cb["certificates"])
-    assert any(expr_equal(iv, "kdg/(Km + R1 + R2) + ksec")
-               or expr_equal(iv, "(Km + R1 + R2)/(kdg + ksec*(Km + R1 + R2))") for iv in cb["invariants"])
+    assert any(
+        expr_equal(iv, "kdg/(Km + R1 + R2) + ksec") or expr_equal(iv, "(Km + R1 + R2)/(kdg + ksec*(Km + R1 + R2))")
+        for iv in cb["invariants"]
+    )
     pt = {"Km": 0.7, "kdg": 2.3, "ksec": 1.9, "ktl": 0.31, "R1": 1.7, "R2": 0.45}
     for iv in cb["invariants"]:
         assert abs(lie_at(g1, iv, pt)) < 1e-4
@@ -764,8 +820,7 @@ def test_unmoved_monomial_searched_as_one_symbol():
     W = "R1*R2*R3"
     g1 = {"Km": f"Km + {W}", "kdg": "kdg"}
     g2 = {"Km": f"ksec*(Km + {W})^2", "ksec": f"{W}*kdg*ksec", "ktl": f"-{W}*kdg*ktl"}
-    obj = mkobj([mkdir(g1, "general"), mkdir(g2, "general")],
-                ["Km", "kdg", "ksec", "ktl", "R1", "R2", "R3"])
+    obj = mkobj([mkdir(g1, "general"), mkdir(g2, "general")], ["Km", "kdg", "ksec", "ktl", "R1", "R2", "R3"])
     r = red(obj)
     assert not r.remaining
     cb = blocks_of(r, "curved")[0]
@@ -783,12 +838,14 @@ def test_section_search_stops_at_its_work_cap():
     pos = ["c", "k0", "kd", "w", "b", "x"]
     res = det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos)
     r = red(res, positive=pos, work_cap=0)
-    assert any(b["status"] == "invariant_only" and "work_cap" in (b.get("reason") or "")
-               for b in blocks_of(r, "curved"))
+    assert any(
+        b["status"] == "invariant_only" and "work_cap" in (b.get("reason") or "") for b in blocks_of(r, "curved")
+    )
 
 
 def test_square_root_of_a_perfect_square_is_taken():
     from symident.reduction.core import _tidy_root
+
     assert _tidy_root("sqrt(16*q_2^2 + 8*q_2*q_3 + q_3^2)") == "4*q_2 + q_3"
     assert _tidy_root("sqrt(4*kb2 + q_1^2)") == "sqrt(4*kb2 + q_1^2)"
 
@@ -800,18 +857,23 @@ def test_partial_chart_is_named_in_the_verdict():
 
 
 def test_the_declared_positive_names_of_the_detection_need_not_be_coordinates():
-    res = si.detect(si.Model({"x": "-k*f*x"}, {"y": "s*x"}, fixed=["f"]), positive=["x", "k", "s", "f"],
-                    reconstruct=True)
+    res = si.detect(
+        si.Model({"x": "-k*f*x"}, {"y": "s*x"}, fixed=["f"]), positive=["x", "k", "s", "f"], reconstruct=True
+    )
     with warnings.catch_warnings():
         warnings.filterwarnings("error", message="no effect")
         res.reduce()
 
 
 def test_labels_partition_the_directions():
-    rx = {"species": ["A", "B", "C"], "stoichiometry": [[1, -1, 0], [0, -1, 1], [0, 1, -1]],
-          "rates": ["k1*B", "k2*B", "k3*C"]}
-    red = si.detect(si.Model(reactions=rx, observables={"y": "B"}), equilibrate=True, reduce_cq=True,
-                    reconstruct=True).reduce()
+    rx = {
+        "species": ["A", "B", "C"],
+        "stoichiometry": [[1, -1, 0], [0, -1, 1], [0, 1, -1]],
+        "rates": ["k1*B", "k2*B", "k3*C"],
+    }
+    red = si.detect(
+        si.Model(reactions=rx, observables={"y": "B"}), equilibrate=True, reduce_cq=True, reconstruct=True
+    ).reduce()
     labels = red.removed + red.remaining
     assert len(labels) == len(set(labels)) == 3
     assert red.remaining == []
@@ -822,18 +884,31 @@ def test_dependent_scaling_is_named_not_reduced():
 
     def mk(g, w):
         return {"type": "scaling", "generator": g, "weights": w, "support": list(g), "explicit": True}
-    obj = {"identifiable": False, "rank": 0, "dim": 2,
-           "info": {"engine": "modular", "settings": {}, "coordinates": ["k1", "k2"]},
-           "symmetries": [mk({"k1": "k1"}, {"k1": "1"}), mk({"k2": "k2"}, {"k2": "1"}),
-                          mk({"k1": "k1", "k2": "k2"}, {"k1": "1", "k2": "1"})]}
+
+    obj = {
+        "identifiable": False,
+        "rank": 0,
+        "dim": 2,
+        "info": {"engine": "modular", "settings": {}, "coordinates": ["k1", "k2"]},
+        "symmetries": [
+            mk({"k1": "k1"}, {"k1": "1"}),
+            mk({"k2": "k2"}, {"k2": "1"}),
+            mk({"k1": "k1", "k2": "k2"}, {"k1": "1", "k2": "1"}),
+        ],
+    }
     r = symmetry_reduction(obj)
     assert (r["removed"], r["remaining"], r["dependent"]) == (["X₁", "X₂"], [], ["X₃"])
 
 
 def test_alternative_charts_are_valid_and_ranked():
     from symident.reduction.core import _chart_valid
-    m = si.Model({"x": "kin*u - (k1 - k2)*x"}, {"y": "s*x"}, trafo={"x": "0"},
-                 conditions={"rows": ["a", "b"], "cols": {"u": [1, 3]}})
+
+    m = si.Model(
+        {"x": "kin*u - (k1 - k2)*x"},
+        {"y": "s*x"},
+        trafo={"x": "0"},
+        conditions={"rows": ["a", "b"], "cols": {"u": [1, 3]}},
+    )
     det = si.detect(m, reconstruct=True)
     red = det.reduce(alternatives=True)
     assert _chart_valid(red._raw, det.dim) and red.alternatives
@@ -849,6 +924,7 @@ def test_an_error_in_the_chart_is_raised_not_hidden(monkeypatch):
 
     def broken(*a, **k):
         raise KeyError("broken chart")
+
     res = det({"x": "-k*x"}, {"y": "s*x"}, reconstruct=True)
     monkeypatch.setattr(core, "red_coordinates", broken)
     with pytest.raises(KeyError, match="broken chart"):
@@ -861,25 +937,31 @@ def test_amgm_certificate_is_exact_for_rational_coefficients():
     import numpy as np
 
     from symident.reduction.sign import absorb
+
     e = np.array([[2, 0], [1, 1], [0, 2]], dtype=float)
     assert any(b > 0 for b in absorb(e, [Fr(1), Fr(-1), Fr(1)]))
     # no budget left where the polynomial reaches zero, no certificate where it falls below, by any margin
     assert not any(b > 0 for b in absorb(e, [Fr(1), Fr(-2), Fr(1)]))
-    assert absorb(e, [Fr(1), Fr(-2) - Fr(1, 10 ** 12), Fr(1)]) is None
+    assert absorb(e, [Fr(1), Fr(-2) - Fr(1, 10**12), Fr(1)]) is None
 
 
 def test_exact_rank_of_rationals():
     from fractions import Fraction as Fr
 
     from symident.reduction.invariants import exact_rank
+
     assert exact_rank([[1, 2], [2, 4]]) == 1
     assert exact_rank([[Fr(1, 3), 1], [1, Fr(1, 3)]]) == 2
     assert exact_rank([[1.5, 2]]) == 1 and exact_rank([["x", 1]]) is None
 
 
 def test_the_reduction_reads_the_level_of_the_directions():
-    m = si.Model({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"Aobs": "alpha*A"}, trafo={"k1": "k2*B/A"},
-                 events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
+    m = si.Model(
+        {"A": "-k1*A + k2*B", "B": "k1*A - k2*B"},
+        {"Aobs": "alpha*A"},
+        trafo={"k1": "k2*B/A"},
+        events=[{"var": "A", "time": 0, "value": "1", "method": "add"}],
+    )
     r = si.detect(m, reconstruct=True)
     assert [s.level for s in r.symmetries] == ["exact"]
     # the level of the detection as a verified closed form would leave it
@@ -904,18 +986,32 @@ def test_the_reduction_reads_the_level_of_the_directions():
 def test_the_trafo_is_checked_back_and_the_loop_closed():
     r = red(det(F_AB, {"y": "s*A"}, reconstruct=True))
     assert r.checks["pins"] is True and r.checks["invariants"] is True and r.checks["failed"] == []
-    assert r.checks["loop"] == {"directions": 0, "expected": 0, "rank": 3, "dim": 3, "rank_status": "proven",
-                                "ok": True}
+    assert r.checks["loop"] == {
+        "directions": 0,
+        "expected": 0,
+        "rank": 3,
+        "dim": 3,
+        "rank_status": "proven",
+        "ok": True,
+    }
     assert "loop" not in red(det(F_AB, {"y": "s*A"}, reconstruct=True), check=False).checks
-    bad = {"removed": ["X₁"], "remaining": [], "blocks": [], "trafo": {"a": "1"},
-           "checks": {"failed": ["q_1 = a*b"], "loop": {"directions": 1, "expected": 0, "rank": 1, "dim": 2,
-                                                       "rank_status": "proven", "ok": False}}}
+    bad = {
+        "removed": ["X₁"],
+        "remaining": [],
+        "blocks": [],
+        "trafo": {"a": "1"},
+        "checks": {
+            "failed": ["q_1 = a*b"],
+            "loop": {"directions": 1, "expected": 0, "rank": 1, "dim": 2, "rank_status": "proven", "ok": False},
+        },
+    }
     text = " ".join(report.reduction_lines(bad, width=80)).replace("  ", " ")
     assert "Check failed over Q: q_1 = a*b." in text and "the reduced model has 1 direction, 0 expected" in text
 
 
 def test_roots_are_taken_only_of_positive_symbols():
     from symident.reduction.core import _tidy_root
+
     assert _tidy_root("sqrt(x^2*y)", {"x", "y"}) == "x*sqrt(y)"
     assert _tidy_root("sqrt(x^2*y)", {"y"}) == "sqrt(x^2*y)"
 
@@ -923,12 +1019,14 @@ def test_roots_are_taken_only_of_positive_symbols():
 def test_invariants_are_checked_against_the_generators_as_detected():
     r = red(det(F_AB, {"y": "s*A"}, reconstruct=True))
     curved = [b for b in r.blocks if b["type"] != "scaling"]
-    assert curved and all("verified: X(I) = 0 exactly for every generator as detected" in b["certificates"]
-                          for b in curved)
+    assert curved and all(
+        "verified: X(I) = 0 exactly for every generator as detected" in b["certificates"] for b in curved
+    )
 
 
 def test_independence_of_invariants_with_exp_is_certified():
     from symident.reduction.blocks import independent_set
+
     assert independent_set(["exp(a)*b", "exp(2*a)*b^2", "c*exp(b)"], ["a", "b", "c"], 2) == ["exp(a)*b", "c*exp(b)"]
 
 
@@ -940,8 +1038,11 @@ def test_the_invariant_count_says_whether_it_is_exact():
 
 def test_signs_of_numbers_are_exact():
     from symident.reduction.sign import num_sign, sgn_poly
+
     assert num_sign(spy.sqrt(2) - 1) == 1 and num_sign(spy.pi - spy.Rational(355, 113)) == -1
-    assert num_sign(spy.exp(1) * spy.exp(-1) - 1) == 0 and num_sign((spy.sqrt(2) + 1)**2 - 3 - 2 * spy.sqrt(2)) is None
+    assert (
+        num_sign(spy.exp(1) * spy.exp(-1) - 1) == 0 and num_sign((spy.sqrt(2) + 1) ** 2 - 3 - 2 * spy.sqrt(2)) is None
+    )
     x, y = spy.symbols("x y")
     assert sgn_poly(spy.sqrt(2) * x + spy.pi * y) == 1
     # an algebraic coefficient never enters a float budget
@@ -951,15 +1052,20 @@ def test_signs_of_numbers_are_exact():
 def test_the_rank_of_a_weight_matrix_is_exact():
     from symident.gfp import PRIMES
     from symident.reduction.scaling import rank_modp
+
     p = PRIMES[0]
     W = np.array([[1, 0], [0, p]], dtype=object)
     assert rank_modp(W) == 2 and rank_modp(W, p) == 1
 
 
 def test_a_face_section_is_proven_where_the_model_is_continuous_up_to_the_face():
-    m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"},
-                 inputs=["u"], events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"}],
-                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
+    m = si.Model(
+        {"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"},
+        {"y": "s*x2"},
+        inputs=["u"],
+        events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"}],
+        conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}},
+    )
     r = red(si.detect(m, equilibrate=True, reconstruct=True))
     scal, curved = r.blocks
     assert scal["level"] == "exact" and scal["unproven"] == []
@@ -971,10 +1077,12 @@ def test_a_face_section_is_proven_where_the_model_is_continuous_up_to_the_face()
 
 def test_continuity_up_to_a_face_is_checked_on_the_model():
     from symident.reduction.sections import face_regular
+
     co, su = ["kb", "k1", "kl"], ["k1", "kl"]
 
     def why(*a, **kw):
         return face_regular(*a, **kw)[0]
+
     lin = {"x1": "kb - (k1 + kl)*x1"}
     assert face_regular(["kl"], list(lin.values()), lin, True, co, su) == (None, "exact")
     sq = {"x1": "kb - (k1 + kl)*x1^2"}
@@ -995,8 +1103,9 @@ def test_section_search_stops_at_its_work_cap_and_says_so():
     pos = ["c", "k0", "kd", "w", "b", "x"]
     res = det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos)
     r = red(res, positive=pos, work_cap=0)
-    assert any(b["status"] == "invariant_only" and "work_cap" in (b.get("reason") or "")
-               for b in blocks_of(r, "curved"))
+    assert any(
+        b["status"] == "invariant_only" and "work_cap" in (b.get("reason") or "") for b in blocks_of(r, "curved")
+    )
     assert any("reduce(work_cap=0) reached" in lim for lim in r.limits)
     assert red(res, positive=pos).trafo == red(res, positive=pos).trafo
 
@@ -1011,14 +1120,25 @@ def test_a_product_at_one_covers_orbits_that_a_pin_misses():
 
 def test_a_section_claim_without_proof_is_named():
     from symident.reduction.core import unproven_of
-    b = {"status": "reduced", "type": "curved", "pins": {"a": "q_1"}, "section": ["a*b = c"],
-         "transversal": ["a", "b"], "face": False, "count": "exact"}
-    assert unproven_of(b) == ["every level set of the invariants is one orbit",
-                              "each orbit meets the section a*b = c at most once"]
+
+    b = {
+        "status": "reduced",
+        "type": "curved",
+        "pins": {"a": "q_1"},
+        "section": ["a*b = c"],
+        "transversal": ["a", "b"],
+        "face": False,
+        "count": "exact",
+    }
+    assert unproven_of(b) == [
+        "every level set of the invariants is one orbit",
+        "each orbit meets the section a*b = c at most once",
+    ]
 
 
 def test_real_coordinates_are_not_claimed_positive():
     from symident.reduction.sign import set_positive, sgn_poly
+
     x, y = spy.symbols("x y")
     old = set_positive(["y"])
     try:
@@ -1035,6 +1155,7 @@ def test_real_coordinates_are_not_claimed_positive():
 def test_a_sampled_vector_is_checked_before_it_is_chosen(monkeypatch):
     import symident.reduction.invariants as ri
     from symident.reduction.expr import gen_prep
+
     preps = [gen_prep({"generator": {"x": "x", "y": "-y"}})]
     vars_ = ["x", "y"]
     expts = np.array([[1, 0], [1, 1]])
@@ -1043,6 +1164,7 @@ def test_a_sampled_vector_is_checked_before_it_is_chosen(monkeypatch):
     def fake(rows_at, n, eval_vars, min_rows=0):
         calls.append(min_rows)
         return {"basis": np.array([[1, 0], [0, 1]], dtype=np.int64), "rows": 3}
+
     monkeypatch.setattr(ri, "modular_nullspace", fake)
     ns = ri._checked_nullspace(preps, vars_, expts, 2)
     assert calls == [0, 4 * 2 + 20]
@@ -1051,6 +1173,7 @@ def test_a_sampled_vector_is_checked_before_it_is_chosen(monkeypatch):
 
 def test_a_constant_pin_of_one_monotone_generator_is_proven():
     from symident.reduction.core import monotone_pins, unproven_of
+
     b = {"status": "reduced", "type": "curved", "pins": {"a": "1", "c": "q_1"}, "face": False, "count": "exact"}
     assert monotone_pins(b, [{"generator": {"a": "a*b", "c": "-c"}}]) == ["a"]
     assert monotone_pins(b, [{"generator": {"a": "a - b", "c": "-c"}}]) == []
@@ -1060,6 +1183,7 @@ def test_a_constant_pin_of_one_monotone_generator_is_proven():
 
 def test_a_direction_without_state_components_lifts_tangent_to_the_resting_variety():
     from symident.reduction.core import lifted_generators
+
     rhs = {"x1": "kb - (k1 + kl)*x1", "u": "0"}
     gen = {"X1": {"generator": {"kb": "kb", "k1": "k1", "kl": "kl"}}}
     (g,), level = lifted_generators(["X1"], gen, rhs)
@@ -1073,6 +1197,7 @@ def test_a_direction_without_state_components_lifts_tangent_to_the_resting_varie
 
 def test_a_real_carrier_has_no_sign_unless_the_carriers_are_taken_positive():
     from symident.reduction.sign import DOMAIN, carriers_real, sgn
+
     c = spy.Symbol("si_red_c1")
     old = DOMAIN["positive"]
     DOMAIN["positive"] = None
@@ -1088,10 +1213,11 @@ def test_a_real_carrier_has_no_sign_unless_the_carriers_are_taken_positive():
 def test_the_sign_changes_of_undecided_coefficients_are_counted_without_enumeration():
     from symident.reduction.sections import _interval, _max_variations
     from symident.reduction.sign import carriers_real
+
     assert _max_variations([{1}, {1, -1}, {1}]) == 2 and _max_variations([{1}, {1}, {-1}]) == 1
     x, a = spy.symbols("x si_red_c1")
     with carriers_real(["si_red_c1"]):
-        assert _interval(spy.Poly(-x**2 + a * x + 1, x), False)
+        assert _interval(spy.Poly(-(x**2) + a * x + 1, x), False)
         assert not _interval(spy.Poly(x**3 + a * x**2 + a * x + 1, x), True)
         assert _interval(spy.Poly(sum((a**2 + 1) * x**k for k in range(1, 12)) - 1, x), True)
 
@@ -1099,6 +1225,7 @@ def test_the_sign_changes_of_undecided_coefficients_are_counted_without_enumerat
 def test_the_work_cap_of_a_reduction_ends_with_the_call():
     from symident.reduction.expr import tri_solve
     from symident.reduction.sign import DOMAIN
+
     f = {"c": "k0 - kd*c", "x": "w*(q + b*c) - x"}
     pos = ["c", "k0", "kd", "w", "b", "x"]
     red(det(f, {"y": "x"}, gauge=None, reconstruct=True, positive=pos), positive=pos, work_cap=0)
@@ -1110,6 +1237,7 @@ def test_the_work_cap_of_a_reduction_ends_with_the_call():
 
 def test_a_triangular_solve_says_when_a_branch_may_be_missing():
     from symident.reduction.expr import tri_solve
+
     x, y = spy.symbols("x y")
     info = {"complete": True}
     assert len(tri_solve([x**2 - 2, y - x], ["x", "y"], info)) == 2 and info["complete"]
@@ -1123,6 +1251,7 @@ def test_a_triangular_solve_says_when_a_branch_may_be_missing():
 def test_a_triangular_solve_drops_a_large_branch_over_a_radical(monkeypatch):
     from symident.reduction import expr
     from symident.reduction.expr import tri_solve
+
     monkeypatch.setattr(expr, "RADICAL_NODES", 20)
     x, y, a = spy.symbols("x y a")
     big = (x + a) ** 3 / (x - 1) + (x - a) ** 2 / (x + 2)
@@ -1134,6 +1263,7 @@ def test_a_triangular_solve_drops_a_large_branch_over_a_radical(monkeypatch):
 
 def test_a_rank_of_exact_numbers_is_certified():
     from symident.reduction.invariants import certified_rank
+
     assert certified_rank([[1, 2], [2, 4]]) == 1
     assert certified_rank([[spy.sqrt(2), 1], [2, spy.sqrt(2)]]) == 1
     assert certified_rank([[spy.exp(1), 1], [1, spy.pi]]) == 2
@@ -1144,6 +1274,7 @@ def test_a_ratio_with_a_real_coordinate_to_an_odd_power_has_no_sign():
     from symident.reduction.expr import red_locals
     from symident.reduction.sections import section_monotone
     from symident.reduction.sign import set_positive
+
     loc = red_locals(["a", "b"])
     pr = {"comps": {"a": "a", "b": "-b"}}
     xi = [{spy.Symbol("a"): spy.Symbol("a"), spy.Symbol("b"): -spy.Symbol("b")}]
@@ -1160,19 +1291,28 @@ def test_a_ratio_with_a_real_coordinate_to_an_odd_power_has_no_sign():
 
 def test_a_resting_state_without_a_point_over_the_field_is_redrawn():
     from symident.reduction.sections import rest_checked
+
     assert rest_checked({"x": "a - b*x^2"}, [], [])
     assert not rest_checked({"x": "a"}, [], [])
 
 
 def test_an_undecided_zero_limit_is_unknown_not_no():
     from symident.reduction.zero import zero_compat
-    b = {"support": ["a", "b"], "invariants": ["a**3 + a**2*b + b**3 + 2*a"], "status": "reduced",
-         "type": "curved", "preps": None, "target": None}
+
+    b = {
+        "support": ["a", "b"],
+        "invariants": ["a**3 + a**2*b + b**3 + 2*a"],
+        "status": "reduced",
+        "type": "curved",
+        "preps": None,
+        "target": None,
+    }
     assert {r["verdict"] for r in zero_compat(b)} == {"unknown"}
 
 
 def test_a_checked_direction_or_a_failed_saturation_warns_and_is_an_error_only_on_request():
     from symident.reduction.core import check_levels
+
     failed = {"symmetries": [{"level": "exact"}], "info": {"verification": {"ok": False, "reason": "r"}}}
     with pytest.raises(ValueError, match="allow_checked"):
         check_levels({"symmetries": [{"level": "checked"}]}, allow_checked=False)
@@ -1197,6 +1337,7 @@ def test_the_closed_loop_fails_on_an_idle_trafo_and_is_not_run_on_a_refusal():
 
     def refused():
         raise ValueError("... anything else is not rational.\n  E = sqrt(q)")
+
     assert loop_outcome(idle, 0)["ok"] is False
     out = loop_outcome(refused, 0)
     assert out["ok"] is None and "not rational" in out["reason"]
@@ -1208,8 +1349,10 @@ def test_the_closed_loop_applies_the_trafo_to_symbolic_grid_cells():
     c = {"rows": ["a1", "a2"], "cols": {"tau": ["t11", "t12"], "KA": ["K11", "K12"]}}
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
-        r = si.detect(si.Model({"A": "1"}, {"E": "Em*tau*A/(KA + (1+tau)*A)"}, trafo={"A": "1", "t11": "1"},
-                               conditions=c), cores=1)
+        r = si.detect(
+            si.Model({"A": "1"}, {"E": "Em*tau*A/(KA + (1+tau)*A)"}, trafo={"A": "1", "t11": "1"}, conditions=c),
+            cores=1,
+        )
     assert not any("had no effect" in str(w.message) for w in rec) and "t11" not in r.info["coordinates"]
 
 
@@ -1231,8 +1374,7 @@ def test_the_closed_loop_applies_a_pin_of_a_renamed_column_in_the_grid():
     rename = {"rows": ["a", "b"], "cols": {"s": ["s", "s2"]}}
     r = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}, conditions=rename), reconstruct=True)
     assert r.reduce().trafo["s"] == "1"
-    ref = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}, conditions={"rows": ["a", "b"],
-                                                                     "cols": {"s": ["1", "s2"]}}))
+    ref = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}, conditions={"rows": ["a", "b"], "cols": {"s": ["1", "s2"]}}))
     assert _loop_matches(r, ref)
     with pytest.warns(UserWarning, match="condition column"):
         si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}, conditions=rename, trafo={"s": "1"}))
@@ -1258,6 +1400,7 @@ def test_the_closed_loop_of_moieties_and_resting_values():
 
 def test_a_resting_value_pinned_to_an_expression_is_no_model():
     from symident.api import reduced_model
+
     rm = reduced_model({"z": "-k*u*z", "u": "0"}, {"y": "z"}, None, None, None, {"z": "q_1", "k": "k"}, True)
     assert rm["why"] is not None and "resting value of z" in rm["why"]
     rm = reduced_model({"z": "-k*u*z", "u": "0"}, {"y": "z"}, None, None, None, {"z": "1", "k": "k"}, True)
@@ -1276,6 +1419,7 @@ def test_a_result_keeps_the_model_it_detected_and_its_reduction():
 
 def test_a_direction_at_rest_is_verified_unless_a_resting_branch_is_undecided(monkeypatch):
     from symident.detection.observability.joint import JointSystem
+
     ev = [{"var": "u", "time": 0, "value": "1", "method": "replace"}]
     m = si.Model({"z": "-k*u*z", "w": "-j*u*w", "u": "0"}, {"y": "z*w"}, inputs=["u"], events=ev)
     # without field routes the direction comes from a route checked at random points
@@ -1297,6 +1441,7 @@ def test_a_direction_at_rest_is_verified_unless_a_resting_branch_is_undecided(mo
 
 def test_atoms_count_positive_only_where_proven():
     from symident.reduction.sign import set_positive, sgn
+
     x, y = spy.symbols("x y")
     old = set_positive(None)
     try:
@@ -1308,12 +1453,13 @@ def test_atoms_count_positive_only_where_proven():
 
 def test_am_gm_keeps_a_strict_sign_only_with_budget_left():
     from symident.reduction.sign import set_positive, sgn_poly
+
     x, y, r_, s_ = spy.symbols("x y r s")
     old = set_positive(["x", "y"])
     try:
-        assert sgn_poly((1 - r_**2)**2 + s_**2) == 0
-        assert sgn_poly((x - y)**2 + r_**2) == 0
-        assert [sgn_poly(e) for e in (x**2 + y**2 - x*y, (x - y)**2 + 1, (x - y)**2 + x)] == [1, 1, 1]
+        assert sgn_poly((1 - r_**2) ** 2 + s_**2) == 0
+        assert sgn_poly((x - y) ** 2 + r_**2) == 0
+        assert [sgn_poly(e) for e in (x**2 + y**2 - x * y, (x - y) ** 2 + 1, (x - y) ** 2 + x)] == [1, 1, 1]
     finally:
         set_positive(old)
 
@@ -1329,6 +1475,7 @@ def test_a_direction_along_one_coordinate_is_pinned_where_its_component_keeps_a_
 
 def test_alternatives_rank_by_level_first():
     from symident.reduction.core import _chart_rank
+
     rational_open = {"removed": ["X1"], "trafo": {"a": "q_1"}, "level": "open"}
     radical_exact = {"removed": ["X1"], "trafo": {"a": "sqrt(q_1)"}, "level": "exact"}
     assert sorted([rational_open, radical_exact], key=_chart_rank)[0] is radical_exact
@@ -1337,6 +1484,7 @@ def test_alternatives_rank_by_level_first():
 
 def test_a_failed_denominator_publishes_no_complete_form():
     from symident.detection.finalize import complete, denominator
+
     assert denominator({"x": "1/(a +* b)"}) is None
     (d,) = complete([{"type": "general", "generator": {"x": "1/(a +* b)"}}])
     assert d["complete_generator"] is None and d["factor"] is None
@@ -1373,6 +1521,7 @@ def test_a_section_whose_entries_take_both_signs_covers_the_orbits_where_they_ar
 
 def test_lift_of_parameters_the_resting_state_does_not_read():
     from symident.reduction.core import lifted_generators
+
     # parameters that enter only with an input zero at rest lift exactly, however large the model
     rhs = {f"x{i}": f"a{i}*x{i - 1} - b{i}*x{i}" for i in range(1, 30)}
     rhs["x0"] = "k*u/(1 + K*u) + c - d*x0"
@@ -1393,8 +1542,12 @@ def test_an_invariant_of_a_resting_state_is_no_trafo_entry():
 
 def test_a_system_of_invariants_past_the_degree_cap_is_a_limit_not_a_hang():
     f = {"A": "-k1*A*B + k2*C", "B": "-k1*A*B + k2*C", "C": "k1*A*B - k2*C"}
-    m = si.Model(f, {"Aobs": "alpha*A"}, trafo={"k1": "k2*C/(A*B)"},
-                 events=[{"var": "A", "time": 0, "value": "1", "method": "add"}])
+    m = si.Model(
+        f,
+        {"Aobs": "alpha*A"},
+        trafo={"k1": "k2*C/(A*B)"},
+        events=[{"var": "A", "time": 0, "value": "1", "method": "add"}],
+    )
     red = si.detect(m, reconstruct=True).reduce(check=False)
     assert any("above 32" in lim for lim in red.limits)
     # another gauge coordinate gives a system within the cap
@@ -1416,6 +1569,7 @@ def positive_domain():
 
     def declare(names):
         set_positive(list(names))
+
     old = set_positive(None)
     yield declare
     set_positive(old)
@@ -1424,6 +1578,7 @@ def positive_domain():
 def test_a_scaling_pins_a_positive_coordinate_before_a_signed_one():
     # a scaling keeps the sign of a coordinate, so only a positive pin meets every orbit
     from symident.reduction import symmetry_reduction
+
     obj = mkobj([mkdir({"x0": "x0", "c": "-c"}, "scaling", {"x0": "1", "c": "-1"})], ["x0", "c"])
     r = symmetry_reduction(obj, positive=["c"])
     assert r["blocks"][0]["pins"] == {"c": "1"} and r["blocks"][0].get("coverage") is None
@@ -1432,6 +1587,7 @@ def test_a_scaling_pins_a_positive_coordinate_before_a_signed_one():
 def test_curved_directions_combine_with_the_scalings_to_leave_their_pins_unmoved(positive_domain):
     from symident.reduction.core import _rebased
     from symident.reduction.scaling import scaling_block
+
     positive_domain(["a1", "a2", "b", "c"])
     blk = scaling_block(np.array([[1, -1, 1]]), ["a2", "b", "P"], ["X1"], [], allowed=["b"])
     curved_dir = {"type": "general", "generator": {"a1": "b*P", "a2": "c*P - a2", "b": "b"}}
@@ -1443,13 +1599,21 @@ def test_curved_directions_combine_with_the_scalings_to_leave_their_pins_unmoved
 def test_a_signed_invariant_proposes_products_with_a_jacobian_of_one_sign(positive_domain):
     from symident.reduction.expr import red_locals, red_sympify
     from symident.reduction.sections import section_jacobian, section_monotone, split_products
+
     positive_domain(["a1", "a2", "b11", "b21", "b22"])
     a1, a2, b11, b22 = spy.symbols("a1 a2 b11 b22")
-    assert split_products([a1 * b22 - a2, b11 + b22], ["a1", "a2", "b11", "b22"]) == \
-        [["a1*a2", "1"], ["a2*b22", "1"]]
-    gens = [{"a1": "1", "a2": "b22", "P2": "1"},
-            {"a1": "b11*P2 - b21*P1 - b22*P2", "a2": "a1*b21 + b11*b22*P2 - b21*b22*P1 - b22^2*P2",
-             "b11": "-b21", "b22": "b21", "b21": "b11*b21 - b21*b22", "P2": "b11*P2 - b22*P2"}]
+    assert split_products([a1 * b22 - a2, b11 + b22], ["a1", "a2", "b11", "b22"]) == [["a1*a2", "1"], ["a2*b22", "1"]]
+    gens = [
+        {"a1": "1", "a2": "b22", "P2": "1"},
+        {
+            "a1": "b11*P2 - b21*P1 - b22*P2",
+            "a2": "a1*b21 + b11*b22*P2 - b21*b22*P1 - b22^2*P2",
+            "b11": "-b21",
+            "b22": "b21",
+            "b21": "b11*b21 - b21*b22",
+            "P2": "b11*P2 - b22*P2",
+        },
+    ]
     preps = [{"comps": {k: v.replace("^", "**") for k, v in g.items()}} for g in gens]
     loc = red_locals([x for p in preps for x in p["comps"].values()] + ["a1*a2"])
     xi_of = [{k: red_sympify(v, loc) for k, v in p["comps"].items()} for p in preps]
@@ -1462,6 +1626,7 @@ def test_a_signed_invariant_proposes_products_with_a_jacobian_of_one_sign(positi
 def test_a_section_under_a_square_root_is_injective_where_the_radicand_is_a_square(positive_domain):
     from symident.reduction import sign
     from symident.reduction.sections import section_injective
+
     positive_domain(["a1", "a2", "b11", "b21", "b22"])
     old = sign.DOMAIN["real_carriers"]
     sign.DOMAIN["real_carriers"] = ["t3", "t4"]
@@ -1470,8 +1635,14 @@ def test_a_section_under_a_square_root_is_injective_where_the_radicand_is_a_squa
         t1, t2, t3, t4 = spy.symbols("t1 t2 t3 t4")
         inv = [b11 + b22, b11**2 + 2 * b21 + b22**2, a1 * b22 - a2, a1 - P2 - b11 * P1]
         r = spy.sqrt(2 * t1 + t3**2)
-        sol = {"a1": (t3 + r) / t1, "a2": (r - t3) / 2, "b11": t1 / 2, "b22": t1 / 2, "b21": t2 / 2 - t1**2 / 4,
-               "P2": (t3 + r) / t1 - t1 * P1 / 2 - t4}
+        sol = {
+            "a1": (t3 + r) / t1,
+            "a2": (r - t3) / 2,
+            "b11": t1 / 2,
+            "b22": t1 / 2,
+            "b21": t2 / 2 - t1**2 / 4,
+            "P2": (t3 + r) / t1 - t1 * P1 / 2 - t4,
+        }
         assert section_injective(inv, sol, ["t1", "t2", "t3", "t4"], [], [(a1 * a2, spy.Integer(1)), (b11, b22)])
     finally:
         sign.DOMAIN["real_carriers"] = old
@@ -1479,6 +1650,7 @@ def test_a_section_under_a_square_root_is_injective_where_the_radicand_is_a_squa
 
 def test_charts_with_total_coverage_rank_before_rational_ones():
     from symident.reduction.core import _chart_rank
+
     total = {"level": "exact", "removed": ["X1"], "trafo": {"a": "sqrt(q_1)"}, "blocks": [{"coverage": "total"}]}
     part = {"level": "exact", "removed": ["X1"], "trafo": {"a": "q_1"}, "blocks": [{"coverage": "partial"}]}
     assert sorted([part, total], key=_chart_rank)[0] is total
@@ -1489,6 +1661,7 @@ def test_the_carriers_are_solved_without_the_unbounded_solver(monkeypatch):
 
     def refuse(*a, **k):
         raise AssertionError("unbounded solver")
+
     monkeypatch.setattr(solve.spy, "solve", refuse)
     q1, q2, a1, a2, b = spy.symbols("q1 q2 a1 a2 b")
     br = solve._carrier_branches([a1 * b - a2 - q1, a1 + a2**2 - q2], ["a1", "a2"], 2)
@@ -1501,13 +1674,23 @@ def test_the_carriers_are_solved_without_the_unbounded_solver(monkeypatch):
 
 def test_a_section_met_once_is_its_own_rational_chart(positive_domain):
     from symident.reduction.solve import _section_chart
+
     positive_domain(["a1", "a2", "b11", "b22"])
     a1, a2, b11, b22, t1, t2 = spy.symbols("a1 a2 b11 b22 t1 t2")
     # the section point solved from the invariants holds a root; the coordinates of the section are rational
     r = spy.sqrt(t2**2 + 4 * t1)
     es = {"a1": (t2 + r) / t1, "a2": (r - t2) / 2, "b11": t1 / 2, "b22": t1 / 2}
-    sc = _section_chart(["a1", "a2", "b11", "b22"], ["a1", "a2", "b11", "b22"], es, [(a1 * a2, 1), (b11, b22)],
-                        ["t1", "t2"], ["q_1", "q_2"], [b11 + b22, a1 * b22 - a2], {}, [])
+    sc = _section_chart(
+        ["a1", "a2", "b11", "b22"],
+        ["a1", "a2", "b11", "b22"],
+        es,
+        [(a1 * a2, 1), (b11, b22)],
+        ["t1", "t2"],
+        ["q_1", "q_2"],
+        [b11 + b22, a1 * b22 - a2],
+        {},
+        [],
+    )
     assert sc["pins"] == {"a1": "1/q_1", "a2": "q_1", "b11": "q_2", "b22": "q_2"}
     assert sc["solved_domain"] == {"q_1": "positive", "q_2": "positive"}
     assert spy.sympify(sc["meaning"]["q_2"]) == (b11 + b22) / 2
@@ -1515,7 +1698,10 @@ def test_a_section_met_once_is_its_own_rational_chart(positive_domain):
 
 def test_the_reduced_model_declares_the_domains_of_the_new_parameters():
     from symident.api import _reduced_positive
-    red = {"trafo": {"a": "q_1", "b": "c*sqrt(q_2)", "d": "q_3"},
-           "blocks": [{"solved_domain": {"q_1": "positive", "q_2": "real"}}, {"solved_domain": {"q_3": "positive"}}]}
+
+    red = {
+        "trafo": {"a": "q_1", "b": "c*sqrt(q_2)", "d": "q_3"},
+        "blocks": [{"solved_domain": {"q_1": "positive", "q_2": "real"}}, {"solved_domain": {"q_3": "positive"}}],
+    }
     assert _reduced_positive(True, red, ["x"]) == ["c", "q_1", "q_3", "x"]
     assert _reduced_positive(["a", "c"], red, ["x"]) == ["c", "q_1", "q_3"]

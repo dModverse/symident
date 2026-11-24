@@ -57,6 +57,7 @@ def balance_products(p, q):
         nms = sym_sort(list(ex))
         mono = mono_string([ex[n] for n in nms], nms)
         return mono if u["coef"] == 1 else f"{u['coef']}*{mono}"
+
     out = []
     for flip in (False, True):
         l = mul(parts[0], parts[3 if flip else 2])
@@ -96,8 +97,10 @@ def _bound_pins(support):
 
 def section_cands(support, extra=()):
     """Gauge-section candidates of a curved block: pins, summand balances (those in `support` first), monomial pairs."""
+
     def key(pr):
         return " = ".join(sym_sort(list(pr)))
+
     head, groups = [], []
     for tm in extra:
         tm = list(dict.fromkeys(tm))
@@ -223,8 +226,12 @@ def section_jacobian(prs, preps, xi_of, loc):
         ms = [red_sympify(m.replace("^", "**"), loc) for m in pr]
         if sgn(ms[0] * ms[1]) == 0:
             return False
-        rows.append([spy.expand(apply_x(xi_of[g], ms[0], loc) * ms[1] - ms[0] * apply_x(xi_of[g], ms[1], loc))
-                     for g in range(len(preps))])
+        rows.append(
+            [
+                spy.expand(apply_x(xi_of[g], ms[0], loc) * ms[1] - ms[0] * apply_x(xi_of[g], ms[1], loc))
+                for g in range(len(preps))
+            ]
+        )
     try:
         det = spy.expand(spy.Matrix(rows).det(method="berkowitz"))
     except SYMPY_FAILS as exc:
@@ -284,14 +291,16 @@ def _owned(extra=()):
 
     def sym(name):
         if name not in cache:
-            real = name in set(DOMAIN["real_carriers"]) or (pos is not None and name not in set(pos) and
-                                                              name not in set(extra))
+            real = name in set(DOMAIN["real_carriers"]) or (
+                pos is not None and name not in set(pos) and name not in set(extra)
+            )
             cache[name] = spy.Symbol(name, real=True) if real else spy.Symbol(name, positive=True)
         return cache[name]
 
     def own(e):
         e = spy.sympify(e)
         return e.xreplace({s: sym(str(s)) for s in e.free_symbols})
+
     return sym, own
 
 
@@ -299,8 +308,9 @@ def _vanishes(e):
     if spy.cancel(e) == 0:
         return True
     # a radicand factored lets a square under the root leave it, by the signs of the symbols
-    rads = {a: spy.Pow(spy.factor(a.base), a.exp) for a in e.atoms(spy.Pow)
-            if a.exp.is_Rational and not a.exp.is_Integer}
+    rads = {
+        a: spy.Pow(spy.factor(a.base), a.exp) for a in e.atoms(spy.Pow) if a.exp.is_Rational and not a.exp.is_Integer
+    }
     return (bool(rads) and spy.cancel(e.xreplace(rads)) == 0) or spy.simplify(e) == 0
 
 
@@ -399,7 +409,7 @@ def _signed_factors(polys):
                 if sf == 0:
                     keep.append((f, m))
                 else:
-                    rep[0] *= sf ** m
+                    rep[0] *= sf**m
                     changed = True
             rep[1] = keep
     return [(s, fs) for s, fs, _ in reps]
@@ -421,7 +431,7 @@ def _connected(polys, g):
     reps = _signed_factors(polys)
     if any(sg <= 0 and not fs for sg, fs in reps):
         return True
-    conds = [sg * spy.Mul(*[f ** m for f, m in fs]) for sg, fs in reps if fs]
+    conds = [sg * spy.Mul(*[f**m for f, m in fs]) for sg, fs in reps if fs]
     if not g or all(_convex_kind(c, g) for c in conds):
         return True
     facts = [(fs[0][0], sg) for sg, fs in reps if len(fs) == 1 and fs[0][1] % 2 == 1]
@@ -437,8 +447,9 @@ def _connected(polys, g):
                     if spy.Symbol(str(x)) not in k.free_symbols and r.is_number and r != 0:
                         sf = sk * (1 if r > 0 else -1)
                         break
-            s *= sf ** m
+            s *= sf**m
         return s
+
     best = None
     for x in g:
         lower, upper, keep, ok = [], [], [], True
@@ -470,15 +481,22 @@ def _connected(polys, g):
 def _rational_gauges(sol, gauge):
     """`sol` and the gauge after g = c*u^2 or g = u^2/c, for each choice that leaves no root in the gauge."""
     real = set(DOMAIN["real_carriers"])
-    sym, own = _owned([str(x) for e in sol.values() for x in spy.sympify(e).free_symbols
-                       if str(x).startswith("si_red_c") and str(x) not in real])
+    sym, own = _owned(
+        [
+            str(x)
+            for e in sol.values()
+            for x in spy.sympify(e).free_symbols
+            if str(x).startswith("si_red_c") and str(x) not in real
+        ]
+    )
     outs = [({k: own(e) for k, e in sol.items()}, list(gauge))]
     for i, v in enumerate(gauge):
         x = sym(v)
         nxt = []
         for cur, names in outs:
-            roots = {w for e in cur.values() for w in e.atoms(spy.Pow)
-                     if w.exp.is_Rational and w.exp.q == 2 and w.has(x)}
+            roots = {
+                w for e in cur.values() for w in e.atoms(spy.Pow) if w.exp.is_Rational and w.exp.q == 2 and w.has(x)
+            }
             if not roots:
                 nxt.append((cur, names))
                 continue
@@ -495,36 +513,47 @@ def _rational_gauges(sol, gauge):
                     continue
                 for to in (c * u**2, u**2 / c):
                     new = {k: spy.simplify(spy.cancel(e.subs(x, to))) for k, e in cur.items()}
-                    if any(w2.has(u) for e in new.values() for w2 in e.atoms(spy.Pow)
-                           if w2.exp.is_Rational and w2.exp.q != 1):
+                    if any(
+                        w2.has(u)
+                        for e in new.values()
+                        for w2 in e.atoms(spy.Pow)
+                        if w2.exp.is_Rational and w2.exp.q != 1
+                    ):
                         continue
-                    nxt.append((new, names[:i] + [str(u)] + names[i + 1:]))
+                    nxt.append((new, names[:i] + [str(u)] + names[i + 1 :]))
             if len(nxt) == n0:
                 nxt.append((cur, names))
         outs = nxt
     done = []
     for cur, names in outs:
         # t = s^2, s > 0, maps t > 0 one to one and leaves no root of a single symbol
-        sq = {w.base for e in cur.values() for w in e.atoms(spy.Pow)
-              if w.exp.is_Rational and w.exp.q == 2 and w.base.is_Symbol and w.base.is_positive}
-        cur = {k: spy.factor(spy.cancel(spy.together(e.xreplace(
-            {t: spy.Symbol(f"si_sq_{t}", positive=True)**2 for t in sq})))) for k, e in cur.items()}
-        done.append(({k: e.xreplace({y: spy.Symbol(str(y)) for y in e.free_symbols}) for k, e in cur.items()},
-                     names))
+        sq = {
+            w.base
+            for e in cur.values()
+            for w in e.atoms(spy.Pow)
+            if w.exp.is_Rational and w.exp.q == 2 and w.base.is_Symbol and w.base.is_positive
+        }
+        cur = {
+            k: spy.factor(
+                spy.cancel(spy.together(e.xreplace({t: spy.Symbol(f"si_sq_{t}", positive=True) ** 2 for t in sq})))
+            )
+            for k, e in cur.items()
+        }
+        done.append(({k: e.xreplace({y: spy.Symbol(str(y)) for y in e.free_symbols}) for k, e in cur.items()}, names))
     return done
 
 
 def _convex_set(carriers, sol, gauge):
     """Whether the gauge values at which every positive carrier is positive form a connected set."""
     for sol2, gauge2 in _rational_gauges(sol, gauge):
-        new = [v for v in gauge2 if v.startswith("si_root_")] + \
-            [str(y) for e in sol2.values() for y in e.free_symbols if str(y).startswith("si_sq_")]
+        new = [v for v in gauge2 if v.startswith("si_root_")] + [
+            str(y) for e in sol2.values() for y in e.free_symbols if str(y).startswith("si_sq_")
+        ]
         old = positive_set()
         if new and old is not None:
             set_positive(list(old) + new)
         try:
-            cons = [k for c in carriers if not is_real(c) and _sign_fixed(sol2[c]) != 1
-                    for k in _constraints(sol2[c])]
+            cons = [k for c in carriers if not is_real(c) and _sign_fixed(sol2[c]) != 1 for k in _constraints(sol2[c])]
             if _connected([spy.expand(num * den) for num, den in cons], [spy.Symbol(v) for v in gauge2]):
                 return True
         except SYMPY_FAILS as exc:
@@ -611,8 +640,10 @@ def face_reach(b, pins, Z, gens, limit_only=False):
     try:
         sub = [(spy.Symbol(k), red_sympify(str(v).replace("^", "**"), loc)) for k, v in pins.items()]
         Ies = [red_sympify(iv.replace("^", "**"), loc).subs(sub) for iv in b["invariants"]]
-        branches = [{str(k): v for k, v in d.items()} for d in
-                    spy.solve([e - spy.Symbol(t) for e, t in zip(Ies, tmp)], [spy.Symbol(u) for u in U], dict=True)]
+        branches = [
+            {str(k): v for k, v in d.items()}
+            for d in spy.solve([e - spy.Symbol(t) for e, t in zip(Ies, tmp)], [spy.Symbol(u) for u in U], dict=True)
+        ]
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
@@ -620,9 +651,13 @@ def face_reach(b, pins, Z, gens, limit_only=False):
     DOMAIN["real_carriers"] = [t for t, e in zip(tmp, Ies) if sgn(e) != 1]
     try:
         if limit_only:
-            ok = [{c: br[c] for c in U} for br in branches if all(br.get(c) is not None for c in U)
-                  and section_injective(Ies, {c: br[c] for c in U}, tmp, list(pins.items()))
-                  and _graph(Ies, {c: br[c] for c in U}, tmp, list(pins.items()))]
+            ok = [
+                {c: br[c] for c in U}
+                for br in branches
+                if all(br.get(c) is not None for c in U)
+                and section_injective(Ies, {c: br[c] for c in U}, tmp, list(pins.items()))
+                and _graph(Ies, {c: br[c] for c in U}, tmp, list(pins.items()))
+            ]
             sol = ok[0] if len(ok) == 1 else None
         else:
             sol = orbits_reach(Ies, branches, U, Z, tmp, gens, list(pins.items()))
@@ -633,8 +668,7 @@ def face_reach(b, pins, Z, gens, limit_only=False):
         back = [(spy.Symbol(t), e) for t, e in zip(tmp, Ies)]
         for c, e in at0.items():
             th = spy.cancel(spy.together(e.subs(back)))
-            if _bad(e) or _bad(th) or (sgn(th) != 1 if not is_real(c) else
-                                       sgn(spy.fraction(th)[1]) == 0):
+            if _bad(e) or _bad(th) or (sgn(th) != 1 if not is_real(c) else sgn(spy.fraction(th)[1]) == 0):
                 return None
         return at0
     except SYMPY_FAILS as exc:
@@ -691,6 +725,7 @@ def face_state_limit(b, pins, Z, gens, states, degrees):
     from ..sym.invariants import verify_invariants
     from .blocks import solve_block
     from .expr import gen_prep
+
     preps = [gen_prep({"generator": g}) for g in gens]
     if any(not p_["ok"] for p_ in preps):
         return False
@@ -721,6 +756,7 @@ def rest_checked(rhs, Z, inputs, points=3):
     # a check without an error bound, with the inputs at 0; a point without a resting state is redrawn
     from ..gfp import verify_prime
     from ..sym.steady import solve_steady_state_modular
+
     states = [x for x, f in rhs.items() if str(f).strip() not in ("0", "0.0")]
     syms = {str(s) for f in rhs.values() for s in spy.sympify(str(f).replace("^", "**")).free_symbols}
     params = sorted(syms - set(states) | {x for x in rhs if x not in states})
@@ -786,8 +822,11 @@ def face_section(b, pins, dens=()):
     out = {"solved": False}
     if not b.get("invariants") or any(re.search(r"exp\(|log\(", s) for s in b["invariants"]):
         return out
-    if b.get("face_invariants") is not None and len(b["face_invariants"]) == len(b["invariants"]) \
-            and callable(b.get("face_back")):
+    if (
+        b.get("face_invariants") is not None
+        and len(b["face_invariants"]) == len(b["invariants"])
+        and callable(b.get("face_back"))
+    ):
         b2 = {k: v for k, v in b.items() if k not in ("invariants", "face_invariants", "face_back")}
         b2["invariants"] = b["face_invariants"]
         res = face_section(b2, pins, dens)
@@ -804,8 +843,7 @@ def face_section(b, pins, dens=()):
         z_cand = [s for s in z_cand if s in set(positive_set())]
     if len(z_cand) < r:
         return out
-    loc = red_locals(list(b["invariants"]) + supp + list(pins) + list(pins.values()) +
-                     [f"{s}_si_f" for s in supp])
+    loc = red_locals(list(b["invariants"]) + supp + list(pins) + list(pins.values()) + [f"{s}_si_f" for s in supp])
     try:
         Ies = [red_sympify(iv.replace("^", "**"), loc) for iv in b["invariants"]]
     except SYMPY_FAILS as exc:
@@ -825,6 +863,7 @@ def face_section(b, pins, dens=()):
             if e.is_zero or _bad(e):
                 return False
         return True
+
     z_cand = [v for v in z_cand if zero_ok([(spy.Symbol(v), spy.Integer(0))])]
     if len(z_cand) < r:
         return out
@@ -935,16 +974,27 @@ def face_section(b, pins, dens=()):
         if not id_face:
             continue
         res = dict(out)
-        res.update(solved=True, pins={z: "0" for z in Z}, gauge=Z, section=[f"{z} = 0" for z in Z],
-                   face=True, coverage="total", solved_domain={}, inv_names=[], shifted=[],
-                   meaning={v: str(spy.factor(e)).replace("**", "^") for v, e in zip(U, good)})
+        res.update(
+            solved=True,
+            pins={z: "0" for z in Z},
+            gauge=Z,
+            section=[f"{z} = 0" for z in Z],
+            face=True,
+            coverage="total",
+            solved_domain={},
+            inv_names=[],
+            shifted=[],
+            meaning={v: str(spy.factor(e)).replace("**", "^") for v, e in zip(U, good)},
+        )
         return res
     for a in conditional:
         for c2 in conditional:
             if a["inv"] == c2["inv"] and a["sign"] == 1 and c2["sign"] == -1:
-                out["split"] = {"invariant": str(Ies[a["inv"]]).replace("**", "^"),
-                                "positive": [f"{z} = 0" for z in a["face"]],
-                                "negative": [f"{z} = 0" for z in c2["face"]]}
+                out["split"] = {
+                    "invariant": str(Ies[a["inv"]]).replace("**", "^"),
+                    "positive": [f"{z} = 0" for z in a["face"]],
+                    "negative": [f"{z} = 0" for z in c2["face"]],
+                }
                 return out
     return out
 
@@ -1000,12 +1050,12 @@ def translation_compress(preps):
 
     def seen(v):
         return any(v in free_syms(e) for ex in E for e in ex.values())
+
     groups, used = {}, set()
     for v in supp:
         if not seen(v):
             continue
-        mem = [w for w in unmoved if w not in used and
-               all(dz(e, v, w) for ex in E for e in ex.values())]
+        mem = [w for w in unmoved if w not in used and all(dz(e, v, w) for ex in E for e in ex.values())]
         if mem:
             groups[v] = mem
             used |= set(mem)
@@ -1028,8 +1078,13 @@ def translation_compress(preps):
             raise RouteError("translation group did not separate")
         keys = [U.get(k, k) for k in pr["comps"]]
         comps = dict(zip(keys, [str(e) for e in ex.values()]))
-        pr = dict(pr, comps=comps, support=keys, vars=sym_sort(list(dict.fromkeys(keys + list(left)))),
-                  degree=prep_degree(comps))
+        pr = dict(
+            pr,
+            comps=comps,
+            support=keys,
+            vars=sym_sort(list(dict.fromkeys(keys + list(left)))),
+            degree=prep_degree(comps),
+        )
         new_preps.append(pr)
     bwd = [(spy.Symbol(U[v]), sum((spy.Symbol(x) for x in [v] + groups[v]), spy.Integer(0))) for v in groups]
     extra_names = list(U.values()) + list(groups) + [w for m in groups.values() for w in m]
@@ -1041,18 +1096,31 @@ def translation_compress(preps):
             e = spy.sympify(iv.replace("^", "**"), locals=l2).subs(bwd)
             out.append(str(spy.factor(spy.together(e))).replace("**", "^"))
         return out
+
     key_back = {u: v for v, u in U.items()}
 
     def back_prep(pr):
         l2 = red_locals(list(pr["comps"].values()) + extra_names)
-        comps = {key_back.get(k, k): str(spy.expand(spy.sympify(str(x).replace("^", "**"), locals=l2).subs(bwd)))
-                 for k, x in pr["comps"].items()}
+        comps = {
+            key_back.get(k, k): str(spy.expand(spy.sympify(str(x).replace("^", "**"), locals=l2).subs(bwd)))
+            for k, x in pr["comps"].items()
+        }
         keys = list(comps)
         vs = {s for x in comps.values() for s in free_syms(spy.sympify(x, locals=l2))}
-        return dict(pr, comps=comps, support=keys, vars=sym_sort(list(dict.fromkeys(keys + list(vs)))),
-                    degree=prep_degree(comps))
-    return {"preps": new_preps, "back": back, "back_prep": back_prep,
-            "note": [" + ".join([v] + groups[v]) for v in groups]}
+        return dict(
+            pr,
+            comps=comps,
+            support=keys,
+            vars=sym_sort(list(dict.fromkeys(keys + list(vs)))),
+            degree=prep_degree(comps),
+        )
+
+    return {
+        "preps": new_preps,
+        "back": back,
+        "back_prep": back_prep,
+        "note": [" + ".join([v] + groups[v]) for v in groups],
+    }
 
 
 def unmoved_compress(preps):
@@ -1086,6 +1154,7 @@ def unmoved_compress(preps):
         for x in v:
             g = math.gcd(g, abs(int(x)))
         return g
+
     prim = []
     for row in E:
         p_ = list(row // gcdv(row))
@@ -1105,6 +1174,7 @@ def unmoved_compress(preps):
         if par.shape[0] or any(not (x.is_Integer and x >= 0) for x in sol):
             return None
         return [int(x) for x in sol]
+
     for p_ in prim:
         if coef_of(p_, B) is None:
             B.append(p_)
@@ -1155,14 +1225,16 @@ def unmoved_compress(preps):
 
     def back_prep(pr):
         l2 = red_locals(list(pr["comps"].values()) + W + unmoved)
-        comps = {k: str(spy.expand(spy.sympify(str(x).replace("^", "**"), locals=l2).subs(bwd)))
-                 for k, x in pr["comps"].items()}
+        comps = {
+            k: str(spy.expand(spy.sympify(str(x).replace("^", "**"), locals=l2).subs(bwd)))
+            for k, x in pr["comps"].items()
+        }
         vs = set(pr["support"]) | {s for x in comps.values() for s in free_syms(spy.sympify(x, locals=l2))}
         return dict(pr, comps=comps, vars=sym_sort(list(vs)), degree=prep_degree(comps))
+
     note = []
     for k in range(len(B)):
-        parts = [unmoved[j] if Bm[k, j] == 1 else f"{unmoved[j]}^{int(Bm[k, j])}"
-                 for j in np.nonzero(Bm[k] > 0)[0]]
+        parts = [unmoved[j] if Bm[k, j] == 1 else f"{unmoved[j]}^{int(Bm[k, j])}" for j in np.nonzero(Bm[k] > 0)[0]]
         note.append("*".join(parts))
     return {"preps": new_preps, "back": back, "back_prep": back_prep, "note": note}
 
@@ -1182,4 +1254,5 @@ def match_carriers(adm):
             if go(l + 1, used | {v}):
                 return True
         return False
+
     return pick if go(0, frozenset()) else None

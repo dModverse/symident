@@ -35,6 +35,13 @@ def test_debug_raises_a_type_error_that_sympy_did_not_raise():
 
 def test_the_summary_counts_the_errors():
     from symident import report
-    res = {"method": "observability", "identifiable": False, "rank": 1, "dim": 2, "symmetries": [],
-           "info": {"engine": "modular", "errors": ["a: TypeError: x", "b: ValueError: y"]}}
+
+    res = {
+        "method": "observability",
+        "identifiable": False,
+        "rank": 1,
+        "dim": 2,
+        "symmetries": [],
+        "info": {"engine": "modular", "errors": ["a: TypeError: x", "b: ValueError: y"]},
+    }
     assert "  errors: 2 exceptions turned into failed routes (info['errors'])" in report.summary_lines(res, width=80)

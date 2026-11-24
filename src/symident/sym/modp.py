@@ -24,7 +24,7 @@ class _Mono(tuple):
 
 
 def _mono_nz(expo):
-    nz = getattr(expo, 'nz', None)
+    nz = getattr(expo, "nz", None)
     return nz if nz is not None else tuple((k, e) for k, e in enumerate(expo) if e)
 
 
@@ -35,6 +35,7 @@ def _poly_terms(expr, gens):
         return [(zero, (0, 1))], [(zero, (1, 1))]
     num, den = spy.fraction(spy.together(expr))
     pos = {g: k for k, g in enumerate(gens)}
+
     def terms(e):
         # the Poly over the generators present only; a dense one over all of them
         # recurses through every level
@@ -52,6 +53,7 @@ def _poly_terms(expr, gens):
                 full[pos[g]] = int(m)
             out.append((_Mono(full), (int(r.p), int(r.q))))
         return out
+
     return terms(num), terms(den)
 
 
@@ -86,7 +88,7 @@ def _solve_mod(A, B, p):
     return [M[i][n:] for i in range(n)]
 
 
-_inv_mod_cache = {}
+_inv_mod_cache: dict = {}
 
 
 def _inv_mod(a, p):
@@ -108,7 +110,7 @@ def _eval_poly_terms(terms, ptvals, p):
     for monom, (cn, cd) in terms:
         if not cn:
             continue
-        c = (cn % p) * _inv_mod(cd, p) % p          # cd is a compile-time constant
+        c = (cn % p) * _inv_mod(cd, p) % p  # cd is a compile-time constant
         for k, e in _mono_nz(monom):
             c = c * pow(ptvals[k], e, p) % p
         acc = (acc + c) % p
@@ -119,7 +121,7 @@ def _eval_terms(numden, ptvals, p):
     """Residue num/den mod p of a (num, den) term list at the point `ptvals`."""
     nv = _eval_poly_terms(numden[0], ptvals, p)
     dv = _eval_poly_terms(numden[1], ptvals, p)
-    if dv == 1:                                     # polynomial entry: no inverse
+    if dv == 1:  # polynomial entry: no inverse
         return nv
     return nv * pow(dv % p, p - 2, p) % p
 
@@ -156,7 +158,7 @@ def eval_rational_mod(expr, names, vals, q):
     return int((num % q) * pow(den, q - 2, q) % q)
 
 
-_eval_batch_cache = {}
+_eval_batch_cache: dict = {}
 
 
 def eval_rational_mod_batch(exprs, names, points, q):
@@ -197,8 +199,7 @@ def eval_rational_mod_batch(exprs, names, points, q):
             if v is None or v.denominator % q == 0:
                 row.append(-1)
             else:
-                row.append(int(v.numerator % q) *
-                           pow(v.denominator % q, q - 2, q) % q)
+                row.append(int(v.numerator % q) * pow(v.denominator % q, q - 2, q) % q)
         out.append(row)
     return out
 
@@ -245,4 +246,4 @@ def eval_rational_batch(exprs, names, points):
                 drow.append(str(v.denominator))
         nums.append(nrow)
         dens.append(drow)
-    return {'num': nums, 'den': dens}
+    return {"num": nums, "den": dens}

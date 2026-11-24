@@ -29,12 +29,14 @@ class JointSystem(RestingStates):
         self.solve_held = list(dict.fromkeys(self.forcings + run.equil_zero_states))
         self.held_state_params = multi.get("held_state_params") or {}
         self.models = [strs(t.get("constraint_model")) for t in multi["tapes"]]
-        is_equil = [len(strs(t.get("constraint_model"))) > 0 and run.first_of_chain[i]
-                    for i, t in enumerate(multi["tapes"])]
+        is_equil = [
+            len(strs(t.get("constraint_model"))) > 0 and run.first_of_chain[i] for i, t in enumerate(multi["tapes"])
+        ]
         self.recast = list(multi.get("power_recast") or [])
         # power recasts and the states of other recasts, which start at their leaf values, are no resting unknowns
-        self.real_state_names = strs(multi.get("real_state_names")) if (self.recast or multi.get("rest_aux")) \
-            else self.state_names
+        self.real_state_names = (
+            strs(multi.get("real_state_names")) if (self.recast or multi.get("rest_aux")) else self.state_names
+        )
         gen_names = [str(r["base"]) if r.get("inverted") else str(r["E"]) for r in self.recast]
         self.l_names = list(dict.fromkeys(str(r["L"]) for r in self.recast))
         held_solve = {str(v) for v in self.held_state_params.values()}
@@ -44,8 +46,7 @@ class JointSystem(RestingStates):
         held_solve |= set(inverted.values())
         self.solve_param_names = [n for n in self.param_names + gen_names if n not in held_solve]
         self.held_param_of = {str(k): str(v) for k, v in self.held_state_params.items()}
-        self.held_names = [n for n in self.held_param_of
-                           if n in self.real_state_names and n not in self.solve_held]
+        self.held_names = [n for n in self.held_param_of if n in self.real_state_names and n not in self.solve_held]
         z_state = set(strs(multi.get("z_state_names")))
         znames = run.znames
         nz = len(znames)
@@ -66,36 +67,53 @@ class JointSystem(RestingStates):
             wc[self.per_cond_cols] = self.n_shared + mi * self.n_st + np.arange(self.n_st)
             self.wide_cols.append(wc)
         self.state_base = [znames[i] for i in self.per_cond_cols]
-        self.znames_wide = [znames[i] for i in self.shared_idx] + \
-            [f"{s}|c{mi + 1}" for mi in range(self.kc) for s in self.state_base]
-        self.z_slots_wide = np.concatenate([run.z_slots[self.shared_idx]] +
-                                           [run.z_slots[self.per_cond_cols]] * self.kc) \
-            if nz else run.z_slots
-        self.z_state_names_wide = self.znames_wide[self.n_shared:self.nz_wide] if self.n_st else []
+        self.znames_wide = [znames[i] for i in self.shared_idx] + [
+            f"{s}|c{mi + 1}" for mi in range(self.kc) for s in self.state_base
+        ]
+        self.z_slots_wide = (
+            np.concatenate([run.z_slots[self.shared_idx]] + [run.z_slots[self.per_cond_cols]] * self.kc)
+            if nz
+            else run.z_slots
+        )
+        self.z_state_names_wide = self.znames_wide[self.n_shared : self.nz_wide] if self.n_st else []
         self.nz_local = nz
         self.znames_local = list(znames)
         self.z_slots_local = run.z_slots.copy()
         self.z_index_local = {z: i for i, z in enumerate(znames)}
         zi = self.z_index_local
-        self.recast_rel = [{
-            "base_col": zi.get(str(rc["base"])), "ECol": zi.get(str(rc["E"])),
-            "LCol": zi.get(str(rc["L"])), "exp_col": zi.get(str(rc["exp"])),
-            "exp_slot": run.slot(str(rc["exp"])), "LSlot": run.slot(str(rc["L"])),
-            "ESlot": run.slot(str(rc["E"])), "base_slot": run.slot(str(rc["base"])),
-            "base_param": str(rc["base"]) in self.param_names} for rc in self.recast]
+        self.recast_rel = [
+            {
+                "base_col": zi.get(str(rc["base"])),
+                "ECol": zi.get(str(rc["E"])),
+                "LCol": zi.get(str(rc["L"])),
+                "exp_col": zi.get(str(rc["exp"])),
+                "exp_slot": run.slot(str(rc["exp"])),
+                "LSlot": run.slot(str(rc["L"])),
+                "ESlot": run.slot(str(rc["E"])),
+                "base_slot": run.slot(str(rc["base"])),
+                "base_param": str(rc["base"]) in self.param_names,
+            }
+            for rc in self.recast
+        ]
         # exponential leaves outside the resting model: their relations over the local columns
         self.exp_rel = run.multi.get("exp_relation") if run.multi.get("exp_atoms") else None
         self.exp_rel_fn = tape_fn(self.exp_rel, run.n_leaves) if self.exp_rel else None
-        self.df_droppable = set(self.forcings) | set(run.equil_zero_states) | \
-            {s for z in run.cond_zero_states for s in (z or [])} | (set(run.leaf_names) - set(znames))
+        self.df_droppable = (
+            set(self.forcings)
+            | set(run.equil_zero_states)
+            | {s for z in run.cond_zero_states for s in (z or [])}
+            | (set(run.leaf_names) - set(znames))
+        )
         self.solve_cache = {}
         # primes at which a solve was continued along a line instead of solved at the point
         self.cont_primes = set()
         self.solve_secs = [0.0, 0]
         self.model_key = ["\n".join(self.models[ci] + self.zero_of(ci)) for ci in range(len(self.models))]
         if run.timing:
-            print(f"[sym] {self.kc} equilibrate condition(s), "
-                  f"{len({self.model_key[c] for c in self.equil_conds})} distinct steady state(s)")
+            print(
+                f"[sym] {self.kc} equilibrate condition(s), "
+                f"{len({self.model_key[c] for c in self.equil_conds})} distinct steady state(s)"
+            )
         sp = set(self.solve_param_names)
         self.model_params = []
         for m in self.models:
@@ -107,10 +125,10 @@ class JointSystem(RestingStates):
             if ci not in self.equil_conds:
                 self.private_of.append([])
                 continue
-            other = {n for cj in self.equil_conds if self.model_key[cj] != self.model_key[ci]
-                     for n in self.model_params[cj]}
-            cand = [n for n in self.model_params[ci]
-                    if n not in other and n not in self.l_names and n not in held_vals]
+            other = {
+                n for cj in self.equil_conds if self.model_key[cj] != self.model_key[ci] for n in self.model_params[cj]
+            }
+            cand = [n for n in self.model_params[ci] if n not in other and n not in self.l_names and n not in held_vals]
             self.private_of.append([n for n in cand if run.slot(n) is not None])
         self.fwd_solve_cache = {}
         self.fwd_cond = self.equil_conds[0] if self.equil_conds else None
@@ -122,8 +140,11 @@ class JointSystem(RestingStates):
         n_eq = (max(self.equil_conds) + 1) if self.equil_conds else 0
         self.cont_off = [False] * n_eq
         self.cont_seen = [False] * n_eq
-        self.chains = [run.chain_tapes(run.chain_groups[run.chain_idx[self.equil_conds[mi]]])
-                       for mi in range(self.kc)] if run.has_gaps else None
+        self.chains = (
+            [run.chain_tapes(run.chain_groups[run.chain_idx[self.equil_conds[mi]]]) for mi in range(self.kc)]
+            if run.has_gaps
+            else None
+        )
         self.fwd_sel = list(range(self.kc))
         self.warm_off = False
         self.diag = self.diagonal_start()
@@ -136,8 +157,7 @@ class JointSystem(RestingStates):
         """Single segments as chains, for the series of the diagonal start."""
         run = self.run
         run.as_chains()
-        self.chains = [run.chain_tapes(run.chain_groups[run.chain_idx[self.equil_conds[mi]]])
-                       for mi in range(self.kc)]
+        self.chains = [run.chain_tapes(run.chain_groups[run.chain_idx[self.equil_conds[mi]]]) for mi in range(self.kc)]
         self.chained = True
 
     def unchain(self):
@@ -156,8 +176,11 @@ class JointSystem(RestingStates):
         reps = list({self.model_key[ci]: ci for ci in reversed(self.equil_conds)}.values())
         if len(reps) < 2 and not self.held_names:
             return None
-        cand = [n for n in self.solve_param_names if run.slot(n) is not None and n not in self.l_names
-                and n not in self.fwd_banned]
+        cand = [
+            n
+            for n in self.solve_param_names
+            if run.slot(n) is not None and n not in self.l_names and n not in self.fwd_banned
+        ]
         try:
             ds = DiagonalStart(self.models, reps, self.fwd_cond, self.held_of, cand, keep=self.held_names)
         except SYMPY_FAILS as exc:
@@ -168,8 +191,9 @@ class JointSystem(RestingStates):
             return None
         good = ds.ok and self.diagonal_trial(ds)
         if run.timing:
-            print(f"[sym] diagonal start: Z = {ds.Z}, zero at the start {ds.S}" if good
-                  else "[sym] diagonal start: none")
+            print(
+                f"[sym] diagonal start: Z = {ds.Z}, zero at the start {ds.S}" if good else "[sym] diagonal start: none"
+            )
         return ds if good else None
 
     def diagonal_trial(self, ds):
@@ -186,9 +210,17 @@ class JointSystem(RestingStates):
         held = {n: 0 for n in self.held_names} or None
         try:
             for _ in range(6):
-                fw = solve_forward_modular(self.models[self.fwd_cond], list(self.real_state_names),
-                                           list(self.solve_param_names), sv, pv, p, forcings=forc,
-                                           keep_free=keep, held=self.held_names or None)
+                fw = solve_forward_modular(
+                    self.models[self.fwd_cond],
+                    list(self.real_state_names),
+                    list(self.solve_param_names),
+                    sv,
+                    pv,
+                    p,
+                    forcings=forc,
+                    keep_free=keep,
+                    held=self.held_names or None,
+                )
                 if not fw.get("ok"):
                     return False
                 zero = [r for r, v in fw["rates"].items() if int(v) % p == 0]
@@ -208,13 +240,25 @@ class JointSystem(RestingStates):
                 if ci != {self.model_key[c]: c for c in reversed(self.equil_conds)}[self.model_key[ci]]:
                     continue
                 pz = [z for z in ds.Z if z in set(self.model_params[ci])]
-                sol = continue_resting_state(self.models[ci], list(self.real_state_names),
-                                             list(self.solve_param_names), pv, {z: dz[z] for z in pz},
-                                             x0, p, T, forcings=self.held_of(ci) or None, held=held)
+                sol = continue_resting_state(
+                    self.models[ci],
+                    list(self.real_state_names),
+                    list(self.solve_param_names),
+                    pv,
+                    {z: dz[z] for z in pz},
+                    x0,
+                    p,
+                    T,
+                    forcings=self.held_of(ci) or None,
+                    held=held,
+                )
                 if not sol.get("ok"):
                     return False
-                if any(not any(int(v) for v in sol["val_by"][x]) for x in ds.S
-                       if x in sol["val_by"] and x not in self.held_of(ci)):
+                if any(
+                    not any(int(v) for v in sol["val_by"][x])
+                    for x in ds.S
+                    if x in sol["val_by"] and x not in self.held_of(ci)
+                ):
                     return False
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
@@ -226,26 +270,9 @@ class JointSystem(RestingStates):
 
     # ---- conditions -----------------------------------------------------------------
 
-
-
-
-
     # ---- steady-state solves --------------------------------------------------------
 
-
-
-
-
-
-
     # ---- continuation from the forward-seeded resting state --------------------------
-
-
-
-
-
-
-
 
     # ---- rows of one condition ------------------------------------------------------
 
@@ -278,6 +305,7 @@ class JointSystem(RestingStates):
         """One condition's rows on the local columns of the condition, state columns scaled unless continued; None
         rejects the point."""
         from ..fields import ser_inv, ser_mul
+
         if not ok(obs):
             return None
         nz_l = self.nz_local
@@ -333,8 +361,7 @@ class JointSystem(RestingStates):
         if self.exp_rel_fn is not None:
             if cont:
                 return None
-            e_m = exp_rows(self.exp_rel, self.exp_rel_fn, self.znames_local,
-                           np.asarray(sc0["ptc"], dtype=np.int64), p)
+            e_m = exp_rows(self.exp_rel, self.exp_rel_fn, self.znames_local, np.asarray(sc0["ptc"], dtype=np.int64), p)
             if e_m is None:
                 return None
             e_m = np.asarray(e_m, dtype=np.int64).reshape(-1, nz_l)
@@ -355,6 +382,7 @@ class JointSystem(RestingStates):
                 for j in range(min(Ns - 1, sc0["ser"].shape[1])):
                     v[1 + j] = int(sc0["ser"][sl, j]) % p
                 return v
+
             for rc in self.recast_rel:
                 if rc["base_slot"] is None or rc["ESlot"] is None:
                     return None
@@ -367,10 +395,15 @@ class JointSystem(RestingStates):
                 c_b2 = [(p - x) % p for x in ib]
                 R1 = np.zeros((2, nz_l * Ns), dtype=np.int64)
                 one = [1] + [0] * (Ns - 1)
-                for i, col, v in ((0, rc["ECol"], one), (0, rc["base_col"], c_b1), (0, rc["exp_col"], c_x1),
-                                  (1, rc["LCol"], one), (1, rc["base_col"], c_b2)):
+                for i, col, v in (
+                    (0, rc["ECol"], one),
+                    (0, rc["base_col"], c_b1),
+                    (0, rc["exp_col"], c_x1),
+                    (1, rc["LCol"], one),
+                    (1, rc["base_col"], c_b2),
+                ):
                     if col is not None:
-                        R1[i, col * Ns:(col + 1) * Ns] = v
+                        R1[i, col * Ns : (col + 1) * Ns] = v
                 rel_s.append(R1)
                 rel.append(R1[:, np.arange(nz_l) * Ns])
         parts = [d_r, e_z] + rel
@@ -413,19 +446,23 @@ class JointSystem(RestingStates):
         r_p, Q, r_ps, QS, prec, series = 0, [], 0, [], [], True
         for loc in locs:
             M = loc["M"][:, st_l + sh_l]
-            rr = _core.sym_rref_mod(M.astype(np.float64), p) if M.shape[0] else \
-                {"piv": [], "R": np.zeros((0, M.shape[1]))}
+            rr = (
+                _core.sym_rref_mod(M.astype(np.float64), p)
+                if M.shape[0]
+                else {"piv": [], "R": np.zeros((0, M.shape[1]))}
+            )
             piv = np.atleast_1d(rr["piv"]).astype(np.int64)
             is_p = piv < n_first
             r_p += int(is_p.sum())
             if np.any(~is_p):
                 R = np.asarray(rr["R"], dtype=np.int64).reshape(len(piv), M.shape[1])
-                Q.append(R[~is_p][:, n_first:n_first + len(sh_l)])
+                Q.append(R[~is_p][:, n_first : n_first + len(sh_l)])
             if loc["S"] is None:
                 series = False
                 continue
-            sp = _core.sym_series_project(np.asarray(loc["S"], dtype=np.int64), int(self.nz_local),
-                                          int(loc["N"]), p, list(st_l), int(cores))
+            sp = _core.sym_series_project(
+                np.asarray(loc["S"], dtype=np.int64), int(self.nz_local), int(loc["N"]), p, list(st_l), int(cores)
+            )
             r_ps += int(sp["r1"])
             QS.append(np.asarray(sp["Q"], dtype=np.int64).reshape(-1, len(sh_l) * int(loc["N"])))
             prec.extend(ints(sp["prec"]))
@@ -436,15 +473,23 @@ class JointSystem(RestingStates):
         r_p, Q, r_ps, QS, prec, series = self._project(locs, p, cores)
         QQ = np.vstack(Q) if Q else None
         r_q = int(_core.sym_rref_mod(QQ.astype(np.float64), p)["rank"]) if QQ is not None and QQ.shape[0] else 0
-        res = {"ok": True, "rank": int(r_p + r_q), "dim": self.nz_wide, "block_rank": True,
-               "pivots": np.zeros(0, dtype=np.int64)}
+        res = {
+            "ok": True,
+            "rank": int(r_p + r_q),
+            "dim": self.nz_wide,
+            "block_rank": True,
+            "pivots": np.zeros(0, dtype=np.int64),
+        }
         if not series or not locs:
             return res
         N = int(locs[0]["N"])
         nsh = len(self.shared_idx)
         QSm = np.vstack(QS) if QS else np.zeros((0, nsh * N), dtype=np.int64)
-        r_qs = int(_core.sym_series_rank(QSm, nsh, N, p, [], cores=int(cores), row_prec=prec)["rank"]) \
-            if QSm.shape[0] else 0
+        r_qs = (
+            int(_core.sym_series_rank(QSm, nsh, N, p, [], cores=int(cores), row_prec=prec)["rank"])
+            if QSm.shape[0]
+            else 0
+        )
         res["rank_s"] = int(r_ps + r_qs)
         res["N"] = N
         return res
@@ -456,12 +501,22 @@ class JointSystem(RestingStates):
         run = self.run
         pt = np.asarray(ptc, dtype=np.int64) % p
         if run.has_gaps:
-            return _core.sym_obs_null_chain([run.chain_tapes(run.chain_groups[run.chain_idx[ci]])],
-                                            run.n_leaves, run.n_states, self.z_slots_local, pt, p,
-                                            run.exact_nt(Nt, Mtot), int(Mtot), 1, [],
-                                            None if ser is None else np.asarray(ser) % p)
-        return _core.sym_obs_null_multi([run.tapes[ci]], run.n_leaves, run.n_states,
-                                        self.z_slots_local, pt, p, run.exact_nt(Nt), 1)
+            return _core.sym_obs_null_chain(
+                [run.chain_tapes(run.chain_groups[run.chain_idx[ci]])],
+                run.n_leaves,
+                run.n_states,
+                self.z_slots_local,
+                pt,
+                p,
+                run.exact_nt(Nt, Mtot),
+                int(Mtot),
+                1,
+                [],
+                None if ser is None else np.asarray(ser) % p,
+            )
+        return _core.sym_obs_null_multi(
+            [run.tapes[ci]], run.n_leaves, run.n_states, self.z_slots_local, pt, p, run.exact_nt(Nt), 1
+        )
 
     def cond_obs_sel(self, scs, sel, p, Nt, Mtot):
         """cond_obs for the conditions `sel` (others None), one batch on chains."""
@@ -469,16 +524,26 @@ class JointSystem(RestingStates):
         out = [None] * self.kc
         if not run.has_gaps or len(sel) < 2:
             for mi in sel:
-                out[mi] = self.cond_obs(self.equil_conds[mi], scs[mi]["ptc"], p, Nt, Mtot,
-                                        scs[mi]["ser"] if scs[mi].get("cont") else None)
+                out[mi] = self.cond_obs(
+                    self.equil_conds[mi], scs[mi]["ptc"], p, Nt, Mtot, scs[mi]["ser"] if scs[mi].get("cont") else None
+                )
             return out
         seeds = np.vstack([np.asarray(scs[mi]["ptc"], dtype=np.int64) % p for mi in sel])
         sers = [np.asarray(scs[mi]["ser"]) % p if scs[mi].get("cont") else None for mi in sel]
         res = _core.sym_obs_null_chain_seed_batch(
-            self.chains, list(sel), seeds, [p] * len(sel), run.n_leaves, run.n_states,
-            self.z_slots_local, run.exact_nt(Nt, Mtot), int(Mtot), int(min(run.cores_call, len(sel))),
+            self.chains,
+            list(sel),
+            seeds,
+            [p] * len(sel),
+            run.n_leaves,
+            run.n_states,
+            self.z_slots_local,
+            run.exact_nt(Nt, Mtot),
+            int(Mtot),
+            int(min(run.cores_call, len(sel))),
             [run.nt_cap[mi] for mi in sel] if len(run.nt_cap) == self.kc else [],
-            sers if any(s is not None for s in sers) else None)
+            sers if any(s is not None for s in sers) else None,
+        )
         for k, mi in enumerate(sel):
             out[mi] = res[k]
         return out
@@ -486,8 +551,7 @@ class JointSystem(RestingStates):
     def cond_obs_all(self, scs, p, Nt, Mtot):
         """cond_obs for every resting condition, one batch on chains when there are gaps."""
         if not self.run.has_gaps or self.kc < 2:
-            return [self.cond_obs(self.equil_conds[mi], scs[mi]["ptc"], p, Nt, Mtot)
-                    for mi in range(self.kc)]
+            return [self.cond_obs(self.equil_conds[mi], scs[mi]["ptc"], p, Nt, Mtot) for mi in range(self.kc)]
         return self.cond_obs_sel(scs, list(range(self.kc)), p, Nt, Mtot)
 
     def kcall(self, point, p, Nt, Mtot=0, solve_fn=None, rank_only=False):
@@ -521,17 +585,20 @@ class JointSystem(RestingStates):
             sblocks.append(b["series"])
             blocks.append(b["W"])
         rr = _core.sym_rref_mod(np.vstack(blocks).astype(np.float64), p)
-        res = {"ok": True, "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), self.nz_wide),
-               "pivots": np.atleast_1d(rr["piv"]).astype(np.int64), "rank": int(rr["rank"]),
-               "dim": self.nz_wide}
+        res = {
+            "ok": True,
+            "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), self.nz_wide),
+            "pivots": np.atleast_1d(rr["piv"]).astype(np.int64),
+            "rank": int(rr["rank"]),
+            "dim": self.nz_wide,
+        }
         if run.has_gaps:
             res = series_stack(res, sblocks, self.nz_wide, Mtot + 1, p, run.cores_call)
         return run.modulo_nuisance(res, p)
 
     def kcall_fwd(self, point, p, Nt, solve_rates):
         """The wide kernel with the forward solve for the turnover rates."""
-        return self.kcall(point, p, Nt, self.run.mtot,
-                          lambda pt, pp, cc: self.solve_cond_fwd(pt, pp, cc, solve_rates))
+        return self.kcall(point, p, Nt, self.run.mtot, lambda pt, pp, cc: self.solve_cond_fwd(pt, pp, cc, solve_rates))
 
     def kcall_fwd_shared(self, point, p, Nt, solve_rates, sel=None):
         """The forward kernel on the shared columns only, on the conditions `sel`."""
@@ -544,8 +611,11 @@ class JointSystem(RestingStates):
             if sc0 is None:
                 return {"ok": False}
             scs[mi] = sc0
-        obs = self.cond_obs_all(scs, p, Nt, run.mtot) if len(sel) == self.kc else \
-            self.cond_obs_sel(scs, sel, p, Nt, run.mtot)
+        obs = (
+            self.cond_obs_all(scs, p, Nt, run.mtot)
+            if len(sel) == self.kc
+            else self.cond_obs_sel(scs, sel, p, Nt, run.mtot)
+        )
         locs = []
         for mi in sel:
             loc = self.cond_local(mi, obs[mi], scs[mi], p)
@@ -564,8 +634,9 @@ class JointSystem(RestingStates):
         if series and QS:
             QSm = np.vstack(QS)
             if QSm.shape[0]:
-                sr = _core.sym_series_rank(QSm, nsh, run.mtot + 1, p, [], at_one_below=rk,
-                                           cores=int(run.cores_call), row_prec=prec)
+                sr = _core.sym_series_rank(
+                    QSm, nsh, run.mtot + 1, p, [], at_one_below=rk, cores=int(run.cores_call), row_prec=prec
+                )
                 if sr.get("R") is not None:
                     piv = np.atleast_1d(sr["pivots"]).astype(np.int64)
                     R = np.asarray(sr["R"], dtype=np.int64).reshape(len(piv), nsh)
@@ -590,6 +661,7 @@ class JointSystem(RestingStates):
 
     def block_calls(self):
         """One condition's observability rows for the saturation."""
+
         def mk(mi):
             def f(point, p, Nt, Mtot=0):
                 sc0 = self.solve_cond(point, p, self.equil_conds[mi])
@@ -597,7 +669,9 @@ class JointSystem(RestingStates):
                     self.run.ss_why = "joint solve failed"
                     return {"ok": False}
                 return self.cond_obs(self.equil_conds[mi], sc0["ptc"], p, Nt, Mtot, sc0.get("ser"))
+
             return f
+
         return [mk(mi) for mi in range(self.kc)]
 
     def stacked_profile(self):
@@ -617,9 +691,17 @@ class JointSystem(RestingStates):
                     return {"ok": False}
                 return _core.sym_obs_chain_rank_profile(
                     run.chain_tapes(run.chain_groups[run.chain_idx[self.equil_conds[mi]]]),
-                    run.n_leaves, run.n_states, self.z_slots_local,
-                    np.asarray(sc0["ptc"], dtype=np.int64) % p, p, int(Nt), 1)
+                    run.n_leaves,
+                    run.n_states,
+                    self.z_slots_local,
+                    np.asarray(sc0["ptc"], dtype=np.int64) % p,
+                    p,
+                    int(Nt),
+                    1,
+                )
+
             return f
+
         return [mk(mi) for mi in range(self.kc)]
 
     def chunk(self, point_list, prime_vec, Nt, cols=None, conds=None, touch=False):
@@ -643,9 +725,11 @@ class JointSystem(RestingStates):
             o["R"] = R
             if o.get("S") is not None:
                 Nn = int(o["N"])
-                o["S"] = series_embed(np.asarray(o["S"], dtype=np.int64).reshape(-1, len(loc_sel) * Nn),
-                                      Nn, loc_sel, nz_l, 1)
+                o["S"] = series_embed(
+                    np.asarray(o["S"], dtype=np.int64).reshape(-1, len(loc_sel) * Nn), Nn, loc_sel, nz_l, 1
+                )
             return o
+
         n_p = len(point_list)
         per_cond = [None] * n_p
         seed_rows, ser_rows, ev_chain, ev_prime = [], [], [], []
@@ -667,11 +751,24 @@ class JointSystem(RestingStates):
                 ser_rows.append(np.asarray(per[mi]["ser"]) % pp if per[mi].get("cont") else None)
                 ev_chain.append(mi)
                 ev_prime.append(pp)
-        kr = _core.sym_obs_null_chain_seed_batch(
-            self.chains, ev_chain, np.vstack(seed_rows), ev_prime, run.n_leaves, run.n_states,
-            self.z_slots_local[loc_sel], run.exact_nt(Nt, run.mtot), int(run.mtot), int(min(run.cores, len(ev_chain))),
-            [run.nt_cap[e] for e in ev_chain] if len(run.nt_cap) == self.kc else [],
-            ser_rows if any(s is not None for s in ser_rows) else None) if seed_rows else []
+        kr = (
+            _core.sym_obs_null_chain_seed_batch(
+                self.chains,
+                ev_chain,
+                np.vstack(seed_rows),
+                ev_prime,
+                run.n_leaves,
+                run.n_states,
+                self.z_slots_local[loc_sel],
+                run.exact_nt(Nt, run.mtot),
+                int(run.mtot),
+                int(min(run.cores, len(ev_chain))),
+                [run.nt_cap[e] for e in ev_chain] if len(run.nt_cap) == self.kc else [],
+                ser_rows if any(s is not None for s in ser_rows) else None,
+            )
+            if seed_rows
+            else []
+        )
         out = [None] * n_p
         e = 0
         for i in range(n_p):
@@ -699,18 +796,35 @@ class JointSystem(RestingStates):
                 Nb = run.mtot + 1
                 sk = [c * Nb + j for c in cl for j in range(Nb)]
                 out[i] = series_stack(
-                    {"ok": True, "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), len(cl)),
-                     "pivots": np.atleast_1d(rr["piv"]).astype(np.int64), "rank": int(rr["rank"]),
-                     "dim": len(cl)},
-                    [None if S is None else S[:, sk] for S in sblocks], len(cl), Nb, prime_vec[i],
-                    run.cores)
+                    {
+                        "ok": True,
+                        "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), len(cl)),
+                        "pivots": np.atleast_1d(rr["piv"]).astype(np.int64),
+                        "rank": int(rr["rank"]),
+                        "dim": len(cl),
+                    },
+                    [None if S is None else S[:, sk] for S in sblocks],
+                    len(cl),
+                    Nb,
+                    prime_vec[i],
+                    run.cores,
+                )
             else:
                 rr = _core.sym_rref_mod(np.vstack(blocks).astype(np.float64), prime_vec[i])
                 out[i] = series_stack(
-                    {"ok": True, "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), self.nz_wide),
-                     "pivots": np.atleast_1d(rr["piv"]).astype(np.int64), "rank": int(rr["rank"]),
-                     "dim": self.nz_wide},
-                    sblocks, self.nz_wide, run.mtot + 1, prime_vec[i], run.cores)
+                    {
+                        "ok": True,
+                        "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), self.nz_wide),
+                        "pivots": np.atleast_1d(rr["piv"]).astype(np.int64),
+                        "rank": int(rr["rank"]),
+                        "dim": self.nz_wide,
+                    },
+                    sblocks,
+                    self.nz_wide,
+                    run.mtot + 1,
+                    prime_vec[i],
+                    run.cores,
+                )
         return out
 
     hom_kind = "resting states"
@@ -718,8 +832,7 @@ class JointSystem(RestingStates):
 
     def hom_prepare(self, point):
         """Moves the parameters of the resting solve and the logarithms of the recast bases."""
-        self.hom_params = list(self.solve_param_names) + [nm for nm in self.l_names
-                                                          if nm not in self.solve_param_names]
+        self.hom_params = list(self.solve_param_names) + [nm for nm in self.l_names if nm not in self.solve_param_names]
 
     def rest_env(self, point, q):
         """The resting states of each condition at `point` modulo `q` as X_c<k>, and as X with one condition, from the
@@ -768,10 +881,17 @@ class JointSystem(RestingStates):
             pv = self.joint_pv(point, p)
             dv = {k: v for k, v in d.items() if k in sp}
             try:
-                sol = continue_resting_state(self.models[ci], list(self.real_state_names),
-                                              list(self.solve_param_names), pv["param_vals"], dv,
-                                              ref["sol"]["val_by"], p, int(T),
-                                              forcings=self.held_of(ci) or None)
+                sol = continue_resting_state(
+                    self.models[ci],
+                    list(self.real_state_names),
+                    list(self.solve_param_names),
+                    pv["param_vals"],
+                    dv,
+                    ref["sol"]["val_by"],
+                    p,
+                    int(T),
+                    forcings=self.held_of(ci) or None,
+                )
             except SYMPY_FAILS as exc:
                 sympy_fail(exc)
                 sol = None
@@ -782,14 +902,14 @@ class JointSystem(RestingStates):
                 return None
             ptc = np.array(ref["ptc"], dtype=np.int64)
             ser = np.zeros((run.n_leaves, T), dtype=np.int64)
-            self.hom_states.append({nm: [int(x) % p for x in vals[:T + 1]] for nm, vals in sol["val_by"].items()})
+            self.hom_states.append({nm: [int(x) % p for x in vals[: T + 1]] for nm, vals in sol["val_by"].items()})
             for nm, vals in sol["val_by"].items():
                 sl = run.slot(nm)
                 if sl is None:
                     continue
                 v = [int(x) % p for x in vals]
                 ptc[sl] = v[0]
-                ser[sl, :] = v[1:1 + T]
+                ser[sl, :] = v[1 : 1 + T]
             for nm, v in d.items():
                 sl = run.slot(nm)
                 if sl is not None and (nm in sp or nm in self.l_names):
@@ -802,9 +922,20 @@ class JointSystem(RestingStates):
             try:
                 chain = run.chain_tapes(run.chain_groups[run.chain_idx[ci]]) if run.has_gaps else [run.tapes[ci]]
                 nt_c = [run.nt_cap[mi]] if run.has_gaps and len(run.nt_cap) == self.kc else []
-                obs = _core.sym_obs_null_chain([chain], run.n_leaves, run.n_states, self.z_slots_local,
-                                               ptc % p, p, int(Nt), int(run.mtot) if run.has_gaps else 0,
-                                               1, nt_c, ser % p, int(T))
+                obs = _core.sym_obs_null_chain(
+                    [chain],
+                    run.n_leaves,
+                    run.n_states,
+                    self.z_slots_local,
+                    ptc % p,
+                    p,
+                    int(Nt),
+                    int(run.mtot) if run.has_gaps else 0,
+                    1,
+                    nt_c,
+                    ser % p,
+                    int(T),
+                )
             except Exception as exc:
                 swallow(exc, "homotopy series")
                 obs = None
@@ -813,12 +944,10 @@ class JointSystem(RestingStates):
             loc = self.cond_local(mi, obs, {"sol": sol, "ptc": ptc, "ser": ser, "cont": True}, p)
             if loc is None or loc["S"] is None:
                 return None
-            blocks.append(series_embed(loc["S"], int(loc["N"]), list(self.wide_cols[mi]),
-                                       self.nz_wide, p))
+            blocks.append(series_embed(loc["S"], int(loc["N"]), list(self.wide_cols[mi]), self.nz_wide, p))
         return np.vstack(blocks)
 
     def pinned(self):
         """Per-condition state columns a condition holds at zero."""
         base = set(self.state_base)
-        return [f"{z}|c{mi + 1}" for mi in range(self.kc) for z in self.zero_of(self.equil_conds[mi])
-                if z in base]
+        return [f"{z}|c{mi + 1}" for mi in range(self.kc) for z in self.zero_of(self.equil_conds[mi]) if z in base]

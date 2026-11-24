@@ -53,18 +53,17 @@ the output:
 ```python
 import symident as si
 
-m = si.Model({"x1": "-(k21 + k01)*x1 + k12*x2 + u", "x2": "k21*x1 - k12*x2"},
-             {"y": "x2"}, known_inputs=["u"])
+m = si.Model({"x1": "-(k21 + k01)*x1 + k12*x2 + u", "x2": "k21*x1 - k12*x2"}, {"y": "x2"}, known_inputs=["u"])
 res = si.detect(m, mode="global")
 print(res)
-#> Result:  structurally locally identifiable (rank 5 / 5)
-#>
-#> Global: values with the output of a generic one, counted at random points
-#>   2 over the algebraic closure, 1 or 2 in the domain (order 5, stable)
-#>   exactly 2 values at a generic point, proven
-#>   sigma1 (exact): k01 -> k12, x1 -> (k01*x2 - k12*x2 + k21*x1)/k21, k12 ->
-#>   k01; in the domain where (k01*x2 - k12*x2 + k21*x1)/k21 > 0
-#>   fundamental domain: k01 < k12
+# > Result:  structurally locally identifiable (rank 5 / 5)
+# >
+# > Global: values with the output of a generic one, counted at random points
+# >   2 over the algebraic closure, 1 or 2 in the domain (order 5, stable)
+# >   exactly 2 values at a generic point, proven
+# >   sigma1 (exact): k01 -> k12, x1 -> (k01*x2 - k12*x2 + k21*x1)/k21, k12 ->
+# >   k01; in the domain where (k01*x2 - k12*x2 + k21*x1)/k21 > 0
+# >   fundamental domain: k01 < k12
 ```
 
 A model with non-identifiable directions prints them as generators, and `res.reduce()` returns
@@ -73,8 +72,8 @@ the reparametrization to identifiable parameters; the
 
 ## Interface
 
-| | |
-|---|---|
+|  |  |
+| -- | -- |
 | `Model(odes, observables, ...)` | ODEs or a reaction network with observables, conditions, events, inputs and switches |
 | `detect(model, ...)` | rank, identifiability and the non-identifiable directions (`Symmetries` of `Symmetry`) |
 | `detect(model, mode="global", global_options=...)` | also the count of the values with the same output and the discrete symmetries |

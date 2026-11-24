@@ -72,11 +72,12 @@ def test_the_orbit_polynomial_of_a_group_over_q_of_i_has_rational_coefficients()
     grp = [{k: k, x0: x0}, {k: spy.I * k, x0: x0}, {k: -k, x0: x0}, {k: -spy.I * k, x0: x0}]
     alpha, fs, _, others = generators(grp, [k, x0])
     assert alpha == k and others == []
-    assert {spy.expand(f) for f in fs} == {x0, -k ** 4}
+    assert {spy.expand(f) for f in fs} == {x0, -(k**4)}
 
 
 def test_the_paths_of_the_monodromy_stop_at_their_cap_with_the_cap_named():
     from symident.detection import work
+
     s = _series(si.Model({"x": "-k^4*x"}, {"y": "x"}, trafo={"x": "x0"}))
     meter = work.Meter("the monodromy", 0, "term products")
     info, _ = mono.propose(s, Fiber(s, [3], True), meter, target=4)

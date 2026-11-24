@@ -45,6 +45,7 @@ def start_powers(exprs, zero_states, cs):
 
 def substitute(e, x, alpha, N, Z=1):
     """`e` with each x^(c0 + c*alpha) as x^c0 * (Z*N)^c."""
+
     def repl(pw):
         if pw.base != x:
             return pw
@@ -52,6 +53,7 @@ def substitute(e, x, alpha, N, Z=1):
         if pe is None or pe[2] != alpha:
             return pw
         return x ** pe[0] * (Z * N) ** pe[1]
+
     return spy.sympify(e).replace(lambda a: a.is_Pow and a.base == x, repl)
 
 
@@ -60,16 +62,23 @@ def leading(f, ic, x, alpha):
     c, a rational function of the other symbols, in the model where every power of x with the exponent alpha is 0;
     a ValueError where k passes the cap. `f` and `ic` map state names to expressions; the start of x is 0."""
     from .discrete import Series
+
     N = spy.Dummy("N")
     f0 = {s: substitute(spy.sympify(v), x, alpha, N).xreplace({N: 0}) for s, v in f.items()}
-    syms = sorted({s for v in list(f0.values()) + [spy.sympify(v) for v in ic.values()] for s in v.free_symbols}
-                  - {spy.Symbol(s) for s in f}, key=str)
-    part = {"segments": [{"f": {s: str(v) for s, v in f0.items()}, "g": {}, "t": "0",
-                          "ic": {s: str(v) for s, v in ic.items()}}]}
+    syms = sorted(
+        {s for v in list(f0.values()) + [spy.sympify(v) for v in ic.values()] for s in v.free_symbols}
+        - {spy.Symbol(s) for s in f},
+        key=str,
+    )
+    part = {
+        "segments": [
+            {"f": {s: str(v) for s, v in f0.items()}, "g": {}, "t": "0", "ic": {s: str(v) for s, v in ic.items()}}
+        ]
+    }
     ser = Series([part], [str(s) for s in syms])
     ib = [str(s) for s in ser.parts[0]["st"]].index(str(x))
     rng = random.Random("leading coefficient")
-    pt = [Fraction(rng.randint(2, 10 ** 6), rng.randint(2, 10 ** 6)) for _ in syms]
+    pt = [Fraction(rng.randint(2, 10**6), rng.randint(2, 10**6)) for _ in syms]
     if ser._outputs(pt, _ORDER_CAP, 0, Fraction(1), Fraction(0)) is None:
         raise ValueError(f"the model has a pole at the start of {x}")
     k = next((n for n, v in enumerate(ser.states0[ib]) if v != 0), None)
@@ -96,8 +105,14 @@ def normalize(parts, cs, states):
     """`parts` (sympy entries, as in rationalize) with each free power of a state that starts at 0 written through
     the normalized power N = (x/c_x)^alpha, a state of the part named in part["spow"]; a power that does not enter
     as c_x^(-alpha) x^alpha with the leading coefficient c_x of x is left in place."""
-    taken = {str(s) for part in parts for seg in part["segments"] for d in ("f", "g") for v in seg[d].values()
-             for s in spy.sympify(v).free_symbols} | {str(s) for s in states}
+    taken = {
+        str(s)
+        for part in parts
+        for seg in part["segments"]
+        for d in ("f", "g")
+        for v in seg[d].values()
+        for s in spy.sympify(v).free_symbols
+    } | {str(s) for s in states}
     for part in parts:
         segs = part["segments"]
         seg = segs[0]
@@ -123,11 +138,13 @@ def normalize(parts, cs, states):
                 if not q.is_Integer:
                     return pw
                 if spy.cancel(pw.base - c) == 0:
-                    return Z ** q
+                    return Z**q
                 if spy.cancel(pw.base * c - 1) == 0:
                     return Z ** (-q)
                 return pw
+
             return e.replace(lambda a: a.is_Pow and a.exp.has(alpha) and not a.base.free_symbols & {x}, repl)
+
         new = {}
         for d in ("f", "g"):
             for key, v in seg[d].items():
@@ -214,6 +231,7 @@ def layered_flow(F, xs, params, order, o, z, skip, sp, alpha):
     D(x) x' = N(x) with x' of index n and layer m lambda_{n+1,m} times the term of index n + 1, and N = S Q with
     n c Q_n = sum_j (alpha j + j - n) x_{k+j} Q_{n-j}; False at a pole."""
     from .discrete import _Eps, _lead, _ser_poly
+
     one, zero = o.c[0], z.c[0]
     L, k, iN, ib = len(o.c), sp["k"], sp["N"], sp["base"]
     dx = {i: [] for i in range(len(F)) if i not in skip and i != iN}
@@ -245,8 +263,7 @@ def layered_flow(F, xs, params, order, o, z, skip, sp, alpha):
             d = (nser[n] - rest) / dser[0]
             dx[i].append(d)
             # a term of layer m has index at least k*m
-            xs[i][n + 1] = _Eps([d.c[m] / lam(n + 1, m, k, alpha, one) if n + 1 >= k * m else zero
-                                 for m in range(L)])
+            xs[i][n + 1] = _Eps([d.c[m] / lam(n + 1, m, k, alpha, one) if n + 1 >= k * m else zero for m in range(L)])
     return True
 
 
@@ -255,6 +272,7 @@ def layered_equations(F, xs, params, need, o, z, skip, sp, alpha, Q, add_eq, add
     D(x) x' = N(x) per index and layer, and n c Q_n = sum_j (alpha j + j - n) x_{k+j} Q_{n-j}, with c the leading
     coefficient of the base saturated."""
     from .discrete import _Eps, _ser_poly
+
     one = o.c[0]
     L, k, iN, ib = len(o.c), sp["k"], sp["N"], sp["base"]
     c = xs[ib][k].c[0]
@@ -282,6 +300,7 @@ def proof(series, pi, positive):
     the leading coefficient c_x and the lowest coefficient of layer 1 of one observable have one sign on the
     domain; else they are named as premises."""
     from .discrete import _Eps, _eval, _ser_poly
+
     part = series.parts[pi]
     sp = part["spow"]
     seg = part["segs"][0]
@@ -320,15 +339,17 @@ def proof(series, pi, positive):
         y.append((mser[n] - sum((eser[l_] * y[n - l_] for l_ in range(1, n + 1)), z)) / eser[0])
     d = y[n1].c[1]
     cx, dx = spy.sympify(c.as_expr()), spy.sympify(d.as_expr())
-    out.update({"leading": str(cx), "observable": series.labels[_row(series, pi, r)], "index": n1,
-                "coefficient": str(dx)})
+    out.update(
+        {"leading": str(cx), "observable": series.labels[_row(series, pi, r)], "index": n1, "coefficient": str(dx)}
+    )
     if d == 0:
         raise ValueError(f"the lowest coefficient of layer 1 of {out['observable']} vanishes")
     if not definite(cx, positive):
         premises.append(f"the leading coefficient {cx} of {sp['state']} is not zero on the domain")
     if not definite(dx, positive):
-        premises.append(f"the coefficient {dx} of t^({n1 - k} + {k}*{sp['alpha']}) in {out['observable']} is not "
-                        "zero on the domain")
+        premises.append(
+            f"the coefficient {dx} of t^({n1 - k} + {k}*{sp['alpha']}) in {out['observable']} is not zero on the domain"
+        )
     return out
 
 

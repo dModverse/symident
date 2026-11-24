@@ -43,8 +43,9 @@ def cofactor_rows(cols, vars_, n_gen, n_mon):
     rows, per_gen = [], [0] * n_gen
     for g in range(n_gen):
         exprs = [str(cl[g]) for cl in cols]
-        pts = [[int(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 2 * t + 7 * (g + 1))]
-               for t in range(1, n_mon + 1)]
+        pts = [
+            [int(x) for x in Pool()(np.arange(1, len(vars_) + 1) + 2 * t + 7 * (g + 1))] for t in range(1, n_mon + 1)
+        ]
         try:
             v = eval_rational_batch(exprs, list(vars_), pts)
         except SYMPY_FAILS as exc:
@@ -62,7 +63,7 @@ def cofactor_rows(cols, vars_, n_gen, n_mon):
             for d in set(den):
                 L = L * d // math.gcd(L, d)
             row = [n * (L // d) for n, d in zip(num, den)]
-            if max(abs(x) for x in row) < 2 ** 53:
+            if max(abs(x) for x in row) < 2**53:
                 rows.append(row)
                 per_gen[g] += 1
     if any(x == 0 for x in per_gen):
@@ -77,6 +78,7 @@ def _paren(s):
 def darboux(preps, d_darboux, extactic_ok=True):
     """Rational invariants from Darboux polynomials (extactic route)."""
     from ..gfp import mono_table
+
     moved = sym_sort(list(dict.fromkeys(v for pr in preps for v in pr["support"])))
     vars_ = sym_sort(list(dict.fromkeys(moved + [v for pr in preps for v in pr["vars"]])))
     loc = red_locals([x for pr in preps for x in pr["comps"].values()] + vars_)
@@ -129,13 +131,15 @@ def darboux(preps, d_darboux, extactic_ok=True):
     elif not extactic_ok:
         coverage = "extactic skipped (invariant count already met): coordinate and xi factors only"
     else:
-        coverage = (f"extactic skipped (moved-coordinate basis {Nbasis}, projected entry degree "
-                    f"{entry_deg}, cap {EXTACTIC_CAP}): coordinate and xi factors only")
+        coverage = (
+            f"extactic skipped (moved-coordinate basis {Nbasis}, projected entry degree "
+            f"{entry_deg}, cap {EXTACTIC_CAP}): coordinate and xi factors only"
+        )
     cert_base = f"Darboux stage ({len(Ps)} candidate factors; {coverage})"
 
     def fail(cert):
-        return {"ok": False, "invariants": [], "cert": cert, "Ps": Ps, "lams": lams,
-                "coverage": coverage}
+        return {"ok": False, "invariants": [], "cert": cert, "Ps": Ps, "lams": lams, "coverage": coverage}
+
     if len(Ps) < 2:
         return fail(f"no rational invariant from Darboux factors; {cert_base}")
     n_mon = math.comb(len(vars_) + max(1, d_darboux), len(vars_)) + 3
@@ -153,8 +157,7 @@ def darboux(preps, d_darboux, extactic_ok=True):
             base = _paren(Pstr[l])
             parts.append(base if K[l, j] == 1 else f"{base}^{int(K[l, j])}")
         inv.append("*".join(parts))
-    return {"ok": True, "invariants": inv, "cert": cert_base, "Ps": Ps, "lams": lams,
-            "coverage": coverage}
+    return {"ok": True, "invariants": inv, "cert": cert_base, "Ps": Ps, "lams": lams, "coverage": coverage}
 
 
 EXP_WORK_CAP = 3250
@@ -172,6 +175,7 @@ def _moved_vars(preps):
 def exp_factors(preps, darb, d_exp):
     """Exponential factors exp(g/h) and invariants combining them with Darboux factors."""
     from ..gfp import mono_table
+
     moved, vars_ = _moved_vars(preps)
     K = len(preps)
     D = max([1] + [1 if pr["degree"] is None else int(pr["degree"]) for pr in preps])
@@ -189,8 +193,7 @@ def exp_factors(preps, darb, d_exp):
         if dj is None or dj < 1:
             continue
         h_c.append({"h": P, "cof": darb["lams"][j], "deg": dj})
-        h_c2.append({"h": spy.expand(P * P), "cof": [spy.Integer(2) * l for l in darb["lams"][j]],
-                     "deg": 2 * dj})
+        h_c2.append({"h": spy.expand(P * P), "cof": [spy.Integer(2) * l for l in darb["lams"][j]], "deg": 2 * dj})
     h_c = h_c + h_c2
     m_idx = [vars_.index(m) for m in moved]
     expts_gs = []
@@ -236,9 +239,10 @@ def exp_factors(preps, darb, d_exp):
                 gcols = (mulmod(mv_g, inner[:, g], p) - mulmod(mv_g, hl[1 + g], p)) % p
                 mucols = np.zeros(K * Nmu, dtype=np.int64)
                 if Nmu:
-                    mucols[g * Nmu:(g + 1) * Nmu] = mu_neg
+                    mucols[g * Nmu : (g + 1) * Nmu] = mu_neg
                 out.append(np.concatenate([gcols, mucols]))
             return np.stack(out)
+
         ns = modular_nullspace(rows_at, n, vars_)
         if ns["basis"] is None or ns["basis"].shape[1] == 0:
             continue
@@ -262,7 +266,7 @@ def exp_factors(preps, darb, d_exp):
                 if not Nmu:
                     mu.append(zero)
                     continue
-                mv = ns["basis"][Ng + g * Nmu:Ng + (g + 1) * Nmu, jc]
+                mv = ns["basis"][Ng + g * Nmu : Ng + (g + 1) * Nmu, jc]
                 mu.append(zero if not np.any(mv) else red_sympify(poly_string(mv, expts_mu, vars_), loc))
             ok_all = True
             for g in range(K):
@@ -277,25 +281,39 @@ def exp_factors(preps, darb, d_exp):
                 continue
             seen.add(key)
             factors.append({"g": g_expr, "h": hc["h"], "mu": mu})
-    cert_base = (f"exp stage (numerator degree <= {d_exp} over {len(h_c)} denominator candidate(s)"
-                 + (f", capped at {EXP_WORK_CAP} unknowns" if capped else "")
-                 + (f", {size_skipped} skipped over the {EXP_SIZE_CAP}-unknown budget" if size_skipped else "")
-                 + f"): {len(factors)} exponential factor(s)")
+    cert_base = (
+        f"exp stage (numerator degree <= {d_exp} over {len(h_c)} denominator candidate(s)"
+        + (f", capped at {EXP_WORK_CAP} unknowns" if capped else "")
+        + (f", {size_skipped} skipped over the {EXP_SIZE_CAP}-unknown budget" if size_skipped else "")
+        + f"): {len(factors)} exponential factor(s)"
+    )
     if not factors:
-        return {"ok": False, "invariants": [], "factors": [],
-                "cert": f"no exponential factor with numerator degree <= {d_exp}; {cert_base}"}
+        return {
+            "ok": False,
+            "invariants": [],
+            "factors": [],
+            "cert": f"no exponential factor with numerator degree <= {d_exp}; {cert_base}",
+        }
     J = len(darb["Ps"])
     cols = list(darb["lams"]) + [f["mu"] for f in factors]
     n_mon = math.comb(len(vars_) + max(1, d_exp + D - 1), len(vars_)) + 3
     rows = cofactor_rows(cols, vars_, K, n_mon)
     if not rows:
-        return {"ok": False, "invariants": [], "factors": factors,
-                "cert": f"cofactor sampling failed (inconclusive); {cert_base}"}
+        return {
+            "ok": False,
+            "invariants": [],
+            "factors": factors,
+            "cert": f"cofactor sampling failed (inconclusive); {cert_base}",
+        }
     Kk = int_kernel(np.array(rows, dtype=object))
-    use_col = [j for j in range(Kk.shape[1]) if np.any(Kk[J:J + len(factors), j] != 0)]
+    use_col = [j for j in range(Kk.shape[1]) if np.any(Kk[J : J + len(factors), j] != 0)]
     if not use_col:
-        return {"ok": False, "invariants": [], "factors": factors,
-                "cert": f"no invariant combining the exponential factors; {cert_base}"}
+        return {
+            "ok": False,
+            "invariants": [],
+            "factors": factors,
+            "cert": f"no invariant combining the exponential factors; {cert_base}",
+        }
     Pstr = [str(P).replace("**", "^") for P in darb["Ps"]]
     pos = positive_set()
     inv = []
@@ -306,7 +324,7 @@ def exp_factors(preps, darb, d_exp):
             base = _paren(Pstr[l])
             parts.append(base if w[l] == 1 else f"{base}^{int(w[l])}")
         arg = spy.Integer(0)
-        for e2 in np.nonzero(w[J:J + len(factors)])[0]:
+        for e2 in np.nonzero(w[J : J + len(factors)])[0]:
             arg = arg + spy.Integer(int(w[J + e2])) * factors[e2]["g"] / factors[e2]["h"]
         arg = spy.cancel(spy.together(arg))
         arg_str = str(arg).replace("**", "^")
@@ -346,15 +364,16 @@ def int_factor(preps, darb, ex_factors):
         w_l = int(w[last])
         parts = [f"{_paren(Pstr[l])}^({int(w[l])}/{w_l})" for l in np.nonzero(w[:J])[0]]
         exp_part = []
-        if E and np.any(w[J:J + E] != 0):
+        if E and np.any(w[J : J + E] != 0):
             arg = spy.Integer(0)
-            for e2 in np.nonzero(w[J:J + E])[0]:
+            for e2 in np.nonzero(w[J : J + E])[0]:
                 arg = arg + spy.Rational(int(w[J + e2]), w_l) * ex_factors[e2]["g"] / ex_factors[e2]["h"]
             exp_part = [f"exp({spy.cancel(spy.together(arg))})"]
         Mstr = "*".join(parts + exp_part) or "1"
         try:
-            Iv = integrating_factor_integral(Mstr.replace("^", "**"), str(xi[moved[0]]),
-                                              str(xi[moved[1]]), moved[0], moved[1])
+            Iv = integrating_factor_integral(
+                Mstr.replace("^", "**"), str(xi[moved[0]]), str(xi[moved[1]]), moved[0], moved[1]
+            )
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             Iv = None
@@ -401,18 +420,24 @@ def separable(preps):
                 sympy_fail(exc)
                 pass
     cand = list(dict.fromkeys(c for c in cand if c and c != "1"))
-    cert = (f"separable-characteristics stage ({len(sep_idx)} of {len(preps)} generator(s) separable, "
-            f"{len(cand)} quadrature candidate(s))")
+    cert = (
+        f"separable-characteristics stage ({len(sep_idx)} of {len(preps)} generator(s) separable, "
+        f"{len(cand)} quadrature candidate(s))"
+    )
     if not cand:
         return {"ok": False, "invariants": [], "cert": f"no closed-form quadrature; {cert}"}
     try:
-        keep = [bool(x) for x in verify_invariants([c.replace("^", "**") for c in cand],
-                                                     [dict(pr["comps"]) for pr in preps])]
+        keep = [
+            bool(x)
+            for x in verify_invariants([c.replace("^", "**") for c in cand], [dict(pr["comps"]) for pr in preps])
+        ]
     except Exception as exc:
         swallow(exc, "invariant verification")
         keep = None
     if keep is None or not any(keep):
-        return {"ok": False, "invariants": [],
-                "cert": f"quadrature integrals are not invariants of every generator; {cert}"}
-    return {"ok": True, "invariants": [c for c, k in zip(cand, keep) if k],
-            "cert": f"{cert}: {sum(keep)} verified"}
+        return {
+            "ok": False,
+            "invariants": [],
+            "cert": f"quadrature integrals are not invariants of every generator; {cert}",
+        }
+    return {"ok": True, "invariants": [c for c, k in zip(cand, keep) if k], "cert": f"{cert}: {sum(keep)} verified"}

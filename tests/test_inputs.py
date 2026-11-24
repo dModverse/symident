@@ -16,10 +16,12 @@ def _model(odes=F, obs=G, **kw):
 
 CASES = {
     "stoichiometry rows for the species": lambda: si.Model(
-        reactions=dict(RX, stoichiometry=[[-1, 1], [1, -1], [0, 0]]), observables=G),
+        reactions=dict(RX, stoichiometry=[[-1, 1], [1, -1], [0, 0]]), observables=G
+    ),
     "stoichiometry transposed": lambda: si.Model(reactions=dict(RX, stoichiometry=[[-1], [1]]), observables=G),
-    "rates short": lambda: si.Model(reactions={"species": ["A", "B"], "stoichiometry": [[-1, 1]], "rates": []},
-                                    observables=G),
+    "rates short": lambda: si.Model(
+        reactions={"species": ["A", "B"], "stoichiometry": [[-1, 1]], "rates": []}, observables=G
+    ),
     "empty right-hand side": lambda: _model({"x": ""}),
     "right-hand side None": lambda: _model({"x": None}),
     "empty observable": lambda: _model(obs={"y": " "}),

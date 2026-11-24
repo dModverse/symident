@@ -59,8 +59,9 @@ class _Polys:
     def __call__(self, pts, p):
         if p not in self._res:
             self._res[p] = np.array([a % p * pow(b, -1, p) % p for a, b in self.coefs], dtype=np.int64)
-        return _core.io_poly_eval(self.exps, self._res[p], self.off, np.ascontiguousarray(pts, dtype=np.int64), p,
-                                  _threads())
+        return _core.io_poly_eval(
+            self.exps, self._res[p], self.off, np.ascontiguousarray(pts, dtype=np.int64), p, _threads()
+        )
 
 
 def _pow(a, e, p):
@@ -78,6 +79,7 @@ def _pow(a, e, p):
 class Quo:
     """A quotient N / prod_k F_k^{e_k} of polynomials over a list F of factors shared by the functions of one model,
     kept without gcds."""
+
     __slots__ = ("numer", "exps")
 
     def __init__(self, numer, exps):
@@ -165,7 +167,7 @@ class Jets:
                 lst.append((Nt * self.Q - N * self.Qt * a, a + 2, 0))
             else:
                 lst.append((Nt * self.Q * E - N * (self.Qt * E * a + Et * self.Q * b), a + 2, b + 1))
-        return [self.quo(N, a, ie, b) for N, a, b in lst[:m + 1]]
+        return [self.quo(N, a, ie, b) for N, a, b in lst[: m + 1]]
 
     def within(self, ms):
         """Whether each derivative of observable r up to order ms[r] is the derivative of one with at most _JET
@@ -249,14 +251,21 @@ def _count(nb, degree, cap_top, cap2=None):
     exponent of a second variable at most cap2."""
     if cap2 is None:
         return sum(math.comb(nb - 1 + degree - e, nb - 1) for e in range(min(degree, cap_top) + 1))
-    return sum(math.comb(nb - 2 + degree - e - f, nb - 2) for e in range(min(degree, cap_top) + 1)
-               for f in range(min(degree - e, cap2) + 1))
+    return sum(
+        math.comb(nb - 2 + degree - e - f, nb - 2)
+        for e in range(min(degree, cap_top) + 1)
+        for f in range(min(degree - e, cap2) + 1)
+    )
 
 
 def _mono_matrix(B, mons, p):
     """The values of the monomials at the rows of B."""
-    return _core.io_mono_matrix(np.ascontiguousarray(B, dtype=np.int64), np.array(mons, dtype=np.int32).reshape(
-        len(mons), B.shape[1]), p, _threads())
+    return _core.io_mono_matrix(
+        np.ascontiguousarray(B, dtype=np.int64),
+        np.array(mons, dtype=np.int32).reshape(len(mons), B.shape[1]),
+        p,
+        _threads(),
+    )
 
 
 class Projection:
@@ -268,8 +277,9 @@ class Projection:
     def __init__(self, rel, ms, pos, rng, top=None, extra=None):
         self.rel, self.ms, self.pos, self.rng = rel, list(ms), list(pos), rng
         J = jets_of(rel)
-        funcs = [q for r, m in enumerate(self.ms) if m >= 0 for q in J.observable(r, m)] + \
-            [J.state(k) for k in rel.inputs(max(self.ms))]
+        funcs = [q for r, m in enumerate(self.ms) if m >= 0 for q in J.observable(r, m)] + [
+            J.state(k) for k in rel.inputs(max(self.ms))
+        ]
         if extra is not None:
             top, funcs = len(funcs), funcs + [J.state(extra)]
         self.base = Base(rel, funcs)
@@ -298,7 +308,7 @@ class Projection:
             return None
         pr = cls(rel, ms, pos, rng, extra=k)
         if lift is not None:
-            pr.capped = (sum(m + 1 for m in ms[:lift[0]]) + h[lift[0]], lift[1] - 1)
+            pr.capped = (sum(m + 1 for m in ms[: lift[0]]) + h[lift[0]], lift[1] - 1)
         return pr
 
     def points(self, theta, p, m):
@@ -328,7 +338,7 @@ class Projection:
                 mons = [m for m in mons if m[self.capped[0]] <= self.capped[1]]
             if len(pool[0]) < len(mons) + 8:
                 pool[0] = np.vstack([pool[0], self.points(theta, p, len(mons) + 8 - len(pool[0]))])
-            A = _mono_matrix(pool[0][:len(mons) + 8], mons, p)
+            A = _mono_matrix(pool[0][: len(mons) + 8], mons, p)
             work.tick(A.shape)
             return mons, _core.io_kernel(A, p, _threads())
 
@@ -357,8 +367,12 @@ class Projection:
                 if len(ker["free"]) == 1:
                     return found(mons, ker["basis"][0])
                 continue
-            boxes = [(D, dt) for D in range(1, _DEGREE + 1) for dt in range(1, min(D, top_degree or D) + 1)
-                     if _count(self.nb, D, dt, None if self.capped is None else self.capped[1]) <= c]
+            boxes = [
+                (D, dt)
+                for D in range(1, _DEGREE + 1)
+                for dt in range(1, min(D, top_degree or D) + 1)
+                if _count(self.nb, D, dt, None if self.capped is None else self.capped[1]) <= c
+            ]
             largest = [b for b in boxes if not any(o != b and o[0] >= b[0] and o[1] >= b[1] for o in boxes)]
             for b in largest:
                 if b in done or work.ticks() > stop:
@@ -396,8 +410,11 @@ class Projection:
             return None
         rng, nb = self.rng, self.nb
         order = self.weights()
-        fixed = [tuple([1] * nb)] + [_unit(nb, v) for v in range(nb)] + \
-            [tuple(order), tuple(max(order) + 1 - w for w in order)]
+        fixed = (
+            [tuple([1] * nb)]
+            + [_unit(nb, v) for v in range(nb)]
+            + [tuple(order), tuple(max(order) + 1 - w for w in order)]
+        )
         bounds = newton_bounds(sl, fixed, stop)
         if bounds is None:
             return None
@@ -564,7 +581,7 @@ class _Slice:
             d[key] = (d.get(key, 0) + 1) % p
             eqs.append({m: c for m, c in d.items() if c})
         eqs.append({tuple([(0, 1)] + [(self.u[k], 1) for k in self.used]): 1, (): p - 1})
-        names = self.names[:self.t]
+        names = self.names[: self.t]
         if direc is not None:
             names = names + ["t"]
             if torus:
@@ -582,11 +599,11 @@ def _gradients(J, funcs, gens, pt, p):
         for f, _ in q.exps:
             polys += [J.fac[f]] + [J.fac[f].diff(x) for x in gens]
         v = [int(x) for x in _Polys(polys, len(pt))(np.array([pt], dtype=np.int64), p)[0]]
-        n, g = v[0], v[1:len(gens) + 1]
+        n, g = v[0], v[1 : len(gens) + 1]
         den, at = 1, len(gens) + 1
         lg = [0] * len(gens)
         for _f, e in q.exps:
-            F, dF = v[at], v[at + 1:at + 1 + len(gens)]
+            F, dF = v[at], v[at + 1 : at + 1 + len(gens)]
             at += 1 + len(gens)
             if not F:
                 return None
@@ -690,7 +707,7 @@ def _pdivmod(a, b, p):
         if c:
             for j, bj in enumerate(b):
                 a[k + j] = (a[k + j] - c * bj) % p
-    return _poly_trim(q), _poly_trim(a[:len(b) - 1])
+    return _poly_trim(q), _poly_trim(a[: len(b) - 1])
 
 
 def _psub(a, b, p):
@@ -798,6 +815,7 @@ def _box(nv, total, per):
             cur.append(e)
             rec(v + 1, left - e, cur)
             cur.pop()
+
     rec(0, total, [])
     out.sort(key=lambda m: (sum(m), m))
     return out
@@ -1107,7 +1125,7 @@ class Coefficients:
         if ker["free"] != [len(boxD)]:
             self.why = "the denominator is not determined by the box of degrees"
             return None
-        return np.asarray(ker["basis"][0][:len(boxD)], dtype=np.int64) % q
+        return np.asarray(ker["basis"][0][: len(boxD)], dtype=np.int64) % q
 
     def _numerators(self, vec, dco, boxD, allm, width, q):
         """The coefficients of every numerator on allm modulo q, one solve with the values times D."""
@@ -1138,9 +1156,15 @@ class Coefficients:
 
     def expressions(self, params):
         """The coefficients as sympy expressions in `params`, in the order of the monomials of the projection."""
+
         def poly(co):
-            return sum((spy.Rational(c.numerator, c.denominator) * spy.prod([s ** e for s, e in zip(params, m)])
-                        for m, c in co.items()), spy.Integer(0))
+            return sum(
+                (
+                    spy.Rational(c.numerator, c.denominator) * spy.prod([s**e for s, e in zip(params, m)])
+                    for m, c in co.items()
+                ),
+                spy.Integer(0),
+            )
 
         D = poly(self.den)
         out = [None] * len(self.order)
@@ -1242,7 +1266,7 @@ class _Series:
         if m in self.at:
             return
         v = next(i for i, e in enumerate(m) if e)
-        lower = m[:v] + (m[v] - 1,) + m[v + 1:]
+        lower = m[:v] + (m[v] - 1,) + m[v + 1 :]
         self._add(lower)
         self.at[m] = len(self.mons)
         self.mons.append(m)
@@ -1252,8 +1276,8 @@ class _Series:
         p = self.p
         for j, m in enumerate(self.mons[1:], 1):
             v = next(i for i, e in enumerate(m) if e)
-            par = self.at[m[:v] + (m[v] - 1,) + m[v + 1:]]
-            self.ser[j, k] = _dot(self.ser[par, :k + 1], X[v][k::-1], p)
+            par = self.at[m[:v] + (m[v] - 1,) + m[v + 1 :]]
+            self.ser[j, k] = _dot(self.ser[par, : k + 1], X[v][k::-1], p)
 
     def value(self, i, k):
         return sum(c * int(self.ser[j, k]) for j, c in self.polys[i]) % self.p
@@ -1485,6 +1509,7 @@ def identity(rel, proj, coef, params_pos):
 def coefficient_values(coef, theta, p):
     """The coefficients of the projection at the parameter point theta modulo p, in the order of the monomials;
     None where the denominator vanishes there."""
+
     def ev(co):
         s = 0
         for m, c in co.items():

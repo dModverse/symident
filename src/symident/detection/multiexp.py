@@ -48,8 +48,14 @@ def eligible(series):
         if v in used:
             return None, f"the start coordinate {v} is also a parameter of the model"
     clocks = {i for i in known if all(not any(m) for P in seg["F"][i] for m in P) and any(seg["F"][i][0].values())}
-    reads = {j for N, D in [seg["F"][i] for i in range(ns) if i not in known] + list(seg["G"])
-             for P in (N, D) for m in P for j, e in enumerate(m[:ns]) if e}
+    reads = {
+        j
+        for N, D in [seg["F"][i] for i in range(ns) if i not in known] + list(seg["G"])
+        for P in (N, D)
+        for m in P
+        for j, e in enumerate(m[:ns])
+        if e
+    }
     if reads & clocks:
         return None, "the model reads the clock"
     return starts, None
@@ -62,6 +68,7 @@ def conservation_laws(seg, states):
     from sympy.polys.matrices import DomainMatrix
 
     from ..sym.parse import model_sympify
+
     xs = [spy.Symbol(x) for x in states]
     rhs = [model_sympify(str(seg["f"][x])) for x in states]
     variables = [spy.Symbol(x) for x in seg["f"]]
@@ -102,10 +109,14 @@ def stacked(parts, coords, series, starts, K, laws=()):
     each law starts where the law takes the value of the first experiment. The coordinates of the model come
     first."""
     from ..sym.parse import model_sympify
+
     seg = parts[0]["segments"][0]
     st = [str(x) for x in series.parts[0]["st"]]
-    taken = set(coords) | set(seg["f"]) | {w for e in list(seg["f"].values()) + list(seg["g"].values())
-                                          for w in re.findall(r"[A-Za-z_]\w*", str(e))}
+    taken = (
+        set(coords)
+        | set(seg["f"])
+        | {w for e in list(seg["f"].values()) + list(seg["g"].values()) for w in re.findall(r"[A-Za-z_]\w*", str(e))}
+    )
     first = {st[i]: spy.Symbol(str(v)) for i, v in starts.items()}
     pivots = [next(iter(law)) for law in laws]
     out, extra = [], []
@@ -131,6 +142,7 @@ def plan(parts, coords, series, starts, ks=None, laws=()):
     observables plus one, at most 8) whose stacked model has full rank: the orders of the rank criterion per
     observable of each experiment, the lowest highest order first and among equal ones the fewest experiments."""
     from .discrete import Series
+
     if ks is None:
         n_y = len(series.parts[0]["segs"][0]["G"])
         n_t = len(coords) - len(starts)
@@ -153,6 +165,7 @@ def count(parts, coords, series, positive, floor, experiments=None):
     criterion of the stacked model up, until it is stable or reaches `floor`, the orbit of the proven maps."""
     from . import discrete, firstint
     from .discrete import choose_order
+
     t0 = time.monotonic()
     starts, why = eligible(series)
     if why is not None:
@@ -162,8 +175,10 @@ def count(parts, coords, series, positive, floor, experiments=None):
     laws = conservation_laws(parts[0]["segments"][0], [st[i] for i in starts])
     fi = firstint.certificate(series, laws)
     if not fi["proven"]:
-        return {"why": "the absence of rational first integrals is not proven: " + str(fi["why"]),
-                "first_integrals": fi}
+        return {
+            "why": "the absence of rational first integrals is not proven: " + str(fi["why"]),
+            "first_integrals": fi,
+        }
     given = isinstance(experiments, int) and not isinstance(experiments, bool) and experiments > 1
     plans = plan(parts, coords, series, starts, [experiments] if given else None, laws)
     if not plans:
@@ -174,9 +189,18 @@ def count(parts, coords, series, positive, floor, experiments=None):
     sk.pins = [tuple({mm + pad: c for mm, c in P.items()} for P in pin) for pin in series.pins]
     discrete._FAILURES.clear()
     fib, stable, cc = choose_order(sk, positive, 1, 2 * len(sk.coords), floor=floor, proj=len(coords))
-    out = {"why": None, "experiments": K, "orders": list(fib.orders), "count": cc, "stable": stable,
-           "first_integrals": fi, "fiber": fib, "crit": crit, "series": sk,
-           "seconds": round(time.monotonic() - t0, 2)}
+    out = {
+        "why": None,
+        "experiments": K,
+        "orders": list(fib.orders),
+        "count": cc,
+        "stable": stable,
+        "first_integrals": fi,
+        "fiber": fib,
+        "crit": crit,
+        "series": sk,
+        "seconds": round(time.monotonic() - t0, 2),
+    }
     if cc is None:
         out["failed"] = discrete.no_count_reason(fib.order)
     return out

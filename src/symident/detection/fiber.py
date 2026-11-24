@@ -35,6 +35,7 @@ def _msolve_degree(eqs, names, p):
 
     from ..sym.msolve import _msolve_binary
     from . import work
+
     if work.msolve_too_large(names, eqs):
         return None
     with tempfile.TemporaryDirectory() as td:

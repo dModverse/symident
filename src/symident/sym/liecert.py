@@ -104,9 +104,10 @@ class _Condition:
             if any(spy.count_ops(h) > _OPS for h in self.jets):
                 raise OverflowError("a Lie derivative grows past the size cap")
             self.orders.append([[spy.diff(h, w) for w in self.W] for h in self.jets])
-            self.jets = [spy.expand(sum((spy.diff(h, x) * self.f[x] for x in self.S), spy.Integer(0)))
-                         for h in self.jets]
-        return [r for o in self.orders[:k + 1] for r in o]
+            self.jets = [
+                spy.expand(sum((spy.diff(h, x) * self.f[x] for x in self.S), spy.Integer(0))) for h in self.jets
+            ]
+        return [r for o in self.orders[: k + 1] for r in o]
 
 
 def _certify(cond, cap, p, seed):

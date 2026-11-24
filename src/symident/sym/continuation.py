@@ -58,19 +58,21 @@ def _ser_value(numden, gser, p, T, pw):
     return None if inv is None else _ser_mul(num, inv, p, T)
 
 
-_cont_cache = {}
+_cont_cache: dict = {}
 
 
-def continue_resting_state(model, state_names, param_names, param_vals, dirs, rest_vals, prime,
-                         order, forcings=None, held=None):
+def continue_resting_state(
+    model, state_names, param_names, param_vals, dirs, rest_vals, prime, order, forcings=None, held=None
+):
     """Resting state as a power series in eps along param_vals + eps dirs, or {'ok': False, 'why'}."""
     p, T = int(prime), int(order)
     model = _as_list(model)
     forcings = set(_as_list(forcings))
     state_names = _as_list(state_names)
     param_names = _as_list(param_names)
-    (param_syms, solve_states, polys, _, _, gens, jx_terms, jt_terms, _, _, _,
-     _) = _ss_compile(model, state_names, param_names, forcings, linear=False)
+    (param_syms, solve_states, polys, _, _, gens, jx_terms, jt_terms, _, _, _, _) = _ss_compile(
+        model, state_names, param_names, forcings, linear=False
+    )
     key = (tuple(model), tuple(state_names), tuple(param_names), tuple(sorted(forcings)))
     cached = _cont_cache.get(key)
     if cached is None:
@@ -85,10 +87,14 @@ def continue_resting_state(model, state_names, param_names, param_vals, dirs, re
     rv = {str(k): int(v) % p for k, v in dict(rest_vals).items()}
     hv = {str(k): int(v) % p for k, v in dict(held or {}).items()}
     n_s = len(solve_states)
-    pser = [[pv.get(str(th), 0)] + [dv.get(str(th), 0)] + [0] * (T - 1) if T >= 1
-            else [pv.get(str(th), 0)] for th in param_syms]
-    xser = [[rv.get(str(s_), 0)] + ([hv[str(s_)]] + [0] * (T - 1) if str(s_) in hv and T >= 1
-                                     else [0] * T) for s_ in solve_states]
+    pser = [
+        [pv.get(str(th), 0)] + [dv.get(str(th), 0)] + [0] * (T - 1) if T >= 1 else [pv.get(str(th), 0)]
+        for th in param_syms
+    ]
+    xser = [
+        [rv.get(str(s_), 0)] + ([hv[str(s_)]] + [0] * (T - 1) if str(s_) in hv and T >= 1 else [0] * T)
+        for s_ in solve_states
+    ]
     keep = [i for i, s_ in enumerate(solve_states) if str(s_) not in hv]
     held_idx = [i for i, s_ in enumerate(solve_states) if str(s_) in hv]
 
@@ -104,16 +110,16 @@ def continue_resting_state(model, state_names, param_names, param_vals, dirs, re
 
     f0 = f_series()
     if f0 is None or any(f0[i][0] for i in keep):
-        return {'ok': False, 'why': 'the start is not a resting state at eps = 0'}
+        return {"ok": False, "why": "the start is not a resting state at eps = 0"}
     g0 = [pv.get(str(th), 0) for th in param_syms] + [rv.get(str(s_), 0) for s_ in solve_states]
     J0 = [[_eval_terms(jn_t[i][j], g0, p) for j in keep] for i in keep]
     for k in range(1, T + 1):
         fs = f_series()
         if fs is None:
-            return {'ok': False, 'why': 'a pole along the continuation'}
+            return {"ok": False, "why": "a pole along the continuation"}
         X = _solve_mod(J0, [[(-fs[i][k]) % p] for i in keep], p)
         if X is None:
-            return {'ok': False, 'why': 'a singular resting Jacobian'}
+            return {"ok": False, "why": "a singular resting Jacobian"}
         for r, i in enumerate(keep):
             xser[i][k] = X[r][0] % p
     pw = {}
@@ -127,7 +133,11 @@ def continue_resting_state(model, state_names, param_names, param_vals, dirs, re
     df_jt = {str(th): [ser_of(jt_terms[str(th)][i]) for i in keep] for th in param_syms}
     for hj in held_idx:
         df_jt[str(solve_states[hj])] = [ser_of(jx_terms[i][hj]) for i in keep]
-    return {'ok': True, 'val_by': {str(solve_states[i]): xser[i] for i in range(n_s)},
-            'df_jx': df_jx, 'df_jt': df_jt,
-            'df_state_cols': [str(solve_states[j]) for j in keep],
-            'df_param_cols': [str(x) for x in param_syms] + [str(solve_states[j]) for j in held_idx]}
+    return {
+        "ok": True,
+        "val_by": {str(solve_states[i]): xser[i] for i in range(n_s)},
+        "df_jx": df_jx,
+        "df_jt": df_jt,
+        "df_state_cols": [str(solve_states[j]) for j in keep],
+        "df_param_cols": [str(x) for x in param_syms] + [str(solve_states[j]) for j in held_idx],
+    }

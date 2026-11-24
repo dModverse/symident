@@ -19,8 +19,10 @@ def red_coordinates(obj):
     co = obj["info"].get("coordinates")
     if co:
         return [str(c) for c in co]
-    warnings.warn("this result has no coordinate list; the emitted "
-                  "trafo covers only coordinates appearing in some direction.", stacklevel=2)
+    warnings.warn(
+        "this result has no coordinate list; the emitted trafo covers only coordinates appearing in some direction.",
+        stacklevel=2,
+    )
     return sym_sort(list(dict.fromkeys(c for d in obj["symmetries"] for c in coords_of(d))))
 
 
@@ -136,6 +138,7 @@ def certify_transversal(W, cols, T):
 def _signed_coordinates(names):
     """The coordinates among `names` outside the declared positive set."""
     from .sign import positive_set
+
     pos = positive_set()
     return set() if pos is None else {c for c in names if c not in set(pos)}
 
@@ -201,33 +204,51 @@ def scaling_block(W, cols, labels, fixed, allowed=None):
     fx = scaling_fixed(W, cols, fixed)
     Wres = fx["Wres"]
     support = [c for j, c in enumerate(cols) if np.any(W[:, j] != 0)]
-    blk = {"labels": labels, "type": "scaling", "support": support, "stage": "transversal",
-           "module_combos": None, "removed_by_fixed": fx["removed"],
-           "redundant_fixed": fx["redundant"], "certificates": [], "reason": None}
+    blk = {
+        "labels": labels,
+        "type": "scaling",
+        "support": support,
+        "stage": "transversal",
+        "module_combos": None,
+        "removed_by_fixed": fx["removed"],
+        "redundant_fixed": fx["redundant"],
+        "certificates": [],
+        "reason": None,
+    }
     if Wres.shape[0] == 0:
-        blk.update(status="fixed", stage="fixed", invariants=[], transversal=None,
-                   gauge_note="removed entirely by the user's fixed coordinates")
+        blk.update(
+            status="fixed",
+            stage="fixed",
+            invariants=[],
+            transversal=None,
+            gauge_note="removed entirely by the user's fixed coordinates",
+        )
         return blk
     K = int_kernel(Wres[:, [cols.index(c) for c in support]])
     blk["inv_exps"] = K
     blk["invariants"] = [mono_string(K[:, j], support) for j in range(K.shape[1])]
     tv = transversal(Wres, cols, fixed, allowed)
-    blk.update(transversal=tv["T"], choices=tv["choices"], matroid=tv["matroid"],
-               new_parameters=tv["new_parameters"], Wres=Wres, Wcols=cols)
+    blk.update(
+        transversal=tv["T"],
+        choices=tv["choices"],
+        matroid=tv["matroid"],
+        new_parameters=tv["new_parameters"],
+        Wres=Wres,
+        Wcols=cols,
+    )
     if tv["T"] is not None:
         blk["status"] = "reduced"
-        blk["gauge_note"] = ("each fixed coordinate may take any nonzero value (here 1); "
-                             "any of the listed choices works")
+        blk["gauge_note"] = "each fixed coordinate may take any nonzero value (here 1); any of the listed choices works"
         blk["pins"] = {t: "1" for t in tv["T"]}
         from .sign import positive_set
+
         pos = positive_set()
         real = [t for t in tv["T"] if pos is not None and t not in set(pos)]
         if real:
             # a scaling keeps the sign of a coordinate: orbits where it is negative miss the pin 1
             blk["coverage"] = "partial"
             blk["gauge_note"] += f"; orbits with {', '.join(real)} < 0 do not meet the pin"
-        blk["certificates"].append("transversal certified exactly: W[,T] invertible with "
-                                   "integer W[,T]^-1 W")
+        blk["certificates"].append("transversal certified exactly: W[,T] invertible with integer W[,T]^-1 W")
     else:
         blk["status"] = "invariant_only"
         blk["reason"] = "no transversal with an integer (Laurent) absorption matrix"
@@ -246,6 +267,7 @@ def components(W):
         while parent[i] != i:
             i = parent[i]
         return i
+
     for i in range(k - 1):
         for j in range(i + 1, k):
             if np.any((W[i] != 0) & (W[j] != 0)):

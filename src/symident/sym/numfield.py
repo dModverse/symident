@@ -49,7 +49,7 @@ class NumberField:
         if d == 1:
             # the field is Q, with s the rational root of W
             r = -Fraction(self.W[0])
-            return (sum((c * r ** k for k, c in enumerate(a)), Fraction(0)),)
+            return (sum((c * r**k for k, c in enumerate(a)), Fraction(0)),)
         a = list(a) + [Fraction(0)] * max(0, d - len(a))
         for k in range(len(a) - 1, d - 1, -1):
             c = a[k]
@@ -119,6 +119,7 @@ class NumberField:
 def _roots_mod(W, p):
     """The roots in GF(p) of the integer polynomial W, lowest degree first, zero included."""
     from .gfpoly import _gf_roots
+
     out = sorted(int(r) for r in _gf_roots([c % p for c in reversed(W)], p))
     return [0] + out if W[0] % p == 0 else out
 

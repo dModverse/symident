@@ -32,8 +32,11 @@ def test_an_unknown_input_absorbs_what_the_parameters_would_explain():
 
 def test_a_time_varying_rate_as_an_unknown_input():
     # Martinelli 2022, arXiv 2211.13507, Section 6
-    m = si.Model({"TU": "lam - rho*TU - eta*TU*V", "TI": "eta*TU*V - delta*TI", "V": "N*delta*TI - c*V"},
-                 {"y1": "V", "y2": "TU + TI"}, unknown_inputs=["eta"])
+    m = si.Model(
+        {"TU": "lam - rho*TU - eta*TU*V", "TI": "eta*TU*V - delta*TI", "V": "N*delta*TI - c*V"},
+        {"y1": "V", "y2": "TU + TI"},
+        unknown_inputs=["eta"],
+    )
     r = si.detect(m, reconstruct=True)
     # eta cancels in the derivative of y2, so it enters from order 2 on: the jet columns that can enter the
     # rows have full rank, which proves the rank modulo the input
@@ -57,11 +60,14 @@ def test_the_input_change_of_a_linear_input():
     assert r.symmetries[0].state_components is None
 
 
-@pytest.mark.parametrize("rhs, change", [
-    ("-k*x + exp(w)", "k*x*exp(-w)"),
-    ("-k*x + a*w^2", "k*x/(2*a*w)"),
-    ("-k*x + w*log(x)", "k*x/log(x)"),
-])
+@pytest.mark.parametrize(
+    "rhs, change",
+    [
+        ("-k*x + exp(w)", "k*x*exp(-w)"),
+        ("-k*x + a*w^2", "k*x/(2*a*w)"),
+        ("-k*x + w*log(x)", "k*x/log(x)"),
+    ],
+)
 def test_the_input_change_through_a_recast_or_a_log_chart(rhs, change):
     r = si.detect(si.Model({"x": rhs}, {"y": "x"}, unknown_inputs=["w"]), reconstruct=True)
     assert {s.level for s in r.symmetries} == {"exact"} and r.info["rank_status"]["status"] == "proven"
@@ -74,12 +80,24 @@ def test_a_measured_unknown_input_leaves_the_model_identifiable():
 
 
 def test_conditions_share_an_unknown_input_or_rename_it():
-    shared = si.detect(si.Model({"x": "-k*x + s*w"}, {"y": "x"}, unknown_inputs=["w"],
-                                conditions={"rows": ["a", "b"], "cols": {"s": [1, 2]}}))
+    shared = si.detect(
+        si.Model(
+            {"x": "-k*x + s*w"},
+            {"y": "x"},
+            unknown_inputs=["w"],
+            conditions={"rows": ["a", "b"], "cols": {"s": [1, 2]}},
+        )
+    )
     assert shared.identifiable
-    own = si.detect(si.Model({"x": "-k*x + s*w"}, {"y": "x"}, unknown_inputs=["w", "w2"],
-                             conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "w2"]}}),
-                    reconstruct=True)
+    own = si.detect(
+        si.Model(
+            {"x": "-k*x + s*w"},
+            {"y": "x"},
+            unknown_inputs=["w", "w2"],
+            conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "w2"]}},
+        ),
+        reconstruct=True,
+    )
     assert (own.rank, own.dim) == (1, 2) and own.symmetries[0].level == "exact"
     ch = _change(own, "k")
     assert _same(ch["w"], "k*x") and _same(ch["w2"], "k*x/2")
@@ -87,8 +105,7 @@ def test_conditions_share_an_unknown_input_or_rename_it():
 
 def test_a_chain_below_the_lie_order_bounds_the_rank_from_below():
     odes = {"x1": "w - k1*x1", "x2": "k1*x1 - k2*x2", "x3": "k2*x2 - k3*x3"}
-    r = si.detect(si.Model(odes, {"y": "x3"}, unknown_inputs=["w"]),
-                  control=si.reconst_control(input_jet_order=2))
+    r = si.detect(si.Model(odes, {"y": "x3"}, unknown_inputs=["w"]), control=si.reconst_control(input_jet_order=2))
     assert r.info["unknown_inputs"]["short"]
     assert r.info["rank_status"]["status"] == "lower bound"
     assert "jet chains" in r.info["rank_status"]["why"]
@@ -113,8 +130,9 @@ def test_an_event_tells_the_rate_from_a_continuous_input():
 
 
 def test_an_unknown_input_is_zero_at_rest():
-    r = si.detect(si.Model({"x": "p - k*x + b*w"}, {"y": "x"}, unknown_inputs=["w"]), equilibrate=True,
-                  reconstruct=True)
+    r = si.detect(
+        si.Model({"x": "p - k*x + b*w"}, {"y": "x"}, unknown_inputs=["w"]), equilibrate=True, reconstruct=True
+    )
     assert set(r.info["coordinates"]) == {"b", "k", "p"} and r.rank == 1
     (s,) = [s for s in r.symmetries if "b" in s.generator]
     assert s.level == "exact" and _same(_change(r, "b")["w"], "-w")
@@ -122,10 +140,13 @@ def test_an_unknown_input_is_zero_at_rest():
     assert r.identifiable and set(r.info["coordinates"]) == {"b", "k", "p"}
 
 
-@pytest.mark.parametrize("kw, what", [
-    (dict(events=[{"var": "w", "time": 1, "value": 1, "method": "add"}]), "event changes the unknown input"),
-    (dict(trafo={"w": "w0"}), "trafo"),
-])
+@pytest.mark.parametrize(
+    "kw, what",
+    [
+        (dict(events=[{"var": "w", "time": 1, "value": 1, "method": "add"}]), "event changes the unknown input"),
+        (dict(trafo={"w": "w0"}), "trafo"),
+    ],
+)
 def test_settings_without_unknown_inputs_are_refused(kw, what):
     with pytest.raises(ValueError, match=what):
         si.detect(si.Model({"x": "-k*x + w"}, {"y": "x"}, unknown_inputs=["w"], **kw))
@@ -164,8 +185,7 @@ def test_full_rank_with_unknown_inputs_is_verified():
 
 
 def test_an_unknown_input_under_a_log_chart_is_no_coordinate():
-    r = si.detect(si.Model({"x": "k0 + k/(1 + (x/(1 + w))^n) - x"}, {"y": "x"}, unknown_inputs=["w"]),
-                  reconstruct=True)
+    r = si.detect(si.Model({"x": "k0 + k/(1 + (x/(1 + w))^n) - x"}, {"y": "x"}, unknown_inputs=["w"]), reconstruct=True)
     assert "w" not in r.info["coordinates"] and r.info["rank_status"]["status"] == "proven"
     assert {s.level for s in r.symmetries} == {"exact"}
     # the lift in the log coordinate of the input has no closed form in the input: no input change of zero
@@ -192,13 +212,17 @@ def test_a_pointwise_lift_reduces_a_direction_the_input_absorbs():
     (lf,) = b["inputs"]["lift"].values()
     a, bb, d, N, w = spy.symbols("a b d N w")
     loc = {"a": a, "b": bb, "d": d, "N": N, "w": w}
-    xi = {k: spy.sympify(v.replace("^", "**"), locals=loc) for part in ("params", "states", "inputs")
-          for k, v in lf[part].items()}
+    xi = {
+        k: spy.sympify(v.replace("^", "**"), locals=loc)
+        for part in ("params", "states", "inputs")
+        for k, v in lf[part].items()
+    }
     V = {spy.Symbol(k): v for k, v in xi.items()}
     f = {a: -w * a, bb: w * a - d * bb}
 
     def act(e):
         return sum(spy.diff(e, k) * v for k, v in V.items())
+
     for x, fx in f.items():
         Dxi = sum(spy.diff(V.get(x, 0), y) * f[y] for y in f)
         assert spy.cancel(Dxi - act(fx)) == 0
@@ -250,8 +274,12 @@ def test_the_count_leaves_out_the_jets_the_output_does_not_read():
 
 
 def test_a_direction_the_inputs_absorb_in_several_conditions_keeps_without_a_proof():
-    m = si.Model({"x": "-k*x + s*w"}, {"y": "x"}, unknown_inputs=["w", "w2"],
-                 conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "w2"]}})
+    m = si.Model(
+        {"x": "-k*x + s*w"},
+        {"y": "x"},
+        unknown_inputs=["w", "w2"],
+        conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "w2"]}},
+    )
     red = si.reduce(si.detect(m, reconstruct=True))
     (b,) = red.to_dict()["blocks"]
     assert red.remaining and b["status"] == "unresolved" and "one condition" in b["reason"]

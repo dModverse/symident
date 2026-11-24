@@ -27,10 +27,27 @@ def _next_order(rk, nt, nt_end, need, cols):
     return min(nt_end, top)
 
 
-def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_block=1, block_call=None,
-                     budget=None, block_map=None, nt_min=0, nt_min_block=None, prep=None,
-                     rank_cap=None, block_profile=None, checks=True, longest_first=False,
-                     stacked_profile=None):
+def saturate_certify(
+    kcall,
+    n_leaves,
+    nz,
+    max_m=0,
+    *,
+    warm,
+    set_caps,
+    probe_block=1,
+    block_call=None,
+    budget=None,
+    block_map=None,
+    nt_min=0,
+    nt_min_block=None,
+    prep=None,
+    rank_cap=None,
+    block_profile=None,
+    checks=True,
+    longest_first=False,
+    stacked_profile=None,
+):
     """Saturated reference rank after raising the Lie and gap orders, or None without a usable point;
     `longest_first` scans the blocks of the highest known orders first, for blocks without shared state;
     `stacked_profile` gives the rank per Lie order of the stacked rows from one jet."""
@@ -100,8 +117,10 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
             if not _ok(res):
                 return None
             if lie_diag:
-                print(f"[liediag] {label} Mtot={Mtot} ranks from Lie order {max(1, frm)}: "
-                      f"{','.join(str(x) for x in rk[max(1, frm):Nt + 1])} (nz={nz}, profile to {nt_try})")
+                print(
+                    f"[liediag] {label} Mtot={Mtot} ranks from Lie order {max(1, frm)}: "
+                    f"{','.join(str(x) for x in rk[max(1, frm) : Nt + 1])} (nz={nz}, profile to {nt_try})"
+                )
             return {"res": res, "Nt": Nt, "grew": grew, "ranks": rk}
         if frm > 1 and frm > lo0:
             # the higher order first: the kernel of the lower one reads the rows of the higher one
@@ -113,8 +132,10 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
                 return None
             if rank_score(lo) == rank_score(hi):
                 if lie_diag:
-                    print(f"[liediag] {label} Mtot={Mtot} rank {lo['rank']} flat over Lie order "
-                          f"{frm}-{frm + need} (nz={nz})")
+                    print(
+                        f"[liediag] {label} Mtot={Mtot} rank {lo['rank']} flat over Lie order "
+                        f"{frm}-{frm + need} (nz={nz})"
+                    )
                 return {"res": hi, "Nt": frm + need, "grew": frm}
         if Mtot > 0 and frm > 1:
             memo = {}
@@ -126,6 +147,7 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
 
             def sc1(r):
                 return rank_score(r) if _ok(r) else None
+
             cap = nz + 1 + lo0
             x, step = max(1, frm), need
             while True:
@@ -148,8 +170,9 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
             grew = hi
             Nt = min(cap, grew + need)
             if lie_diag:
-                print(f"[liediag] {label} Mtot={Mtot} galloped from {frm} to order {grew} in "
-                      f"{len(memo)} calls (nz={nz})")
+                print(
+                    f"[liediag] {label} Mtot={Mtot} galloped from {frm} to order {grew} in {len(memo)} calls (nz={nz})"
+                )
             return {"res": at(Nt), "Nt": Nt, "grew": grew}
         Nt = max(1, frm)
         prev, flat, grew = -1, 0, Nt
@@ -170,8 +193,10 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
             prev = rank_score(r)
             Nt += 1
         if lie_diag:
-            print(f"[liediag] {label} Mtot={Mtot} ranks from Lie order {max(1, frm)}: "
-                  f"{','.join(map(str, ranks))} (nz={nz})")
+            print(
+                f"[liediag] {label} Mtot={Mtot} ranks from Lie order {max(1, frm)}: "
+                f"{','.join(map(str, ranks))} (nz={nz})"
+            )
         return {"res": res, "Nt": Nt, "grew": grew}
 
     def lo_of(bi):
@@ -187,8 +212,17 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
                 return None
         if not per_block:
             # the stacked rows of many conditions stall and rise again: the plateau grows with the order
-            sb = scan_nt(kcall, point, Mtot, 1, need_used, "stacked", nt_min, stacked_profile,
-                         rel=float(state.env_value("STACKEDPLATEAU", "0.5")) if stacked_profile is not None else 0.0)
+            sb = scan_nt(
+                kcall,
+                point,
+                Mtot,
+                1,
+                need_used,
+                "stacked",
+                nt_min,
+                stacked_profile,
+                rel=float(state.env_value("STACKEDPLATEAU", "0.5")) if stacked_profile is not None else 0.0,
+            )
             if sb is not None:
                 sb["point"] = point
             return sb
@@ -196,11 +230,12 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
         Nt, driver, block_ranks = 1, 0, None
         t_scan = time.monotonic()
         if block_map is not None:
+
             def one(bi):
                 known = from_orders is not None and len(from_orders) == len(block_call)
                 frm = max(1, int(from_orders[bi])) if known else 1
-                return scan_nt(block_call[bi], point, Mtot, frm, need_used, f"block {bi + 1}",
-                               lo_of(bi), prof_of(bi))
+                return scan_nt(block_call[bi], point, Mtot, frm, need_used, f"block {bi + 1}", lo_of(bi), prof_of(bi))
+
             # the blocks of the highest known orders first, so that the longest scans do not start last
             nb = len(block_call)
             idx = list(range(nb))
@@ -218,8 +253,7 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
             block_ranks = [s.get("ranks") for s in sbs]
         else:
             for bi in range(len(block_call)):
-                sb = scan_nt(block_call[bi], point, Mtot, Nt, need_used, f"block {bi + 1}",
-                            lo_of(bi), prof_of(bi))
+                sb = scan_nt(block_call[bi], point, Mtot, Nt, need_used, f"block {bi + 1}", lo_of(bi), prof_of(bi))
                 if sb is None:
                     return None
                 orders[bi] = sb["grew"]
@@ -231,14 +265,22 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
         t_call = time.monotonic()
         r = kcall(point, P, Nt, Mtot)
         if timing:
-            print(f"[sat] Mtot {Mtot}: scans {t_caps - t_scan:.1f}s, caps {t_call - t_caps:.1f}s, "
-                  f"call {time.monotonic() - t_call:.1f}s; orders {min(orders)}-{max(orders)}")
+            print(
+                f"[sat] Mtot {Mtot}: scans {t_caps - t_scan:.1f}s, caps {t_call - t_caps:.1f}s, "
+                f"call {time.monotonic() - t_call:.1f}s; orders {min(orders)}-{max(orders)}"
+            )
         if not _ok(r):
             return None
         if lie_diag:
             print(f"[liediag] block Lie orders: {','.join(map(str, orders))} -> stacked order {Nt}, rank {r['rank']}")
-        return {"res": r, "Nt": Nt, "block_orders": orders, "block_driver": driver, "point": point,
-                "block_ranks": block_ranks}
+        return {
+            "res": r,
+            "Nt": Nt,
+            "block_orders": orders,
+            "block_driver": driver,
+            "point": point,
+            "block_ranks": block_ranks,
+        }
 
     hint = state.get("order_hint")
     using_hint = False
@@ -255,14 +297,15 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
             if not _ok(r):
                 return None
             bo_ = list(hint["block_orders"])
-            return {"res": r, "Nt": Nt, "block_orders": bo_, "block_driver": int(np.argmax(bo_)),
-                    "point": point}
+            return {"res": r, "Nt": Nt, "block_orders": bo_, "block_driver": int(np.argmax(bo_)), "point": point}
 
     sat = None
     for attempt in range(1, 51):
         if probe_block > 1 and attempt >= 2 and (attempt - 2) % probe_block == 0:
-            pts = [point0 if k == 0 else pool(pool_next + (k - 1) * n_leaves + np.arange(n_leaves))
-                   for k in range(probe_block)]
+            pts = [
+                point0 if k == 0 else pool(pool_next + (k - 1) * n_leaves + np.arange(n_leaves))
+                for k in range(probe_block)
+            ]
             warm(pts, [P] * probe_block)
         sat = saturate_nt(point0, 0)
         if sat is not None:
@@ -285,6 +328,7 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
     def sat_log(what):
         if timing:
             print(f"[sat {time.monotonic() - sat_t0:7.1f}s] {what}")
+
     sat_log(f"scanned, Lie order {sat['Nt']}")
     nt_used, mtot_used = sat["Nt"], (int(hint["Mtot"]) if hinted else 0)
     # why the gap order stopped: "full" proves it sufficient, "plateau", "cap" and "failed" do not
@@ -302,8 +346,10 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
             if sat_m is None:
                 gap_stop = "failed"
                 break
-            sat_log(f"gap order {mtot_used + 1}: Lie order {sat_m['Nt']}, score "
-                   f"{rank_score(sat_m['res'])} (was {rank_score(sat['res'])})")
+            sat_log(
+                f"gap order {mtot_used + 1}: Lie order {sat_m['Nt']}, score "
+                f"{rank_score(sat_m['res'])} (was {rank_score(sat['res'])})"
+            )
             mtot_used += 1
             if rank_score(sat_m["res"]) <= rank_score(sat["res"]):
                 gap_stop = "plateau"
@@ -374,14 +420,28 @@ def saturate_certify(kcall, n_leaves, nz, max_m=0, *, warm, set_caps, probe_bloc
                 break
         _, sat, point0, nt_used = best
         if best[0] < rank_max:
-            session.note("limits", "rank: no saturated point reached the rank seen at another prime "
-                                   "or point; a direction may be reported too many")
-    return {"ref": sat["res"], "nt_used": nt_used, "mtot_used": mtot_used, "gap_stop": gap_stop,
-            "point0": point0, "pool": pool, "pool_next": pool_next,
-            "block_orders": sat.get("block_orders"), "block_driver": sat.get("block_driver"),
-            "block_ranks": sat.get("block_ranks"), "budget": budget, "plateau": need_used,
-            "rank": sat["res"]["rank"], "rank_s": rank_of(sat["res"]),
-            "pivots": sat["res"]["pivots"]}
+            session.note(
+                "limits",
+                "rank: no saturated point reached the rank seen at another prime "
+                "or point; a direction may be reported too many",
+            )
+    return {
+        "ref": sat["res"],
+        "nt_used": nt_used,
+        "mtot_used": mtot_used,
+        "gap_stop": gap_stop,
+        "point0": point0,
+        "pool": pool,
+        "pool_next": pool_next,
+        "block_orders": sat.get("block_orders"),
+        "block_driver": sat.get("block_driver"),
+        "block_ranks": sat.get("block_ranks"),
+        "budget": budget,
+        "plateau": need_used,
+        "rank": sat["res"]["rank"],
+        "rank_s": rank_of(sat["res"]),
+        "pivots": sat["res"]["pivots"],
+    }
 
 
 def nullspace_basis(ref, free_cols, P):

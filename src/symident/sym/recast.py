@@ -13,6 +13,7 @@ from .parse import _as_list, _is_rational_expr, _make_local_parse
 
 class SeriesExp(spy.Function):
     """exp(w) of a w that vanishes at the state of zero gaps, a series the kernel sums."""
+
     nargs = 1
 
     @classmethod
@@ -26,6 +27,7 @@ class SeriesExp(spy.Function):
 
 class SeriesLog1p(spy.Function):
     """log(1 + w) of a w that vanishes at the state of zero gaps, a series the kernel sums."""
+
     nargs = 1
 
     @classmethod
@@ -39,6 +41,7 @@ class SeriesLog1p(spy.Function):
 
 class SeriesSin(spy.Function):
     """sin(w) of a w that vanishes at the state of zero gaps, a series the kernel sums."""
+
     nargs = 1
 
     @classmethod
@@ -52,6 +55,7 @@ class SeriesSin(spy.Function):
 
 class SeriesCos(spy.Function):
     """cos(w) of a w that vanishes at the state of zero gaps, a series the kernel sums."""
+
     nargs = 1
 
     @classmethod
@@ -79,7 +83,7 @@ def _chains(K, chain_of):
     return out
 
 
-_PRE = '_sx_'
+_PRE = "_sx_"
 
 
 def pre_state(name):
@@ -90,7 +94,7 @@ def pre_state(name):
 def pre_state_name(sym):
     """The state a pre_state() symbol stands for, else None."""
     nm = str(sym)
-    return nm[len(_PRE):] if nm.startswith(_PRE) else None
+    return nm[len(_PRE) :] if nm.startswith(_PRE) else None
 
 
 def _series_events(S, ic, ev, chain_of, ln):
@@ -104,13 +108,13 @@ def _series_events(S, ic, ev, chain_of, ln):
     out = [list(evs) for evs in ev]
 
     def compose(cur, method, v):
-        return {'replace': v, 'add': cur + v, 'multiply': cur * v}[method]
+        return {"replace": v, "add": cur + v, "multiply": cur * v}[method]
 
     def series_exp(psi, psi0, r):
         # r^psi = r^psi0 * exp(log(r)*(psi - psi0)), psi0 the value at zero gaps
         if r == spy.E:
             return spy.exp(psi0) * SeriesExp(psi - psi0)
-        return r ** psi0 * SeriesExp(ln(r) * (psi - psi0))
+        return r**psi0 * SeriesExp(ln(r) * (psi - psi0))
 
     def series_log(u, u0):
         if u0 == 0:
@@ -151,12 +155,12 @@ def _series_events(S, ic, ev, chain_of, ln):
             pre = dict(x0)
             new = []
             for e in ev[c]:
-                v = spy.sympify(e['value'])
-                if e.get('t0'):
+                v = spy.sympify(e["value"])
+                if e.get("t0"):
                     # an event at a start at rest reads the resting coordinates themselves
                     at_pre = v.xreplace(pre)
                     new.append(dict(e, value=at_pre))
-                elif e.get('marked'):
+                elif e.get("marked"):
                     at_pre = v.xreplace({pre_state(s): pre[s] for s in S})
                     new.append(e)
                 else:
@@ -164,11 +168,13 @@ def _series_events(S, ic, ev, chain_of, ln):
                     try:
                         new.append(dict(e, value=rewrite(v, pre), marked=True, plain=v))
                     except _NotExpandableError:
-                        return {'why': 'the event value %s for %s is a function of the states that the '
-                                'finite-field engine does not expand' % (v, e['var'])}
-                var = sym_of.get(str(e['var']))
+                        return {
+                            "why": "the event value %s for %s is a function of the states that the "
+                            "finite-field engine does not expand" % (v, e["var"])
+                        }
+                var = sym_of.get(str(e["var"]))
                 if var is not None:
-                    x0[var] = compose(x0[var], str(e['method']), at_pre)
+                    x0[var] = compose(x0[var], str(e["method"]), at_pre)
             out[c] = new
     return out
 
@@ -181,7 +187,7 @@ def _state_events(ev, states, atoms):
     """The first event value with an atom of `atoms(value)` that reads `states`, else None."""
     for evs in ev:
         for e in evs:
-            for a in atoms(spy.sympify(e['value'])):
+            for a in atoms(spy.sympify(e["value"])):
                 if a.free_symbols & states:
                     return e, a
     return None
@@ -251,8 +257,7 @@ def _terms_independent(atoms):
         if not all(v.is_Rational for v in vals):
             continue
         for bi, b in enumerate(basis):
-            rows.append([comps[k].get(b, 0) * vals[k] for k in range(m)] +
-                        [1 if j == bi else 0 for j in range(nb)])
+            rows.append([comps[k].get(b, 0) * vals[k] for k in range(m)] + [1 if j == bi else 0 for j in range(nb)])
         npts += 1
         if npts >= m + 3:
             break
@@ -270,16 +275,17 @@ def _terms_independent(atoms):
 
 class _ExpCtx:
     """Fresh symbols and constant leaves of one rewrite: e^(1/L0) as `ec`, log(p) as one leaf per prime."""
+
     def __init__(self, taken):
         self.taken = set(taken)
-        self.ec = self.fresh('_e_', positive=True)
+        self.ec = self.fresh("_e_", positive=True)
         self.ln_sym = {}
 
     def fresh(self, stem, **kw):
         """A new symbol from `stem`, with underscores appended until unused, marked as taken."""
         nm = stem
         while nm in self.taken:
-            nm += '_'
+            nm += "_"
         self.taken.add(nm)
         return spy.Symbol(nm, **kw)
 
@@ -291,22 +297,22 @@ class _ExpCtx:
                 out += e
                 continue
             if pr not in self.ln_sym:
-                self.ln_sym[pr] = self.fresh('_ln%d_' % pr, positive=True)
+                self.ln_sym[pr] = self.fresh("_ln%d_" % pr, positive=True)
             out += e * self.ln_sym[pr]
         return out
 
     @staticmethod
     def rpow(r, e):
         """`r` to the power `e`, as exp(e) for the base E."""
-        return spy.exp(e) if r == spy.E else r ** e
+        return spy.exp(e) if r == spy.E else r**e
 
     def const(self, r, c0):
         """r^c0, None when it is irrational and not a power of e."""
         if c0 == 0:
             return spy.Integer(1)
         if r == spy.E:
-            return self.ec ** c0
-        return r ** c0 if c0.is_Integer else None
+            return self.ec**c0
+        return r**c0 if c0.is_Integer else None
 
     def numbers(self, e):
         """E as the leaf ec, log(b) of a number as a multiple of a log leaf."""
@@ -368,9 +374,8 @@ def _exp_leaf_canon(exprs, ctx, held=None):
     held = held if held is not None else [set()] * len(exprs)
     atoms, logs, log_of = [], [], {}
     for e, hs in zip(exprs, held):
-        if any((be := _exp_atom(a)) is not None and be[1].free_symbols & hs
-               for a in e.atoms(spy.exp, spy.Pow)):
-            return {'why': 'an event value with the exponential of a state is not supported'}
+        if any((be := _exp_atom(a)) is not None and be[1].free_symbols & hs for a in e.atoms(spy.exp, spy.Pow)):
+            return {"why": "an event value with the exponential of a state is not supported"}
     while True:
         exprs = _exponent_logs(exprs, ctx, held, logs, log_of)
         found = {}
@@ -378,13 +383,13 @@ def _exp_leaf_canon(exprs, ctx, held=None):
             for at in e.atoms(spy.exp, spy.Pow):
                 if at in found or _exp_atom(at) is None:
                     continue
-                if any(_exp_atom(a) is not None
-                       for a in _exp_atom(at)[1].atoms(spy.exp, spy.Pow)):
+                if any(_exp_atom(a) is not None for a in _exp_atom(at)[1].atoms(spy.exp, spy.Pow)):
                     continue
                 dec = _exp_terms(*_exp_atom(at))
                 if dec is None or ctx.const(dec[0], dec[1]) is None:
-                    return {'why': 'the exponential %s is not supported by '
-                            'engine="modular"; try engine="symbolic"' % at}
+                    return {
+                        "why": 'the exponential %s is not supported by engine="modular"; try engine="symbolic"' % at
+                    }
                 found[at] = dec
         if not found:
             break
@@ -402,8 +407,10 @@ def _exp_leaf_canon(exprs, ctx, held=None):
                 for tb, qb in comb.items():
                     pc[(B, tb)] = pc.get((B, tb), 0) + q * qb
             if any(ctx.const(B, c) is None for B, c in cst.items()):
-                return {'why': 'exponents that are linearly dependent over the rationals '
-                        'up to a constant that is not an integer power are not supported'}
+                return {
+                    "why": "exponents that are linearly dependent over the rationals "
+                    "up to a constant that is not an integer power are not supported"
+                }
             pieces[at] = ({k: v for k, v in pc.items() if v != 0}, cst)
         den = {}
         for pc, _ in pieces.values():
@@ -411,9 +418,9 @@ def _exp_leaf_canon(exprs, ctx, held=None):
                 den[key] = spy.ilcm(den.get(key, 1), spy.Rational(q).q)
         key_w = {}
         for (r, t), L in sorted(den.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))):
-            W = ctx.fresh('_ew%d_' % (len(atoms) + 1), positive=True)
+            W = ctx.fresh("_ew%d_" % (len(atoms) + 1), positive=True)
             key_w[(r, t)] = W
-            atoms.append({'W': W, 'r': r, 'tau': t, 'L': L})
+            atoms.append({"W": W, "r": r, "tau": t, "L": L})
         repl = {}
         for at, (r, c0, _terms) in found.items():
             v = ctx.const(r, c0)
@@ -426,23 +433,24 @@ def _exp_leaf_canon(exprs, ctx, held=None):
         exprs = [e.xreplace(repl) for e in exprs]
     # e^c as integer powers of the leaf e^(1/L0)
     L0 = 1
-    for e in exprs + [w['tau'] for w in atoms]:
+    for e in exprs + [w["tau"] for w in atoms]:
         for pw in e.atoms(spy.Pow):
             if pw.base == ctx.ec:
                 L0 = spy.ilcm(L0, spy.Rational(pw.exp).q)
-    ec_sub = {ctx.ec: ctx.ec ** L0}
+    ec_sub = {ctx.ec: ctx.ec**L0}
     exprs = [e.xreplace(ec_sub) for e in exprs]
     for w in atoms:
-        w['tau'] = w['tau'].xreplace(ec_sub)
+        w["tau"] = w["tau"].xreplace(ec_sub)
     ctx.L0 = L0
-    ind = _terms_independent([(w['r'], w['tau']) for w in atoms])
+    ind = _terms_independent([(w["r"], w["tau"]) for w in atoms])
     if ind is None:
-        return {'why': 'an exponent is not a rational function of the coordinates (a logarithm of an initial '
-                'value in an exponent); give that initial value as a parameter'}
+        return {
+            "why": "an exponent is not a rational function of the coordinates (a logarithm of an initial "
+            "value in an exponent); give that initial value as a parameter"
+        }
     if not ind:
-        return {'why': 'exponents that are linearly dependent over the rationals '
-                'are not supported'}
-    return {'exprs': exprs, 'atoms': atoms, 'logs': logs}
+        return {"why": "exponents that are linearly dependent over the rationals are not supported"}
+    return {"exprs": exprs, "atoms": atoms, "logs": logs}
 
 
 def _exponent_logs(vals, ctx, held, leaves, leaf_of):
@@ -462,10 +470,11 @@ def _exponent_logs(vals, ctx, held, leaves, leaf_of):
             out += sgn * ctx.numbers(spy.log(c))
             for p, m in facs:
                 if p not in leaf_of:
-                    leaf_of[p] = ctx.fresh('_el%d_' % (len(leaves) + 1), real=True)
-                    leaves.append({'V': leaf_of[p], 'p': p})
+                    leaf_of[p] = ctx.fresh("_el%d_" % (len(leaves) + 1), real=True)
+                    leaves.append({"V": leaf_of[p], "p": p})
                 out += sgn * m * leaf_of[p]
         return out
+
     out = []
     for e, states in zip(vals, held):
         rep = {}
@@ -475,8 +484,12 @@ def _exponent_logs(vals, ctx, held, leaves, leaf_of):
                 continue
             for L in be[1].atoms(spy.log):
                 u = L.args[0]
-                if u.is_number or u.free_symbols & states or L in rep or \
-                        any(_exp_atom(a) is not None for a in u.atoms(spy.exp, spy.Pow)):
+                if (
+                    u.is_number
+                    or u.free_symbols & states
+                    or L in rep
+                    or any(_exp_atom(a) is not None for a in u.atoms(spy.exp, spy.Pow))
+                ):
                     continue
                 v = as_logs(u)
                 if v is not None:
@@ -487,11 +500,11 @@ def _exponent_logs(vals, ctx, held, leaves, leaf_of):
 
 def _exp_back(atoms, ctx, used):
     """Back-substitution map {name: value string} for the leaves and constants."""
-    back = {str(w['W']): str(ctx.rpow(w['r'], w['tau'] / w['L'])) for w in atoms}
+    back = {str(w["W"]): str(ctx.rpow(w["r"], w["tau"] / w["L"])) for w in atoms}
     if ctx.ec in used:
         back[str(ctx.ec)] = str(spy.exp(spy.Rational(1, ctx.L0)))
     for r, s in ctx.ln_sym.items():
-        back[str(s)] = 'log(%s)' % r
+        back[str(s)] = "log(%s)" % r
     return back
 
 
@@ -505,11 +518,11 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest
     g = [[ctx.numbers(e) for e in p[1]] for p in per_cond]
     ic = [{k: ctx.numbers(v) for k, v in p[2].items()} for p in per_cond]
     fss = [list(p[3]) for p in per_cond]
-    ev = [[dict(e, value=ctx.numbers(e['value'])) for e in evs] for evs in ev_per]
+    ev = [[dict(e, value=ctx.numbers(e["value"])) for e in evs] for evs in ev_per]
     tm = [None if t is None else ctx.numbers(t) for t in tm_per]
 
     # ---- dynamics: auxiliary states, innermost exponential first
-    aux = []                         # {'X', 'r', 'phi'}
+    aux = []  # {'X', 'r', 'phi'}
     n_real = len(S)
     while True:
         states = set(S)
@@ -517,6 +530,7 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest
         def state_atom(a):
             be = _exp_atom(a)
             return be is not None and bool(be[1].free_symbols & states)
+
         found = {}
         for c in range(K):
             for e in f[c] + g[c]:
@@ -527,8 +541,9 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest
                         continue
                     dec = _exp_terms(*_exp_atom(at))
                     if dec is None or const(dec[0], dec[1]) is None:
-                        return {'why': 'the exponential %s is not supported by '
-                            'engine="modular"; try engine="symbolic"' % at}
+                        return {
+                            "why": 'the exponential %s is not supported by engine="modular"; try engine="symbolic"' % at
+                        }
                     found[at] = dec
         if not found:
             break
@@ -539,9 +554,9 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest
                     den[(r, t)] = spy.ilcm(den.get((r, t), 1), q.q)
         key_x = {}
         for (r, t), D in sorted(den.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))):
-            X = ctx.fresh('_ex%d_' % (len(aux) + 1))
+            X = ctx.fresh("_ex%d_" % (len(aux) + 1))
             key_x[(r, t)] = X
-            aux.append({'X': X, 'r': r, 'phi': t / D})
+            aux.append({"X": X, "r": r, "phi": t / D})
         repl = {}
         for at, (r, c0, terms) in found.items():
             v = const(r, c0)
@@ -553,17 +568,17 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest
             repl[at] = v
         f = [[e.xreplace(repl) for e in fc] for fc in f]
         g = [[e.xreplace(repl) for e in gc] for gc in g]
-        new_aux = aux[len(aux) - len(key_x):]
+        new_aux = aux[len(aux) - len(key_x) :]
         for c in range(K):
             rhs_of = dict(zip(S, f[c]))
             for a in new_aux:
-                phi = a['phi']
+                phi = a["phi"]
                 dphi = sum(spy.diff(phi, s) * rhs_of[s] for s in phi.free_symbols & states)
-                f[c].append(spy.expand(a['X'] * ctx.ln_of(a['r']) * dphi))
+                f[c].append(spy.expand(a["X"] * ctx.ln_of(a["r"]) * dphi))
                 ic_sub = {s: ic[c][str(s)] for s in phi.free_symbols & states}
-                ic[c][str(a['X'])] = rpow(a['r'], phi.xreplace(ic_sub))
+                ic[c][str(a["X"])] = rpow(a["r"], phi.xreplace(ic_sub))
                 fss[c].append(spy.Integer(0))
-        S += [a['X'] for a in new_aux]
+        S += [a["X"] for a in new_aux]
 
     # an auxiliary state no observable depends on stays at 1 in that condition
     idx = {X: i for i, X in enumerate(S)}
@@ -575,14 +590,14 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest
         while front:
             nxt = set()
             for a in aux:
-                if a['X'] in front and a['X'] not in used:
-                    used.add(a['X'])
-                    nxt |= f[c][idx[a['X']]].free_symbols
+                if a["X"] in front and a["X"] not in used:
+                    used.add(a["X"])
+                    nxt |= f[c][idx[a["X"]]].free_symbols
             front = nxt - used
         for a in aux:
-            if a['X'] not in used:
-                f[c][idx[a['X']]] = spy.Integer(0)
-                ic[c][str(a['X'])] = spy.Integer(1)
+            if a["X"] not in used:
+                f[c][idx[a["X"]]] = spy.Integer(0)
+                ic[c][str(a["X"])] = spy.Integer(1)
 
     # later events on a state inside an exponent move the auxiliary states with it
     Sset = set(S)
@@ -594,89 +609,106 @@ def _apply_exp_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest
             while queue:
                 cur = queue.pop(0)
                 for a in aux:
-                    phi = a['phi']
-                    vs = [s for s in phi.free_symbols if str(s) == str(cur['var'])]
-                    if not vs or f[c][idx[a['X']]] == 0:
+                    phi = a["phi"]
+                    vs = [s for s in phi.free_symbols if str(s) == str(cur["var"])]
+                    if not vs or f[c][idx[a["X"]]] == 0:
                         continue
                     vsym = vs[0]
                     d1 = spy.diff(phi, vsym)
-                    v = spy.sympify(cur['value'])
-                    if (cur['method'] == 'add' and spy.diff(d1, vsym) == 0 and
-                            not ((d1.free_symbols | v.free_symbols) & Sset)):
-                        new = {'var': str(a['X']), 'method': 'multiply', 'value': rpow(a['r'], v * d1)}
+                    v = spy.sympify(cur["value"])
+                    if (
+                        cur["method"] == "add"
+                        and spy.diff(d1, vsym) == 0
+                        and not ((d1.free_symbols | v.free_symbols) & Sset)
+                    ):
+                        new = {"var": str(a["X"]), "method": "multiply", "value": rpow(a["r"], v * d1)}
                     else:
                         # the exponent at the state after the event; values read the states before it
-                        after = {'replace': v, 'add': vsym + v, 'multiply': vsym * v}[cur['method']]
-                        new = {'var': str(a['X']), 'method': 'replace',
-                               'value': rpow(a['r'], phi.xreplace({vsym: after}))}
-                    if cur.get('t0'):
-                        new['t0'] = True
+                        after = {"replace": v, "add": vsym + v, "multiply": vsym * v}[cur["method"]]
+                        new = {
+                            "var": str(a["X"]),
+                            "method": "replace",
+                            "value": rpow(a["r"], phi.xreplace({vsym: after})),
+                        }
+                    if cur.get("t0"):
+                        new["t0"] = True
                     out.append(new)
                     queue.append(new)
         ev[c] = out
     ev = _series_events(S, ic, ev, chain_of, lambda r: ctx.numbers(spy.log(r)))
-    if 'why' in ev:
+    if "why" in ev:
         return ev
 
     # ---- leaf level: generic exponential leaves W
-    refs = ([('f', c, i) for c in range(K) for i in range(len(f[c]))] +
-            [('g', c, i) for c in range(K) for i in range(len(g[c]))] +
-            [('ic', c, k) for c in range(K) for k in ic[c]] +
-            [('ev', c, i) for c in range(K) for i in range(len(ev[c]))] +
-            [('tm', c, None) for c in range(K) if tm[c] is not None] +
-            # a start at rest: the resting model in the same leaves
-            ([('fss', c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else []))
-    store = {'f': f, 'g': g, 'ic': ic, 'fss': fss}
+    refs = (
+        [("f", c, i) for c in range(K) for i in range(len(f[c]))]
+        + [("g", c, i) for c in range(K) for i in range(len(g[c]))]
+        + [("ic", c, k) for c in range(K) for k in ic[c]]
+        + [("ev", c, i) for c in range(K) for i in range(len(ev[c]))]
+        + [("tm", c, None) for c in range(K) if tm[c] is not None]
+        +
+        # a start at rest: the resting model in the same leaves
+        ([("fss", c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else [])
+    )
+    store = {"f": f, "g": g, "ic": ic, "fss": fss}
     vals = []
     for kind, c, i in refs:
-        vals.append(ev[c][i]['value'] if kind == 'ev' else tm[c] if kind == 'tm'
-                    else store[kind][c][i])
+        vals.append(ev[c][i]["value"] if kind == "ev" else tm[c] if kind == "tm" else store[kind][c][i])
     # in event values the states at the event are pre_state() symbols; plain state names are initial values
     held = {pre_state(s) for s in S}
-    lc = _exp_leaf_canon(vals, ctx, [held if kind == 'ev' else set() for kind, _, _ in refs])
-    if 'why' in lc:
+    lc = _exp_leaf_canon(vals, ctx, [held if kind == "ev" else set() for kind, _, _ in refs])
+    if "why" in lc:
         return lc
-    logleaves = lc['logs']
-    for (kind, c, i), v in zip(refs, lc['exprs']):
-        if kind == 'ev':
-            ev[c][i]['value'] = v
-        elif kind == 'tm':
+    logleaves = lc["logs"]
+    for (kind, c, i), v in zip(refs, lc["exprs"]):
+        if kind == "ev":
+            ev[c][i]["value"] = v
+        elif kind == "tm":
             tm[c] = v
         else:
             store[kind][c][i] = v
-    w_atoms = lc['atoms']
+    w_atoms = lc["atoms"]
     for w in w_atoms:
-        ctx.ln_of(w['r'])
+        ctx.ln_of(w["r"])
     const_syms = set(ctx.ln_sym.values())
     used = set()
-    for v in lc['exprs'] + [w['tau'] for w in w_atoms]:
+    for v in lc["exprs"] + [w["tau"] for w in w_atoms]:
         used |= v.free_symbols
     if ctx.ec in used:
         const_syms.add(ctx.ec)
     rel = []
     for w in w_atoms:
-        phi = w['tau'] / w['L']
+        phi = w["tau"] / w["L"]
         for z in sorted(phi.free_symbols - const_syms, key=str):
-            rel.append((str(w['W']), str(z),
-                        spy.together(w['W'] * ctx.ln_of(w['r']) * spy.diff(phi, z))))
+            rel.append((str(w["W"]), str(z), spy.together(w["W"] * ctx.ln_of(w["r"]) * spy.diff(phi, z))))
     back = _exp_back(w_atoms, ctx, used)
     for lf in logleaves:
-        for z in sorted(lf['p'].free_symbols - const_syms, key=str):
-            rel.append((str(lf['V']), str(z), spy.together(spy.diff(lf['p'], z) / lf['p'])))
-        back[str(lf['V'])] = str(spy.log(lf['p']))
+        for z in sorted(lf["p"].free_symbols - const_syms, key=str):
+            rel.append((str(lf["V"]), str(z), spy.together(spy.diff(lf["p"], z) / lf["p"])))
+        back[str(lf["V"])] = str(spy.log(lf["p"]))
     per_cond = [(f[c], g[c], ic[c], fss[c]) for c in range(K)]
-    return {'S': S, 'per_cond': per_cond, 'ev_per': ev, 'tm_per': tm, 'rel': rel,
-            'consts': sorted(str(s) for s in const_syms),
-            'atoms': [str(w['W']) for w in w_atoms] + [str(lf['V']) for lf in logleaves], 'back': back,
-            'n_aux': len(aux), 'codim': len(aux) + len(w_atoms) + len(logleaves)}
+    return {
+        "S": S,
+        "per_cond": per_cond,
+        "ev_per": ev,
+        "tm_per": tm,
+        "rel": rel,
+        "consts": sorted(str(s) for s in const_syms),
+        "atoms": [str(w["W"]) for w in w_atoms] + [str(lf["V"]) for lf in logleaves],
+        "back": back,
+        "n_aux": len(aux),
+        "codim": len(aux) + len(w_atoms) + len(logleaves),
+    }
 
 
 _TRIG = (spy.sin, spy.cos, spy.tan)
 
 
-_TRIG_RECIPROCAL = {spy.cot: lambda a: spy.cos(a) / spy.sin(a),
-                    spy.sec: lambda a: 1 / spy.cos(a),
-                    spy.csc: lambda a: 1 / spy.sin(a)}
+_TRIG_RECIPROCAL = {
+    spy.cot: lambda a: spy.cos(a) / spy.sin(a),
+    spy.sec: lambda a: 1 / spy.cos(a),
+    spy.csc: lambda a: 1 / spy.sin(a),
+}
 
 
 def _has_trig(e):
@@ -686,8 +718,7 @@ def _has_trig(e):
 
 def _trig_basic(e):
     """cot, sec and csc through sin and cos."""
-    return spy.sympify(e).replace(lambda x: type(x) in _TRIG_RECIPROCAL,
-                     lambda x: _TRIG_RECIPROCAL[type(x)](x.args[0]))
+    return spy.sympify(e).replace(lambda x: type(x) in _TRIG_RECIPROCAL, lambda x: _TRIG_RECIPROCAL[type(x)](x.args[0]))
 
 
 def _trig_terms(fn, u):
@@ -698,13 +729,14 @@ def _trig_terms(fn, u):
     terms = dict(u.as_coefficients_dict())
     c0 = terms.pop(spy.Integer(1), spy.Integer(0))
     cp = terms.pop(spy.pi, spy.Integer(0))
-    if not (c0.is_Rational and cp.is_Rational and (2 * cp).is_Integer and
-            all(q.is_Rational for q in terms.values())):
+    if not (c0.is_Rational and cp.is_Rational and (2 * cp).is_Integer and all(q.is_Rational for q in terms.values())):
         return None
     # an inner trig atom left in a term is one the later leaf pass resolves
-    if any(_has_exp(t) or not _is_rational_expr(
-            t.replace(lambda x: isinstance(x, _TRIG), lambda x: spy.Dummy())
-             .xreplace({spy.pi: 1})) for t in terms):
+    if any(
+        _has_exp(t)
+        or not _is_rational_expr(t.replace(lambda x: isinstance(x, _TRIG), lambda x: spy.Dummy()).xreplace({spy.pi: 1}))
+        for t in terms
+    ):
         return None
     return c0, cp, terms
 
@@ -717,8 +749,8 @@ def _trig_value(fn, factors, k, rest):
         d = spy.Dummy(real=True)
         reps[d] = T
         A *= (1 + I * d) ** m if m > 0 else (1 - I * d) ** (-m)
-        n *= (1 + T ** 2) ** abs(m)
-    Z = I ** (int(k) % 4) * spy.expand(A ** 2)
+        n *= (1 + T**2) ** abs(m)
+    Z = I ** (int(k) % 4) * spy.expand(A**2)
     if rest != 0:
         C, Sn = spy.Dummy(real=True), spy.Dummy(real=True)
         reps[C], reps[Sn] = spy.cos(rest), spy.sin(rest)
@@ -740,6 +772,7 @@ def _shared(fn):
         if r is None:
             r = memo[e] = fn(e)
         return r
+
     return g
 
 
@@ -763,7 +796,7 @@ def _trig_find(exprs, in_scope, why):
                 continue
             dec = _trig_terms(type(at), at.args[0])
             if dec is None:
-                return {'why': why % at}
+                return {"why": why % at}
             found[at] = dec
     return found
 
@@ -781,7 +814,7 @@ def _trig_den(found, keep):
 def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_rest=False):
     """The model with trigonometric functions as half-angle states and leaves, as _apply_exp_recast."""
     ctx = _ExpCtx(taken)
-    pis = ctx.fresh('_pi_', positive=True)
+    pis = ctx.fresh("_pi_", positive=True)
     S = list(S)
     K = len(per_cond)
     basic = _shared(_trig_basic)
@@ -790,56 +823,54 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
     g = [[basic(e) for e in p[1]] for p in per_cond]
     ic = [{k: basic(v) for k, v in p[2].items()} for p in per_cond]
     fss = [[basic_pi(e) for e in p[3]] for p in per_cond]
-    ev = [[dict(e, value=basic(e['value'])) for e in evs] for evs in ev_per]
+    ev = [[dict(e, value=basic(e["value"])) for e in evs] for evs in ev_per]
     tm = [None if t is None else basic(t) for t in tm_per]
     free = _shared(lambda e: e.free_symbols)
-    unsupported = ('the argument of %s is not supported by engine="modular"; '
-                   'try engine="symbolic"')
+    unsupported = 'the argument of %s is not supported by engine="modular"; try engine="symbolic"'
 
     # ---- dynamics: auxiliary half-angle states, innermost first
-    aux = []                         # {'X', 'phi'}
+    aux = []  # {'X', 'phi'}
     while True:
         states = set(S)
+
         def state_atom(a):
             return bool(a.args[0].free_symbols & states)
-        found = _trig_find([e for c in range(K) for e in f[c] + g[c]], state_atom,
-                           unsupported)
-        if 'why' in found:
+
+        found = _trig_find([e for c in range(K) for e in f[c] + g[c]], state_atom, unsupported)
+        if "why" in found:
             return found
         if not found:
             break
         den = _trig_den(found, lambda t: bool(t.free_symbols & states))
         key_x = {}
         for t, D in sorted(den.items(), key=lambda kv: str(kv[0])):
-            X = ctx.fresh('_tx%d_' % (len(aux) + 1))
+            X = ctx.fresh("_tx%d_" % (len(aux) + 1))
             key_x[t] = X
-            aux.append({'X': X, 'phi': t / D})
+            aux.append({"X": X, "phi": t / D})
         repl = {}
         for at, (c0, cp, terms) in found.items():
-            factors = [(key_x[t], int(q * den[t]))
-                       for t, q in terms.items() if t in key_x]
-            rest = c0 + sum((q * t for t, q in terms.items() if t not in key_x),
-                            spy.Integer(0))
+            factors = [(key_x[t], int(q * den[t])) for t, q in terms.items() if t in key_x]
+            rest = c0 + sum((q * t for t, q in terms.items() if t not in key_x), spy.Integer(0))
             repl[at] = _trig_value(type(at), factors, 2 * cp, rest)
         xr = _shared(lambda e, repl=repl: e.xreplace(repl))
         f = [[xr(e) for e in fc] for fc in f]
         g = [[xr(e) for e in gc] for gc in g]
-        new_aux = aux[len(aux) - len(key_x):]
+        new_aux = aux[len(aux) - len(key_x) :]
         dmemo = {}
         for c in range(K):
             rhs_of = dict(zip(S, f[c]))
             for a in new_aux:
-                phi = a['phi']
+                phi = a["phi"]
                 inside = sorted(phi.free_symbols & states, key=str)
-                key = (a['X'], tuple(rhs_of[s] for s in inside))
+                key = (a["X"], tuple(rhs_of[s] for s in inside))
                 if key not in dmemo:
                     dphi = sum(spy.diff(phi, s) * rhs_of[s] for s in inside)
-                    dmemo[key] = spy.expand((1 + a['X'] ** 2) * dphi / 2)
+                    dmemo[key] = spy.expand((1 + a["X"] ** 2) * dphi / 2)
                 f[c].append(dmemo[key])
                 ic_sub = {s: ic[c][str(s)] for s in phi.free_symbols & states}
-                ic[c][str(a['X'])] = spy.tan(phi.xreplace(ic_sub) / 2)
+                ic[c][str(a["X"])] = spy.tan(phi.xreplace(ic_sub) / 2)
                 fss[c].append(spy.Integer(0))
-        S += [a['X'] for a in new_aux]
+        S += [a["X"] for a in new_aux]
 
     # an auxiliary state no observable depends on stays at 0 in that condition
     n_real = len(S) - len(aux)
@@ -851,14 +882,14 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
         while front:
             nxt = set()
             for a in aux:
-                if a['X'] in front and a['X'] not in used:
-                    used.add(a['X'])
-                    nxt |= free(f[c][idx[a['X']]])
+                if a["X"] in front and a["X"] not in used:
+                    used.add(a["X"])
+                    nxt |= free(f[c][idx[a["X"]]])
             front = nxt - used
         for a in aux:
-            if a['X'] not in used:
-                f[c][idx[a['X']]] = spy.Integer(0)
-                ic[c][str(a['X'])] = spy.Integer(0)
+            if a["X"] not in used:
+                f[c][idx[a["X"]]] = spy.Integer(0)
+                ic[c][str(a["X"])] = spy.Integer(0)
 
     # a later event on a state inside an argument resets the auxiliary state
     for c in range(K):
@@ -866,37 +897,41 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
         for e in ev[c]:
             out.append(e)
             for a in aux:
-                phi = a['phi']
-                vs = [s for s in phi.free_symbols if str(s) == str(e['var'])]
-                if not vs or f[c][idx[a['X']]] == 0:
+                phi = a["phi"]
+                vs = [s for s in phi.free_symbols if str(s) == str(e["var"])]
+                if not vs or f[c][idx[a["X"]]] == 0:
                     continue
                 # the half angle at the state after the event; values read the states before it
-                v = spy.sympify(e['value'])
-                after = {'replace': v, 'add': vs[0] + v, 'multiply': vs[0] * v}[e['method']]
-                new = {'var': str(a['X']), 'method': 'replace', 'value': spy.tan(phi.xreplace({vs[0]: after}) / 2)}
-                if e.get('t0'):
-                    new['t0'] = True
+                v = spy.sympify(e["value"])
+                after = {"replace": v, "add": vs[0] + v, "multiply": vs[0] * v}[e["method"]]
+                new = {"var": str(a["X"]), "method": "replace", "value": spy.tan(phi.xreplace({vs[0]: after}) / 2)}
+                if e.get("t0"):
+                    new["t0"] = True
                 out.append(new)
         ev[c] = out
     ev = _series_events(S, ic, ev, chain_of, spy.log)
-    if 'why' in ev:
+    if "why" in ev:
         return ev
     hit = _state_events(ev, {pre_state(s) for s in S}, lambda e: e.atoms(*_TRIG))
     if hit is not None:
-        return {'why': 'the event value %s for %s reads the state through %s, which is not '
-                'supported' % (hit[0]['value'], hit[0]['var'], hit[1])}
+        return {
+            "why": "the event value %s for %s reads the state through %s, which is not "
+            "supported" % (hit[0]["value"], hit[0]["var"], hit[1])
+        }
 
     # ---- leaf level: generic half-angle leaves V and the constant leaves
-    refs = ([('f', c, i) for c in range(K) for i in range(len(f[c]))] +
-            [('g', c, i) for c in range(K) for i in range(len(g[c]))] +
-            [('ic', c, k) for c in range(K) for k in ic[c]] +
-            [('ev', c, i) for c in range(K) for i in range(len(ev[c]))] +
-            [('tm', c, None) for c in range(K) if tm[c] is not None] +
-            # a start at rest: the resting model in the same leaves
-            ([('fss', c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else []))
-    store = {'f': f, 'g': g, 'ic': ic, 'fss': fss}
-    vals = [ev[c][i]['value'] if kind == 'ev' else tm[c] if kind == 'tm'
-            else store[kind][c][i] for kind, c, i in refs]
+    refs = (
+        [("f", c, i) for c in range(K) for i in range(len(f[c]))]
+        + [("g", c, i) for c in range(K) for i in range(len(g[c]))]
+        + [("ic", c, k) for c in range(K) for k in ic[c]]
+        + [("ev", c, i) for c in range(K) for i in range(len(ev[c]))]
+        + [("tm", c, None) for c in range(K) if tm[c] is not None]
+        +
+        # a start at rest: the resting model in the same leaves
+        ([("fss", c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else [])
+    )
+    store = {"f": f, "g": g, "ic": ic, "fss": fss}
+    vals = [ev[c][i]["value"] if kind == "ev" else tm[c] if kind == "tm" else store[kind][c][i] for kind, c, i in refs]
     # rational offsets c0 as powers of e^(i/M0), M0 over all arguments
     atoms, M0 = [], 1
     for e in _once(vals):
@@ -904,103 +939,128 @@ def _apply_trig_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
             dec = _trig_terms(type(at), at.args[0])
             if dec is not None:
                 M0 = spy.ilcm(M0, dec[0].q)
-    tc = ctx.fresh('_tc_', positive=True)
+    tc = ctx.fresh("_tc_", positive=True)
     while True:
         found = _trig_find(vals, lambda a: True, unsupported)
-        if 'why' in found:
+        if "why" in found:
             return found
         if not found:
             break
         den = _trig_den(found, lambda t: True)
         key_v = {}
         for t, D in sorted(den.items(), key=lambda kv: str(kv[0])):
-            V = ctx.fresh('_tw%d_' % (len(atoms) + 1))
+            V = ctx.fresh("_tw%d_" % (len(atoms) + 1))
             key_v[t] = V
-            atoms.append({'V': V, 'phi': t / D})
+            atoms.append({"V": V, "phi": t / D})
         repl = {}
         for at, (c0, cp, terms) in found.items():
             factors = [(key_v[t], int(q * den[t])) for t, q in terms.items()]
             if c0 != 0:
                 if not (c0 * M0).is_Integer:
-                    return {'why': unsupported % at}
+                    return {"why": unsupported % at}
                 factors.append((tc, int(c0 * M0)))
             repl[at] = _trig_value(type(at), factors, 2 * cp, spy.Integer(0))
         xr = _shared(lambda e, repl=repl: e.xreplace(repl))
         vals = [xr(e) for e in vals]
-    if not _terms_independent([(spy.E, a['phi'].xreplace({spy.pi: spy.Symbol('_pi_')}))
-                               for a in atoms]):
-        return {'why': 'arguments of trigonometric functions that are linearly '
-                'dependent over the rationals are not supported'}
+    if not _terms_independent([(spy.E, a["phi"].xreplace({spy.pi: spy.Symbol("_pi_")})) for a in atoms]):
+        return {
+            "why": "arguments of trigonometric functions that are linearly "
+            "dependent over the rationals are not supported"
+        }
 
     xr = _shared(lambda e: e.xreplace({spy.pi: pis}))
     vals = [xr(e) for e in vals]
     for a in atoms:
-        a['phi'] = a['phi'].xreplace({spy.pi: pis})
+        a["phi"] = a["phi"].xreplace({spy.pi: pis})
     for (kind, c, i), v in zip(refs, vals):
-        if kind == 'ev':
-            ev[c][i]['value'] = v
-        elif kind == 'tm':
+        if kind == "ev":
+            ev[c][i]["value"] = v
+        elif kind == "tm":
             tm[c] = v
         else:
             store[kind][c][i] = v
 
     used = set()
-    for v in _once(vals + [a['phi'] for a in atoms] + [e for fc in fss for e in fc]):
+    for v in _once(vals + [a["phi"] for a in atoms] + [e for fc in fss for e in fc]):
         used |= free(v)
     consts = {pis, tc} & used
     rel = []
     for a in atoms:
-        for z in sorted(a['phi'].free_symbols - consts, key=str):
-            rel.append((str(a['V']), str(z),
-                        spy.together((1 + a['V'] ** 2) * spy.diff(a['phi'], z) / 2)))
-    back = {str(a['V']): str(spy.tan(a['phi'].xreplace({pis: spy.pi}) / 2))
-            for a in atoms}
+        for z in sorted(a["phi"].free_symbols - consts, key=str):
+            rel.append((str(a["V"]), str(z), spy.together((1 + a["V"] ** 2) * spy.diff(a["phi"], z) / 2)))
+    back = {str(a["V"]): str(spy.tan(a["phi"].xreplace({pis: spy.pi}) / 2)) for a in atoms}
     if pis in consts:
-        back[str(pis)] = 'pi'
+        back[str(pis)] = "pi"
     if tc in consts:
         back[str(tc)] = str(spy.tan(spy.Rational(1, 2 * M0)))
     per_cond = [(f[c], g[c], ic[c], fss[c]) for c in range(K)]
-    return {'S': S, 'per_cond': per_cond, 'ev_per': ev, 'tm_per': tm, 'rel': rel,
-            'consts': sorted(str(s) for s in consts),
-            'atoms': [str(a['V']) for a in atoms], 'back': back,
-            'n_aux': len(aux), 'codim': len(aux) + len(atoms)}
+    return {
+        "S": S,
+        "per_cond": per_cond,
+        "ev_per": ev,
+        "tm_per": tm,
+        "rel": rel,
+        "consts": sorted(str(s) for s in consts),
+        "atoms": [str(a["V"]) for a in atoms],
+        "back": back,
+        "n_aux": len(aux),
+        "codim": len(aux) + len(atoms),
+    }
 
 
 def _apply_const_recast(S, per_cond, ev_per, tm_per, taken):
     """pi and Euler's number as fixed generic leaves; arguments and return as _apply_exp_recast."""
     ctx = _ExpCtx(taken)
-    leaves = {spy.pi: ctx.fresh('_pi_', positive=True), spy.E: ctx.ec}
+    leaves = {spy.pi: ctx.fresh("_pi_", positive=True), spy.E: ctx.ec}
 
     def sub(e):
         return spy.sympify(e).xreplace(leaves)
-    per_cond = [([sub(e) for e in f], [sub(e) for e in g], {k: sub(v) for k, v in ic.items()},
-                 [sub(e) for e in fss]) for f, g, ic, fss in per_cond]
-    ev = [[dict(e, value=sub(e['value'])) for e in evs] for evs in ev_per]
+
+    per_cond = [
+        ([sub(e) for e in f], [sub(e) for e in g], {k: sub(v) for k, v in ic.items()}, [sub(e) for e in fss])
+        for f, g, ic, fss in per_cond
+    ]
+    ev = [[dict(e, value=sub(e["value"])) for e in evs] for evs in ev_per]
     tm = [None if t is None else sub(t) for t in tm_per]
     exprs = [e for p in per_cond for e in list(p[0]) + list(p[1]) + list(p[2].values()) + list(p[3])]
-    exprs += [e['value'] for evs in ev for e in evs] + [t for t in tm if t is not None]
+    exprs += [e["value"] for evs in ev for e in evs] + [t for t in tm if t is not None]
     used = set().union(*[e.free_symbols for e in exprs]) & set(leaves.values())
-    back = {str(v): 'pi' if k == spy.pi else 'exp(1)' for k, v in leaves.items() if v in used}
-    return {'S': list(S), 'per_cond': per_cond, 'ev_per': ev, 'tm_per': tm, 'rel': [],
-            'consts': sorted(back), 'atoms': [], 'back': back, 'n_aux': 0, 'codim': 0}
+    back = {str(v): "pi" if k == spy.pi else "exp(1)" for k, v in leaves.items() if v in used}
+    return {
+        "S": list(S),
+        "per_cond": per_cond,
+        "ev_per": ev,
+        "tm_per": tm,
+        "rel": [],
+        "consts": sorted(back),
+        "atoms": [],
+        "back": back,
+        "n_aux": 0,
+        "codim": 0,
+    }
 
 
 def _merge_recast(a, b):
     """Two recast results as one: b applied after a."""
     if a is None or b is None:
         return b if a is None else a
-    back = dict(a['back'])
-    back.update(b['back'])
-    return dict(b, rel=a['rel'] + b['rel'], atoms=a['atoms'] + b['atoms'], back=back,
-                consts=sorted(set(a['consts']) | set(b['consts'])),
-                n_aux=a['n_aux'] + b['n_aux'], codim=a['codim'] + b['codim'])
+    back = dict(a["back"])
+    back.update(b["back"])
+    return dict(
+        b,
+        rel=a["rel"] + b["rel"],
+        atoms=a["atoms"] + b["atoms"],
+        back=back,
+        consts=sorted(set(a["consts"]) | set(b["consts"])),
+        n_aux=a["n_aux"] + b["n_aux"],
+        codim=a["codim"] + b["codim"],
+    )
 
 
 def _tidy_logs(e):
     """Common factors pulled out and each numeric sum of logs as one log."""
     e = spy.factor_terms(spy.cancel(e))
-    return e.replace(lambda x: x.is_Add and x.is_number and x.has(spy.log),
-                     lambda x: spy.logcombine(x, force=True))
+    return e.replace(lambda x: x.is_Add and x.is_number and x.has(spy.log), lambda x: spy.logcombine(x, force=True))
 
 
 def drop_monomial_content(vector, skip=None):
@@ -1028,22 +1088,29 @@ def drop_monomial_content(vector, skip=None):
                 b, x = f.as_base_exp()
                 if b.is_Symbol and x.is_Integer:
                     pw[b] = pw.get(b, 0) + sgn * int(x)
-        common = pw if common is None else {
-            b: (min(x, common[b]) if x > 0 else max(x, common[b]))
-            for b, x in pw.items() if b in common and (x > 0) == (common[b] > 0)}
+        common = (
+            pw
+            if common is None
+            else {
+                b: (min(x, common[b]) if x > 0 else max(x, common[b]))
+                for b, x in pw.items()
+                if b in common and (x > 0) == (common[b] > 0)
+            }
+        )
     m = spy.Integer(1)
     for b, x in (common or {}).items():
-        m *= b ** x
+        m *= b**x
     return {k: str(spy.cancel(e / m)) for (k, _), e in zip(items, es)}
 
 
 def exp_backsub_expr(expr, names, values):
     """A component in the exponential leaves back in the model symbols."""
+
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
+
     names, values = as_list(names), as_list(values)
-    _, parse = _make_local_parse([str(expr)] + [str(v) for v in values] +
-                                     [str(n) for n in names])
+    _, parse = _make_local_parse([str(expr)] + [str(v) for v in values] + [str(n) for n in names])
     e = parse(str(expr))
     sub = {parse(str(n)): parse(str(v)) for n, v in zip(names, values)}
     for _ in range(len(sub) + 1):
@@ -1063,7 +1130,7 @@ def trig_full_angle(vector, skip=None):
     halves = sorted(set().union(*[e.atoms(spy.tan) for e in es]), key=str)
     if not halves:
         return dict(items)
-    Vs = [spy.Dummy('V') for _ in halves]
+    Vs = [spy.Dummy("V") for _ in halves]
     es = [spy.cancel(e.xreplace(dict(zip(halves, Vs)))) for e in es]
     keep = [k not in skip for k, _ in items]
     L = spy.Integer(1)
@@ -1080,9 +1147,8 @@ def trig_full_angle(vector, skip=None):
     # sin(u) = 2V/(1 + V^2), cos(u) = (1 - V^2)/(1 + V^2), 1 + V^2 = 2/(1 + cos(u))
     rels, sub = [], {}
     for h, V in zip(halves, Vs):
-        deg = max((spy.degree(e, V) for e, kp in zip(es, keep) if kp and e != 0),
-                  default=0)
-        es = [e / (1 + V ** 2) ** ((deg + 1) // 2) for e in es]
+        deg = max((spy.degree(e, V) for e, kp in zip(es, keep) if kp and e != 0), default=0)
+        es = [e / (1 + V**2) ** ((deg + 1) // 2) for e in es]
         sn, cs = spy.sin(2 * h.args[0]), spy.cos(2 * h.args[0])
         sub[V] = sn / (1 + cs)
         rels.append((sn, cs))
@@ -1091,8 +1157,8 @@ def trig_full_angle(vector, skip=None):
         v = spy.cancel(spy.together(e.xreplace(sub)))
         num, den = spy.fraction(v)
         for sn, cs in rels:
-            num = spy.expand(num).subs(sn ** 2, 1 - cs ** 2)
-            den = spy.expand(den).subs(sn ** 2, 1 - cs ** 2)
+            num = spy.expand(num).subs(sn**2, 1 - cs**2)
+            den = spy.expand(den).subs(sn**2, 1 - cs**2)
         v = spy.factor(spy.cancel(num / den))
         if spy.count_ops(v) < 200:
             v = spy.factor(spy.trigsimp(v))
@@ -1108,8 +1174,7 @@ _FUNCS = (spy.log, spy.atan, spy.atanh, spy.asin, spy.acos, spy.asinh, spy.acosh
 
 
 def _func_pow(a):
-    return a.is_Pow and not a.base.is_Symbol and not a.base.is_number and \
-        a.exp.is_Rational and not a.exp.is_Integer
+    return a.is_Pow and not a.base.is_Symbol and not a.base.is_number and a.exp.is_Rational and not a.exp.is_Integer
 
 
 def _func_atoms(e):
@@ -1127,23 +1192,24 @@ def _func_derivative(a, u):
     if t is spy.log:
         return 1 / u
     if t is spy.atan:
-        return 1 / (1 + u ** 2)
+        return 1 / (1 + u**2)
     if t is spy.atanh:
-        return 1 / (1 - u ** 2)
+        return 1 / (1 - u**2)
     if t is spy.asin:
-        return 1 / spy.sqrt(1 - u ** 2)
+        return 1 / spy.sqrt(1 - u**2)
     if t is spy.acos:
-        return -1 / spy.sqrt(1 - u ** 2)
+        return -1 / spy.sqrt(1 - u**2)
     if t is spy.asinh:
-        return 1 / spy.sqrt(1 + u ** 2)
+        return 1 / spy.sqrt(1 + u**2)
     if t is spy.acosh:
-        return 1 / spy.sqrt(u ** 2 - 1)
+        return 1 / spy.sqrt(u**2 - 1)
     return None
 
 
 def _engine_holds(constants=(), degrees=()):
     """True if every prime holds the roots and denominators, else raises NeedPrimesError."""
     from ..gfp import NeedPrimesError, all_primes, holds_roots
+
     if not all(holds_roots(constants, q, degrees) for q in all_primes()):
         raise NeedPrimesError(constants, degrees)
     return True
@@ -1182,10 +1248,10 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
     g = [[spy.sympify(e) for e in p[1]] for p in per_cond]
     ic = [{k: spy.sympify(v) for k, v in p[2].items()} for p in per_cond]
     fss = [list(p[3]) for p in per_cond]
-    ev = [[dict(e, value=spy.sympify(e['value'])) for e in evs] for evs in ev_per]
+    ev = [[dict(e, value=spy.sympify(e["value"])) for e in evs] for evs in ev_per]
     tm = [None if t is None else spy.sympify(t) for t in tm_per]
     ev = _series_events(S, ic, ev, chain_of, spy.log)
-    if 'why' in ev:
+    if "why" in ev:
         return ev
 
     # ---- dynamics: auxiliary states, innermost function first
@@ -1199,18 +1265,17 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
                     u = _func_arg(a)
                     if a in found or not (u.free_symbols & states):
                         continue
-                    if any(_func_atoms(x) and (_func_arg(x).free_symbols & states)
-                           for x in _func_atoms(u)):
+                    if any(_func_atoms(x) and (_func_arg(x).free_symbols & states) for x in _func_atoms(u)):
                         continue
                     found.append(a)
         if not found:
             break
         found.sort(key=spy.default_sort_key)
-        key = {a: ctx.fresh('_fx%d_' % (len(aux) + i + 1)) for i, a in enumerate(found)}
+        key = {a: ctx.fresh("_fx%d_" % (len(aux) + i + 1)) for i, a in enumerate(found)}
         f = [[e.xreplace(key) for e in fc] for fc in f]
         g = [[e.xreplace(key) for e in gc] for gc in g]
         for a in found:
-            aux.append({'X': key[a], 'atom': a})
+            aux.append({"X": key[a], "atom": a})
         for c in range(K):
             rhs_of = dict(zip(S, f[c]))
             for a in found:
@@ -1224,48 +1289,59 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
                 if isinstance(a, (spy.Pow, spy.log)) and u0.is_number and u0.is_positive is not True:
                     # the auxiliary state of a power or logarithm divides by its argument, which must not
                     # start at zero or below
-                    return {'why': 'the argument of %s starts at %s, but a logarithm, fractional power or '
-                            'base of a free exponent must be positive; give that initial value as a positive '
-                            'parameter' % (str(a).replace('**', '^'), u0)}
+                    return {
+                        "why": "the argument of %s starts at %s, but a logarithm, fractional power or "
+                        "base of a free exponent must be positive; give that initial value as a positive "
+                        "parameter" % (str(a).replace("**", "^"), u0)
+                    }
                 ic[c][str(W)] = a.xreplace(ic_sub)
                 fss[c].append(spy.Integer(0))
         for c in range(K):
             for e in ev[c]:
-                if any(str(e['var']) in {str(s) for s in _func_arg(a).free_symbols} for a in found):
-                    return {'why': 'an event on %s, which enters the argument of %s, is not '
-                            'supported' % (e['var'], next(a for a in found if str(e['var']) in
-                                                          {str(s) for s in _func_arg(a).free_symbols}))}
+                if any(str(e["var"]) in {str(s) for s in _func_arg(a).free_symbols} for a in found):
+                    return {
+                        "why": "an event on %s, which enters the argument of %s, is not "
+                        "supported"
+                        % (
+                            e["var"],
+                            next(a for a in found if str(e["var"]) in {str(s) for s in _func_arg(a).free_symbols}),
+                        )
+                    }
         S += [key[a] for a in found]
     hit = _state_events(ev, {pre_state(s) for s in S}, _func_atoms)
     if hit is not None:
-        return {'why': 'the event value %s for %s reads the state through %s, which is not '
-                'supported' % (hit[0]['value'], hit[0]['var'], hit[1])}
+        return {
+            "why": "the event value %s for %s reads the state through %s, which is not "
+            "supported" % (hit[0]["value"], hit[0]["var"], hit[1])
+        }
 
     # ---- leaf level: transcendental functions of leaves as generic leaves
-    refs = ([('f', c, i) for c in range(K) for i in range(len(f[c]))] +
-            [('g', c, i) for c in range(K) for i in range(len(g[c]))] +
-            [('ic', c, k) for c in range(K) for k in ic[c]] +
-            [('ev', c, i) for c in range(K) for i in range(len(ev[c]))] +
-            [('tm', c, None) for c in range(K) if tm[c] is not None] +
-            # a start at rest: the resting model in the same leaves
-            ([('fss', c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else []))
-    store = {'f': f, 'g': g, 'ic': ic, 'fss': fss}
-    vals = [ev[c][i]['value'] if kind == 'ev' else tm[c] if kind == 'tm'
-            else store[kind][c][i] for kind, c, i in refs]
+    refs = (
+        [("f", c, i) for c in range(K) for i in range(len(f[c]))]
+        + [("g", c, i) for c in range(K) for i in range(len(g[c]))]
+        + [("ic", c, k) for c in range(K) for k in ic[c]]
+        + [("ev", c, i) for c in range(K) for i in range(len(ev[c]))]
+        + [("tm", c, None) for c in range(K) if tm[c] is not None]
+        +
+        # a start at rest: the resting model in the same leaves
+        ([("fss", c, i) for c in range(K) for i in range(len(fss[c]))] if at_rest else [])
+    )
+    store = {"f": f, "g": g, "ic": ic, "fss": fss}
+    vals = [ev[c][i]["value"] if kind == "ev" else tm[c] if kind == "tm" else store[kind][c][i] for kind, c, i in refs]
     atoms, consts, back = [], [], {}
     leaf_of = {}
 
     def log_leaf(p):
         # one generic leaf per irreducible factor: logs of distinct irreducibles are independent
         if p not in leaf_of:
-            V = ctx.fresh('_fl%d_' % (len(atoms) + 1))
+            V = ctx.fresh("_fl%d_" % (len(atoms) + 1))
             leaf_of[p] = V
-            atoms.append({'V': V, 'phi': p, 'kind': 'log', 'atom': spy.log(p), 'dphi': 1 / p})
+            atoms.append({"V": V, "phi": p, "kind": "log", "atom": spy.log(p), "dphi": 1 / p})
         return leaf_of[p]
 
     def const_leaf(a):
         if a not in leaf_of:
-            C = ctx.fresh('_fc%d_' % (len(consts) + 1), positive=bool(a.is_positive))
+            C = ctx.fresh("_fc%d_" % (len(consts) + 1), positive=bool(a.is_positive))
             leaf_of[a] = C
             consts.append(C)
             back[str(C)] = str(a)
@@ -1301,12 +1377,12 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
             return None if lo is None or hi is None else (lo - hi) / 2
         if t in (spy.atan, spy.asin, spy.acos, spy.asinh, spy.acosh):
             if a not in leaf_of:
-                V = ctx.fresh('_fa%d_' % (len(atoms) + 1))
+                V = ctx.fresh("_fa%d_" % (len(atoms) + 1))
                 leaf_of[a] = V
-                atoms.append({'V': V, 'phi': u, 'kind': 'inv', 'atom': a,
-                              'dphi': _func_derivative(a, u)})
+                atoms.append({"V": V, "phi": u, "kind": "inv", "atom": a, "dphi": _func_derivative(a, u)})
             return leaf_of[a]
         return None
+
     while True:
         found = {}
         for e in vals:
@@ -1321,25 +1397,28 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
         vals = [e.xreplace(found) for e in vals]
     # a leaf that cancels from every value is no coordinate
     used = set().union(*(spy.sympify(e).free_symbols for e in vals))
-    atoms = [a for a in atoms if a['V'] in used]
+    atoms = [a for a in atoms if a["V"] in used]
     # pi and e left by an evaluated function value are transcendental constants
-    vals = [e.xreplace({c: const_leaf(c) for c in e.atoms(spy.NumberSymbol) if c in (spy.pi, spy.E)})
-            for e in vals]
+    vals = [e.xreplace({c: const_leaf(c) for c in e.atoms(spy.NumberSymbol) if c in (spy.pi, spy.E)}) for e in vals]
     for a in aux:
         for (kind, _c, k), v in zip(refs, vals):
-            if kind == 'ic' and k == str(a['X']) and not _is_sqrt_rational(v):
-                return {'why': 'the term %s starts at %s, which the finite-field engine '
-                        'cannot evaluate exactly; use engine="symbolic"'
-                        % (str(a['atom']).replace('**', '^'), str(v).replace('**', '^'))}
-    inv_args = [a['phi'] for a in atoms if a['kind'] == 'inv']
+            if kind == "ic" and k == str(a["X"]) and not _is_sqrt_rational(v):
+                return {
+                    "why": "the term %s starts at %s, which the finite-field engine "
+                    'cannot evaluate exactly; use engine="symbolic"'
+                    % (str(a["atom"]).replace("**", "^"), str(v).replace("**", "^"))
+                }
+    inv_args = [a["phi"] for a in atoms if a["kind"] == "inv"]
     for i, u in enumerate(inv_args):
-        if any(u.free_symbols & v.free_symbols for v in inv_args[i + 1:]):
-            return {'why': 'inverse trigonometric or hyperbolic functions of leaves that share '
-                    'a coordinate (%s) are not supported' % u}
+        if any(u.free_symbols & v.free_symbols for v in inv_args[i + 1 :]):
+            return {
+                "why": "inverse trigonometric or hyperbolic functions of leaves that share "
+                "a coordinate (%s) are not supported" % u
+            }
     for (kind, c, i), v in zip(refs, vals):
-        if kind == 'ev':
-            ev[c][i]['value'] = v
-        elif kind == 'tm':
+        if kind == "ev":
+            ev[c][i]["value"] = v
+        elif kind == "tm":
             tm[c] = v
         else:
             store[kind][c][i] = v
@@ -1347,12 +1426,20 @@ def _apply_func_recast(S, per_cond, ev_per, tm_per, taken, chain_of=None, at_res
     cset = set(consts)
     rel = []
     for a in atoms:
-        u = a['phi']
+        u = a["phi"]
         for z in sorted(u.free_symbols - cset, key=str):
-            rel.append((str(a['V']), str(z), spy.together(a['dphi'] * spy.diff(u, z))))
-        back[str(a['V'])] = str(a['atom'])
+            rel.append((str(a["V"]), str(z), spy.together(a["dphi"] * spy.diff(u, z))))
+        back[str(a["V"])] = str(a["atom"])
     per_cond = [(f[c], g[c], ic[c], fss[c]) for c in range(K)]
-    return {'S': S, 'per_cond': per_cond, 'ev_per': ev, 'tm_per': tm, 'rel': rel,
-            'consts': sorted(str(s) for s in consts),
-            'atoms': [str(a['V']) for a in atoms], 'back': back,
-            'n_aux': len(aux), 'codim': len(aux) + len(atoms)}
+    return {
+        "S": S,
+        "per_cond": per_cond,
+        "ev_per": ev,
+        "tm_per": tm,
+        "rel": rel,
+        "consts": sorted(str(s) for s in consts),
+        "atoms": [str(a["V"]) for a in atoms],
+        "back": back,
+        "n_aux": len(aux),
+        "codim": len(aux) + len(atoms),
+    }

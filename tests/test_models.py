@@ -52,17 +52,27 @@ def plain(spec):
     so that a lifted generator can be checked on the equations directly."""
     tr = spec.get("trafo")
     # a coordinate named like a state is the initial value of that state, which the lifted field moves apart
-    return (spec.get("positive") in (None, True) and isinstance(tr, dict) and set(spec["f"]) <= set(tr)
-            and not spec.get("conditions") and not spec.get("events") and not spec.get("forcings")
-            and not spec.get("equilibrate") and not spec.get("reduceCQ") and isinstance(spec.get("g"), dict)
-            and "piecewise" not in str(spec.get("f")))
+    return (
+        spec.get("positive") in (None, True)
+        and isinstance(tr, dict)
+        and set(spec["f"]) <= set(tr)
+        and not spec.get("conditions")
+        and not spec.get("events")
+        and not spec.get("forcings")
+        and not spec.get("equilibrate")
+        and not spec.get("reduceCQ")
+        and isinstance(spec.get("g"), dict)
+        and "piecewise" not in str(spec.get("f"))
+    )
 
 
 def lifted_identities(spec, d):
     """The residuals of a lifted generator X: X(f_i) - sum_j f_j d(xi_i)/d(x_j), X(g_k), and
     xi_x - X(x0) at the initial values."""
+
     def sym(k):
         return spy.Symbol(k, positive=True)
+
     f = {sym(k): parse(v, True) for k, v in spec["f"].items()}
     g = [parse(v, True) for v in spec["g"].values()]
     tr = {sym(k): parse(v, True) for k, v in (spec.get("trafo") or {}).items()}
@@ -73,6 +83,7 @@ def lifted_identities(spec, d):
 
     def X(e):
         return sum(c * spy.diff(e, k) for k, c in xi.items())
+
     out = [X(f[x]) - sum(f[y] * spy.diff(xi.get(x, 0), y) for y in f) for x in f]
     out += [X(e) for e in g]
     x0 = {x: tr[x] for x in f}
@@ -114,8 +125,9 @@ def vanishes(e):
             if x in e.free_symbols:
                 u = spy.Symbol(f"{x}_root", positive=True)
                 e = e.xreplace({x: (u**2 - c) / a})
-        e = e.replace(lambda x: x.is_Pow and x.exp == spy.Rational(1, 2),
-                      lambda x: spy.sqrt(spy.factor(spy.together(x.base))))
+        e = e.replace(
+            lambda x: x.is_Pow and x.exp == spy.Rational(1, 2), lambda x: spy.sqrt(spy.factor(spy.together(x.base)))
+        )
     return False
 
 
@@ -129,11 +141,18 @@ def test_reduction(path):
             res = symmetry_reduction(obj, **kw_of(g.get("args")))
     except USER_ERRORS:
         return
-    gens = [{spy.Symbol(k): parse(v) for k, v in d["generator"].items()}
-            for d in obj["symmetries"] if d.get("generator") and d["type"] == "general"]
+    gens = [
+        {spy.Symbol(k): parse(v) for k, v in d["generator"].items()}
+        for d in obj["symmetries"]
+        if d.get("generator") and d["type"] == "general"
+    ]
     # the curved blocks are reduced after the scalings are pinned
-    scal = {spy.Symbol(k): parse(v) for b in res["blocks"] if b["type"] == "scaling" and b["status"] == "reduced"
-            for k, v in (b.get("pins") or {}).items()}
+    scal = {
+        spy.Symbol(k): parse(v)
+        for b in res["blocks"]
+        if b["type"] == "scaling" and b["status"] == "reduced"
+        for k, v in (b.get("pins") or {}).items()
+    }
     gens = [{k: c.xreplace(scal) for k, c in xi.items() if k not in scal} for xi in gens]
     for b in res["blocks"]:
         assert b["status"] in ("reduced", "fixed", "invariant_only", "unresolved", "skipped")
@@ -149,8 +168,13 @@ def test_reduction(path):
         real = {q for q, dom in (b.get("solved_domain") or {}).items() if dom == "real"}
 
         def own(e):
-            return e.xreplace({x: spy.Symbol(str(x), real=True) if str(x) in real else
-                               spy.Symbol(str(x), positive=True) for x in e.free_symbols})
+            return e.xreplace(
+                {
+                    x: spy.Symbol(str(x), real=True) if str(x) in real else spy.Symbol(str(x), positive=True)
+                    for x in e.free_symbols
+                }
+            )
+
         pins = {own(spy.Symbol(k)): own(parse(v)) for k, v in (b.get("pins") or {}).items()}
         for q, inv in (b.get("new_parameters") or {}).items():
             back = own(parse(inv)).xreplace(pins)

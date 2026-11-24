@@ -62,16 +62,18 @@ def _fiber_terms():
 
 
 # why a call of msolve gave no count, by kind, since the last reset
-_FAILURES = set()
+_FAILURES: set = set()
 # the work caps that stopped a proof of a map since the last reset, as reasons
-_CAPPED = set()
-_FAILED = {"memory": "msolve ran out of memory ({gib:g} GiB of address space per call)",
-           "size": "a system past the caps of msolve ({unknowns} unknowns, {terms:,} terms)",
-           "work": "msolve reached the cap msolve_entries of {entries:,} nonzero entries of the matrices of F4",
-           "dimension": "the equations of the fiber have a component of positive dimension up to order {order}, which "
-                        "the denominators and coordinates do not exclude",
-           "quotient": "the quotient of a block has more than {cap} standard monomials",
-           "error": "msolve stopped with an error"}
+_CAPPED: set = set()
+_FAILED = {
+    "memory": "msolve ran out of memory ({gib:g} GiB of address space per call)",
+    "size": "a system past the caps of msolve ({unknowns} unknowns, {terms:,} terms)",
+    "work": "msolve reached the cap msolve_entries of {entries:,} nonzero entries of the matrices of F4",
+    "dimension": "the equations of the fiber have a component of positive dimension up to order {order}, which "
+    "the denominators and coordinates do not exclude",
+    "quotient": "the quotient of a block has more than {cap} standard monomials",
+    "error": "msolve stopped with an error",
+}
 _NO_FINITE_COUNT = "msolve found no finite count: " + _FAILED["dimension"]
 
 
@@ -92,9 +94,18 @@ def no_count_reason(order):
         return _NO_FINITE_COUNT.format(order=order)
     gib = work.MSOLVE_MEMORY / (1 << 30)
     cap = work.cap
-    why = [_FAILED[k].format(order=order, gib=gib, cap=5000, unknowns=cap("msolve_unknowns"),
-                             terms=cap("msolve_terms"), entries=int(cap("msolve_entries")))
-           for k in ("memory", "work", "size", "dimension", "quotient", "error") if k in _FAILURES]
+    why = [
+        _FAILED[k].format(
+            order=order,
+            gib=gib,
+            cap=5000,
+            unknowns=cap("msolve_unknowns"),
+            terms=cap("msolve_terms"),
+            entries=int(cap("msolve_entries")),
+        )
+        for k in ("memory", "work", "size", "dimension", "quotient", "error")
+        if k in _FAILURES
+    ]
     return f"msolve found no finite count up to order {order}: " + "; ".join(why)
 
 
@@ -105,6 +116,7 @@ class CapError(Exception):
 
 # ---- the equations of the fiber ------------------------------------------------------------
 
+
 class FiberTooLargeError(Exception):
     """The equations of the fiber have more than _FIBER_TERMS terms, or more than _FIBER_UNKNOWNS unknowns (the
     arguments n, "unknowns"): no count is taken."""
@@ -112,6 +124,7 @@ class FiberTooLargeError(Exception):
 
 class _Dual:
     """A value and the gradient over the coordinates, modulo p."""
+
     __slots__ = ("v", "d", "p")
 
     def __init__(self, v, d, p):
@@ -165,7 +178,7 @@ class _Dual:
     def __eq__(self, x):
         return self.v == self._of(x).v
 
-    __hash__ = None
+    __hash__ = None  # type: ignore[assignment]
 
 
 def _ser_mul(a, b, n, zero, limit=None):
@@ -199,7 +212,7 @@ def _mul_add(acc, x, y, room):
     else:
         items, step = list(x.items()), max(1, room // max(1, len(y)))
         for s in range(0, len(items), step):
-            acc = acc + x.ring.dtype(items[s:s + step]) * y
+            acc = acc + x.ring.dtype(items[s : s + step]) * y
             if _terms(acc) > room:
                 raise FiberTooLargeError(room)
     if _terms(acc) > room:
@@ -228,6 +241,7 @@ def _ser_poly(P, xs, params, n, one, zero, limit=None):
         if (i, e) not in cache:
             cache[(i, e)] = check(xs[i] if e == 1 else _ser_mul(power(i, e - 1), xs[i], n, zero, limit))
         return cache[(i, e)]
+
     ns = len(xs)
     for m, c in P.items():
         coef = one * c
@@ -245,6 +259,7 @@ def _ser_poly(P, xs, params, n, one, zero, limit=None):
 class _Eps:
     """A power series in the formal gap variable eps, truncated after a fixed degree, over the coefficients of any
     ring: the gaps between events are eps times the given gaps, as in the local analysis."""
+
     __slots__ = ("c",)
 
     def __init__(self, c):
@@ -271,8 +286,9 @@ class _Eps:
     def __mul__(self, x):
         if not isinstance(x, _Eps):
             return _Eps([a * x for a in self.c])
-        return _Eps([sum((self.c[i] * x.c[k - i] for i in range(1, k + 1)), self.c[0] * x.c[k])
-                     for k in range(len(self.c))])
+        return _Eps(
+            [sum((self.c[i] * x.c[k - i] for i in range(1, k + 1)), self.c[0] * x.c[k]) for k in range(len(self.c))]
+        )
 
     __rmul__ = __mul__
 
@@ -376,8 +392,12 @@ class Series:
         segs = [seg for part in parts for seg in part["segments"]]
         texts = []
         for seg in segs:
-            texts += list(seg["f"].values()) + list(seg["g"].values()) + \
-                [v for v in (seg.get("ic") or {}).values() if v is not None] + [seg.get("on") or "0"]
+            texts += (
+                list(seg["f"].values())
+                + list(seg["g"].values())
+                + [v for v in (seg.get("ic") or {}).values() if v is not None]
+                + [seg.get("on") or "0"]
+            )
             texts += [e["value"] for e in seg.get("events") or []] + [seg.get("t") or "0"]
         allsyms = set().union(*[model_sympify(str(e)).free_symbols for e in texts])
         states = {spy.Symbol(x) for seg in segs for x in seg["f"]}
@@ -390,8 +410,11 @@ class Series:
         self.parts = [self._part(part, rng) for part in parts]
         self.labels = [lab for part in self.parts for seg in part["segs"] for lab in seg["labels"]]
         # the rows of the copies with a free start: their values at sigma(theta) need the image of the start
-        self.free_rows = {k for k, (part, seg, _) in enumerate((p, s_, y) for p in self.parts for s_ in p["segs"]
-                                                               for y in s_["labels"]) if part["segs"][0].get("free")}
+        self.free_rows = {
+            k
+            for k, (part, seg, _) in enumerate((p, s_, y) for p in self.parts for s_ in p["segs"] for y in s_["labels"])
+            if part["segs"][0].get("free")
+        }
         self.has_events = any(len(part["segs"]) > 1 for part in self.parts)
         # the jets of unknown inputs: free starts that are no coordinates, with values drawn or set (uinputs.py)
         self.inputs = [(pi, i) for pi, part in enumerate(self.parts) for i in part["segs"][0]["inputs"]]
@@ -423,8 +446,10 @@ class Series:
         sp, seg = part["spow"], part["segs"][0]
         v, vy = startpow.valuations(seg["F"], seg["G"], len(part["st"]), sp["N"], part["known"])
         if v[sp["base"]] is not None and v[sp["base"]] < sp["k"]:
-            raise ValueError(f"discrete(): {sp['state']}^{sp['alpha']} enters the dynamics of {sp['state']} below "
-                             f"the order {sp['k']} of {sp['state']}")
+            raise ValueError(
+                f"discrete(): {sp['state']}^{sp['alpha']} enters the dynamics of {sp['state']} below "
+                f"the order {sp['k']} of {sp['state']}"
+            )
         sp["v"], sp["vy"] = v, vy
         a = self.cs[sp["alpha_index"]]
         if not is_positive(a, self.positive):
@@ -440,12 +465,14 @@ class Series:
         def frac(e):
             num, den = spy.fraction(spy.cancel(spy.together(model_sympify(str(e)).xreplace(self.known))))
             return _dict(num, gens), _dict(den, gens)
+
         def poly(text):
             e = spy.cancel(model_sympify(str(text)).xreplace(self.known))
             num, den = spy.fraction(e)
             if not den.is_number or (num.free_symbols - set(cs)):
                 raise ValueError(f"discrete() needs event times polynomial in the coordinates, not {e}")
             return e
+
         t0 = poly(part["segments"][0].get("t", "0"))
         # each segment is expanded at the segment start, or, where the start holds coordinates, at the start of the
         # condition: there the series of a later start tells the time of the event
@@ -454,8 +481,11 @@ class Series:
         for j, seg in enumerate(part["segments"]):
             if list(seg["f"]) != [str(x) for x in st]:
                 raise ValueError("discrete(): the segments of a condition have other states")
-            s = {"F": [frac(seg["f"][str(x)]) for x in st], "G": [frac(v) for v in seg["g"].values()],
-                 "labels": [f"{seg.get('label', '')}{y}" for y in seg["g"]]}
+            s = {
+                "F": [frac(seg["f"][str(x)]) for x in st],
+                "G": [frac(v) for v in seg["g"].values()],
+                "labels": [f"{seg.get('label', '')}{y}" for y in seg["g"]],
+            }
             if j == 0:
                 # the start of each state: a coordinate, a number, or a rational function of the coordinates; without
                 # initial values (a copy switched into a regime) every state starts free, a number at the point
@@ -485,25 +515,40 @@ class Series:
                 if free and seg.get("on") is not None:
                     N, D = frac(seg["on"])
                     ns = len(st)
-                    lin = [i for i in range(ns) if max(m[i] for m in N) == 1 and
-                           all(not any(m[:i] + m[i + 1:ns]) or m[i] == 0 for m in N if m[i] == 1)]
+                    lin = [
+                        i
+                        for i in range(ns)
+                        if max(m[i] for m in N) == 1
+                        and all(not any(m[:i] + m[i + 1 : ns]) or m[i] == 0 for m in N if m[i] == 1)
+                    ]
                     lin = lin or [i for i in range(ns) if max(m[i] for m in N) == 1]
                     if not lin:
                         raise ValueError(f"discrete() needs the switching surface {seg['on']} = 0 linear in a state")
                     i = lin[0]
 
                     def drop(m, i=i):
-                        return m[:i] + (0,) + m[i + 1:]
-                    s["on"] = (i, {drop(m): c for m, c in N.items() if m[i] == 1},
-                               {m: c for m, c in N.items() if m[i] == 0}, N, D)
+                        return m[:i] + (0,) + m[i + 1 :]
+
+                    s["on"] = (
+                        i,
+                        {drop(m): c for m, c in N.items() if m[i] == 1},
+                        {m: c for m, c in N.items() if m[i] == 0},
+                        N,
+                        D,
+                    )
                 # a state with a numeric start whose right-hand side reads only such states (the jets of a known
                 # input, the clock) has a known series: it enters as numbers, not as unknowns
                 ns, known = len(st), set()
                 while True:
-                    more = {i for i in range(ns) if i not in known and s["x0"][i][0] is not None and
-                            s["x0"][i][0].is_number and
-                            all(not e or j_ in known for P in s["F"][i] for m in P for j_, e in enumerate(m[:ns])) and
-                            all(not any(m[ns:]) for P in s["F"][i] for m in P)}
+                    more = {
+                        i
+                        for i in range(ns)
+                        if i not in known
+                        and s["x0"][i][0] is not None
+                        and s["x0"][i][0].is_number
+                        and all(not e or j_ in known for P in s["F"][i] for m in P for j_, e in enumerate(m[:ns]))
+                        and all(not any(m[ns:]) for P in s["F"][i] for m in P)
+                    }
                     if not more:
                         break
                     known |= more
@@ -579,8 +624,11 @@ class Series:
             def start(v):
                 v = spy.Rational(v)
                 return Fraction(int(v.p), int(v.q))
-            xs = [[start(seg["x0"][i][0])] + [zero] * order if i in known else [zero] * (order + 1)
-                  for i in range(len(part["st"]))]
+
+            xs = [
+                [start(seg["x0"][i][0])] + [zero] * order if i in known else [zero] * (order + 1)
+                for i in range(len(part["st"]))
+            ]
             nop = [zero] * len(self.params)
             for k in range(order):
                 for i in sorted(known):
@@ -615,8 +663,10 @@ class Series:
                             continue
                         if i in seg["inputs"]:
                             v = (self.input_values or {}).get((pi, i), seg["inputs"][i])
-                            xs.append([one * (Fraction(int(v.p), int(v.q)) if isinstance(v, spy.Rational) else v)]
-                                      + [zero] * order)
+                            xs.append(
+                                [one * (Fraction(int(v.p), int(v.q)) if isinstance(v, spy.Rational) else v)]
+                                + [zero] * order
+                            )
                             continue
                         d = _eval(den, cvals, zero)
                         if d == 0:
@@ -635,8 +685,9 @@ class Series:
                         # the layers S^m of the free power of a state at 0, one per k orders
                         o, z = _Eps([one] + [zero] * (order // sp["k"])), _Eps([zero] * (order // sp["k"] + 1))
                         xs = [[o * c for c in x] for x in xs]
-                        if not startpow.layered_flow(seg["F"], xs, params, order, o, z, kser, sp,
-                                                     val[self.cs[sp["alpha_index"]]]):
+                        if not startpow.layered_flow(
+                            seg["F"], xs, params, order, o, z, kser, sp, val[self.cs[sp["alpha_index"]]]
+                        ):
                             return None
                 else:
                     sp = None
@@ -660,8 +711,11 @@ class Series:
                         xs = [_shift(x, -off, order, gap, one, zero) for x in xs]
                     else:
                         xs = [[w] + [z] * order for w in w0]
-                if sp is None and (j == 0 or seg["off"] is None) and not _flow(seg["F"], xs, params, order, o, z,
-                                                                               kser, meter, weight):
+                if (
+                    sp is None
+                    and (j == 0 or seg["off"] is None)
+                    and not _flow(seg["F"], xs, params, order, o, z, kser, meter, weight)
+                ):
                     return None
                 if pi == 0 and j == 0:
                     # the series of the states at the start of the first condition, for the exact count
@@ -708,7 +762,7 @@ class Series:
         key = (p, gap)
         have = self._jac.get(key)
         if have is not None and have[0] >= order:
-            return None if have[1] is None else [y[:order + 1] for y in have[1]]
+            return None if have[1] is None else [y[: order + 1] for y in have[1]]
         m = len(self.cs)
         cv = self._jac_point(p)
         one, zero = _Dual(1, [0] * m, p), _Dual(0, [0] * m, p)
@@ -772,8 +826,12 @@ class Series:
             # the pins of least degree first
             least = sorted(range(len(pv)), key=lambda i: _pin_degree(self.pins[i]))
             rows += [(("pin", i), list(pv[i].d)) for i in least]
-        rows += [((j, k), list(ys[j][k][0].d) if isinstance(ys[j][k], list) else list(ys[j][k].d))
-                 for k in range(cap + 1) for j in range(len(ys)) if k < len(ys[j])]
+        rows += [
+            ((j, k), list(ys[j][k][0].d) if isinstance(ys[j][k], list) else list(ys[j][k].d))
+            for k in range(cap + 1)
+            for j in range(len(ys))
+            if k < len(ys[j])
+        ]
         for key, row in rows:
             for b, c in zip(basis, piv):
                 if row[c]:
@@ -817,6 +875,7 @@ class Series:
             basis.append([x * inv % p for x in row])
             piv.append(c)
             return True
+
         for row in seed:
             adds(row)
         orders = [0] * len(ys)
@@ -856,8 +915,9 @@ class Series:
             if sp is not None:
                 row0 = sum(len(seg["labels"]) for part_ in self.parts[:pi] for seg in part_["segs"])
                 seg = part["segs"][0]
-                sp["need"] = startpow.needs(seg["F"], seg["G"], len(part["st"]), sp,
-                                            orders[row0:row0 + len(seg["G"])], part["known"])
+                sp["need"] = startpow.needs(
+                    seg["F"], seg["G"], len(part["st"]), sp, orders[row0 : row0 + len(seg["G"])], part["known"]
+                )
                 jets.update(self._spow_jets(pi, order, kser))
                 continue
             for j, seg in enumerate(part["segs"]):
@@ -891,6 +951,7 @@ class Series:
         zero_in = set()
         if self.inputs:
             from .uinputs import unread_jets
+
             zero_in = unread_jets(self, orders)
             jets = {key: v for key, v in jets.items() if (key[0], key[2]) not in zero_in or key[3] > 0}
         if len(names) + len(jets) > _FIBER_UNKNOWNS:
@@ -903,6 +964,7 @@ class Series:
 
         def in_ring(P):
             return R.from_dict({mm + pad: c for mm, c in P.items()}) if P else R.zero
+
         eqs, outs = [], []
         sat = [cof[str(c)] for c in self.cs]
 
@@ -920,6 +982,7 @@ class Series:
             e = _lead(e)
             if not e.is_ground:
                 sat.append(e)
+
         row = 0
         for pi, part in enumerate(self.parts):
             kser = self._known_series(pi, order)
@@ -964,15 +1027,20 @@ class Series:
                     pre = [_at_gap(x, in_ring(seg["dt"]), gap, R.one, R.zero) for x in xs]
                     xs = []
                     for i in range(len(part["st"])):
+
                         def jet(k, i=i):
                             return _Eps([g[jets[(pi, j, i, k, m)]] for m in range(gap + 1)])
+
                         ws = [jet(k) for k in range(1, order + 1)]
                         w0 = pre[i]
                         if (pi, j, i, 0, 0) in jets:
                             w0 = jet(0)
                         # the state at the event: the series at the anchor where the start holds coordinates
-                        at = _at_gap([w0] + ws, in_ring(seg["off"]), gap, R.one, R.zero) \
-                            if seg["off"] is not None else w0
+                        at = (
+                            _at_gap([w0] + ws, in_ring(seg["off"]), gap, R.one, R.zero)
+                            if seg["off"] is not None
+                            else w0
+                        )
                         if i in seg["event"]:
                             N, D = seg["event"][i]
                             nv, dv = _value(N, pre, params, o, z), _value(D, pre, params, o, z)
@@ -992,6 +1060,7 @@ class Series:
 
                     def layers(key):
                         return _Eps([g[jets[key + (m,)]] if key + (m,) in jets else R.zero for m in range(L)])
+
                     for i in range(len(xs)):
                         if i == sp["N"]:
                             xs[i] = [z] * (order + 1)
@@ -1000,9 +1069,21 @@ class Series:
                         else:
                             xs[i] = [o * xs[i][0]] + [layers((pi, 0, i, k)) for k in range(1, order + 1)]
                     Q = [o] + [layers(("q", pi, q)) for q in range(1, sp["need"][sp["N"]] - sp["k"] + 1)]
-                    startpow.layered_equations(seg["F"], xs, params, sp["need"], o, z, kser, sp,
-                                               cof[str(self.cs[sp["alpha_index"]])], Q, add_eq, add_sat,
-                                               _fiber_terms())
+                    startpow.layered_equations(
+                        seg["F"],
+                        xs,
+                        params,
+                        sp["need"],
+                        o,
+                        z,
+                        kser,
+                        sp,
+                        cof[str(self.cs[sp["alpha_index"]])],
+                        Q,
+                        add_eq,
+                        add_sat,
+                        _fiber_terms(),
+                    )
                 for i, (N, D) in enumerate(seg["F"]):
                     if (j == 0 and i in kser) or sp is not None:
                         continue
@@ -1017,8 +1098,12 @@ class Series:
                     mser = _ser_poly(M, xs, params, n, o, z, _fiber_terms())
                     eser = _ser_poly(E, xs, params, n, o, z, _fiber_terms())
                     add_sat(eser[0])
-                    outs.append(([[_rdict(c) for c in _coeffs(e)] for e in eser],
-                                 [[_rdict(c) for c in _coeffs(m)] for m in mser]))
+                    outs.append(
+                        (
+                            [[_rdict(c) for c in _coeffs(e)] for e in eser],
+                            [[_rdict(c) for c in _coeffs(m)] for m in mser],
+                        )
+                    )
         return list(jets.values()), [_rdict(e) for e in eqs if e], outs, [_rdict(f) for f in sat]
 
 
@@ -1031,7 +1116,7 @@ def _dict(e, syms):
     return _rdict(_sparse_ring(tuple(syms)).from_expr(e))
 
 
-_RINGS = {}
+_RINGS: dict = {}
 
 
 def _sparse_ring(syms):
@@ -1076,16 +1161,22 @@ class Fiber:
             jets, static, outs, sat = series.prolonged(self.orders, self.gap)
         except FiberTooLargeError as exc:
             # a series past the limit: the equations have more terms, and no count is taken
-            self.too_large, self.allnames, self.static, self.outs, self.sat = \
-                _fiber_terms() + 1, list(self.names), [], [], []
+            self.too_large, self.allnames, self.static, self.outs, self.sat = (
+                _fiber_terms() + 1,
+                list(self.names),
+                [],
+                [],
+                [],
+            )
             self.unknowns = exc.args[0] if exc.args[1:] == ("unknowns",) else None
             self.sep_mode = {}
             return
         self.allnames = self.names + jets
         # the monomials as (variable, exponent) pairs: the system has hundreds of variables and few terms
         self.static = [_sparse(P) for P in static]
-        self.outs = [([[_sparse(c) for c in row] for row in E], [[_sparse(c) for c in row] for row in M])
-                     for E, M in outs]
+        self.outs = [
+            ([[_sparse(c) for c in row] for row in E], [[_sparse(c) for c in row] for row in M]) for E, M in outs
+        ]
         self.sat = []
         for f in (_sparse(_clear(f)) for f in sat):
             if f not in self.sat:
@@ -1174,6 +1265,7 @@ class Fiber:
                 parent[i] = parent[parent[i]]
                 i = parent[i]
             return i
+
         for P in polys + sat:
             vs = sorted({v for mm in P for v, _ in mm})
             for a, b_ in zip(vs, vs[1:]):
@@ -1204,8 +1296,12 @@ class Fiber:
         # brackets, so si_w multiplies each term
         eqs.append(_ms_sparse(fac, self.allnames, "si_w") + "-1")
         proj = getattr(self, "proj", m)
-        return {"names": [self.allnames[i] for i in idx], "sep": [self.names[i] for i in idx if i < m],
-                "proj": [self.names[i] for i in idx if i < proj], "eqs": eqs}
+        return {
+            "names": [self.allnames[i] for i in idx],
+            "sep": [self.names[i] for i in idx if i < m],
+            "proj": [self.names[i] for i in idx if i < proj],
+            "eqs": eqs,
+        }
 
 
 def _monomial_eliminate(polys, sat, m, p=0):
@@ -1240,6 +1336,7 @@ def _monomial_eliminate(polys, sat, m, p=0):
                 if all(w != v for w, _ in mo) and (v >= m or all(w < m for w, _ in mo)):
                     return v, div(-b, a), mo
         return None
+
     while True:
         hit = next((t for P in polys for t in [target(P)] if t is not None), None)
         if hit is None:
@@ -1311,7 +1408,7 @@ def _decode(d):
     for j in range(len(start) - 1):
         P = {}
         for t in range(start[j], start[j + 1]):
-            P[tuple(zip(var[tstart[t]:tstart[t + 1]], ex[tstart[t]:tstart[t + 1]]))] = coef[t]
+            P[tuple(zip(var[tstart[t] : tstart[t + 1]], ex[tstart[t] : tstart[t + 1]]))] = coef[t]
         out.append(P)
     return out
 
@@ -1326,6 +1423,7 @@ def _reduce_mod(polys, sat, nv, m0, p):
 
 def _reduce_q(polys, sat, nv, m0, p=0):
     """_reduce() in Python, over Q (p = 0) or GF(p)."""
+
     def div(a, b):
         return a * pow(b, -1, p) % p if p else Fraction(a) / b
 
@@ -1345,6 +1443,7 @@ def _reduce_q(polys, sat, nv, m0, p=0):
         if len(vs) != 1 or any(mm and (len(mm) != 1 or mm[0][1] != 1) for mm in P):
             return None
         return vs.pop()
+
     polys, sat = [dict(P) for P in polys], [dict(f) for f in sat]
     alive = [bool(P) for P in polys]
     salive = [True] * len(sat)
@@ -1409,8 +1508,12 @@ def _reduce_q(polys, sat, nv, m0, p=0):
             for mm in P:
                 if len(mm) == 1 and mm[0][1] == 1:
                     v = mm[0][0]
-                    if v >= m0 and v not in insat and count.get(v) == 1 and \
-                            sum(1 for nn in P if any(w == v for w, _ in nn)) == 1:
+                    if (
+                        v >= m0
+                        and v not in insat
+                        and count.get(v) == 1
+                        and sum(1 for nn in P if any(w == v for w, _ in nn)) == 1
+                    ):
                         hit = (j, v)
                         break
             if hit:
@@ -1426,7 +1529,7 @@ def _reduce_q(polys, sat, nv, m0, p=0):
 
 
 def _eval(P, x, zero=Fraction(0)):
-    return sum((c * math.prod((xi ** e for xi, e in zip(x, m) if e), start=zero + 1) for m, c in P.items()), zero)
+    return sum((c * math.prod((xi**e for xi, e in zip(x, m) if e), start=zero + 1) for m, c in P.items()), zero)
 
 
 def _msolve(names, p, eqs, flags, sep=()):
@@ -1469,14 +1572,18 @@ def parse_rational(txt):
     """msolve output over Q with every quotient of integers, a / 2^k or a / b, as an exact Fraction."""
     # a match starts only at the first digit of a number: otherwise each start inside a long integer scans the
     # rest of it, quadratic in the number of digits
-    txt = re.sub(r"(?<!\d)(-?\d+)\s*/\s*(\d+)(?![\d^])", r"Fraction(\1, \2)",
-                 re.sub(r"(?<!\d)(-?\d+)\s*/\s*2\^(\d+)", r"Fraction(\1, 2**\2)", txt))
+    txt = re.sub(
+        r"(?<!\d)(-?\d+)\s*/\s*(\d+)(?![\d^])",
+        r"Fraction(\1, \2)",
+        re.sub(r"(?<!\d)(-?\d+)\s*/\s*2\^(\d+)", r"Fraction(\1, 2**\2)", txt),
+    )
     # the rational parametrization holds integers past the default limit of int()
     with _AllDigits():
         return eval(txt, {"Fraction": Fraction, "__builtins__": {}})
 
 
 # ---- counts --------------------------------------------------------------------------------
+
 
 def real_points(fib, point, precision=64):
     """The real points of the fiber of `point` as boxes [(lo, hi)] per coordinate, None on failure."""
@@ -1667,9 +1774,13 @@ def _stage_points(fib, A, polys, sat, p):
         return None
     at = {fib.allnames[i]: i for i in idx}
     if p:
-        rur = {"elim": [int(c) % p for c in par[1][0][1]], "den": [int(c) % p for c in par[1][1][1]],
-               "par": [[int(c) % p for c in q[0][1]] for q in par[1][2]], "lin": [int(c) % p for c in lin],
-               "vnames": list(vnames)}
+        rur = {
+            "elim": [int(c) % p for c in par[1][0][1]],
+            "den": [int(c) % p for c in par[1][1][1]],
+            "par": [[int(c) % p for c in q[0][1]] for q in par[1][2]],
+            "lin": [int(c) % p for c in lin],
+            "vnames": list(vnames),
+        }
         elim = rur["elim"]
         # every distinct root of the eliminating polynomial is a point; all of them in GF(p), or none is used
         sq = len(elim) - len(_gcd_mod(elim, [(k * elim[k]) % p for k in range(1, len(elim))], p))
@@ -1688,8 +1799,7 @@ def _rational_points(par, lin, vnames, at):
     sq = spy.sqf_part(elim)
     if sq.degree() > _STAGE_ROOTS:
         return None
-    roots = [-f.all_coeffs()[1] / spy.Integer(f.all_coeffs()[0]) for f, _ in spy.factor_list(sq)[1]
-             if f.degree() == 1]
+    roots = [-f.all_coeffs()[1] / spy.Integer(f.all_coeffs()[0]) for f, _ in spy.factor_list(sq)[1] if f.degree() == 1]
     if len(roots) != sq.degree():
         return None
 
@@ -1698,6 +1808,7 @@ def _rational_points(par, lin, vnames, at):
         for c in reversed(coeffs):
             acc = acc * x + int(c)
         return acc
+
     out = []
     for r in roots:
         t = Fraction(int(r.p), int(r.q))
@@ -1757,8 +1868,9 @@ def _staged_count(fib, idx, polys, sat, p):
             return None
         n = 1
         for sub in _components(keep, rp, rs):
-            k = _staged_count(fib, sub, [P for P in rp if _vars(P) & set(sub)],
-                              [f for f in rs if _vars(f) & set(sub)], p)
+            k = _staged_count(
+                fib, sub, [P for P in rp if _vars(P) & set(sub)], [f for f in rs if _vars(f) & set(sub)], p
+            )
             if k is None:
                 return None
             n *= k
@@ -1778,8 +1890,11 @@ def _block_count(fib, idx, polys, sat, p):
     if data[0] == -1:
         return 0
     deg = int(data[1][2])
-    if len(b["proj"]) < len(b["names"]) and getattr(fib, "proj", len(fib.names)) < len(fib.names) and \
-            deg <= _PROJ_POINTS:
+    if (
+        len(b["proj"]) < len(b["names"])
+        and getattr(fib, "proj", len(fib.names)) < len(fib.names)
+        and deg <= _PROJ_POINTS
+    ):
         # the count of a projection: the distinct values of the projected coordinates on the points
         k = _projected_count(data, b["proj"])
         return deg if k is None else k
@@ -1799,6 +1914,7 @@ def _projected_count(data, proj):
 
     def poly(cs):
         return spy.Poly(list(reversed([spy.Integer(int(c)) for c in cs])) or [0], T, domain="QQ")
+
     w = spy.Poly(spy.sqf_part(poly(par[1][0][1]).as_expr()), T, domain="QQ")
     n = w.degree()
     try:
@@ -1817,6 +1933,7 @@ def _projected_count(data, proj):
     def vec(P):
         c = P.all_coeffs()[::-1]
         return [Fraction(int(x.p), int(x.q)) for x in c] + [Fraction(0)] * (n - len(c))
+
     # a reduced echelon basis: each row is zero at the pivots of the others
     rows = {}
 
@@ -1836,6 +1953,7 @@ def _projected_count(data, proj):
                 rows[q] = [a - f * b for a, b in zip(r, v)]
         rows[piv] = v
         return True
+
     basis = [spy.Poly(1, T, domain="QQ")]
     add(basis[0])
     k = 0
@@ -1857,6 +1975,7 @@ def _components(keep, polys, sat):
             parent[i] = parent[parent[i]]
             i = parent[i]
         return i
+
     for P in list(polys) + list(sat):
         vs = sorted(_vars(P) & parent.keys())
         for a, b in zip(vs, vs[1:]):
@@ -1882,8 +2001,21 @@ def _gb_count(names, p, eqs, sep=(), cap=5000, exact=False, dims=None):
         fi, fo = os.path.join(td, "in.ms"), os.path.join(td, "out.ms")
         with open(fi, "w") as fh:
             fh.write(",".join(names) + "\n" + str(p) + "\n" + ",\n".join(eqs) + "\n")
-        r = work.run_msolve([msolve._msolve_binary(), "-f", fi, "-o", fo, "-g", "2", "-l", "2" if exact else "44",
-                             "-t", str(msolve._MSOLVE_THREADS)])
+        r = work.run_msolve(
+            [
+                msolve._msolve_binary(),
+                "-f",
+                fi,
+                "-o",
+                fo,
+                "-g",
+                "2",
+                "-l",
+                "2" if exact else "44",
+                "-t",
+                str(msolve._MSOLVE_THREADS),
+            ]
+        )
         txt = ""
         if os.path.exists(fo):
             with open(fo) as fh:
@@ -1899,8 +2031,11 @@ def _gb_count(names, p, eqs, sep=(), cap=5000, exact=False, dims=None):
     lead = [next(iter(P)) for P in gb]
     basis = _standard_monomials([dict(m) for m in lead], len(names), cap)
     if basis is None:
-        _failed(kind="dimension" if _standard_monomials([dict(m) for m in lead], len(names), 0, finite=True) is None
-                else "quotient")
+        _failed(
+            kind="dimension"
+            if _standard_monomials([dict(m) for m in lead], len(names), 0, finite=True) is None
+            else "quotient"
+        )
         return None
     if dims is not None:
         dims.append(len(basis))
@@ -2002,10 +2137,12 @@ def _distinct_eigenvalues(M, p, rng):
 
 def _gcd_mod(a, b, p):
     """The monic gcd of two polynomials mod p, coefficients from the constant term up."""
+
     def trim(x):
         while x and not x[-1]:
             x = x[:-1]
         return x
+
     a, b = trim(list(a)), trim(list(b))
     while b:
         inv = pow(b[-1], -1, p)
@@ -2024,7 +2161,7 @@ def _standard_monomials(lead, nv, cap, finite=False):
     pure = {}
     for e in lead:
         if len(e) == 1:
-            (v, k), = e.items()
+            ((v, k),) = e.items()
             pure[v] = min(pure.get(v, k), k)
     if len(pure) < nv:
         return None
@@ -2065,8 +2202,12 @@ def _boxes_of_maps(fib, pt, maps, check=True):
     here = fib.values(pt)
     for im in imgs[1:]:
         there = fib.values(im)
-        if here is None or there is None or [r for k, r in enumerate(here) if k not in fib.series.free_rows] != \
-                [r for k, r in enumerate(there) if k not in fib.series.free_rows]:
+        if (
+            here is None
+            or there is None
+            or [r for k, r in enumerate(here) if k not in fib.series.free_rows]
+            != [r for k, r in enumerate(there) if k not in fib.series.free_rows]
+        ):
             return None
     return [[(v, v) for v in t] for t in vals]
 
@@ -2077,6 +2218,7 @@ def domain_point(fib, rng):
 
 
 # ---- the rational univariate representation over GF(p) -------------------------------------
+
 
 def _rur(fib, point, p):
     """{"deg", "elim", "den", "par", "lin", "vnames"} of the fiber of `point` (integers mod p), None on failure."""
@@ -2098,12 +2240,21 @@ def _rur(fib, point, p):
         _, _, deg, vnames, lin, par = data[1]
         if deg <= 0 or par[0] != 1:
             return None
-        blocks.append({"deg": int(deg), "elim": [int(c) % p for c in par[1][0][1]],
-                       "den": [int(c) % p for c in par[1][1][1]],
-                       "par": [[int(c) % p for c in q[0][1]] for q in par[1][2]], "lin": [int(c) % p for c in lin],
-                       "vnames": list(vnames)})
-    return {"deg": math.prod(b["deg"] for b in blocks), "blocks": blocks,
-            "fixed": {n: int(v) % p for n, v in sysd["fixed"].items()}}
+        blocks.append(
+            {
+                "deg": int(deg),
+                "elim": [int(c) % p for c in par[1][0][1]],
+                "den": [int(c) % p for c in par[1][1][1]],
+                "par": [[int(c) % p for c in q[0][1]] for q in par[1][2]],
+                "lin": [int(c) % p for c in lin],
+                "vnames": list(vnames),
+            }
+        )
+    return {
+        "deg": math.prod(b["deg"] for b in blocks),
+        "blocks": blocks,
+        "fixed": {n: int(v) % p for n, v in sysd["fixed"].items()},
+    }
 
 
 def _pmod(a, f, p):
@@ -2214,8 +2365,10 @@ def _charpolys_block(rur, p, names=None):
         P = np.identity(k, dtype=object)
         s = []
         for _ in range(k):
-            P = np.array([[sum(int(P[i, l]) * int(M[l, j]) for l in range(k)) % p for j in range(k)]
-                          for i in range(k)], dtype=object)
+            P = np.array(
+                [[sum(int(P[i, l]) * int(M[l, j]) for l in range(k)) % p for j in range(k)] for i in range(k)],
+                dtype=object,
+            )
             s.append(sum(int(P[i, i]) for i in range(k)) % p)
         e_ = [1]
         for m in range(1, k + 1):
@@ -2246,6 +2399,7 @@ def _fiber_points_block(rur, p):
         for c in reversed(coeffs):
             acc = (acc * x + c) % p
         return acc
+
     out = []
     for t in _gf_roots(list(reversed(rur["elim"])), p):
         dv = ev(rur["den"], t)
@@ -2261,6 +2415,7 @@ def _fiber_points_block(rur, p):
 
 # ---- interpolation of the coefficients -------------------------------------------------------
 
+
 class _Sampler:
     """Characteristic polynomials of the fiber at integer points, memoized per point and prime."""
 
@@ -2273,7 +2428,7 @@ class _Sampler:
         self.checks = None
 
     def point(self):
-        return tuple(self.rng.randint(2, 10 ** 6) for _ in self.fib.syms)
+        return tuple(self.rng.randint(2, 10**6) for _ in self.fib.syms)
 
     def points(self, n):
         """The first `n` points of one pool, shared by every coefficient."""
@@ -2285,7 +2440,7 @@ class _Sampler:
         """`base` with coordinate i changed, the same for every coefficient."""
         if i not in self.moved:
             pt = list(base)
-            pt[i] = self.rng.randint(2, 10 ** 6)
+            pt[i] = self.rng.randint(2, 10**6)
             self.moved[i] = tuple(pt)
         return self.moved[i]
 
@@ -2390,14 +2545,12 @@ def interpolate(oracle, sam, base, primes, cap=_DEG_CAP):
 
 def _recon(sols, primes, mons, syms):
     """The rational function from the coefficient vectors modulo the first primes, None where none is bounded."""
-    rec = rat_recon(np.array(sols, dtype=np.int64).T, primes[:len(sols)])
+    rec = rat_recon(np.array(sols, dtype=np.int64).T, primes[: len(sols)])
     if any(dd == "0" for dd in rec["den"]):
         return None
     coef = [spy.Rational(int(n), int(dd)) for n, dd in zip(rec["num"], rec["den"])]
-    num = sum((c * spy.Mul(*[s ** e for s, e in zip(syms, m)]) for c, m in zip(coef[:len(mons)], mons)),
-              spy.Integer(0))
-    den = sum((c * spy.Mul(*[s ** e for s, e in zip(syms, m)]) for c, m in zip(coef[len(mons):], mons)),
-              spy.Integer(0))
+    num = sum((c * spy.Mul(*[s**e for s, e in zip(syms, m)]) for c, m in zip(coef[: len(mons)], mons)), spy.Integer(0))
+    den = sum((c * spy.Mul(*[s**e for s, e in zip(syms, m)]) for c, m in zip(coef[len(mons) :], mons)), spy.Integer(0))
     return None if den == 0 else spy.cancel(num / den)
 
 
@@ -2420,10 +2573,11 @@ def _holds(oracle, sam, r, p):
 
 # ---- the maps ------------------------------------------------------------------------------
 
+
 def _rational_roots(coeffs, Z):
     """The roots in Q(theta) of Z^k + sum c_j Z^j, without repeats."""
     k = len(coeffs)
-    poly = Z ** k + sum((c * Z ** j for j, c in enumerate(coeffs)), spy.Integer(0))
+    poly = Z**k + sum((c * Z**j for j, c in enumerate(coeffs)), spy.Integer(0))
     num = spy.fraction(spy.together(poly))[0]
     out = []
     for fac, _ in spy.factor_list(num, Z)[1]:
@@ -2484,7 +2638,9 @@ def _rational_maps(fib, meter):
         def oracle(pt, p):
             c = sam.at(pt, p)
             return None if c is None else c[nm][j]
+
         return oracle
+
     size = {}
     for nm in fib.names:
         sup = set()
@@ -2505,8 +2661,11 @@ def _rational_maps(fib, meter):
         roots[fib.syms[fib.names.index(nm)]] = rs
         lab = _labels(sam, roots, sam.points(1)[0], primes[1])
         # separated: no two points of rational branches share a label
-        if lab is not None and len(lab) == sum(1 for fp in sam.points_of(sam.points(1)[0], primes[1])
-                                                if _on_roots(sam, roots, fp, sam.points(1)[0], primes[1])):
+        if lab is not None and len(lab) == sum(
+            1
+            for fp in sam.points_of(sam.points(1)[0], primes[1])
+            if _on_roots(sam, roots, fp, sam.points(1)[0], primes[1])
+        ):
             labels = lab
             break
     if labels is None:
@@ -2524,7 +2683,9 @@ def _rational_maps(fib, meter):
                 if not ls or lab not in ls:
                     return None
                 return ls[lab][nm]
+
             return oracle
+
         for s, nm in zip(fib.syms, fib.names):
             if s in sig:
                 continue
@@ -2608,6 +2769,7 @@ def candidates(series, order, gap, p, meter=None):
         for i, j in pairs:
             v[i], v[j] = v[j], v[i]
         return v
+
     base = vals(pt)
     if base is None:
         return []
@@ -2667,6 +2829,7 @@ def _block_map(F, H, X, x0, th):
     def coeffs(e):
         num = spy.fraction(spy.together(e))[0]
         return spy.Poly(spy.expand(num), *X).coeffs() if num != 0 else []
+
     for x in block:
         rhs = sum((spy.diff(phi[x], y) * F[y] for y in X), spy.Integer(0))
         eqs += coeffs(F[x].xreplace(both) - rhs)
@@ -2699,8 +2862,12 @@ def _state_map(f, g, ic, sig, states):
     own = {}
     for x in X if ic is not None else ():
         q = model_sympify(str(ic.get(str(x), x)))
-        if q == x or (q.is_Symbol and q in sig and q not in used and
-                      sum(model_sympify(str(ic.get(str(y), y))) == q for y in X) == 1):
+        if q == x or (
+            q.is_Symbol
+            and q in sig
+            and q not in used
+            and sum(model_sympify(str(ic.get(str(y), y))) == q for y in X) == 1
+        ):
             own[q] = x
     phi = {x: x for x in X}
     for q, x in own.items():
@@ -2724,6 +2891,7 @@ def _state_map(f, g, ic, sig, states):
         # phi at theta maps x0(theta) to x0(sigma(theta)) for the given initial values
         at0 = {y: x0[y] for y in given}
         return all(spy.cancel(phi[x].xreplace(at0) - x0[x].xreplace(th)) == 0 for x in given)
+
     try:
         if holds(phi):
             return phi
@@ -2735,7 +2903,7 @@ def _state_map(f, g, ic, sig, states):
                 continue
             c = spy.cancel(R.xreplace({**th, **phi}) / R)
             if c.is_Rational and c not in (0, 1):
-                alt[x] = x ** c
+                alt[x] = x**c
         if alt != phi and holds(alt):
             return alt
         blk = _block_map(F, H, X, x0, th)
@@ -2750,15 +2918,19 @@ def _state_map(f, g, ic, sig, states):
             # the terms of a row bound those of the equation from it, before the row is put over one denominator
             bound = max((_term_bound(h) for h in rows), default=0)
             if bound > cap:
-                _CAPPED.add(f"a map of the states was not solved from the outputs: their Lie derivatives expand to "
-                            f"up to {bound:.3g} terms, past the cap state_map_terms of {cap:,}")
+                _CAPPED.add(
+                    f"a map of the states was not solved from the outputs: their Lie derivatives expand to "
+                    f"up to {bound:.3g} terms, past the cap state_map_terms of {cap:,}"
+                )
                 return None
             eqs += [spy.fraction(spy.together(h.xreplace(img) - h))[0] for h in rows]
             rows = [sum((spy.diff(h, y) * F[y] for y in F), spy.Integer(0)) for h in rows]
         bound = max((_term_bound(e) for e in eqs), default=0)
         if bound > cap:
-            _CAPPED.add(f"a map of the states was not solved from the outputs: their equations expand to up to "
-                        f"{bound:.3g} terms, past the cap state_map_terms of {cap:,}")
+            _CAPPED.add(
+                f"a map of the states was not solved from the outputs: their equations expand to up to "
+                f"{bound:.3g} terms, past the cap state_map_terms of {cap:,}"
+            )
             return None
         eqs = [spy.expand(e) for e in eqs]
         if any(e != 0 and spy.Poly(e, *P.values()).total_degree() > 1 for e in eqs):
@@ -2798,6 +2970,7 @@ def state_map_proof(parts, sig, states, positive=True):
     out = _state_map_proof(parts, sig, states, positive)
     if out is None and any(seg.get("inputs") for part in parts for seg in part["segments"]):
         from .uinputs import input_state_map
+
         out = input_state_map(parts, sig, states)
     return out
 
@@ -2898,8 +3071,10 @@ def fundamental_domain(coords, states, maps):
     """Per map the inequality theta_c < sigma_c(theta) on the first coordinate c it moves in one order of the
     coordinates, parameters with simple images first: theta is the least of the orbit in that order."""
     syms = [spy.Symbol(c) for c in coords]
-    order = sorted(syms, key=lambda x: (str(x) in set(states), sum(spy.count_ops(sig.get(x, x)) for sig in maps),
-                                        coords.index(str(x))))
+    order = sorted(
+        syms,
+        key=lambda x: (str(x) in set(states), sum(spy.count_ops(sig.get(x, x)) for sig in maps), coords.index(str(x))),
+    )
     out = []
     for sig in maps:
         c = next(x for x in order if sig.get(x, x) != x)
@@ -2920,10 +3095,13 @@ def choose_order(series, positive, start, cap, floor=1, proj=None, lowest=False,
     # at the orders of the rank criterion the system is square and has extra solutions; one order higher it is
     # smaller in count and faster to solve. Every observable starts at the highest of these orders: an observable
     # whose next coefficient adds no rank in the coordinates can still remove points, where the start is given
-    base = ([c + 1 for c in crit] if lowest else [max(crit) + 1] * len(crit)) if crit else \
-        [max(1, start)] * len(series.labels)
+    base = (
+        ([c + 1 for c in crit] if lowest else [max(crit) + 1] * len(crit))
+        if crit
+        else [max(1, start)] * len(series.labels)
+    )
     rng = session.current().rng("discrete order", tuple(series.coords))
-    point = {spy.Symbol(c): spy.Integer(rng.randint(2, 10 ** 6)) for c in series.coords}
+    point = {spy.Symbol(c): spy.Integer(rng.randint(2, 10**6)) for c in series.coords}
     prev = found = None
     for t in range(min(cap, raises) + 1):
         orders = [n + t for n in base]
@@ -2976,8 +3154,9 @@ def pinned_count(series, positive, floor, names=None):
     `cert` None where the route does not apply or no count is below twice the orbit."""
     out = {"why": None, "orders": None, "count": None, "cert": None, "fiber": None, "functions": None}
     cap = 2 * len(series.coords)
-    if series.has_events or any(seg.get("free") or seg.get("on") is not None
-                                for part in series.parts for seg in part["segs"]):
+    if series.has_events or any(
+        seg.get("free") or seg.get("on") is not None for part in series.parts for seg in part["segs"]
+    ):
         out["why"] = "the count of the proven functions covers models without events, switches and free starts"
         return out
     crit = series.output_orders(cap, PRIMES[0])
@@ -3017,7 +3196,7 @@ def _pin_sets(series, p):
             basis.append([x * inv % p for x in row])
             piv.append(c)
             first.append(i)
-    first += [i for i in order if i not in first][:len(first)]
+    first += [i for i in order if i not in first][: len(first)]
     return [sorted(first), every] if len(first) < len(every) else [every]
 
 
@@ -3032,7 +3211,7 @@ def _pinned_once(series, positive, floor, crit, cap):
         out["why"] = "the proven functions do not lower the orders of the rank criterion"
         return out
     rng = session.current().rng("discrete pinned", tuple(series.coords))
-    point = {spy.Symbol(c): spy.Integer(rng.randint(2, 10 ** 6)) for c in series.coords}
+    point = {spy.Symbol(c): spy.Integer(rng.randint(2, 10**6)) for c in series.coords}
     fib = cc = None
     # one order above the criterion first, as in choose_order(): at the criterion the starts often have extra points;
     # at most to the order of the rank criterion of the outputs alone, one below the first count without pins
@@ -3044,8 +3223,11 @@ def _pinned_once(series, positive, floor, crit, cap):
             break
     out.update(orders=fib.orders, count=cc, fiber=fib)
     if cc is None or cc >= 2 * floor:
-        out["why"] = (f"the count of the proven functions is {cc}, not below {2 * floor}" if cc is not None else
-                      "msolve gave no count of the proven functions")
+        out["why"] = (
+            f"the count of the proven functions is {cc}, not below {2 * floor}"
+            if cc is not None
+            else "msolve gave no count of the proven functions"
+        )
         return out
     out["cert"] = count_certificate(fib, floor, base, within=(floor, 2 * floor))
     if out["cert"]["bound"] is None:
@@ -3084,9 +3266,14 @@ def _candidate_stage(series, parts, states, positive, meter):
     gap = _DEEPER if series.has_events else 0
     found = candidates(series, order, gap, PRIMES[0], meter)
     out = [(sig, None if series.start_powers else state_map_proof(parts, sig, states, positive)) for sig in found]
-    return out, {"order": order, "found": len(found), "proven": sum(pf is not None for _, pf in out),
-                 "seconds": round(time.monotonic() - t0, 2), "permutations": meter.spent,
-                 "complete_search": not meter.over}
+    return out, {
+        "order": order,
+        "found": len(found),
+        "proven": sum(pf is not None for _, pf in out),
+        "seconds": round(time.monotonic() - t0, 2),
+        "permutations": meter.spent,
+        "complete_search": not meter.over,
+    }
 
 
 def analyze(parts, coords, positive, states, order=None, start=None, points=_POINTS, inputs=(), experiments=None):
@@ -3118,6 +3305,7 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
     # the exact count first, with the group of the proven candidates: where it holds, the fiber is the orbit and
     # neither the count nor the reconstruction is needed
     from .fieldproof import exact_fiber
+
     proof, tried = None, None
     # the constants of the model that are no coordinates enter the exact count as known symbols, in the base field
     consts = sorted(str(x) for x in series.known)
@@ -3197,8 +3385,10 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
     elif me is not None and me.get("used"):
         # one experiment gave no count: the maps of the fiber of one are not reconstructed
         k = cc
-        limits.append("the count is that of several experiments; the maps of the fiber of one were not "
-                      "reconstructed, since msolve gave no count of it")
+        limits.append(
+            "the count is that of several experiments; the maps of the fiber of one were not "
+            "reconstructed, since msolve gave no count of it"
+        )
     elif cc is not None and cgrp is not None and len(cgrp) == cc and len(proven) == len(cand):
         # the proven candidates account for every point counted: the fiber has no other map to reconstruct
         k, maps = cc, []
@@ -3222,18 +3412,24 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
             fib, stable, cc = Fiber(series, [n + 2 for n in fib.orders], positive, gap=fib.gap + 2), False, None
         timing["maps"] = round(time.monotonic() - t2, 2)
         if false:
-            limits.append(f"{len(false)} of the maps of the fiber at order {fib.order} change the coefficients up "
-                          f"to order {fib.order + _DEEPER}: the count is that of the equations up to order "
-                          f"{fib.order}, more than the values with the same output")
+            limits.append(
+                f"{len(false)} of the maps of the fiber at order {fib.order} change the coefficients up "
+                f"to order {fib.order + _DEEPER}: the count is that of the equations up to order "
+                f"{fib.order}, more than the values with the same output"
+            )
             maps = [sig for sig in maps if all(sig is not f for f in false)]
         if maps is None and mmeter.over:
             limits.append(f"the closed forms of the maps were not found: {mmeter.reason()}")
     elif getattr(fib, "unknowns", None):
-        limits.append(f"the equations of the fiber at order {fib.order} have {fib.unknowns} unknowns, more than the "
-                      f"{_FIBER_UNKNOWNS} a count takes")
+        limits.append(
+            f"the equations of the fiber at order {fib.order} have {fib.unknowns} unknowns, more than the "
+            f"{_FIBER_UNKNOWNS} a count takes"
+        )
     elif getattr(fib, "too_large", None):
-        limits.append(f"the equations of the fiber at order {fib.order} have more than {_fiber_terms()} terms, the "
-                      "most a count takes (switch FIBER_TERMS)")
+        limits.append(
+            f"the equations of the fiber at order {fib.order} have more than {_fiber_terms()} terms, the "
+            "most a count takes (switch FIBER_TERMS)"
+        )
     else:
         limits.append(no_count_reason(fib.order))
     # the candidates join the maps of the fiber
@@ -3241,6 +3437,7 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
     every = list(maps or [])
     # numerical monodromy proposes the maps that the reconstruction over Q misses (detection.monodromy)
     from .monodromy import proposals
+
     t2 = time.monotonic()
     mono, mono_maps = proposals(series, fib, k, every + [sig for sig, _ in cand])
     if mono is not None:
@@ -3265,13 +3462,26 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
     route, single = None, complete and not (me or {}).get("final") and not (me or {}).get("used")
     if me is not None and (me.get("used") or me.get("final")):
         route = me
-    elif me is not None and me.get("count") and orbit and not false and orbit <= me["count"] < 2 * orbit and \
-            all(e["level"] == "exact" for e in out) and (forced or not complete):
+    elif (
+        me is not None
+        and me.get("count")
+        and orbit
+        and not false
+        and orbit <= me["count"] < 2 * orbit
+        and all(e["level"] == "exact" for e in out)
+        and (forced or not complete)
+    ):
         route, complete, k = me, True, orbit
     # the exact count: the field fixed by the exact maps inside the field of the output coefficients
     # again with the group of all exact maps, where the reconstruction found more of them
-    if grp is not None and not spow and not (proof and proof["exact"]) and \
-            (tried is None or len(grp) != len(tried)) and not (route is not None and complete) and not series.inputs:
+    if (
+        grp is not None
+        and not spow
+        and not (proof and proof["exact"])
+        and (tried is None or len(grp) != len(tried))
+        and not (route is not None and complete)
+        and not series.inputs
+    ):
         t3 = time.monotonic()
         # the functions the first search proved in the field of the outputs hold for any group
         pre = (proof or {}).get("proven", [])
@@ -3294,8 +3504,9 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
         t4 = time.monotonic()
         if route is not None:
             # the experiments over Q: below twice the orbit, or at most their count modulo the prime
-            cb = count_certificate(route["fiber"], route["count"], route["crit"],
-                                   within=(orbit, 2 * orbit) if complete else None)
+            cb = count_certificate(
+                route["fiber"], route["count"], route["crit"], within=(orbit, 2 * orbit) if complete else None
+            )
             if cb["bound"] is None and single:
                 # the count of one experiment equals the orbit as well and may verify where the experiments do not
                 one = count_certificate(fib, k, series.output_orders(2 * len(coords), PRIMES[0]))
@@ -3306,8 +3517,10 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
         timing["verified"] = round(time.monotonic() - t4, 2)
     if k is not None and orbit is not None and orbit < k:
         for c, g in power_coordinates(series).items():
-            limits.append(f"{c} enters only as {c}^{g}: the fiber holds {c} -> zeta*{c} with zeta^{g} = 1, maps "
-                          "over Q(zeta) that the reconstruction over Q does not give")
+            limits.append(
+                f"{c} enters only as {c}^{g}: the fiber holds {c} -> zeta*{c} with zeta^{g} = 1, maps "
+                "over Q(zeta) that the reconstruction over Q does not give"
+            )
     relevant = [e for e in out if e.get("preserves_domain") is not False and e["level"] != "open"]
     # the fiber is the orbit of the group: a map that keeps the domain keeps the point inside, one that never does
     # moves it out
@@ -3318,17 +3531,30 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
             count_domain = 1 + sum(keeps)
     limits += sorted(_CAPPED)
     if series.capped is not None:
-        limits.append(f"the Taylor coefficients of the outputs up to order {series.capped} were not formed: "
-                      f"{series.meter.reason()}; the stages that need the orders of the rank criterion were skipped")
-    info = {"order": fib.order, "orders": dict(zip(series.labels, fib.orders)), "gap_order": fib.gap,
-            "order_stable": stable, "count": k, "count_domain": count_domain, "count_bound": cb and cb["bound"],
-            "counts": counts, "limits": limits,
-            "closed_forms": maps is not None,
-            "count_final": complete,
-            "fundamental_domain": fundamental_domain(coords, states, [
-                {spy.Symbol(s): model_sympify(v) for s, v in e["map"].items()} for e in relevant]),
-            "candidates": cinfo, "timing": timing, "monodromy": mono,
-            "certificate": certificate(out, orbit, k, counts, complete, cb, proof, route, _pinned_info(pinned))}
+        limits.append(
+            f"the Taylor coefficients of the outputs up to order {series.capped} were not formed: "
+            f"{series.meter.reason()}; the stages that need the orders of the rank criterion were skipped"
+        )
+    info = {
+        "order": fib.order,
+        "orders": dict(zip(series.labels, fib.orders)),
+        "gap_order": fib.gap,
+        "order_stable": stable,
+        "count": k,
+        "count_domain": count_domain,
+        "count_bound": cb and cb["bound"],
+        "counts": counts,
+        "limits": limits,
+        "closed_forms": maps is not None,
+        "count_final": complete,
+        "fundamental_domain": fundamental_domain(
+            coords, states, [{spy.Symbol(s): model_sympify(v) for s, v in e["map"].items()} for e in relevant]
+        ),
+        "candidates": cinfo,
+        "timing": timing,
+        "monodromy": mono,
+        "certificate": certificate(out, orbit, k, counts, complete, cb, proof, route, _pinned_info(pinned)),
+    }
     if me is not None:
         info["experiments"] = _route_info(me)
     if spow:
@@ -3339,13 +3565,21 @@ def analyze(parts, coords, positive, states, order=None, start=None, points=_POI
 def _entry(sig, proofs, maps, mono_maps, fib, syms, parts, states, positive, spow):
     """The result entry of the map `sig`: the state maps from `proofs` (by id) or proven here, and the stages that
     found it."""
-    entry = {"map": {str(s): str(e) for s, e in sig.items() if e != s},
-             "changes": [str(s) for s in syms if sig[s] != s]}
+    entry = {
+        "map": {str(s): str(e) for s, e in sig.items() if e != s},
+        "changes": [str(s) for s in syms if sig[s] != s],
+    }
     pf = proofs[id(sig)] if id(sig) in proofs else None if spow else state_map_proof(parts, sig, states, positive)
     entry["level"] = "exact" if pf is not None else "checked"
-    entry["found_by"] = [w for w, hit in (("candidates", id(sig) in proofs),
-                                           ("fiber", any(sig is m for m in maps or [])),
-                                           ("monodromy", any(sig is m for m in mono_maps))) if hit]
+    entry["found_by"] = [
+        w
+        for w, hit in (
+            ("candidates", id(sig) in proofs),
+            ("fiber", any(sig is m for m in maps or [])),
+            ("monodromy", any(sig is m for m in mono_maps)),
+        )
+        if hit
+    ]
     entry["state_maps"] = pf
     entry["preserves_domain"], entry["domain_conditions"] = domain_conditions(fib, sig)
     entry["fixed_set"] = fixed_set(sig)
@@ -3361,16 +3595,26 @@ def _start_power_info(info, spow):
     for sp in spow:
         pf = sp["proof"]
         premises += pf["premises"]
-        info["start_powers"].append({
-            "state": sp["state"], "exponent": sp["alpha"], "order": sp["k"], "leading": pf["leading"],
-            "observable": pf["observable"], "index": pf["index"], "coefficient": pf["coefficient"],
-            "premises": list(pf["premises"])})
+        info["start_powers"].append(
+            {
+                "state": sp["state"],
+                "exponent": sp["alpha"],
+                "order": sp["k"],
+                "leading": pf["leading"],
+                "observable": pf["observable"],
+                "index": pf["index"],
+                "coefficient": pf["coefficient"],
+                "premises": list(pf["premises"]),
+            }
+        )
         cert.setdefault("proven", []).append(
             f"every point of the fiber in the domain has the exponent {sp['alpha']} of the point, by the lowest "
-            f"exponent other than an integer of {pf['observable']}")
+            f"exponent other than an integer of {pf['observable']}"
+        )
     info["limits"].append(
         "the series of " + ", ".join(f"{sp['state']}^{sp['alpha']}" for sp in spow) + " are in t and in the "
-        "layers (t^k)^(m alpha), with the normalized power (x/c_x)^alpha (info['discrete']['start_powers'])")
+        "layers (t^k)^(m alpha), with the normalized power (x/c_x)^alpha (info['discrete']['start_powers'])"
+    )
     if premises:
         cert["premise"] = "; ".join(premises)
         if cert.get("complete") in ("exact", "verified"):
@@ -3382,6 +3626,7 @@ def _experiments(parts, coords, series, positive, floor, experiments, timing):
     """multiexp.count(), timed."""
 
     from . import multiexp
+
     t = time.monotonic()
     me = multiexp.count(parts, coords, series, positive, floor, experiments)
     timing["experiments"] = round(time.monotonic() - t, 2)
@@ -3391,14 +3636,14 @@ def _experiments(parts, coords, series, positive, floor, experiments, timing):
 def _final(me, floor, proven, cand):
     """Whether the count of the experiments is below twice the orbit of the proven candidates, all proven: the
     orbit divides the size of the fiber, which the count bounds."""
-    return me is not None and bool(me.get("count")) and len(proven) == len(cand) and \
-        floor <= me["count"] < 2 * floor
+    return me is not None and bool(me.get("count")) and len(proven) == len(cand) and floor <= me["count"] < 2 * floor
 
 
 def _verified(series, syms, large):
     """fewcoef.verified_functions() with the threads of msolve for the kernels, within the cap verified_entries of
     work.CAPS on the entries of the matrices reduced."""
     from . import fewcoef, ioproj
+
     rng = session.current().rng("discrete verified", tuple(series.coords))
     log, threads = [], ioproj.THREADS[0]
     ioproj.THREADS[0] = max(1, int(msolve._MSOLVE_THREADS))
@@ -3416,8 +3661,10 @@ def _add_relation_bound(pinned, verified):
     coefficient."""
     if verified is None:
         return
-    pinned["relation"] = {k: verified.get(k) for k in ("terms", "reference", "functions", "exist", "checks",
-                                                        "trials", "kernels", "degree", "height", "why")}
+    pinned["relation"] = {
+        k: verified.get(k)
+        for k in ("terms", "reference", "functions", "exist", "checks", "trials", "kernels", "degree", "height", "why")
+    }
     cb = pinned["cert"]
     used = [f for f in pinned["functions"] or [] if f in verified["checks"]]
     if cb is None or cb["bound"] is None or not used:
@@ -3434,13 +3681,23 @@ def _pinned_info(pinned):
         return None
     cb = pinned["cert"] or {}
     fib = pinned["fiber"]
-    out = {"functions": pinned["functions"], "orders": dict(zip(fib.series.labels, fib.orders)) if fib else None,
-           "count_modp": pinned["count"], "count": cb.get("count"), "count_bound": cb.get("bound"),
-           "count_bits": cb.get("bits"), "bezout": cb.get("bezout"), "why": pinned["why"]}
+    out = {
+        "functions": pinned["functions"],
+        "orders": dict(zip(fib.series.labels, fib.orders)) if fib else None,
+        "count_modp": pinned["count"],
+        "count": cb.get("count"),
+        "count_bound": cb.get("bound"),
+        "count_bits": cb.get("bits"),
+        "bezout": cb.get("bezout"),
+        "why": pinned["why"],
+    }
     if pinned.get("relation") is not None:
         # the bound of the count over Q alone, and that of the verified relation, whose sum is count_bound
-        out.update(relation=pinned["relation"], relation_bound=pinned.get("relation_bound"),
-                   count_bound_q=cb.get("count_bound", cb.get("bound")))
+        out.update(
+            relation=pinned["relation"],
+            relation_bound=pinned.get("relation_bound"),
+            count_bound_q=cb.get("count_bound", cb.get("bound")),
+        )
     return out
 
 
@@ -3498,19 +3755,26 @@ def _domain_counts(fib, maps, k, points, coords, proven=None):
     elements `proven` of a group of proven maps whose orbit has `k` points, the fiber at a point is the orbit of the
     point."""
     rng = session.current().rng("discrete domain", tuple(coords))
-    pts = [domain_point(fib, rng) for _ in range(points)] if isinstance(points, int) else \
-        [{spy.Symbol(str(k_)): spy.Rational(str(v)) for k_, v in dict(pt).items()} for pt in points]
+    pts = (
+        [domain_point(fib, rng) for _ in range(points)]
+        if isinstance(points, int)
+        else [{spy.Symbol(str(k_)): spy.Rational(str(v)) for k_, v in dict(pt).items()} for pt in points]
+    )
 
     def count_at(pt):
         if proven is not None:
             boxes = _boxes_of_maps(fib, pt, proven, check=False)
             if boxes is not None:
                 return None, boxes
-        cc = complex_count(fib, {s: v for s, v in pt.items()}, PRIMES[0]) \
-            if all(v.q % PRIMES[0] for v in pt.values()) else None
+        cc = (
+            complex_count(fib, {s: v for s, v in pt.items()}, PRIMES[0])
+            if all(v.q % PRIMES[0] for v in pt.values())
+            else None
+        )
         # where the maps account for every point counted, the point and the images are the fiber, exactly
         boxes = _boxes_of_maps(fib, pt, maps) if maps is not None and cc == k == len(maps) + 1 else None
         return cc, boxes if boxes is not None else real_points(fib, pt)
+
     # msolve gains little from threads: the points run as processes of one thread each
     workers = max(1, min(int(msolve._MSOLVE_THREADS), len(pts)))
     with msolve.msolve_threads(1):
@@ -3522,13 +3786,20 @@ def _domain_counts(fib, maps, k, points, coords, proven=None):
     counts = []
     for pt, (cc, boxes) in zip(pts, done):
         if boxes is None:
-            counts.append({"point": {str(s): str(v) for s, v in pt.items()}, "complex": cc, "real": None,
-                           "in_domain": None})
+            counts.append(
+                {"point": {str(s): str(v) for s, v in pt.items()}, "complex": cc, "real": None, "in_domain": None}
+            )
             continue
         dom = [in_domain(fib, b) for b in boxes]
-        counts.append({"point": {str(s): str(v) for s, v in pt.items()}, "complex": cc, "real": len(boxes),
-                       "in_domain": sum(d is True for d in dom),
-                       "undecided": sum(d is None for d in dom)})
+        counts.append(
+            {
+                "point": {str(s): str(v) for s, v in pt.items()},
+                "complex": cc,
+                "real": len(boxes),
+                "in_domain": sum(d is True for d in dom),
+                "undecided": sum(d is None for d in dom),
+            }
+        )
     return counts
 
 
@@ -3542,8 +3813,7 @@ def _fiber_degrees(fib):
     whose degrees in theta come from the recursion of the series on degree bounds; None at a pole."""
     A = Atoms()
     try:
-        outs = fib.series._outputs([Deg(A, 1) for _ in fib.series.cs], fib.order, 0, Deg.const(A, 1),
-                                   Deg.const(A, 0))
+        outs = fib.series._outputs([Deg(A, 1) for _ in fib.series.cs], fib.order, 0, Deg.const(A, 1), Deg.const(A, 0))
     except ZeroDivisionError:
         outs = None
     if outs is None:
@@ -3559,8 +3829,12 @@ def _fiber_degrees(fib):
     for (E, M), b, n in zip(fib.outs, bnum, fib.orders):
         for k in range(n + 1):
             for m in range(len(M[k])):
-                terms = [_sparse_deg(E[l_][a]) + b[k - l_][m - a] for l_ in range(k + 1) for a in range(m + 1)
-                         if a < len(E[l_]) and E[l_][a] and m - a < len(b[k - l_]) and b[k - l_][m - a] is not None]
+                terms = [
+                    _sparse_deg(E[l_][a]) + b[k - l_][m - a]
+                    for l_ in range(k + 1)
+                    for a in range(m + 1)
+                    if a < len(E[l_]) and E[l_][a] and m - a < len(b[k - l_]) and b[k - l_][m - a] is not None
+                ]
                 if M[k][m]:
                     terms.append(_sparse_deg(M[k][m]) + dq)
                 if terms:
@@ -3588,8 +3862,12 @@ def _x_bezout(fib):
         # the leading coefficient of the base of a free power is a factor of the saturation in the jets
         return None
     # a coordinate pinned to the value at the point is the equation x_i = theta_i, of degree one
-    pinned = [i for i in range(len(series.cs)) for n, d in series.pins
-              if d == {(0,) * len(series.cs): 1} and n == {tuple(int(j == i) for j in range(len(series.cs))): 1}]
+    pinned = [
+        i
+        for i in range(len(series.cs))
+        for n, d in series.pins
+        if d == {(0,) * len(series.cs): 1} and n == {tuple(int(j == i) for j in range(len(series.cs))): 1}
+    ]
     # the rows of the outputs, and the rows of the pins before those of the outputs: the smaller product
     got = [_row_degrees(series, series.rank_rows(2 * len(series.cs), PRIMES[0], skip=sorted(set(pinned))))]
     if series.pins:
@@ -3608,10 +3886,19 @@ def _x_bezout(fib):
         vals = dict(zip(gens, start + list(series.params)))
 
         def ev(Pd):
-            return sum((spy.Rational(c.numerator, c.denominator) * spy.prod([g ** e for g, e in zip(gens, m)])
-                        for m, c in Pd.items()), spy.Integer(0)).xreplace(vals)
-        dens = [spy.fraction(spy.together(v))[1] for v in start] + [ev(D) for _, D in seg["F"]] + \
-            [ev(E) for _, E in seg["G"]]
+            return sum(
+                (
+                    spy.Rational(c.numerator, c.denominator) * spy.prod([g**e for g, e in zip(gens, m)])
+                    for m, c in Pd.items()
+                ),
+                spy.Integer(0),
+            ).xreplace(vals)
+
+        dens = (
+            [spy.fraction(spy.together(v))[1] for v in start]
+            + [ev(D) for _, D in seg["F"]]
+            + [ev(E) for _, E in seg["G"]]
+        )
         for d in dens:
             sat = sat * spy.fraction(spy.together(d))[0] * spy.fraction(spy.together(d))[1]
     syms = [spy.Symbol(c) for c in series.coords]
@@ -3689,6 +3976,7 @@ def count_certificate(fib, k, crit, within=None):
         return out
     if series.inputs:
         from .uinputs import count_certificate as with_inputs
+
         return with_inputs(fib, k, out)
     if crit is None or any(o < c for o, c in zip(fib.orders, crit)):
         out["why"] = "the orders are below those of the rank criterion"
@@ -3712,13 +4000,14 @@ def count_certificate(fib, k, crit, within=None):
         return out
     out["bits"] = bits
     rng = session.current().rng("verified count", tuple(fib.coords))
-    pt = {s: spy.Integer(rng.randint(1, 2 ** bits)) for s in fib.syms}
+    pt = {s: spy.Integer(rng.randint(1, 2**bits)) for s in fib.syms}
     # msolve over Q per block, plain and then with the separating form
     k2 = q_count(fib, pt)
     out["count"] = k2
     if not k2:
-        out["why"] = f"no finite count over Q at the random integer point of {bits} bits" + \
-            (f": {no_count_reason(fib.order)}" if k2 is None and "size" in _FAILURES else "")
+        out["why"] = f"no finite count over Q at the random integer point of {bits} bits" + (
+            f": {no_count_reason(fib.order)}" if k2 is None and "size" in _FAILURES else ""
+        )
         return out
     if within is None and k2 != k:
         out["why"] = f"the count over Q at a random integer point is {k2}, not {k}"
@@ -3743,20 +4032,32 @@ def certificate(entries, orbit, k, counts, complete, cb=None, exact=None, route=
     exact = exact or {"exact": False, "why": None}
     bound = None if exact.get("exact") else cb.get("bound")
     out = {
-        "invariance": [{"map": e["map"], "proven": e["level"] == "exact", "state_maps": e.get("state_maps")}
-                       for e in entries],
+        "invariance": [
+            {"map": e["map"], "proven": e["level"] == "exact", "state_maps": e.get("state_maps")} for e in entries
+        ],
         "identities": "f(phi(x), sigma(theta)) = Dphi(x) f(x, theta), h(phi(x), sigma(theta)) = h(x, theta) and "
-                      "phi(x0(theta)) = x0(sigma(theta)), in every segment and through every event, as identities "
-                      "of rational functions over Q, or over Q(i) for a map with complex coefficients, checked by "
-                      "cancellation",
-        "orbit": orbit, "count": k, "prime": PRIMES[0], "counts_at_points": agree,
-        "proven": ["the invariance of every map at level exact",
-                   f"the orbit of a generic point under the group of the exact maps has {orbit} points"],
-        "exact": exact, "count_bound": bound, "count_bound_why": None if exact.get("exact") else cb.get("why"),
-        "count_bits": cb.get("bits"), "bezout": cb.get("bezout")}
+        "phi(x0(theta)) = x0(sigma(theta)), in every segment and through every event, as identities "
+        "of rational functions over Q, or over Q(i) for a map with complex coefficients, checked by "
+        "cancellation",
+        "orbit": orbit,
+        "count": k,
+        "prime": PRIMES[0],
+        "counts_at_points": agree,
+        "proven": [
+            "the invariance of every map at level exact",
+            f"the orbit of a generic point under the group of the exact maps has {orbit} points",
+        ],
+        "exact": exact,
+        "count_bound": bound,
+        "count_bound_why": None if exact.get("exact") else cb.get("why"),
+        "count_bits": cb.get("bits"),
+        "bezout": cb.get("bezout"),
+    }
     if exact.get("exact"):
-        out["proven"].append("the field fixed by the exact maps lies in the field of the output coefficients, so "
-                             f"the fiber at a generic point is the orbit of {orbit} points")
+        out["proven"].append(
+            "the field fixed by the exact maps lies in the field of the output coefficients, so "
+            f"the fiber at a generic point is the orbit of {orbit} points"
+        )
         out["complete"] = "exact"
         return out
     if pinned is not None:
@@ -3766,51 +4067,74 @@ def certificate(entries, orbit, k, counts, complete, cb=None, exact=None, route=
         out["proven"].append(
             f"the {len(pinned['functions'])} functions under pinned lie in the field of the output coefficients (the "
             "relations and generators under exact"
-            + (", and for the functions under pinned.relation the relation of the projection there, verified" if
-               pinned.get("relation_bound") is not None else "")
+            + (
+                ", and for the functions under pinned.relation the relation of the projection there, verified"
+                if pinned.get("relation_bound") is not None
+                else ""
+            )
             + "), so they take one value on the fiber, which lies in the solutions of these functions and the output "
-            "coefficients up to the orders under pinned")
+            "coefficients up to the orders under pinned"
+        )
         if complete:
-            out["proven"].append(f"the orbit of {orbit} point{'' if orbit == 1 else 's'} divides the size of the "
-                                 f"fiber, and a count below {2 * orbit} leaves the orbit")
+            out["proven"].append(
+                f"the orbit of {orbit} point{'' if orbit == 1 else 's'} divides the size of the "
+                f"fiber, and a count below {2 * orbit} leaves the orbit"
+            )
     if route is not None:
         K, fi = route["experiments"], route["first_integrals"]
-        out["route"] = {"experiments": K, "orders": route["orders"], "count": route["count"],
-                        "first_integrals": fi}
+        out["route"] = {"experiments": K, "orders": route["orders"], "count": route["count"], "first_integrals": fi}
         out["proven"].append(
             "no nonconstant rational first integral at a generic point: the eigenvalues of the Jacobian at an "
             f"equilibrium over {fi['field']} at one point of the parameters are linearly independent over Z "
-            "(Cong, Llibre and Zhang 2011, Theorem 1), and a first integral at a generic point would give one there")
+            "(Cong, Llibre and Zhang 2011, Theorem 1), and a first integral at a generic point would give one there"
+        )
         out["proven"].append(
             f"so the values of the parameters and the starts of the first of {K} experiments with shared parameters "
-            "and free starts, over their fiber, are the fiber of one experiment")
+            "and free starts, over their fiber, are the fiber of one experiment"
+        )
         if complete:
-            out["proven"].append(f"the orbit of {orbit} point{'' if orbit == 1 else 's'} divides the size of the "
-                                 f"fiber, and a count below {2 * orbit} leaves the orbit")
+            out["proven"].append(
+                f"the orbit of {orbit} point{'' if orbit == 1 else 's'} divides the size of the "
+                f"fiber, and a count below {2 * orbit} leaves the orbit"
+            )
     if bound is None:
-        out["axiom"] = ("the number of solutions modulo the prime at a random point equals the number over the "
-                        "complex numbers at a generic point; no error bound is proven")
+        out["axiom"] = (
+            "the number of solutions modulo the prime at a random point equals the number over the "
+            "complex numbers at a generic point; no error bound is proven"
+        )
         why = [w for w in (exact.get("why"), cb.get("why")) if w]
         out["count_bound_why"] = "; ".join(why) or None
     elif used:
         n = cb["count"]
         top = max(pinned["orders"].values())
-        out["bounded"] = (f"the count of the proven functions and the output coefficients up to order {top} over Q "
-                          f"at a random integer point is {n}, so the fiber at a generic point has at most {n} "
-                          f"point{'' if n == 1 else 's'}, except with probability at most {bound:.3g}"
-                          + (f", of which {pinned['relation_bound']:.3g} for the verified relation"
-                             if pinned.get("relation_bound") is not None else ""))
+        out["bounded"] = (
+            f"the count of the proven functions and the output coefficients up to order {top} over Q "
+            f"at a random integer point is {n}, so the fiber at a generic point has at most {n} "
+            f"point{'' if n == 1 else 's'}, except with probability at most {bound:.3g}"
+            + (
+                f", of which {pinned['relation_bound']:.3g} for the verified relation"
+                if pinned.get("relation_bound") is not None
+                else ""
+            )
+        )
     elif route is not None:
         n = cb["count"]
-        out["bounded"] = (f"the count of the {route['experiments']} experiments over Q at a random integer point is "
-                          f"{n}, at least the number of values of the parameters and the starts of the first there, so "
-                          f"the fiber of one experiment at a generic point has at most {n} point"
-                          f"{'' if n == 1 else 's'}, except with probability at most {bound:.3g}")
+        out["bounded"] = (
+            f"the count of the {route['experiments']} experiments over Q at a random integer point is "
+            f"{n}, at least the number of values of the parameters and the starts of the first there, so "
+            f"the fiber of one experiment at a generic point has at most {n} point"
+            f"{'' if n == 1 else 's'}, except with probability at most {bound:.3g}"
+        )
     else:
-        out["bounded"] = (f"the fiber at a generic point has at most {k} points, except with probability at most "
-                          f"{bound:.3g} (the count over Q at a random integer point)")
-    out["complete"] = ("verified" if bound is not None else "axiom") if complete else \
-        ("no" if k is not None and orbit is not None and orbit < k else "open")
+        out["bounded"] = (
+            f"the fiber at a generic point has at most {k} points, except with probability at most "
+            f"{bound:.3g} (the count over Q at a random integer point)"
+        )
+    out["complete"] = (
+        ("verified" if bound is not None else "axiom")
+        if complete
+        else ("no" if k is not None and orbit is not None and orbit < k else "open")
+    )
     return out
 
 
@@ -3853,29 +4177,43 @@ def resting_start(f, ic, inputs, coords):
     odd = [str(x) for x, e in zip(U, bal) if not e.is_polynomial(*U)]
     if odd:
         from .rationalize import NotRationalError
-        raise NotRationalError("discrete() under equilibrate needs a resting state with one rational closed form in "
-                               f"the coordinates; the balances of {', '.join(odd)} are not rational in the states")
+
+        raise NotRationalError(
+            "discrete() under equilibrate needs a resting state with one rational closed form in "
+            f"the coordinates; the balances of {', '.join(odd)} are not rational in the states"
+        )
     cap = work.CAPS["rest_bezout"]
     bezout = math.prod(max(1, spy.Poly(e, *U).total_degree()) for e in bal if e != 0)
     if bezout > cap:
-        raise ValueError(f"discrete() under equilibrate does not solve the balances of {', '.join(map(str, U))}: "
-                         f"their Bezout number {bezout} in the states is past the cap rest_bezout of {cap}")
+        raise ValueError(
+            f"discrete() under equilibrate does not solve the balances of {', '.join(map(str, U))}: "
+            f"their Bezout number {bezout} in the states is past the cap rest_bezout of {cap}"
+        )
     block = _largest_block(bal, U)
     cap = work.CAPS["rest_block"]
     if block > cap:
-        raise ValueError(f"discrete() under equilibrate does not solve the balances of {', '.join(map(str, U))}: "
-                         f"their largest coupled block of {block} states is past the cap rest_block of {cap}")
+        raise ValueError(
+            f"discrete() under equilibrate does not solve the balances of {', '.join(map(str, U))}: "
+            f"their largest coupled block of {block} states is past the cap rest_block of {cap}"
+        )
     sols = _solve_balances(bal, U)
-    sols = [s for s in sols if set(s) >= set(U) and not any(v.has(spy.I) or v.free_symbols & set(U)
-                                                               for v in s.values())]
+    sols = [
+        s for s in sols if set(s) >= set(U) and not any(v.has(spy.I) or v.free_symbols & set(U) for v in s.values())
+    ]
     if sols:
         best = max(sum(s[x] != 0 for x in U) for s in sols)
         sols = [s for s in sols if sum(s[x] != 0 for x in U) == best]
     # an exponential of the coordinates is left to the rational form of the fiber (rationalize)
-    if len(sols) != 1 or not all(_rational(sols[0][x].replace(lambda a: isinstance(a, spy.exp) and _rational(
-            a.args[0]), lambda a: spy.Integer(2))) for x in U):
-        raise ValueError("discrete() under equilibrate needs a resting state with one rational closed form in the "
-                         f"coordinates; the balances of {', '.join(map(str, U))} have {len(sols)} such solutions")
+    if len(sols) != 1 or not all(
+        _rational(
+            sols[0][x].replace(lambda a: isinstance(a, spy.exp) and _rational(a.args[0]), lambda a: spy.Integer(2))
+        )
+        for x in U
+    ):
+        raise ValueError(
+            "discrete() under equilibrate needs a resting state with one rational closed form in the "
+            f"coordinates; the balances of {', '.join(map(str, U))} have {len(sols)} such solutions"
+        )
     out.update({str(x): str(spy.cancel(sols[0][x])) for x in U})
     return out
 

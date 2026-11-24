@@ -35,13 +35,21 @@ def parameter_form(d, drop=()):
 
 # ---- Hodgkin-Huxley neuron in current clamp: rest, then a current step
 
-RATES = {"m": ("am*exp(V/kam)", "bm*exp(-V/kbm)"), "h": ("ah*exp(-V/kah)", "bh*exp(V/kbh)"),
-         "n": ("an*exp(V/kan)", "bn*exp(-V/kbn)")}
-HH = {"V": "(Iapp - gNa*m^3*h*(V - ENa) - gK*n^4*(V - EK) - gL*(V - EL))/C", "Iapp": "0",
-      **{g: f"{a}*(1 - {g}) - {b}*{g}" for g, (a, b) in RATES.items()}}
+RATES = {
+    "m": ("am*exp(V/kam)", "bm*exp(-V/kbm)"),
+    "h": ("ah*exp(-V/kah)", "bh*exp(V/kbh)"),
+    "n": ("an*exp(V/kan)", "bn*exp(-V/kbn)"),
+}
+HH = {
+    "V": "(Iapp - gNa*m^3*h*(V - ENa) - gK*n^4*(V - EK) - gL*(V - EL))/C",
+    "Iapp": "0",
+    **{g: f"{a}*(1 - {g}) - {b}*{g}" for g, (a, b) in RATES.items()},
+}
 HH_POS = ["C", "gNa", "gK", "gL"] + [p + g for g in "mhn" for p in ("a", "b", "ka", "kb")]
-HH_EVENTS = [{"var": "Iapp", "time": "1", "value": "10", "method": "replace"},
-             {"var": "Iapp", "time": "6", "value": "0", "method": "replace"}]
+HH_EVENTS = [
+    {"var": "Iapp", "time": "1", "value": "10", "method": "replace"},
+    {"var": "Iapp", "time": "6", "value": "0", "method": "replace"},
+]
 
 
 def hh(obs, equilibrate):
@@ -52,10 +60,10 @@ def hh(obs, equilibrate):
         for g, (a, b) in RATES.items():
             a0, b0 = a.replace("V", "V0"), b.replace("V", "V0")
             trafo[g] = f"({a0})/(({a0}) + ({b0}))"
-        trafo["EL"] = (f"V0 + (gNa*({trafo['m']})^3*({trafo['h']})*(V0 - ENa) + "
-                       f"gK*({trafo['n']})^4*(V0 - EK))/gL")
-    return det(HH, obs, trafo=trafo, events=HH_EVENTS, inputs=["Iapp"], equilibrate=equilibrate,
-               positive=HH_POS, cores=4)
+        trafo["EL"] = f"V0 + (gNa*({trafo['m']})^3*({trafo['h']})*(V0 - ENa) + gK*({trafo['n']})^4*(V0 - EK))/gL"
+    return det(
+        HH, obs, trafo=trafo, events=HH_EVENTS, inputs=["Iapp"], equilibrate=equilibrate, positive=HH_POS, cores=4
+    )
 
 
 def test_hodgkin_huxley_at_rest():
@@ -74,8 +82,18 @@ def test_hodgkin_huxley_offset_at_rest():
     assert d["level"] == "exact"
     assert set(d["support"]) == {"EK", "EL", "ENa", "Vlj", "am", "bm", "ah", "bh", "an", "bn"}
     # the direction of the offset in closed form
-    shift = {"EK": "1", "EL": "1", "ENa": "1", "Vlj": "-1", "am": "-am/kam", "bm": "bm/kbm", "ah": "ah/kah",
-             "bh": "-bh/kbh", "an": "-an/kan", "bn": "bn/kbn"}
+    shift = {
+        "EK": "1",
+        "EL": "1",
+        "ENa": "1",
+        "Vlj": "-1",
+        "am": "-am/kam",
+        "bm": "bm/kbm",
+        "ah": "ah/kah",
+        "bh": "-bh/kbh",
+        "an": "-an/kan",
+        "bn": "bn/kbn",
+    }
     assert same_direction(d["generator"], shift)
     # the same direction with the resting state given through the trafo
     hand = hh({"y": "V + Vlj"}, False)
@@ -87,17 +105,39 @@ def test_hodgkin_huxley_offset_at_rest():
 def test_hodgkin_huxley_offset_banks_per_entry(monkeypatch):
     # each entry fitted on points that move only the leaves of the entry from the base point
     import symident.detection.forward as fw
+
     monkeypatch.setattr(fw, "_UNION_CAP", 0)
-    eq = det(HH, {"y": "V + Vlj"}, events=HH_EVENTS, inputs=["Iapp"], equilibrate=True, positive=HH_POS,
-             cores=4, control=si.reconst_control(relevance_cap_dir=1))
+    eq = det(
+        HH,
+        {"y": "V + Vlj"},
+        events=HH_EVENTS,
+        inputs=["Iapp"],
+        equilibrate=True,
+        positive=HH_POS,
+        cores=4,
+        control=si.reconst_control(relevance_cap_dir=1),
+    )
     (d,) = eq.symmetries
     assert d["level"] == "exact" and eq.info["rank_status"]["status"] == "proven"
-    assert same_direction(d["generator"], {"EK": "1", "EL": "1", "ENa": "1", "Vlj": "-1", "am": "-am/kam",
-                                           "bm": "bm/kbm", "ah": "ah/kah", "bh": "-bh/kbh", "an": "-an/kan",
-                                           "bn": "bn/kbn"})
+    assert same_direction(
+        d["generator"],
+        {
+            "EK": "1",
+            "EL": "1",
+            "ENa": "1",
+            "Vlj": "-1",
+            "am": "-am/kam",
+            "bm": "bm/kbm",
+            "ah": "ah/kah",
+            "bh": "-bh/kbh",
+            "an": "-an/kan",
+            "bn": "bn/kbn",
+        },
+    )
 
 
 # ---- small models: a trigonometric and a logarithmic term of a state at rest
+
 
 def test_trigonometric_state_at_rest():
     f = {"x": "p - k*sin(x - phi) + u", "u": "0"}
@@ -113,8 +153,7 @@ def test_logarithmic_state_at_rest():
     f = {"x": "a*(1 + u) - b*x*log(x/K)", "u": "0"}
     pos = ["a", "b", "K", "s", "x"]
     eq = det(f, {"y": "s*x"}, equilibrate=True, positive=pos)
-    hand = det(f, {"y": "s*x"}, trafo={"x": "x0", "a": "b*x0*log(x0/K)", "u": "0"},
-               positive=["b", "K", "s", "x", "x0"])
+    hand = det(f, {"y": "s*x"}, trafo={"x": "x0", "a": "b*x0*log(x0/K)", "u": "0"}, positive=["b", "K", "s", "x", "x0"])
     assert (eq.rank, eq.dim) == (hand.rank, hand.dim) == (3, 4)
     (d,) = eq.symmetries
     assert d["type"] == "scaling" and set(d["generator"]) == {"a", "K", "s"}
@@ -153,6 +192,7 @@ def test_state_only_inside_a_term_is_drawn_as_by_hand():
 
 
 # ---- models without a resting state
+
 
 def test_no_resting_state():
     with pytest.raises(InputError, match="balance of x at rest"):

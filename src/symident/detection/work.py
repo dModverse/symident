@@ -59,6 +59,7 @@ def msolve_memory(gib):
     old = MSOLVE_MEMORY
     if gib is None:
         from .. import state
+
         gib = state.env_value("MSOLVE_GB") or None
     if gib is not None:
         MSOLVE_MEMORY = int(float(gib) * (1 << 30))
@@ -85,6 +86,7 @@ def _limiter(memory):
             resource.setrlimit(resource.RLIMIT_AS, (lim, lim))
         except (OSError, ValueError):
             pass
+
     return apply
 
 
@@ -98,29 +100,29 @@ def run(cmd, input=None, text=False, memory=None):
 # the work caps of the global analysis; discrete() sets the public ones for one call (caps())
 CAPS = {
     # nonzero entries of the matrices of the F4 rounds of one call of msolve, and the unknowns and terms of the input
-    "msolve_entries": 4 * 10 ** 8,
+    "msolve_entries": 4 * 10**8,
     "msolve_unknowns": 400,
     "msolve_terms": 100000,
     # the same for the short counts: the first count of discrete(), the size of a square subsystem, the check of a
     # resting state
-    "quick_entries": 6 * 10 ** 7,
+    "quick_entries": 6 * 10**7,
     "quick_unknowns": 400,
     "quick_terms": 100000,
     # entries of the matrices over GF(p) that the exact search reduces, and the verified functions past it
-    "search_entries": 5 * 10 ** 8,
-    "verified_entries": 2 * 10 ** 8,
+    "search_entries": 5 * 10**8,
+    "verified_entries": 2 * 10**8,
     # terms of a polynomial of the elimination of the states
-    "elimination_terms": 3 * 10 ** 6,
+    "elimination_terms": 3 * 10**6,
     # products of terms that the Taylor series of the outputs may take, (k + 1)^2 per order k and term
-    "series_products": 10 ** 10,
+    "series_products": 10**10,
     # permutations of coordinates tested as candidates
     "candidates": 20000,
     # points of the fiber that the reconstruction of the maps solves
     "map_points": 200,
     # products of terms in the Taylor series that the steps of the paths of the monodromy evaluate
-    "monodromy_products": 10 ** 9,
+    "monodromy_products": 10**9,
     # the terms of the expansion of the equations of a map of the states solved from the Lie derivatives of the outputs
-    "state_map_terms": 10 ** 5,
+    "state_map_terms": 10**5,
     # the Bezout number of the resting balances that SymPy is given, and the states of their largest coupled block
     "rest_bezout": 4,
     "rest_block": 8,
@@ -165,8 +167,9 @@ def local_caps(**kw):
 def quick_msolve():
     """The short caps of msolve (quick_entries, quick_unknowns, quick_terms) within the block, at most those in
     force."""
-    with local_caps(**{k: min(cap(k), cap("quick" + k[6:])) for k in ("msolve_entries", "msolve_unknowns",
-                                                                       "msolve_terms")}):
+    with local_caps(
+        **{k: min(cap(k), cap("quick" + k[6:])) for k in ("msolve_entries", "msolve_unknowns", "msolve_terms")}
+    ):
         yield
 
 
@@ -206,8 +209,9 @@ def run_msolve(cmd, text=True):
     out = []
     total, buf, done = 0, b"", 0
     # leaving the block closes both pipes and waits for the process
-    with subprocess.Popen(list(cmd) + ["-v", "2"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          preexec_fn=_limiter(MSOLVE_MEMORY)) as proc:
+    with subprocess.Popen(
+        list(cmd) + ["-v", "2"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=_limiter(MSOLVE_MEMORY)
+    ) as proc:
         reader = threading.Thread(target=lambda: out.append(proc.stdout.read()))
         reader.start()
         try:

@@ -20,8 +20,7 @@ def _hyp_to_exp(e):
 def _has_exp(e):
     """True if e contains an exponential or the number E."""
     e = spy.sympify(e)
-    return e.has(spy.E) or any(_exp_atom(a) is not None
-                               for a in e.atoms(spy.exp, spy.Pow))
+    return e.has(spy.E) or any(_exp_atom(a) is not None for a in e.atoms(spy.exp, spy.Pow))
 
 
 def _strip_log_obs(g):
@@ -48,8 +47,7 @@ def _strip_log_obs(g):
             out = out * L.args[0] ** c
         for t in spy.Add.make_args(rest):
             nl = [a for a in t.atoms(spy.log) if a.args[0].is_number]
-            out = out * (nl[0].args[0] ** spy.cancel(t / nl[0]) if len(nl) == 1
-                         else spy.exp(t))
+            out = out * (nl[0].args[0] ** spy.cancel(t / nl[0]) if len(nl) == 1 else spy.exp(t))
         if not out.atoms(spy.log):
             return out
     return g
@@ -105,6 +103,7 @@ def _log_param_denominators(base_of, exprs):
 
 def _log_param_sub(lp):
     """Rewriter of base^(sum c_i theta_i + k) to base^k * prod X_i^(c_i L_i), lp: theta -> (X, base[, L])."""
+
     def repl(at):
         be = _exp_atom(at)
         if be is None:
@@ -114,7 +113,7 @@ def _log_param_sub(lp):
         k = terms.pop(spy.Integer(1), spy.Integer(0))
         if not terms or any(t not in lp or lp[t][1] != base for t in terms):
             return at
-        out = base ** k if k != 0 else spy.Integer(1)
+        out = base**k if k != 0 else spy.Integer(1)
         for t, cf in terms.items():
             L = lp[t][2] if len(lp[t]) > 2 else 1
             out = out * lp[t][0] ** (cf * L)
@@ -125,6 +124,7 @@ def _log_param_sub(lp):
         if not lp:
             return e
         return e.replace(lambda x: _exp_atom(x) is not None, repl)
+
     return sub
 
 
@@ -151,30 +151,31 @@ def sign_chart(f, gs, positive):
     lines = list(fl.values()) + [v for g in gl for v in g.values()] + [str(k) for k in fl]
     local, parse = _make_local_parse(lines)
     local = dict(local)
-    local.update({'abs': spy.Abs, 'sign': spy.sign})
+    local.update({"abs": spy.Abs, "sign": spy.sign})
     parse = _make_parse(local)
     pos, _ = declared(positive)
     names = {str(sym) for sym in local.values() if isinstance(sym, spy.Symbol)}
-    to_pos = {spy.Symbol(n): spy.Symbol(n, positive=True)
-              for n in names if pos is None or n in pos}
+    to_pos = {spy.Symbol(n): spy.Symbol(n, positive=True) for n in names if pos is None or n in pos}
     back = {v: k for k, v in to_pos.items()}
 
     def one(k, rhs):
-        if any(t in rhs for t in ('max(', 'min(', 'pmax(', 'pmin(', 'ifelse(',
-                                  'Heaviside(')):
-            raise InapplicableError('%s: max, min and steps are not analytic; analyze each '
-                             'regime on its own, e.g. through `conditions`' % k)
+        if any(t in rhs for t in ("max(", "min(", "pmax(", "pmin(", "ifelse(", "Heaviside(")):
+            raise InapplicableError(
+                "%s: max, min and steps are not analytic; analyze each regime on its own, e.g. through `conditions`" % k
+            )
         e = parse(rhs).xreplace(to_pos)
         if e.atoms(spy.Abs, spy.sign):
-            raise InapplicableError('%s: the sign inside abs() or sign() is not decided by '
-                             'the coordinates declared `positive`' % k)
+            raise InapplicableError(
+                "%s: the sign inside abs() or sign() is not decided by the coordinates declared `positive`" % k
+            )
         return to_r(e.xreplace(back))
+
     try:
         Fn = {k: one(k, str(v)) for k, v in fl.items()}
         Gn = [{k: one(k, str(v)) for k, v in g.items()} for g in gl]
     except ValueError as err:
-        return {'why': str(err)}
-    return {'f': Fn, 'g': Gn}
+        return {"why": str(err)}
+    return {"f": Fn, "g": Gn}
 
 
 def _log_numbers(e, consts):
@@ -186,11 +187,11 @@ def _log_numbers(e, consts):
             continue
         n = spy.nsimplify(n)
         if not (n.is_Rational and n > 0):
-            raise InapplicableError('log(%s) of a number that is not a positive rational' % n)
+            raise InapplicableError("log(%s) of a number that is not a positive rational" % n)
         out = spy.Integer(0)
         for q, sgn in ((n.p, 1), (n.q, -1)):
             for pr, ex in spy.factorint(q).items():
-                sym = spy.Symbol('lognum_%d' % pr)
+                sym = spy.Symbol("lognum_%d" % pr)
                 consts.add(str(sym))
                 out += sgn * ex * sym
         rep[a] = out
@@ -205,8 +206,7 @@ def _split(u):
     """u over a common denominator, factored, or split by the common factors of u when the degree is high."""
     t = spy.together(u)
     try:
-        deg = max((spy.Poly(x, *x.free_symbols).total_degree() if x.free_symbols else 0)
-                  for x in spy.fraction(t))
+        deg = max((spy.Poly(x, *x.free_symbols).total_degree() if x.free_symbols else 0) for x in spy.fraction(t))
     except (spy.PolynomialError, spy.GeneratorsNeeded):
         deg = 0
     return spy.factor_terms(t) if deg > _FACTOR_DEGREE else spy.factor(t)
@@ -217,9 +217,13 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
     fl = dict(f)
     gl = [dict(g) for g in gs]
     il = [dict(ic) for ic in (ics or [])]
-    lines = (list(fl.values()) + [v for g in gl for v in g.values()] +
-             [v for ic in il for v in ic.values()] +
-             [str(k) for k in fl] + [str(t) for t in taken])
+    lines = (
+        list(fl.values())
+        + [v for g in gl for v in g.values()]
+        + [v for ic in il for v in ic.values()]
+        + [str(k) for k in fl]
+        + [str(t) for t in taken]
+    )
     # conditions repeat the same texts: each distinct text is parsed and normalized once
     _, parse = _make_local_parse(list(dict.fromkeys(str(x) for x in lines)))
     pos, _ = declared(positive)
@@ -233,13 +237,14 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
         P = {x: spy.Symbol(str(x), positive=True) for x in e.free_symbols if is_pos(x)}
         e = spy.expand_power_base(e.xreplace(P), deep=True)
         e = e.xreplace({v: k for k, v in P.items()})
-        return e.replace(lambda x: x.is_Pow and x.base.is_Add and not x.exp.is_number,
-                         lambda x: spy.exp(x.exp * spy.log(x.base)))
+        return e.replace(
+            lambda x: x.is_Pow and x.base.is_Add and not x.exp.is_number, lambda x: spy.exp(x.exp * spy.log(x.base))
+        )
 
     def sum_powers(e):
         # u^c of a sum u with c not an integer is exp(c*log(u)): the base u is treated like log(u)
-        return [pw.base for pw in e.atoms(spy.Pow) if pw.base.is_Add and pw.exp.is_Rational
-                and not pw.exp.is_Integer]
+        return [pw.base for pw in e.atoms(spy.Pow) if pw.base.is_Add and pw.exp.is_Rational and not pw.exp.is_Integer]
+
     normal = {}
 
     def normal_of(v):
@@ -247,15 +252,18 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
         if v not in normal:
             normal[v] = norm(parse(v))
         return normal[v]
+
     F = {k: normal_of(v) for k, v in fl.items()}
     G = [{k: normal_of(v) for k, v in g.items()} for g in gl]
     I = [{k: normal_of(v) for k, v in ic.items()} for ic in il]
     # the distinct expressions of the observables, in the order of their first occurrence
     G_exprs = list(dict.fromkeys(e for g in G for e in g.values()))
     g_texts = list(dict.fromkeys(str(v) for g in gl for v in g.values()))
-    normed = any(spy.simplify(F[k] - parse(str(v))) != 0 for k, v in fl.items()) or \
-        any(spy.simplify(normal[v] - parse(v)) != 0 for v in g_texts) or \
-        any(sum_powers(e) for e in list(F.values()) + G_exprs)
+    normed = (
+        any(spy.simplify(F[k] - parse(str(v))) != 0 for k, v in fl.items())
+        or any(spy.simplify(normal[v] - parse(v)) != 0 for v in g_texts)
+        or any(sum_powers(e) for e in list(F.values()) + G_exprs)
+    )
     states = {spy.Symbol(k) for k in fl}
     one, zero = spy.Integer(1), spy.Integer(0)
 
@@ -263,7 +271,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
         # sign certificate on the declared domain: coordinates are real, the declared ones positive
         return is_positive(e, positive)
 
-    chart = {}                               # v -> (a, b)
+    chart = {}  # v -> (a, b)
 
     skip = {str(x) for x in skip}
 
@@ -272,8 +280,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
     def claim(v, a, b):
         if str(v) in skip:
             return
-        if v in chart and (spy.simplify(chart[v][0] - a) != 0 or
-                           spy.simplify(chart[v][1] - b) != 0):
+        if v in chart and (spy.simplify(chart[v][0] - a) != 0 or spy.simplify(chart[v][1] - b) != 0):
             # two logarithms of one symbol: no coordinate change, the recasts take the powers and logarithms
             contested.add(v)
             return
@@ -304,8 +311,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
                 if v in b.free_symbols or b == 0:
                     continue
                 a = spy.expand(arg - b * v)
-                if v in chart and (spy.simplify(chart[v][0] - a) != 0 or
-                                   spy.simplify(chart[v][1] - b) != 0):
+                if v in chart and (spy.simplify(chart[v][0] - a) != 0 or spy.simplify(chart[v][1] - b) != 0):
                     continue
                 claim(v, a, b)
                 done = True
@@ -342,9 +348,11 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
             for pw in e.atoms(spy.Pow):
                 if pw.base in given and pw.base not in at_zero and not pw.exp.is_number and is_pos(pw.base):
                     claim(pw.base, zero, one)
+
         def charted():
             # the names whose symbol the chart holds
             return {str(v) for v in chart if spy.Symbol(str(v)) in chart}
+
         # an initial value of a transformed state enters as the logarithm of the argument
         while True:
             n0 = len(chart)
@@ -363,7 +371,7 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
             if len(chart) == n0:
                 break
     except ValueError as err:
-        return {'why': str(err)}
+        return {"why": str(err)}
     # an affine coordinate change turns a free power of the symbol into a power of a sum
     for e in list(F.values()) + G_exprs:
         for pw in e.atoms(spy.Pow):
@@ -378,9 +386,9 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
     used = {str(t) for t in taken} | {str(k) for k in fl}
     L = {}
     for v in sorted(chart, key=str):
-        nm = 'log_%s' % v
+        nm = "log_%s" % v
         while nm in used:
-            nm += '_'
+            nm += "_"
         used.add(nm)
         L[v] = spy.Symbol(nm, real=True)
     sub0 = {v: (spy.exp(L[v]) - chart[v][0]) / chart[v][1] for v in chart}
@@ -400,12 +408,14 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
             x = x.xreplace({at: spy.log(spy.cancel(at.args[0])) for at in x.atoms(spy.log)})
             r = tidied[e] = _log_numbers(spy.powsimp(spy.expand_log(x, force=True)), consts)
         return r
+
     texts = {}
 
     def tidy_text(e):
         if e not in texts:
             texts[e] = str(tidy(e))
         return texts[e]
+
     Fn = {}
     for k, e in F.items():
         ks = spy.Symbol(k)
@@ -413,8 +423,9 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
             # log(u)' = u'/u with u = a + b*v and u' over every state it holds
             a, b = chart[ks]
             u = a + b * ks
-            du = sum((spy.diff(u, spy.Symbol(s_)) * F[s_] for s_ in F
-                      if spy.Symbol(s_) in u.free_symbols), spy.Integer(0))
+            du = sum(
+                (spy.diff(u, spy.Symbol(s_)) * F[s_] for s_ in F if spy.Symbol(s_) in u.free_symbols), spy.Integer(0)
+            )
             Fn[str(L[ks])] = str(spy.powsimp(spy.expand(tidy(du) * spy.exp(-L[ks]))))
         else:
             Fn[k] = str(tidy(e))
@@ -430,87 +441,96 @@ def log_arg_chart(f, gs, positive, taken, ics=None, skip=()):
                 u0 = (a + b * ks).xreplace(at0)
                 if u0.is_number and u0.is_positive is not True:
                     # log(u) and u^n are not analytic at a start of 0: no Lie derivatives at t = 0
-                    return {'why': 'the initial value %s = %s makes %s start at %s, but a logarithm, '
-                            'fractional power or base of a free exponent must be positive, also at the start; '
-                            'give that initial value as a positive parameter' % (k, e, a + b * ks, u0)}
+                    return {
+                        "why": "the initial value %s = %s makes %s start at %s, but a logarithm, "
+                        "fractional power or base of a free exponent must be positive, also at the start; "
+                        "give that initial value as a positive parameter" % (k, e, a + b * ks, u0)
+                    }
                 le = tidy(spy.log(u0))
                 # a logarithm left over is a function of the coordinates, for the recasts
-                if any(not at.args[0].is_number and not positive_on(at.args[0])
-                       for at in le.atoms(spy.log)):
-                    return {'why': 'the initial value %s = %s does not split into '
-                            'logarithms of positive coordinates' % (k, e)}
+                if any(not at.args[0].is_number and not positive_on(at.args[0]) for at in le.atoms(spy.log)):
+                    return {
+                        "why": "the initial value %s = %s does not split into "
+                        "logarithms of positive coordinates" % (k, e)
+                    }
                 try:
                     d[str(L[ks])] = str(_log_numbers(le, consts))
                 except ValueError as err:
-                    return {'why': str(err)}
+                    return {"why": str(err)}
             else:
                 d[k] = tidy_text(e)
         In.append(d)
-    return {'f': Fn, 'g': Gn, 'ic': In, 'consts': sorted(consts),
-            'map': [{'v': str(v), 'L': str(L[v]), 'a': str(chart[v][0]),
-                     'b': str(chart[v][1])} for v in sorted(chart, key=str)]}
+    return {
+        "f": Fn,
+        "g": Gn,
+        "ic": In,
+        "consts": sorted(consts),
+        "map": [
+            {"v": str(v), "L": str(L[v]), "a": str(chart[v][0]), "b": str(chart[v][1])} for v in sorted(chart, key=str)
+        ],
+    }
 
 
 def log_arg_event(var, value, method, maps, positive=True):
     """One event in the log coordinates as {'var', 'value', 'method', 'consts'}, or {'why': ...}."""
     maps = list(maps)
-    lines = [str(value)] + [str(m[k]) for m in maps for k in ('v', 'L', 'a', 'b')]
+    lines = [str(value)] + [str(m[k]) for m in maps for k in ("v", "L", "a", "b")]
     _, parse = _make_local_parse(lines)
-    ent = {str(m['v']): (spy.Symbol(str(m['L']), real=True), parse(str(m['a'])),
-                         parse(str(m['b']))) for m in maps}
+    ent = {str(m["v"]): (spy.Symbol(str(m["L"]), real=True), parse(str(m["a"])), parse(str(m["b"]))) for m in maps}
     sub = {parse(v): (spy.exp(Lv) - a) / b for v, (Lv, a, b) in ent.items()}
     e = parse(str(value)).subs(sub)
     if str(var) not in ent:
-        return {'var': str(var), 'value': str(e), 'method': str(method), 'consts': []}
+        return {"var": str(var), "value": str(e), "method": str(method), "consts": []}
     Lv, a, b = ent[str(var)]
-    if method == 'add' and e == 0:
-        return {'var': str(Lv), 'value': '0', 'method': 'add', 'consts': []}
-    if method == 'multiply' and a == 0:
-        le, kind = spy.log(e), 'add'
+    if method == "add" and e == 0:
+        return {"var": str(Lv), "value": "0", "method": "add", "consts": []}
+    if method == "multiply" and a == 0:
+        le, kind = spy.log(e), "add"
     else:
         # the argument after the event, from exp(L) = a + b*v before it
-        u = {'replace': a + b * e, 'add': spy.exp(Lv) + b * e,
-             'multiply': a + (spy.exp(Lv) - a) * e}[str(method)]
-        le, kind = spy.log(u), 'replace'
+        u = {"replace": a + b * e, "add": spy.exp(Lv) + b * e, "multiply": a + (spy.exp(Lv) - a) * e}[str(method)]
+        le, kind = spy.log(u), "replace"
     # positive on the domain, with the argument before the event positive
-    h = spy.Dummy('h', positive=True)
+    h = spy.Dummy("h", positive=True)
     v0 = parse(str(value))
-    u_old = {'replace': a + b * v0, 'add': h + b * v0, 'multiply': a + (h - a) * v0}[str(method)]
-    if method == 'multiply' and a == 0:
+    u_old = {"replace": a + b * v0, "add": h + b * v0, "multiply": a + (h - a) * v0}[str(method)]
+    if method == "multiply" and a == 0:
         u_old = v0
     if not is_positive(u_old, positive):
-        return {'why': 'the event value %s for %s, which is analyzed as log(%s), does not keep '
-                'the argument positive' % (value, var, a + b * parse(str(var)))}
+        return {
+            "why": "the event value %s for %s, which is analyzed as log(%s), does not keep "
+            "the argument positive" % (value, var, a + b * parse(str(var)))
+        }
     le = spy.powsimp(spy.expand_log(le, force=True))
     consts = set()
     try:
         le = _log_numbers(le, consts)
     except ValueError as err:
-        return {'why': str(err)}
-    return {'var': str(Lv), 'value': str(le), 'method': kind, 'consts': sorted(consts)}
+        return {"why": str(err)}
+    return {"var": str(Lv), "value": str(le), "method": kind, "consts": sorted(consts)}
 
 
 def log_arg_back_vec(vec, maps):
     """A generator in the log coordinates back in the user's symbols."""
     maps = list(maps)
-    lines = [str(x) for x in vec.values()] + [str(k) for k in vec] + \
-        [str(m[k]) for m in maps for k in ('v', 'L', 'a', 'b')]
+    lines = (
+        [str(x) for x in vec.values()] + [str(k) for k in vec] + [str(m[k]) for m in maps for k in ("v", "L", "a", "b")]
+    )
     _, parse = _make_local_parse(lines)
     V = {str(k): parse(str(x)) for k, x in vec.items()}
-    ent = [(parse(str(m['v'])), str(m['L']), parse(str(m['a'])), parse(str(m['b'])))
-           for m in maps]
+    ent = [(parse(str(m["v"])), str(m["L"]), parse(str(m["a"])), parse(str(m["b"]))) for m in maps]
     Lnames = {Ln for _, Ln, _, _ in ent}
     vp = {v: spy.Symbol(str(v), positive=True) for v, _, _, _ in ent}
     to_l = {parse(Ln): spy.log(a + b * v) for v, Ln, a, b in ent}
     out = {k: e.subs(to_l) for k, e in V.items() if k not in Lnames}
     # a coordinate whose a, b hold another transformed symbol comes after it
-    order = sorted(ent, key=lambda t: len((t[2].free_symbols | t[3].free_symbols) &
-                                          set(vp)))
+    order = sorted(ent, key=lambda t: len((t[2].free_symbols | t[3].free_symbols) & set(vp)))
     for v, Ln, a, b in order:
         e_l = V.get(Ln, spy.Integer(0)).subs(to_l)
 
         def grad(h):
             return sum((spy.diff(h, parse(k)) * e for k, e in out.items()), spy.Integer(0))
+
         nv = ((a + b * v) * e_l - grad(a) - v * grad(b)) / b
         out[str(v)] = nv
     res = {}
@@ -524,8 +544,7 @@ def log_arg_back_vec(vec, maps):
 
 def scaling_weights(comps):
     """{name: weight} when every component is a number times the coordinate of that component, else None."""
-    _, parse = _make_local_parse([str(v) for v in comps.values()] +
-                                     [str(k) for k in comps])
+    _, parse = _make_local_parse([str(v) for v in comps.values()] + [str(k) for k in comps])
     out = {}
     for k, v in comps.items():
         w = spy.cancel(parse(str(v)) / parse(str(k)))
@@ -594,9 +613,9 @@ def log_chart_generators(gens, coords, translated=()):
     taken = set(names)
     lp = {}
     for t, b in sorted(base_of.items(), key=lambda kv: str(kv[0])):
-        nm = 'exp_%s' % t
+        nm = "exp_%s" % t
         while nm in taken:
-            nm += '_'
+            nm += "_"
         taken.add(nm)
         lp[t] = (spy.Symbol(nm), b)
     sub = _log_param_sub(lp)
@@ -625,9 +644,13 @@ def log_chart_generators(gens, coords, translated=()):
             if v.atoms(spy.log, spy.exp) or any(t in v.free_symbols for t in lp):
                 return None
         out.append({k: str(v) for k, v in h.items()})
-    return {'map': [{'theta': str(t), 'X': str(X), 'base': 'E' if b == spy.E else str(b), 'translated': t in moved}
-                    for t, (X, b) in lp.items()],
-            'gens': out}
+    return {
+        "map": [
+            {"theta": str(t), "X": str(X), "base": "E" if b == spy.E else str(b), "translated": t in moved}
+            for t, (X, b) in lp.items()
+        ],
+        "gens": out,
+    }
 
 
 def exp_chart_generators(gens, coords, positive):
@@ -640,8 +663,7 @@ def exp_chart_generators(gens, coords, positive):
             exprs_of.append(None)
             continue
         _, parse = _make_local_parse([str(v) for v in g.values()] + names)
-        exprs_of.append({str(k): spy.expand_log(spy.sympify(parse(str(v))), force=True)
-                         for k, v in g.items()})
+        exprs_of.append({str(k): spy.expand_log(spy.sympify(parse(str(v))), force=True) for k, v in g.items()})
     coord_syms = {spy.Symbol(n) for n in names}
     cand = set()
     for g in exprs_of:
@@ -666,9 +688,9 @@ def exp_chart_generators(gens, coords, positive):
     taken = set(names)
     L = {}
     for v in sorted(cand, key=str):
-        nm = 'log_%s' % v
+        nm = "log_%s" % v
         while nm in taken:
-            nm += '_'
+            nm += "_"
         taken.add(nm)
         L[v] = spy.Symbol(nm, real=True)
     sub = {v: spy.exp(L[v]) for v in cand}
@@ -689,8 +711,7 @@ def exp_chart_generators(gens, coords, positive):
             if v.atoms(spy.log, spy.exp):
                 return None
         out.append({k: str(v) for k, v in h.items()})
-    return {'map': [{'v': str(v), 'L': str(L[v])} for v in sorted(cand, key=str)],
-            'gens': out}
+    return {"map": [{"v": str(v), "L": str(L[v])} for v in sorted(cand, key=str)], "gens": out}
 
 
 def _model_str(e):
@@ -700,8 +721,10 @@ def _model_str(e):
 
 def exp_chart_back(expr, v_names, l_names, solve_for=None):
     """An expression in L = log(v) back in v; with solve_for naming an L, exp() of it, the value of v."""
+
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
+
     v_names, l_names = as_list(v_names), as_list(l_names)
     _, parse = _make_local_parse([str(expr)] + [str(x) for x in v_names + l_names])
     e = parse(str(expr))
@@ -715,15 +738,17 @@ def exp_chart_back(expr, v_names, l_names, solve_for=None):
 
 def log_chart_back(expr, x_names, thetas, bases, solve_for=None):
     """An expression in X = b^theta back in theta; with solve_for naming an X, log_b of it, the value of theta."""
+
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
+
     x_names, thetas, bases = as_list(x_names), as_list(thetas), as_list(bases)
     _, parse = _make_local_parse([str(expr)] + [str(x) for x in x_names + thetas])
     e = parse(str(expr))
     subs = {}
     logb = None
     for X, th, b in zip(x_names, thetas, bases):
-        bb = spy.E if str(b) == 'E' else spy.sympify(str(b))
+        bb = spy.E if str(b) == "E" else spy.sympify(str(b))
         subs[parse(str(X))] = bb ** parse(str(th))
         if solve_for is not None and str(X) == str(solve_for):
             logb = spy.log(bb)
@@ -735,14 +760,16 @@ def log_chart_back(expr, x_names, thetas, bases, solve_for=None):
 
 def log_param_backsub(expr, comp, x_names, thetas, bases):
     """A component in X = base^theta back in theta, divided by X*log(base) when comp names an X."""
+
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
+
     x_names, thetas, bases = as_list(x_names), as_list(thetas), as_list(bases)
     _, parse = _make_local_parse([str(expr)] + [str(x) for x in x_names + thetas])
     e = parse(str(expr))
     subs = {}
     for X, th, b in zip(x_names, thetas, bases):
-        bb = spy.E if str(b) == 'E' else spy.sympify(str(b))
+        bb = spy.E if str(b) == "E" else spy.sympify(str(b))
         Xs = parse(str(X))
         if str(comp) == str(X):
             e = e / (Xs * spy.log(bb))
@@ -752,14 +779,22 @@ def log_param_backsub(expr, comp, x_names, thetas, bases):
 
 def _split_power_bases(per_cond):
     """`per_cond` with a product base of a symbolic power split into powers of the factors, (2*K)^n as 2^n*K^n."""
+
     def split(e):
         e = spy.sympify(e)
-        if any(not pw.exp.is_number and not pw.base.is_Symbol and not pw.base.is_number
-               for pw in e.atoms(spy.Pow)):
+        if any(not pw.exp.is_number and not pw.base.is_Symbol and not pw.base.is_number for pw in e.atoms(spy.Pow)):
             return spy.expand_power_base(e, force=True)
         return e
-    return [([split(e) for e in f_c], [split(e) for e in g_c], {k: split(v) for k, v in ic_c.items()},
-             [split(e) for e in f_ss]) for (f_c, g_c, ic_c, f_ss) in per_cond]
+
+    return [
+        (
+            [split(e) for e in f_c],
+            [split(e) for e in g_c],
+            {k: split(v) for k, v in ic_c.items()},
+            [split(e) for e in f_ss],
+        )
+        for (f_c, g_c, ic_c, f_ss) in per_cond
+    ]
 
 
 def _power_exponent(ex):
@@ -775,7 +810,7 @@ def _detect_power_atoms(per_cond, states=()):
     """Sorted (base, n) of the symbolic powers base^(c0 + c*n), n not a state, or None for another power."""
     pairs = set()
     states = set(states)
-    for (f_c, g_c, ic_c, f_ss) in per_cond:
+    for f_c, g_c, ic_c, f_ss in per_cond:
         for e in list(f_c) + list(g_c) + list(ic_c.values()) + list(f_ss):
             for pw in spy.sympify(e).atoms(spy.Pow):
                 if pw.exp.is_number or _exp_atom(pw) is not None:
@@ -791,10 +826,10 @@ def _apply_power_recast(pairs, S, per_cond):
     """States, conditions and meta with E = base^n per pair and L = log(base) per base as new states."""
     recast = {}
     Lof = {}
-    for (base, n) in pairs:
-        recast[(base, n)] = spy.Symbol('_E_%s_%s' % (base, n))
+    for base, n in pairs:
+        recast[(base, n)] = spy.Symbol("_E_%s_%s" % (base, n))
         if base not in Lof:
-            Lof[base] = spy.Symbol('_L_%s' % base)
+            Lof[base] = spy.Symbol("_L_%s" % base)
 
     def sub(expr):
         def repl(pw):
@@ -803,21 +838,20 @@ def _apply_power_recast(pairs, S, per_cond):
             cn = _power_exponent(pw.exp)
             E = None if cn is None else recast.get((pw.base, cn[2]))
             return pw.base ** cn[0] * E ** cn[1] if E is not None else pw
+
         return spy.sympify(expr).replace(lambda x: x.is_Pow, repl)
 
-    extra = [recast[(b, n)] for (b, n) in pairs] + \
-            [Lof[b] for b in sorted(Lof, key=str)]
+    extra = [recast[(b, n)] for (b, n) in pairs] + [Lof[b] for b in sorted(Lof, key=str)]
     new_per_cond = []
-    for (f_c, g_c, ic_c, f_ss) in per_cond:
+    for f_c, g_c, ic_c, f_ss in per_cond:
         f_r = [sub(e) for e in f_c]
         g_r = [sub(e) for e in g_c]
         ic_r = {k: sub(v) for k, v in ic_c.items()}
         ss_r = [sub(e) for e in f_ss]
         rhs_of = {str(X): f_r[i] for i, X in enumerate(S)}
         # a base state with a given initial value fixes the initial values of E and L
-        b0 = {b: spy.sympify(ic_c[str(b)]) for b in Lof
-              if str(b) in ic_c and spy.sympify(ic_c[str(b)]) not in (b, 0)}
-        for (b, n) in pairs:
+        b0 = {b: spy.sympify(ic_c[str(b)]) for b in Lof if str(b) in ic_c and spy.sympify(ic_c[str(b)]) not in (b, 0)}
+        for b, n in pairs:
             E = recast[(b, n)]
             brhs = rhs_of.get(str(b), spy.Integer(0))
             ic_r[str(E)] = spy.exp(n * spy.log(b0[b])) if b in b0 else E
@@ -828,19 +862,18 @@ def _apply_power_recast(pairs, S, per_cond):
             ic_r[str(L)] = spy.log(b0[b]) if b in b0 else L
             f_r.append(brhs / b if brhs != 0 else spy.Integer(0))
         new_per_cond.append((f_r, g_r, ic_r, ss_r))
-    meta = [{'E': str(recast[(b, n)]), 'L': str(Lof[b]),
-             'base': str(b), 'exp': str(n)} for (b, n) in pairs]
+    meta = [{"E": str(recast[(b, n)]), "L": str(Lof[b]), "base": str(b), "exp": str(n)} for (b, n) in pairs]
     return list(S) + extra, new_per_cond, meta
 
 
 def recast_backsub_expr(expr, e_names, l_names, bases, exps):
     """An expression with E -> base**exp and L -> log(base) substituted back, canceled."""
+
     def as_list(v):
         return list(v) if isinstance(v, (list, tuple)) else [v]
-    e_names, l_names, bases, exps = (as_list(e_names), as_list(l_names),
-                                     as_list(bases), as_list(exps))
-    _, parse = _make_local_parse(
-        [str(expr)] + [str(x) for x in e_names + l_names + bases + exps])
+
+    e_names, l_names, bases, exps = (as_list(e_names), as_list(l_names), as_list(bases), as_list(exps))
+    _, parse = _make_local_parse([str(expr)] + [str(x) for x in e_names + l_names + bases + exps])
     e = parse(str(expr))
     subs = {}
     for E, L, base, exp in zip(e_names, l_names, bases, exps):

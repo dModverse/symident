@@ -40,10 +40,30 @@ def _dumps(x):
     return json.dumps(_clean(x), default=_default)
 
 
-DETECT_ARGS = ("f", "g", "trafo", "conditions", "events", "reactions", "totals", "parameters",
-               "fixed", "forcings", "free_initial", "equilibrate", "reduce_cq", "reconstruct",
-               "verify", "positive", "sym_engine", "cores", "scalings_only", "regimes", "unknown_inputs",
-               "known_inputs")
+DETECT_ARGS = (
+    "f",
+    "g",
+    "trafo",
+    "conditions",
+    "events",
+    "reactions",
+    "totals",
+    "parameters",
+    "fixed",
+    "forcings",
+    "free_initial",
+    "equilibrate",
+    "reduce_cq",
+    "reconstruct",
+    "verify",
+    "positive",
+    "sym_engine",
+    "cores",
+    "scalings_only",
+    "regimes",
+    "unknown_inputs",
+    "known_inputs",
+)
 
 
 def kwargs_of(spec):
@@ -53,8 +73,9 @@ def kwargs_of(spec):
         gp = spec["gauge_preference"]
         kw["gauge_preference"] = None if gp == "AUTO" else gp
     if spec.get("control"):
-        kw["control"] = reconst_control(**{k: (math.inf if v == "Inf" else v)
-                                           for k, v in spec["control"].items() if v is not None})
+        kw["control"] = reconst_control(
+            **{k: (math.inf if v == "Inf" else v) for k, v in spec["control"].items() if v is not None}
+        )
     return kw
 
 
@@ -89,9 +110,11 @@ def detect_json(spec, env=None):
         kw["reconstruct"] = True
     with _context(env), warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
-        res = pivot_choice(lambda pivots, cq_pivots: symmetry_detection(**dict(kw, free_initial=pivots,
-                                                                                 cq_pivots=cq_pivots)),
-                           kw.get("free_initial"), bool(kw.get("reduce_cq")))
+        res = pivot_choice(
+            lambda pivots, cq_pivots: symmetry_detection(**dict(kw, free_initial=pivots, cq_pivots=cq_pivots)),
+            kw.get("free_initial"),
+            bool(kw.get("reduce_cq")),
+        )
         if mode == "global":
             res = _global(res, kw, sp.get("global_options"))
     if res.get("info") and res["info"].get("kernel") is not None:
@@ -105,11 +128,22 @@ def detect_json(spec, env=None):
 def _global(res, kw, options):
     """The result `res` of the detection with `kw` after the global analysis on the model of `kw`."""
     from .api import Model, Symmetries, global_step
-    model = Model(kw["f"], kw["g"], trafo=kw.get("trafo"), conditions=kw.get("conditions"), events=kw.get("events"),
-                  inputs=kw.get("forcings") or (), unknown_inputs=kw.get("unknown_inputs") or (),
-                  known_inputs=kw.get("known_inputs") or (), fixed=kw.get("fixed") or (),
-                  parameters=kw.get("parameters") or (), reactions=kw.get("reactions"), totals=kw.get("totals"),
-                  regimes=kw.get("regimes"))
+
+    model = Model(
+        kw["f"],
+        kw["g"],
+        trafo=kw.get("trafo"),
+        conditions=kw.get("conditions"),
+        events=kw.get("events"),
+        inputs=kw.get("forcings") or (),
+        unknown_inputs=kw.get("unknown_inputs") or (),
+        known_inputs=kw.get("known_inputs") or (),
+        fixed=kw.get("fixed") or (),
+        parameters=kw.get("parameters") or (),
+        reactions=kw.get("reactions"),
+        totals=kw.get("totals"),
+        regimes=kw.get("regimes"),
+    )
     sym = Symmetries(res, model)
     global_step(sym, options, int(kw.get("cores") or 1))
     return sym._raw
@@ -134,6 +168,7 @@ def reduce_json(obj, args, env=None):
         res = symmetry_reduction(o, **kw)
         finish_reduction(o, res)
         from .api import attach_discrete
+
         attach_discrete(o, res, kw.get("positive"), branch)
     if check and isinstance(o.get("spec"), dict) and res.get("trafo") and o.get("method") == "observability":
         with _context(env), warnings.catch_warnings():
@@ -147,13 +182,29 @@ def _loop(spec, red, gauge):
     """The detection of `spec` with the trafo of the reduction applied: the directions found against the remaining
     ones."""
     from .api import loop_outcome, reduced_model
+
     want = len(red.get("remaining") or [])
-    rm = reduced_model(dict(spec.get("f") or {}), spec.get("g"), spec.get("trafo"), spec.get("conditions"),
-                       spec.get("events"), red["trafo"], bool(spec.get("equilibrate")))
+    rm = reduced_model(
+        dict(spec.get("f") or {}),
+        spec.get("g"),
+        spec.get("trafo"),
+        spec.get("conditions"),
+        spec.get("events"),
+        red["trafo"],
+        bool(spec.get("equilibrate")),
+    )
     if rm["why"] is not None:
         return {"ok": None, "directions": None, "expected": want, "reason": "not run, " + rm["why"]}
-    s = dict(spec, reconstruct=False, trafo=rm["trafo"], conditions=rm["conditions"],
-             fixed=list(dict.fromkeys(list(spec.get("fixed") or []) + list(gauge or []) +
-                                      list(red.get("fixed") or []) + rm["fixed"])))
+    s = dict(
+        spec,
+        reconstruct=False,
+        trafo=rm["trafo"],
+        conditions=rm["conditions"],
+        fixed=list(
+            dict.fromkeys(
+                list(spec.get("fixed") or []) + list(gauge or []) + list(red.get("fixed") or []) + rm["fixed"]
+            )
+        ),
+    )
     s.pop("gauge_preference", None)
     return loop_outcome(lambda: symmetry_detection(**kwargs_of(s)), want)

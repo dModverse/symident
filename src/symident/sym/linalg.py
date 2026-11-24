@@ -11,7 +11,7 @@ from .parse import _PRIMES
 
 def _rref_mod_p(A, p):
     """Vectorized int64 Gauss-Jordan over GF(p): (R, pivots); products < p^2 < 2^62 fit int64."""
-    A = (np.asarray(A, dtype=np.int64) % p)
+    A = np.asarray(A, dtype=np.int64) % p
     nrows, ncols = A.shape
     pivots = []
     r = 0
@@ -57,6 +57,7 @@ def _rational_reconstruct(a, m):
 def sym_rat_recon_big(residues, primes):
     """Per-row CRT and rational reconstruction in arbitrary precision: {'num', 'den'}, den '0' where no lift."""
     from sympy.ntheory.modular import crt
+
     mods = [int(p) for p in primes]
     M = 1
     for m in mods:
@@ -74,7 +75,7 @@ def sym_rat_recon_big(residues, primes):
             val = spy.Rational(val)
             num.append(str(int(val.p)))
             den.append(str(int(val.q)))
-    return {'num': num, 'den': den}
+    return {"num": num, "den": den}
 
 
 def _crt_nullspace(reduce_mod_p, ncols):
@@ -88,6 +89,7 @@ def _crt_nullspace(reduce_mod_p, ncols):
     first = list(_PRIMES[:4])
     try:
         from concurrent.futures import ThreadPoolExecutor
+
         with ThreadPoolExecutor(max_workers=len(first)) as ex:
             pre = dict(zip(first, ex.map(lambda q: _rref_mod_p(reduce_mod_p(q), q), first)))
     except Exception as exc:
@@ -111,6 +113,7 @@ def _crt_nullspace(reduce_mod_p, ncols):
         return None
 
     from sympy.ntheory.modular import crt
+
     exact = {}
     for key, res in residues.items():
         x, Mmod = crt(mods, res)
@@ -133,8 +136,7 @@ def _modular_nullspace(M):
     """Exact nullspace of a sympy Matrix via _crt_nullspace, validated symbolically; None if that fails."""
     nrows, ncols = M.shape
     if nrows == 0:
-        return [spy.Matrix([1 if j == c else 0 for j in range(ncols)])
-                for c in range(ncols)]
+        return [spy.Matrix([1 if j == c else 0 for j in range(ncols)]) for c in range(ncols)]
     Aint = []
     for i in range(nrows):
         row = [spy.Rational(M[i, j]) for j in range(ncols)]
@@ -195,8 +197,7 @@ def exact_int_kernel(rows, ncols):
 def exact_nullspace(rows, ncols):
     """Nullspace basis of an integer matrix as sympy column vectors, by the modular path first."""
     if not rows:
-        return [spy.Matrix([1 if j == c else 0 for j in range(ncols)])
-                for c in range(ncols)]
+        return [spy.Matrix([1 if j == c else 0 for j in range(ncols)]) for c in range(ncols)]
     basis = _modular_nullspace_int(rows, ncols)
     if basis is not None:
         return basis

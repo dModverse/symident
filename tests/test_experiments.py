@@ -23,6 +23,7 @@ needs_msolve = pytest.mark.skipif(not _has_msolve(), reason="needs msolve")
 
 def _series(f, g, params):
     from symident.detection.discrete import Series
+
     ic = {x: x for x in f}
     f = dict(f, time="1")
     ic["time"] = "0"
@@ -58,8 +59,12 @@ def test_the_cycle_types_of_a_polynomial_modulo_primes():
 @needs_msolve
 def test_a_cycle_of_three_states_has_no_rational_first_integral():
     from symident.detection import firstint
-    *_, s = _series({"x1": "-k1*x1 + k3*x3 + u0", "x2": "k1*x1 - k2*x2", "x3": "k2*x2 - (k3 + k4)*x3"},
-                    {"y": "x1"}, ["k1", "k2", "k3", "k4", "u0"])
+
+    *_, s = _series(
+        {"x1": "-k1*x1 + k3*x3 + u0", "x2": "k1*x1 - k2*x2", "x3": "k2*x2 - (k3 + k4)*x3"},
+        {"y": "x1"},
+        ["k1", "k2", "k3", "k4", "u0"],
+    )
     c = firstint.certificate(s)
     assert c["proven"] and c["field"] == "Q"
     (b,) = c["blocks"]
@@ -69,6 +74,7 @@ def test_a_cycle_of_three_states_has_no_rational_first_integral():
 @needs_msolve
 def test_a_cascade_takes_the_parameters_into_a_number_field():
     from symident.detection import firstint
+
     # two blocks of one state: their rational traces are dependent over Q, those over Q(alpha) are not
     *_, s = _series({"x1": "c - a*x1", "x2": "x1 - b*x2"}, {"y": "x2"}, ["a", "b", "c"])
     c = firstint.certificate(s)
@@ -77,14 +83,18 @@ def test_a_cascade_takes_the_parameters_into_a_number_field():
 
 
 @needs_msolve
-@pytest.mark.parametrize("f, g, params, why", [
-    ({"x1": "-k1*x1 + k2*x2", "x2": "k1*x1 - k2*x2"}, {"y": "x1"}, ["k1", "k2"], "eigenvalue 0"),
-    ({"x1": "w*x2", "x2": "-w*x1"}, {"y": "x1"}, ["w"], "trace of the Jacobian at the equilibrium is 0"),
-    ({"x1": "(w + x3)*x2", "x2": "-w*x1", "x3": "0"}, {"y1": "x2", "y2": "x3"}, ["w"], "no isolated equilibrium"),
-    ({"x": "-k*x + time"}, {"y": "x"}, ["k"], "clock"),
-])
+@pytest.mark.parametrize(
+    "f, g, params, why",
+    [
+        ({"x1": "-k1*x1 + k2*x2", "x2": "k1*x1 - k2*x2"}, {"y": "x1"}, ["k1", "k2"], "eigenvalue 0"),
+        ({"x1": "w*x2", "x2": "-w*x1"}, {"y": "x1"}, ["w"], "trace of the Jacobian at the equilibrium is 0"),
+        ({"x1": "(w + x3)*x2", "x2": "-w*x1", "x3": "0"}, {"y1": "x2", "y2": "x3"}, ["w"], "no isolated equilibrium"),
+        ({"x": "-k*x + time"}, {"y": "x"}, ["k"], "clock"),
+    ],
+)
 def test_a_first_integral_or_the_clock_leaves_the_premise_unproven(f, g, params, why):
     from symident.detection import firstint
+
     *_, s = _series(f, g, params)
     c = firstint.certificate(s)
     assert not c["proven"] and why in c["why"]
@@ -96,6 +106,7 @@ def test_the_count_of_two_experiments_is_that_of_the_parameters_and_the_first_st
 
     from symident.detection import discrete, multiexp
     from symident.gfp import PRIMES
+
     parts, coords, s = _series({"x": "-k*x"}, {"y": "x^2"}, ["k"])
     starts, why = multiexp.eligible(s)
     assert why is None and [str(v) for v in starts.values()] == ["x"]
@@ -116,11 +127,17 @@ def test_the_count_of_two_experiments_is_that_of_the_parameters_and_the_first_st
 def test_a_fixed_start_or_an_event_leaves_the_route_out():
     from symident.detection import multiexp
     from symident.detection.discrete import Series
+
     seg = {"f": {"x": "-k*x"}, "g": {"y": "x"}, "ic": {"x": "1"}, "t": "0", "label": ""}
     assert "fixed" in multiexp.eligible(Series([{"segments": [seg]}], ["k"]))[1]
     seg = dict(seg, ic={"x": "x"})
-    ev = {"f": seg["f"], "g": seg["g"], "events": [{"var": "x", "method": "add", "value": "1"}], "t": "1",
-          "label": "@1"}
+    ev = {
+        "f": seg["f"],
+        "g": seg["g"],
+        "events": [{"var": "x", "method": "add", "value": "1"}],
+        "t": "1",
+        "label": "@1",
+    }
     assert "events" in multiexp.eligible(Series([{"segments": [seg, ev]}], ["x", "k"]))[1]
     assert "one condition" in multiexp.eligible(Series([{"segments": [seg]}, {"segments": [seg]}], ["x", "k"]))[1]
     # a start coordinate that is a parameter as well
@@ -156,6 +173,7 @@ def test_the_twisted_oscillator_leaves_the_route_to_one_experiment():
 
 def test_a_conservation_law_is_found_over_the_field_of_the_parameters():
     from symident.detection import multiexp
+
     seg = {"f": {"x1": "-k1*x1*x3 + k2*x2", "x2": "(k1*x1*x3 - k2*x2)/v", "x3": "c - d*x3 + u", "u": "0"}}
     (law,) = multiexp.conservation_laws(seg, ["x1", "x2", "x3"])
     assert law == {"x1": 1, "x2": spy.Symbol("v")}
@@ -165,6 +183,7 @@ def test_a_conservation_law_is_found_over_the_field_of_the_parameters():
 @needs_msolve
 def test_the_premise_holds_on_the_level_set_of_a_conservation_law():
     from symident.detection import firstint, multiexp
+
     f = {"x1": "-k1*x1*x3 + k2*x2", "x2": "k1*x1*x3 - k2*x2", "x3": "c - d*x3"}
     parts, coords, s = _series(f, {"y1": "x1", "y2": "x3"}, ["c", "d", "k1", "k2"])
     laws = multiexp.conservation_laws(parts[0]["segments"][0], ["x1", "x2", "x3"])

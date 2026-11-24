@@ -3,14 +3,20 @@
 from symident import report
 
 SCAL = {"type": "scaling", "generator": {"x": "x", "s": "-s"}}
-GEN = {"type": "general", "generator": {"k1": "k1*k2 - 1.5e-3*k1", "k2": "-(a - b)*k2"},
-       "route": "quadrature"}
+GEN = {"type": "general", "generator": {"k1": "k1*k2 - 1.5e-3*k1", "k2": "-(a - b)*k2"}, "route": "quadrature"}
 SUPP = {"type": "general", "generator": None, "support": ["a", "b"], "reason": "too large"}
 
 
 def res(syms, **kw):
-    out = {"method": "observability", "rank": 3, "dim": 5, "identifiable": not syms,
-           "symmetries": syms, "gauge": None, "info": {"engine": "modular", "settings": {}}}
+    out = {
+        "method": "observability",
+        "rank": 3,
+        "dim": 5,
+        "identifiable": not syms,
+        "symmetries": syms,
+        "gauge": None,
+        "info": {"engine": "modular", "settings": {}},
+    }
     out.update(kw)
     return out
 
@@ -52,21 +58,31 @@ def test_reduction_hints_singular_and_plural():
 
 def test_result_line_per_method():
     assert report.result_lines(res([], rank=5)) == ["Result:  structurally locally identifiable (rank 5 / 5)"]
-    assert report.result_lines(res([SCAL]), width=80)[0] == \
-        "Result:  rank 3 / 5  |  1 non-identifiable direction"
-    assert report.result_lines(res([SCAL, SCAL], method="scalings"), width=80)[0] == \
-        "Result:  2 scaling symmetries (exact integer kernel)"
+    assert report.result_lines(res([SCAL]), width=80)[0] == "Result:  rank 3 / 5  |  1 non-identifiable direction"
+    assert (
+        report.result_lines(res([SCAL, SCAL], method="scalings"), width=80)[0]
+        == "Result:  2 scaling symmetries (exact integer kernel)"
+    )
 
 
 def test_summary_computation_lines():
-    info = {"engine": "modular", "lie_order_used": 3, "lie_order_driver": 1, "gap_order_used": None,
-            "lie_plateau": 2, "lie_uncertified": [0, 2], "conditions": 2, "segments": 3,
-            "switching": {"surfaces": ["c - x = 0"], "regimes": [[1], [-1]], "excluded": [[0]]},
-            "settings": {"reconstruct": True, "verify": True}, "verification": {"ok": False, "reason": "r"},
-            "elapsed": 1.25,
-            "gauge_suggestion": {"gauge": ["k"], "sizes": [2], "plain": ["s"], "plain_sizes": [4]}}
+    info = {
+        "engine": "modular",
+        "lie_order_used": 3,
+        "lie_order_driver": 1,
+        "gap_order_used": None,
+        "lie_plateau": 2,
+        "lie_uncertified": [0, 2],
+        "conditions": 2,
+        "segments": 3,
+        "switching": {"surfaces": ["c - x = 0"], "regimes": [[1], [-1]], "excluded": [[0]]},
+        "settings": {"reconstruct": True, "verify": True},
+        "verification": {"ok": False, "reason": "r"},
+        "elapsed": 1.25,
+        "gauge_suggestion": {"gauge": ["k"], "sizes": [2], "plain": ["s"], "plain_sizes": [4]},
+    }
     out = report.summary_lines(res([SCAL], info=info), width=80)
-    comp = out[out.index("Computation:") + 1:out.index("")]
+    comp = out[out.index("Computation:") + 1 : out.index("")]
     assert comp == [
         "  Lie order 3 (gap order 0), set by condition 2",
         "  saturation: certified except condition 1, 3 (rank bound not reached)",
@@ -76,20 +92,24 @@ def test_summary_computation_lines():
         "only where it is free in every allowed regime, from any point of a switching surface",
         "  settings: reconstruct=True",
         "  saturation guard: FAILED (r; directions may be over-reported)",
-        "  elapsed: 1.2s"]
+        "  elapsed: 1.2s",
+    ]
     assert out[1] == "detect  |  observability   engine: modular (GF(p) + CRT)"
 
 
 def test_summary_saturation_and_guard_variants():
     def comp(**info):
         out = report.summary_lines(res([], info={"engine": "x", **info}), width=80)
-        return out[out.index("Computation:") + 1:out.index("")] if "Computation:" in out else []
+        return out[out.index("Computation:") + 1 : out.index("")] if "Computation:" in out else []
+
     assert comp(rank_proven=2, rank_proof="proven symmetries") == ["  rank: proven (2 directions, proven symmetries)"]
-    assert comp(rank_fields=2) == ["  rank: lower bound (2 directions, invariant fields at random points "
-                                   "without an error bound)"]
-    assert comp(rank_fields=2, rank_fields_bound={"probability": 3e-12}) == \
-        ["  rank: verified (2 directions, invariant fields at random points, probability of a wrong pass at "
-         "most 3.0e-12)"]
+    assert comp(rank_fields=2) == [
+        "  rank: lower bound (2 directions, invariant fields at random points without an error bound)"
+    ]
+    assert comp(rank_fields=2, rank_fields_bound={"probability": 3e-12}) == [
+        "  rank: verified (2 directions, invariant fields at random points, probability of a wrong pass at "
+        "most 3.0e-12)"
+    ]
     assert comp(lie_plateau=2, lie_certified=True)[0].startswith("  saturation: certified (every")
     assert comp(lie_plateau=2) == ["  saturation: provisional (plateau 2, no rank bound reached)"]
     assert comp(verification={"ok": True, "reason": "ok"}) == ["  saturation guard: PASSED (ok)"]
@@ -98,49 +118,112 @@ def test_summary_saturation_and_guard_variants():
 
 
 def test_reduction_verdict():
-    x = {"removed": ["X₁", "X₂"], "remaining": ["X₃"], "dependent": ["X₄"],
-         "blocks": [{"coverage": "partial", "status": "reduced", "labels": ["X₂"]},
-                    {"coverage": "partial", "status": "kept", "labels": ["X₃"]}]}
-    assert report.red_verdict(x) == ("Reduced 2 of 3 directions  (X₃ remaining); X₄ depends on the others; "
-                                     "the section of X₂ covers only part of the positive orthant.")
+    x = {
+        "removed": ["X₁", "X₂"],
+        "remaining": ["X₃"],
+        "dependent": ["X₄"],
+        "blocks": [
+            {"coverage": "partial", "status": "reduced", "labels": ["X₂"]},
+            {"coverage": "partial", "status": "kept", "labels": ["X₃"]},
+        ],
+    }
+    assert report.red_verdict(x) == (
+        "Reduced 2 of 3 directions  (X₃ remaining); X₄ depends on the others; "
+        "the section of X₂ covers only part of the positive orthant."
+    )
     assert report.red_verdict({"removed": ["X₁"], "remaining": []}) == "Reduced 1 of 1 direction."
 
 
-SEC = {"removed": ["X₁", "X₂", "X₃", "X₄"], "remaining": [], "blocks": [
-    {"labels": ["X₁"], "type": "scaling", "status": "reduced", "support": ["K", "P"],
-     "transversal": ["P"], "pins": {"P": "1"}},
-    {"labels": ["X₂"], "type": "curved", "status": "reduced", "support": ["kL", "kS"], "face": True,
-     "section": ["kL = 0"], "pins": {"kL": "0", "kS": "q_1"}, "new_parameters": {"q_1": "kL + kS"},
-     "coverage": "total"},
-    {"labels": ["X₃"], "type": "curved", "status": "reduced", "support": ["c", "k"], "face": False,
-     "section": ["c*k = 1"], "pins": {"k": "sqrt(q_2)"}, "new_parameters": {"q_2": "k/c"},
-     "coverage": "total", "gauge_note": "a solved entry contains a square root"},
-    {"labels": ["X₄"], "type": "curved", "status": "reduced", "support": ["a", "b"], "face": False,
-     "transversal": ["a"], "pins": {"a": "1", "b": "q_3"}, "new_parameters": {"q_3": "a - b"},
-     "coverage": "partial", "solved_domain": {"q_3": "real"}}]}
+SEC = {
+    "removed": ["X₁", "X₂", "X₃", "X₄"],
+    "remaining": [],
+    "blocks": [
+        {
+            "labels": ["X₁"],
+            "type": "scaling",
+            "status": "reduced",
+            "support": ["K", "P"],
+            "transversal": ["P"],
+            "pins": {"P": "1"},
+        },
+        {
+            "labels": ["X₂"],
+            "type": "curved",
+            "status": "reduced",
+            "support": ["kL", "kS"],
+            "face": True,
+            "section": ["kL = 0"],
+            "pins": {"kL": "0", "kS": "q_1"},
+            "new_parameters": {"q_1": "kL + kS"},
+            "coverage": "total",
+        },
+        {
+            "labels": ["X₃"],
+            "type": "curved",
+            "status": "reduced",
+            "support": ["c", "k"],
+            "face": False,
+            "section": ["c*k = 1"],
+            "pins": {"k": "sqrt(q_2)"},
+            "new_parameters": {"q_2": "k/c"},
+            "coverage": "total",
+            "gauge_note": "a solved entry contains a square root",
+        },
+        {
+            "labels": ["X₄"],
+            "type": "curved",
+            "status": "reduced",
+            "support": ["a", "b"],
+            "face": False,
+            "transversal": ["a"],
+            "pins": {"a": "1", "b": "q_3"},
+            "new_parameters": {"q_3": "a - b"},
+            "coverage": "partial",
+            "solved_domain": {"q_3": "real"},
+        },
+    ],
+}
 
 
 def test_sections_short_list_the_equations_and_point_to_the_details():
     out = report.red_section_lines(SEC, 80)
-    assert out == ["", "Sections:", "  {X₁}  P = 1", "  {X₂}  kL = 0", "  {X₃}  c*k = 1", "  {X₄}  a = 1",
-                   "  summary(detailed=True) explains each section."]
-    assert report.red_section_lines(SEC, 80, detail_call="summary(x, detailed = TRUE)")[-1] == \
-        "  summary(x, detailed = TRUE) explains each section."
+    assert out == [
+        "",
+        "Sections:",
+        "  {X₁}  P = 1",
+        "  {X₂}  kL = 0",
+        "  {X₃}  c*k = 1",
+        "  {X₄}  a = 1",
+        "  summary(detailed=True) explains each section.",
+    ]
+    assert (
+        report.red_section_lines(SEC, 80, detail_call="summary(x, detailed = TRUE)")[-1]
+        == "  summary(x, detailed = TRUE) explains each section."
+    )
     assert "explains each section." in " ".join(report.reduction_summary_lines(SEC, width=80))
 
 
 def test_a_section_of_several_generators_is_explained_by_its_proof():
-    b = {"labels": ["X₁", "X₂"], "type": "curved", "status": "reduced", "support": ["a", "b", "c"],
-         "face": False, "section": ["a = b", "b = 1"], "transversal": ["a", "b"],
-         "pins": {"a": "1", "b": "1", "c": "q_1"}, "new_parameters": {"q_1": "a*b*c"}, "coverage": "total"}
+    b = {
+        "labels": ["X₁", "X₂"],
+        "type": "curved",
+        "status": "reduced",
+        "support": ["a", "b", "c"],
+        "face": False,
+        "section": ["a = b", "b = 1"],
+        "transversal": ["a", "b"],
+        "pins": {"a": "1", "b": "1", "c": "q_1"},
+        "new_parameters": {"q_1": "a*b*c"},
+        "coverage": "total",
+    }
     x = {"removed": ["X₁", "X₂"], "remaining": [], "blocks": [b]}
     txt = "\n".join(report.reduction_summary_lines(x, width=200, detailed=True))
     assert "at most once is not proven" in txt
-    txt = "\n".join(report.reduction_summary_lines({**x, "blocks": [dict(b, injective=True)]},
-                                                     width=200, detailed=True))
+    txt = "\n".join(
+        report.reduction_summary_lines({**x, "blocks": [dict(b, injective=True)]}, width=200, detailed=True)
+    )
     assert "The invariants determine each point with a = b, b = 1" in txt and "at most once." in txt
-    txt = "\n".join(report.reduction_summary_lines({**x, "blocks": [dict(b, reach=True)]},
-                                                     width=200, detailed=True))
+    txt = "\n".join(report.reduction_summary_lines({**x, "blocks": [dict(b, reach=True)]}, width=200, detailed=True))
     assert "graph of these values over a connected set of a, b, and X₁, X₂ are independent" in txt
 
 
@@ -158,8 +241,11 @@ def test_sections_detailed_explain_each_choice():
 
 def test_a_rank_that_is_not_proven_names_what_it_rests_on():
     pj = {"status": "verified", "of": "the unknown inputs", "probability": 1e-8}
-    rs = {"status": "verified", "probability": 1e-8,
-          "why": "full rank at a point; the rank modulo the unknown inputs holds at a random point modulo a prime"}
+    rs = {
+        "status": "verified",
+        "probability": 1e-8,
+        "why": "full rank at a point; the rank modulo the unknown inputs holds at a random point modulo a prime",
+    }
     info = {"engine": "modular", "settings": {}, "rank_status": rs, "projection": pj}
     lines = report.result_lines(res([], rank=5, info=info), width=200)
     assert lines[0] == "Result:  structurally locally identifiable (rank 5 / 5)"

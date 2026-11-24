@@ -126,9 +126,26 @@ def _fit_entry(primes, bankU_rows, reli_cols, mons, vals_of, vars_):
     return num_str if den_str == "1" else f"({num_str})/({den_str})"
 
 
-def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, scaling,
-                     state_col_names, ctrl, phys_cols, models, real_state_names, solve_param_names,
-                     solve_held, ac_in=None, list_anchors=False):
+def perprime_forward(
+    f,
+    sc,
+    kcall,
+    kcall_fwd,
+    znames,
+    z_slots,
+    leaf_names,
+    nz,
+    scaling,
+    state_col_names,
+    ctrl,
+    phys_cols,
+    models,
+    real_state_names,
+    solve_param_names,
+    solve_held,
+    ac_in=None,
+    list_anchors=False,
+):
     """Forward-sampling reconstruction of one residual direction over solved resting states."""
     rprimes = all_primes()
     n_prime_fwd = max(2, min(3, len(rprimes) - 1))
@@ -222,9 +239,16 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
     tsv = {s: ((i + 1) * 7919 + 11) % (P1 - 1) + 1 for i, s in enumerate(real_state_names)}
     tpv = {s: ((i + 1) * 104729 + 3) % (P1 - 1) + 1 for i, s in enumerate(solve_param_names)}
     try:
-        ts = solve_forward_modular(models[0], list(real_state_names), list(solve_param_names), tsv,
-                                    tpv, P1, forcings=list(solve_held) if solve_held else None,
-                                    keep_free=keep_free)
+        ts = solve_forward_modular(
+            models[0],
+            list(real_state_names),
+            list(solve_param_names),
+            tsv,
+            tpv,
+            P1,
+            forcings=list(solve_held) if solve_held else None,
+            keep_free=keep_free,
+        )
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         ts = None
@@ -262,7 +286,7 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
         return bool(np.any((v[phys_supp] - v0f[phys_supp]) % P1 != 0))
 
     gsz = 8
-    groups = [cand[i:i + gsz] for i in range(0, len(cand), gsz)]
+    groups = [cand[i : i + gsz] for i in range(0, len(cand), gsz)]
     single = []
     for gi, g in enumerate(groups, start=1):
         m = (moved(g, 7919 * gi + 1), moved(g, 7919 * gi + 2))
@@ -288,8 +312,10 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
         return fb(f"forward: couples {len(union_rel)} leaves (entry up to {max_rel})")
 
     d_cap = max(1, min(3, int(ctrl["degree_cap"])))
-    bank = {"U": np.zeros((0, len(union_rel)), dtype=np.int64),
-            "V": [np.zeros((0, nz), dtype=np.int64) for _ in primes]}
+    bank = {
+        "U": np.zeros((0, len(union_rel)), dtype=np.int64),
+        "V": [np.zeros((0, nz), dtype=np.int64) for _ in primes],
+    }
 
     def need_of(k, d):
         return 2 * mono_table(k, d).shape[0] + 20
@@ -315,8 +341,7 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
             mons = mono_table(len(reli), d)
             if not fill_bank_to(need_of(len(reli), d)):
                 continue
-            expr = _fit_entry(primes, bank["U"], reli_cols, mons,
-                              lambda jp, need: bank["V"][jp][:need, c9], vars_)
+            expr = _fit_entry(primes, bank["U"], reli_cols, mons, lambda jp, need: bank["V"][jp][:need, c9], vars_)
             if expr is not None:
                 return {"expr": expr, "reli": vars_}
         return None
@@ -362,8 +387,13 @@ def perprime_forward(f, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, s
         pred = eval_modq(ex, env, qv)
         if pred is None or (pred - int(vver[col])) % qv != 0:
             return fb("forward: reconstructed direction failed fresh-point verification")
-    return {"support": sym_sort(list(entries)), "vector": entries, "type": "general",
-            "closed_form": True, "solved_rates": list(solve_rates)}
+    return {
+        "support": sym_sort(list(entries)),
+        "vector": entries,
+        "type": "general",
+        "closed_form": True,
+        "solved_rates": list(solve_rates),
+    }
 
 
 class SolveRates(list):
@@ -381,10 +411,26 @@ class SolveRates(list):
         return tuple(self), tuple(self.state_solve)
 
 
-def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz, scaling,
-                            state_col_names, ctrl, phys_cols, models, real_state_names,
-                            solve_param_names, solve_held, kcall_fwd_sh=None, select_fn=None,
-                            map_fn=None):
+def perprime_forward_shared(
+    sc,
+    kcall,
+    kcall_fwd,
+    znames,
+    z_slots,
+    leaf_names,
+    nz,
+    scaling,
+    state_col_names,
+    ctrl,
+    phys_cols,
+    models,
+    real_state_names,
+    solve_param_names,
+    solve_held,
+    kcall_fwd_sh=None,
+    select_fn=None,
+    map_fn=None,
+):
     """Every residual direction on the forward route: one transversal, one bank."""
     rprimes = all_primes()
     n_prime_fwd = max(2, min(3, len(rprimes) - 1))
@@ -476,8 +522,7 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
     for ac in acs:
         v0 = rr0["R"][piv0.index(ac)] % P1
         nzv = [int(i) for i in np.nonzero(v0)[0]]
-        supp_of.append(list(dict.fromkeys(_strip_name(znames[i])
-                                          for i in [ac] + [c for c in nzv if c != ac])))
+        supp_of.append(list(dict.fromkeys(_strip_name(znames[i]) for i in [ac] + [c for c in nzv if c != ac])))
     li = {nm: i for i, nm in enumerate(leaf_names)}
 
     def run_group(acs, supp_of, ts, n_p=1):
@@ -495,13 +540,17 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                 base0, vb = cand, vs
                 break
         if base0 is None:
-            return [{"support": sym_sort(sp), "type": "general", "closed_form": False,
-                     "reason": "forward: no base"} for sp in supp_of]
+            return [
+                {"support": sym_sort(sp), "type": "general", "closed_form": False, "reason": "forward: no base"}
+                for sp in supp_of
+            ]
         if select_fn is not None and kcall_fwd_sh is not None:
             select_fn(base0, P1, sc["nt_used"], solve_rates)
         v0f = vb[0]
-        phys_supp_of = [[int(c) for c in np.nonzero(v0f[a] % P1)[0] if int(c) in phys_set_s and int(c) != acs[a]]
-                        for a in range(len(acs))]
+        phys_supp_of = [
+            [int(c) for c in np.nonzero(v0f[a] % P1)[0] if int(c) in phys_set_s and int(c) != acs[a]]
+            for a in range(len(acs))
+        ]
         solved = {li[r] for r in solve_rates if r in li}
         cand = [i for i in range(len(leaf_names)) if i not in solved]
 
@@ -564,9 +613,11 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
         # draws every leaf of a wide direction rarely solves the resting balances
         local = len(union_rel) > fwd_cap_dir
         if rdiag:
-            print(f"[fwds] leaves per anchor {[len({x for r in rel_by[a] for x in r}) for a in range(len(acs))]}, "
-                  f"entries up to {max((len(r) for rb in rel_by for r in rb), default=0)}, union "
-                  f"{len(union_rel)}{' (banks per entry)' if local else ''}")
+            print(
+                f"[fwds] leaves per anchor {[len({x for r in rel_by[a] for x in r}) for a in range(len(acs))]}, "
+                f"entries up to {max((len(r) for rb in rel_by for r in rb), default=0)}, union "
+                f"{len(union_rel)}{' (banks per entry)' if local else ''}"
+            )
 
         # an entry of a leaf solved from a resting balance has the degree of that balance plus one
         d_cap = max(1, min(4, int(ctrl["degree_cap"])))
@@ -575,8 +626,11 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
         def bank_of(reli):
             key = tuple(reli) if local else tuple(union_rel)
             if key not in banks:
-                banks[key] = {"cols": list(key), "U": np.zeros((0, len(key)), dtype=np.int64),
-                              "V": [[] for _ in primes]}
+                banks[key] = {
+                    "cols": list(key),
+                    "U": np.zeros((0, len(key)), dtype=np.int64),
+                    "V": [[] for _ in primes],
+                }
             return banks[key]
 
         def need_of(k, d):
@@ -617,11 +671,14 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                 mons = mono_table(len(reli), d)
                 if not fill_bank_to(bank, need_of(len(reli), d)):
                     if rdiag:
-                        print(f"[fwds] entry {znames[c9]}: {len(reli)} leaves, degree {d}: bank of "
-                              f"{len(bank['V'][0])} of {need_of(len(reli), d)} points")
+                        print(
+                            f"[fwds] entry {znames[c9]}: {len(reli)} leaves, degree {d}: bank of "
+                            f"{len(bank['V'][0])} of {need_of(len(reli), d)} points"
+                        )
                     continue
-                expr = _fit_entry(primes, bank["U"], reli_cols, mons,
-                                  lambda jp, need: val_of(bank, jp, a, c9, need), vars_)
+                expr = _fit_entry(
+                    primes, bank["U"], reli_cols, mons, lambda jp, need: val_of(bank, jp, a, c9, need), vars_
+                )
                 if expr is not None:
                     return {"expr": expr, "reli": vars_}
             if rdiag:
@@ -637,9 +694,10 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
                 break
         out = []
         for a, ac in enumerate(acs):
+
             def opn(reason, a=a):
-                return {"support": sym_sort(supp_of[a]), "type": "general", "closed_form": False,
-                        "reason": reason}
+                return {"support": sym_sort(supp_of[a]), "type": "general", "closed_form": False, "reason": reason}
+
             if not ok_a[a]:
                 out.append(opn("forward: couples too many leaves"))
                 continue
@@ -689,8 +747,15 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             if bad:
                 out.append(opn("forward: failed fresh-point verification"))
                 continue
-            out.append({"support": sym_sort(list(entries)), "vector": entries, "type": "general",
-                        "closed_form": True, "solved_rates": list(solve_rates)})
+            out.append(
+                {
+                    "support": sym_sort(list(entries)),
+                    "vector": entries,
+                    "type": "general",
+                    "closed_form": True,
+                    "solved_rates": list(solve_rates),
+                }
+            )
         return out
 
     tsv = {s: ((i + 1) * 7919 + 11) % (P1 - 1) + 1 for i, s in enumerate(real_state_names)}
@@ -700,10 +765,16 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
     def trans_for(sp):
         kf = list(dict.fromkeys([x for s in sp for x in s] + recast_leaves))
         try:
-            ts = solve_forward_modular(models[0], list(real_state_names), list(solve_param_names),
-                                        tsv, tpv, P1,
-                                        forcings=list(solve_held) if solve_held else None,
-                                        keep_free=kf)
+            ts = solve_forward_modular(
+                models[0],
+                list(real_state_names),
+                list(solve_param_names),
+                tsv,
+                tpv,
+                P1,
+                forcings=list(solve_held) if solve_held else None,
+                keep_free=kf,
+            )
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             return None
@@ -743,17 +814,30 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
     for g in groups:
         gidx = g["idx"]
         if g["ts"] is None:
-            res = [{"support": sym_sort(supp_of[i]), "type": "general", "closed_form": False,
-                    "reason": "forward: no transversal"} for i in gidx]
+            res = [
+                {
+                    "support": sym_sort(supp_of[i]),
+                    "type": "general",
+                    "closed_form": False,
+                    "reason": "forward: no transversal",
+                }
+                for i in gidx
+            ]
         else:
             res = run_group([acs[i] for i in gidx], [supp_of[i] for i in gidx], g["ts"])
         if res is None:
-            res = [{"support": sym_sort(supp_of[i]), "type": "general", "closed_form": False,
-                    "reason": "forward: no closed form"} for i in gidx]
+            res = [
+                {
+                    "support": sym_sort(supp_of[i]),
+                    "type": "general",
+                    "closed_form": False,
+                    "reason": "forward: no closed form",
+                }
+                for i in gidx
+            ]
         again = [k for k, e in enumerate(res) if not e.get("closed_form")]
         if again and g["ts"] is not None:
-            res2 = run_group([acs[gidx[k]] for k in again], [supp_of[gidx[k]] for k in again],
-                            g["ts"], n_p=n_prime_fwd)
+            res2 = run_group([acs[gidx[k]] for k in again], [supp_of[gidx[k]] for k in again], g["ts"], n_p=n_prime_fwd)
             if res2 is not None:
                 for j, k in enumerate(again):
                     res[k] = res2[j]
@@ -765,8 +849,7 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             for g in groups_for(again):
                 if g["ts"] is None:
                     continue
-                res = run_group([acs[i] for i in g["idx"]], [supp_of[i] for i in g["idx"]], g["ts"],
-                               n_p=n_prime_fwd)
+                res = run_group([acs[i] for i in g["idx"]], [supp_of[i] for i in g["idx"]], g["ts"], n_p=n_prime_fwd)
                 if res is not None:
                     for k, i in enumerate(g["idx"]):
                         if res[k].get("closed_form"):
@@ -776,8 +859,10 @@ def perprime_forward_shared(sc, kcall, kcall_fwd, znames, z_slots, leaf_names, n
             if not e.get("closed_form"):
                 print(f"[fwds] open: {e.get('reason')}")
         n_k = track["n_k"]
-        print(f"[fwds] closed {sum(1 for e in out if e.get('closed_form'))} of {len(out)} ({el()}; "
-              f"{n_k} kernel calls, {track['t_k'] / n_k if n_k else 0:.1f} s each)")
+        print(
+            f"[fwds] closed {sum(1 for e in out if e.get('closed_form'))} of {len(out)} ({el()}; "
+            f"{n_k} kernel calls, {track['t_k'] / n_k if n_k else 0:.1f} s each)"
+        )
     return out
 
 
@@ -789,18 +874,50 @@ def fwd_adopt(fwd, n_res):
     return cl if len(cl) == n_res and n_res > 0 else None
 
 
-def perprime_forward_multi(residual_free, sc, kcall, kcall_fwd, znames, z_slots, leaf_names, nz,
-                           scaling, state_col_names, ctrl, phys_cols, models, real_state_names,
-                           solve_param_names, solve_held):
+def perprime_forward_multi(
+    residual_free,
+    sc,
+    kcall,
+    kcall_fwd,
+    znames,
+    z_slots,
+    leaf_names,
+    nz,
+    scaling,
+    state_col_names,
+    ctrl,
+    phys_cols,
+    models,
+    real_state_names,
+    solve_param_names,
+    solve_held,
+):
     """Forward results of the first residual direction per anchor; [] without directions, None without anchors."""
     if not residual_free:
         return []
 
     def fwd1(ac_in, list_anchors):
-        return perprime_forward(residual_free[0], sc, kcall, kcall_fwd, znames, z_slots, leaf_names,
-                                nz, scaling, state_col_names, ctrl, phys_cols, models,
-                                real_state_names, solve_param_names, solve_held,
-                                ac_in=ac_in, list_anchors=list_anchors)
+        return perprime_forward(
+            residual_free[0],
+            sc,
+            kcall,
+            kcall_fwd,
+            znames,
+            z_slots,
+            leaf_names,
+            nz,
+            scaling,
+            state_col_names,
+            ctrl,
+            phys_cols,
+            models,
+            real_state_names,
+            solve_param_names,
+            solve_held,
+            ac_in=ac_in,
+            list_anchors=list_anchors,
+        )
+
     anchors = fwd1(None, True)
     if not anchors:
         return None

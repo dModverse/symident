@@ -18,8 +18,13 @@ def model(extra=None, obs=None, odes=None, rest=False):
     if extra is not None:
         observables[extra[0]] = extra[1]
     start = {} if rest else {"x": "0"}
-    return si.Model(odes or {"x": "k1*u - k2*x"}, observables, trafo=[dict(start, u=str(c + 1)) for c in range(K)],
-                    conditions={"rows": [f"c{c}" for c in range(K)], "cols": {}}, equilibrate=rest)
+    return si.Model(
+        odes or {"x": "k1*u - k2*x"},
+        observables,
+        trafo=[dict(start, u=str(c + 1)) for c in range(K)],
+        conditions={"rows": [f"c{c}" for c in range(K)], "cols": {}},
+        equilibrate=rest,
+    )
 
 
 def run(m, monkeypatch, on):
@@ -78,6 +83,7 @@ def test_a_direction_that_fails_on_a_condition_left_out_brings_the_condition_bac
     def drop_29(sel):
         sel["kept"] = [c for c in sel["kept"] if c != 29]
         return sel
+
     monkeypatch.setattr(select, "choose", lambda *a, **k: drop_29(choose(*a, **k)))
     monkeypatch.setattr(select, "choose_resting", lambda *a, **k: drop_29(choose_resting(*a, **k)))
     on = run(m, monkeypatch, True)
@@ -89,6 +95,10 @@ def test_a_direction_that_fails_on_a_condition_left_out_brings_the_condition_bac
 
 
 def test_few_conditions_are_all_analyzed(monkeypatch):
-    m = si.Model({"x": "k1*u - k2*x"}, [{"y": "s*x"}] * 3, trafo=[{"x": "0", "u": str(c + 1)} for c in range(3)],
-                 conditions={"rows": ["a", "b", "c"], "cols": {}})
+    m = si.Model(
+        {"x": "k1*u - k2*x"},
+        [{"y": "s*x"}] * 3,
+        trafo=[{"x": "0", "u": str(c + 1)} for c in range(3)],
+        conditions={"rows": ["a", "b", "c"], "cols": {}},
+    )
     assert run(m, monkeypatch, True).info["selection"] is None

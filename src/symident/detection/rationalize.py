@@ -67,12 +67,14 @@ def _time_rate(at, states):
 
 def _split_time(e, states):
     """`e` with every exp(a*time + b) split into exp(a*time)*exp(b)."""
+
     def split(at):
         arg = spy.expand(at.args[0])
         tpart = sum((t for t in spy.Add.make_args(arg) if t.has(TIME)), spy.Integer(0))
         if tpart == 0 or tpart == arg or _time_rate(spy.exp(tpart), states) is None:
             return at
         return spy.exp(tpart) * spy.exp(arg - tpart)
+
     return e.replace(lambda a: isinstance(a, spy.exp), split)
 
 
@@ -81,8 +83,13 @@ def _injective_forms(e):
     of a power with odd numerator, the argument of exp."""
     out = []
     for c in (spy.Integer(1), spy.log(10), spy.log(2)):
-        out.append((spy.expand_power_exp(spy.exp(spy.expand(e * c))), f"exp({_str(c)}*y)" if c != 1 else "exp(y)",
-                    "exp is injective on the reals"))
+        out.append(
+            (
+                spy.expand_power_exp(spy.exp(spy.expand(e * c))),
+                f"exp({_str(c)}*y)" if c != 1 else "exp(y)",
+                "exp is injective on the reals",
+            )
+        )
     if isinstance(e, spy.exp):
         out.append((e.args[0], "log(y)", "exp is injective on the reals"))
     if e.is_Pow and e.exp.is_Rational and e.exp.p % 2:
@@ -91,8 +98,9 @@ def _injective_forms(e):
 
 
 def _transcendental(e):
-    return [a for a in spy.preorder_traversal(e) if isinstance(a, (spy.exp, spy.log)) or
-            (a.is_Pow and not a.exp.is_Integer)]
+    return [
+        a for a in spy.preorder_traversal(e) if isinstance(a, (spy.exp, spy.log)) or (a.is_Pow and not a.exp.is_Integer)
+    ]
 
 
 def _constant_states(parts, coords):
@@ -162,16 +170,18 @@ def _reciprocal_log_params(exprs, cs):
 
 def _reciprocal_sub(rp):
     """Rewriter of exp(c/theta) to X^(c/g), rp: theta -> (X, g)."""
+
     def repl(at):
         terms = spy.expand(at.args[0]).as_coefficients_dict()
         if len(terms) != 1:
             return at
-        (t, c), = terms.items()
+        ((t, c),) = terms.items()
         th = 1 / t if t.is_Pow and t.exp == -1 else None
         if th not in rp:
             return at
         X, g = rp[th]
         return X ** (c / g) if (c / g).is_Integer else at
+
     return lambda e: e.replace(lambda a: isinstance(a, spy.exp), repl)
 
 
@@ -179,8 +189,9 @@ def rationalize(parts, coords, states):
     """(parts, rewrites, logs): `parts` (as in discrete.Series) in rational form with the same fiber, the rewrites
     applied and {coordinate: (base, L)} for a coordinate theta read as b^(theta/L). A ValueError names the term
     that keeps the model from being rational."""
-    states = {spy.Symbol(x) for x in states} | {spy.Symbol(x) for part in parts for seg in part["segments"]
-                                                  for x in seg["f"]}
+    states = {spy.Symbol(x) for x in states} | {
+        spy.Symbol(x) for part in parts for seg in part["segments"] for x in seg["f"]
+    }
     cs = {spy.Symbol(c) for c in coords} - states
     rewrites = []
     orig = {}
@@ -189,9 +200,14 @@ def rationalize(parts, coords, states):
         d[k] = model_sympify(str(d[k]))
     constant = _constant_states(parts, set(coords))
     for x in dict.fromkeys(constant):
-        rewrites.append({"rewrite": "constant", "state": x,
-                         "why": f"{x} has no dynamics and takes numbers at the start and at the events: within a "
-                                "segment it is that number"})
+        rewrites.append(
+            {
+                "rewrite": "constant",
+                "state": x,
+                "why": f"{x} has no dynamics and takes numbers at the start and at the events: within a "
+                "segment it is that number",
+            }
+        )
     exprs = [d[k] for d, k in _strings(parts)]
     # log coordinates: theta enters only through b^(c*theta), as X = b^(theta/L) with integer powers
     base_of = {t: b for t, b in _detect_log_params(exprs, states).items() if t in cs}
@@ -205,9 +221,15 @@ def rationalize(parts, coords, states):
         for t, b in sorted(base_of.items(), key=lambda kv: str(kv[0])):
             logs[str(t)] = (b, den[t])
             ex = f"{_str(b)}^({t}/{den[t]})" if den[t] != 1 else (f"exp({t})" if b == spy.E else f"{_str(b)}^{t}")
-            rewrites.append({"rewrite": "coordinate", "from": ex, "to": str(t),
-                             "why": f"{ex} is a bijection of the real line onto the positive reals: the fiber in "
-                                    f"{t} is the image of the fiber in {ex}"})
+            rewrites.append(
+                {
+                    "rewrite": "coordinate",
+                    "from": ex,
+                    "to": str(t),
+                    "why": f"{ex} is a bijection of the real line onto the positive reals: the fiber in "
+                    f"{t} is the image of the fiber in {ex}",
+                }
+            )
     # coordinates read only as exp(c/theta), as X = exp(g/theta) with integer powers
     recip = _reciprocal_log_params([d[k] for d, k in _strings(parts)], cs - set(base_of))
     if recip:
@@ -217,28 +239,45 @@ def rationalize(parts, coords, states):
         for t, g in sorted(recip.items(), key=lambda kv: str(kv[0])):
             logs[str(t)] = (spy.E, g, "reciprocal")
             ex = f"exp({_str(g)}/{t})"
-            rewrites.append({"rewrite": "coordinate", "from": ex, "to": str(t),
-                             "why": f"{ex} is a bijection of the positive reals onto the reals above 1 and of the "
-                                    f"negative reals onto (0, 1): the fiber in {t} is the image of the fiber in {ex}"})
+            rewrites.append(
+                {
+                    "rewrite": "coordinate",
+                    "from": ex,
+                    "to": str(t),
+                    "why": f"{ex} is a bijection of the positive reals onto the reals above 1 and of the "
+                    f"negative reals onto (0, 1): the fiber in {t} is the image of the fiber in {ex}",
+                }
+            )
     # observables under an injective function: the function goes
     seen = {}
     for part in parts:
         for seg in part["segments"]:
             for y, e in list(seg["g"].items()):
-                if _is_rational_expr(_split_time(e, states).replace(
-                        lambda a: _time_rate(a, states) is not None, lambda a: spy.Integer(1))):
+                if _is_rational_expr(
+                    _split_time(e, states).replace(
+                        lambda a: _time_rate(a, states) is not None, lambda a: spy.Integer(1)
+                    )
+                ):
                     continue
                 if (y, e) in seen:
                     seg["g"][y] = seen[(y, e)]
                     continue
                 for w, how, why in _injective_forms(e):
                     w = _split_time(w, states)
-                    if _is_rational_expr(w.replace(lambda a: _time_rate(a, states) is not None,
-                                                   lambda a: spy.Integer(1))):
+                    if _is_rational_expr(
+                        w.replace(lambda a: _time_rate(a, states) is not None, lambda a: spy.Integer(1))
+                    ):
                         seen[(y, e)] = seg["g"][y] = w
-                        rewrites.append({"rewrite": "observable", "observable": y, "from": _str(e), "to": _str(w),
-                                         "why": f"y = {_str(e)} as {how}: {why}, so two values of the coordinates "
-                                                "with the same output keep it after the rewrite and back"})
+                        rewrites.append(
+                            {
+                                "rewrite": "observable",
+                                "observable": y,
+                                "from": _str(e),
+                                "to": _str(w),
+                                "why": f"y = {_str(e)} as {how}: {why}, so two values of the coordinates "
+                                "with the same output keep it after the rewrite and back",
+                            }
+                        )
                         break
     # exp(a*time) as a state E with E' = a*E, E(0) = 1
     rates = {}
@@ -257,13 +296,21 @@ def rationalize(parts, coords, states):
             rates[a] = spy.Symbol(nm)
         for part in parts:
             for j, seg in enumerate(part["segments"]):
-                if j == 0 and seg.get("ic") is not None and spy.sympify(seg["t"]) != 0 and \
-                        any(v is not None for v in seg["ic"].values()):
-                    raise ValueError("discrete() rewrites exp(a*time) as a state that starts at 1 at time 0; the "
-                                     f"condition {seg.get('label') or ''} starts at {seg['t']}")
+                if (
+                    j == 0
+                    and seg.get("ic") is not None
+                    and spy.sympify(seg["t"]) != 0
+                    and any(v is not None for v in seg["ic"].values())
+                ):
+                    raise ValueError(
+                        "discrete() rewrites exp(a*time) as a state that starts at 1 at time 0; the "
+                        f"condition {seg.get('label') or ''} starts at {seg['t']}"
+                    )
         for d, k in _strings(parts):
-            d[k] = d[k].replace(lambda a: _time_rate(a, states) in rates if isinstance(a, spy.exp) else False,
-                                lambda a: rates[_time_rate(a, states)])
+            d[k] = d[k].replace(
+                lambda a: _time_rate(a, states) in rates if isinstance(a, spy.exp) else False,
+                lambda a: rates[_time_rate(a, states)],
+            )
         for part in parts:
             for j, seg in enumerate(part["segments"]):
                 for a, E in rates.items():
@@ -274,16 +321,24 @@ def rationalize(parts, coords, states):
                         seg["ic"][str(E)] = None if free else spy.Integer(1)
         for a, E in rates.items():
             ex = _str(spy.exp(a * TIME))
-            rewrites.append({"rewrite": "time", "from": ex, "to": str(E),
-                             "why": f"{E}' = {_str(a * E)}, {E}(0) = 1 has the unique solution {ex}"})
+            rewrites.append(
+                {
+                    "rewrite": "time",
+                    "from": ex,
+                    "to": str(E),
+                    "why": f"{E}' = {_str(a * E)}, {E}(0) = 1 has the unique solution {ex}",
+                }
+            )
     # a free power of a state at 0 through the normalized power (x/c_x)^alpha is a state of the part
     from .startpow import normalize
+
     normalize(parts, cs, states)
     for d, k in _strings(parts):
         bad = _blocking(d[k])
         if bad is not None:
-            raise NotRationalError(f"discrete() needs a model rational in the states and coordinates; {_str(bad)} "
-                                   "is not")
+            raise NotRationalError(
+                f"discrete() needs a model rational in the states and coordinates; {_str(bad)} is not"
+            )
         # an entry the rewrites leave keeps the text it had
         o = orig.get((id(d), k))
         d[k] = o if o is not None and d[k] == model_sympify(o) else _str(d[k])
@@ -312,7 +367,7 @@ def map_to_given(sig, logs):
             pos = {x: spy.Symbol(str(x), real=True) for x in img.free_symbols}
             img = spy.expand_log(spy.log(img.xreplace(pos)), force=True) * L / spy.log(b)
             if len(logs[str(s)]) > 2:
-                img = L ** 2 / img
+                img = L**2 / img
             img = spy.expand(spy.simplify(img)).xreplace({v: k for k, v in pos.items()})
         out[s] = img
     return out
@@ -325,8 +380,9 @@ def relation_to_given(r, logs):
         op = "<" if "<" in r else ">"
         lhs, rhs = r.split(op, 1)
         if lhs.strip() in logs and len(logs[lhs.strip()]) == 2:
-            return f"{lhs.strip()} {op} " + _str(map_to_given({spy.Symbol(lhs.strip()): model_sympify(rhs)},
-                                                              logs)[spy.Symbol(lhs.strip())])
+            return f"{lhs.strip()} {op} " + _str(
+                map_to_given({spy.Symbol(lhs.strip()): model_sympify(rhs)}, logs)[spy.Symbol(lhs.strip())]
+            )
         return f"{_str(to_given(model_sympify(lhs), logs))} {op} {_str(to_given(model_sympify(rhs), logs))}"
     e = model_sympify(r)
     terms = spy.Add.make_args(spy.expand(e))

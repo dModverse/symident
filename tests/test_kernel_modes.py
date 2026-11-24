@@ -8,9 +8,17 @@ import symident as si
 from symident import _core
 from symident.gfp import null_residues
 
-FUNS = ["sym_obs_null_multi", "sym_obs_null_batch", "sym_obs_rank_profile", "sym_obs_null_chain",
-        "sym_obs_chain_rank_profile", "sym_obs_chain_rows", "sym_obs_null_chain_seed_batch",
-        "sym_obs_null_chain_point_batch", "sym_segment_ranks"]
+FUNS = [
+    "sym_obs_null_multi",
+    "sym_obs_null_batch",
+    "sym_obs_rank_profile",
+    "sym_obs_null_chain",
+    "sym_obs_chain_rank_profile",
+    "sym_obs_chain_rows",
+    "sym_obs_null_chain_seed_batch",
+    "sym_obs_null_chain_point_batch",
+    "sym_segment_ranks",
+]
 
 
 def ev(var, time, value, method):
@@ -20,23 +28,31 @@ def ev(var, time, value, method):
 MODELS = {
     "rational": lambda: si.Model({"x": "v*x/(K + x) - d*x"}, {"y": "s*x"}),
     "start in closed form": lambda: si.Model(
-        {"x": "v*u*x/(K + x) + kb - d*x"}, {"y": "s*x"},
+        {"x": "v*u*x/(K + x) + kb - d*x"},
+        {"y": "s*x"},
         trafo={"x": "(v*u + kb - d*K + sqrt((v*u + kb - d*K)^2 + 4*d*kb*K))/(2*d)"},
-        conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}}),
+        conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}},
+    ),
     "unknown input": lambda: si.Model({"L": "-(c*T + L)/tau"}, {"y": "L"}, unknown_inputs=["T"]),
     "dose at an unknown time": lambda: si.Model(
-        {"D": "-ka*D", "A": "ka*D - k*A"}, {"y": "A"}, events=[ev("D", "tau", "d", "add")],
-        trafo={"D": "0", "A": "0"}),
+        {"D": "-ka*D", "A": "ka*D - k*A"}, {"y": "A"}, events=[ev("D", "tau", "d", "add")], trafo={"D": "0", "A": "0"}
+    ),
     "switch with a kink": lambda: si.Model(
-        {"x": "-k1*x + u*z", "z": "-(1-u)*k2*z", "u": "0"}, {"y": "x"},
-        events=[ev("u", 0, "0", "replace"), ev("u", "tau", "1", "replace")]),
+        {"x": "-k1*x + u*z", "z": "-(1-u)*k2*z", "u": "0"},
+        {"y": "x"},
+        events=[ev("u", 0, "0", "replace"), ev("u", "tau", "1", "replace")],
+    ),
     "scaled and reset state": lambda: si.Model(
-        {"A": "-k*A/(1 + A)"}, {"y": "s*A"}, events=[ev("A", 2, "f", "multiply"), ev("A", 4, "r", "replace")]),
+        {"A": "-k*A/(1 + A)"}, {"y": "s*A"}, events=[ev("A", 2, "f", "multiply"), ev("A", 4, "r", "replace")]
+    ),
     "switch at a given time": lambda: si.Model(
-        {"x": "piecewise(-a*x + c*z, time > 1, -b*x*z)", "z": "-d*z/(1 + z)"}, {"y": "s*x"}),
+        {"x": "piecewise(-a*x + c*z, time > 1, -b*x*z)", "z": "-d*z/(1 + z)"}, {"y": "s*x"}
+    ),
     "conditions in values": lambda: si.Model(
-        {"x": "k1*u - k2*x*z", "z": "k3*x - k4*z"}, {"y": "s*z"},
-        conditions={"rows": ["a", "b", "c"], "cols": {"u": [1, 2, 0], "k4": ["k4", "k4", "k5"]}}),
+        {"x": "k1*u - k2*x*z", "z": "k3*x - k4*z"},
+        {"y": "s*z"},
+        conditions={"rows": ["a", "b", "c"], "cols": {"u": [1, 2, 0], "k4": ["k4", "k4", "k5"]}},
+    ),
 }
 
 
@@ -49,7 +65,9 @@ def _calls(monkeypatch, model, **kw):
         def call(*a, **k):
             seen.append((name, a, k))
             return f(*a, **k)
+
         return call
+
     for name in FUNS:
         monkeypatch.setattr(_core, name, spy(name))
     si.detect(model, **kw)
@@ -101,8 +119,9 @@ def test_the_cases_reach_every_part_of_the_kernel(monkeypatch):
 
 
 def test_a_vanishing_reciprocal_fails_in_both_modes(monkeypatch):
-    _, (tapes, nl, ns, zs, pt, p, nt, *_), _ = [c for c in _calls(monkeypatch, MODELS["rational"]())
-                                                if c[0] == "sym_obs_null_multi"][-1]
+    _, (tapes, nl, ns, zs, pt, p, nt, *_), _ = [
+        c for c in _calls(monkeypatch, MODELS["rational"]()) if c[0] == "sym_obs_null_multi"
+    ][-1]
     a, b = _both(monkeypatch, "sym_obs_null_multi", (tapes, nl, ns, zs, np.zeros_like(pt), p, nt), {})
     assert a["ok"] is False and b["ok"] is False
 
@@ -151,4 +170,4 @@ def test_lanes_along_directions_equal_the_rows(monkeypatch):
     pad = np.concatenate([V, np.zeros((nz, nz), dtype=np.int64)], axis=1)
     for k, point in enumerate((pt, other)):
         rows = _core.sym_obs_annihilates(tapes, nl, ns, zs, point, p, nt, pad)
-        assert list(rows["zero"])[:V.shape[1]] == list(got[k]["zero"])
+        assert list(rows["zero"])[: V.shape[1]] == list(got[k]["zero"])

@@ -22,6 +22,7 @@ def orbit_kind(d):
     import sympy as spy
 
     from ..sym.parse import model_sympify
+
     if d.get("type") == "scaling":
         return "scaling"
     gen = d.get("generator")
@@ -100,16 +101,24 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
     phys_coords = [z for z in znames if z not in aux]
     phys_set = set(phys_coords)
     result = dict(result)
-    result["non_identifiable"] = [d for d in result["non_identifiable"]
-                                  if any(s in phys_set for s in d.get("support", []))]
+    result["non_identifiable"] = [
+        d for d in result["non_identifiable"] if any(s in phys_set for s in d.get("support", []))
+    ]
     phys_cols = [i for i, z in enumerate(znames) if z in phys_set]
     piv = {int(x) for x in np.atleast_1d(sc["pivots"])}
     N = nullspace_basis(sc["ref"], [c for c in range(nz) if c not in piv], P)
     phys_null = rref_modp(N[phys_cols, :], P)["rank"] if phys_cols and N.shape[1] else 0
     if sc.get("rank_s") is not None and sc["rank_s"] < sc["rank"]:
         aux_cols = [i for i, z in enumerate(znames) if z not in phys_set]
-        r_aux = int(_core.sym_series_rank(np.asarray(sc["ref"]["S"], dtype=np.int64), int(nz),
-                                          int(sc["ref"]["N"]), P, aux_cols)["rank"]) if aux_cols else 0
+        r_aux = (
+            int(
+                _core.sym_series_rank(
+                    np.asarray(sc["ref"]["S"], dtype=np.int64), int(nz), int(sc["ref"]["N"]), P, aux_cols
+                )["rank"]
+            )
+            if aux_cols
+            else 0
+        )
         phys_null = (nz - sc["rank_s"]) - (len(aux_cols) - r_aux)
     result["dim"] = len(phys_coords)
     result["coordinates"] = phys_coords
@@ -124,8 +133,7 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
             phys = {k: v for k, v in d["vector"].items() if k not in aux}
             if aux_field == "input_vector":
                 # components, with the form they belong to for the rescaling to the generator
-                comp = (lambda k, v: scaling_component(v, k)) if d.get("type") == "scaling" else \
-                    (lambda k, v: str(v))
+                comp = (lambda k, v: scaling_component(v, k)) if d.get("type") == "scaling" else (lambda k, v: str(v))
                 d[aux_field] = {k: comp(k, v) for k, v in d[aux_field].items()}
                 d["input_form"] = {k: comp(k, v) for k, v in phys.items()}
             if flag_joint and any(set(get_symbols(str(e))) & aux for e in phys.values()):
@@ -152,6 +160,7 @@ def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None, shifts=()):
         except ValueError:
             pass
         return eval_modq(w, env, P)
+
     for d in scal_res.get("non_identifiable", []):
         names = [k for k in d["vector"] if k in zi]
         if not names:
@@ -186,14 +195,33 @@ def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None, shifts=()):
         if moved:
             # a translated coordinate: the generator itself, not weights
             vec = {names[i]: wsym[i] if names[i] in shifts else scaling_component(wsym[i], names[i]) for i in order}
-            scaling.append({"support": supp, "vector": vec, "type": "general", "closed_form": True,
-                            "exact": bool(d.get("exact", False))})
+            scaling.append(
+                {
+                    "support": supp,
+                    "vector": vec,
+                    "type": "general",
+                    "closed_form": True,
+                    "exact": bool(d.get("exact", False)),
+                }
+            )
             continue
-        scaling.append({"support": supp, "vector": {names[i]: wsym[i] for i in order},
-                        "type": "scaling", "closed_form": True, "exact": bool(d.get("exact", False)),
-                        **({"state_components": d["state_components"],
-                            "lift_form": {names[i]: scaling_component(wsym[i], names[i]) for i in order}}
-                           if d.get("state_components") else {})})
+        scaling.append(
+            {
+                "support": supp,
+                "vector": {names[i]: wsym[i] for i in order},
+                "type": "scaling",
+                "closed_form": True,
+                "exact": bool(d.get("exact", False)),
+                **(
+                    {
+                        "state_components": d["state_components"],
+                        "lift_form": {names[i]: scaling_component(wsym[i], names[i]) for i in order},
+                    }
+                    if d.get("state_components")
+                    else {}
+                ),
+            }
+        )
     return {"scaling": scaling, "Bmat": Bmat}
 
 

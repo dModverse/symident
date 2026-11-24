@@ -64,11 +64,31 @@ def entry_degrees(f, pivots, point0, nv, zvals_of, rel, kbatch, nt_used, ctrl, l
     return out
 
 
-def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, point0, pool,
-                          pool_next, nt_used, kcall, rel_probe=None, residue_fn=None, ctrl=None,
-                          kbatch=None, shared_bank=None, fast_only=False, aux_leaves=(), degrees=None):
+def interpolate_direction(
+    f,
+    ref,
+    pivots,
+    znames,
+    z_slots,
+    leaf_names,
+    n_leaves,
+    point0,
+    pool,
+    pool_next,
+    nt_used,
+    kcall,
+    rel_probe=None,
+    residue_fn=None,
+    ctrl=None,
+    kbatch=None,
+    shared_bank=None,
+    fast_only=False,
+    aux_leaves=(),
+    degrees=None,
+):
     """One residual direction as rational entries over the leaves that move each entry."""
     from .closedform import reconstruct_entry
+
     if kbatch is None:
         kbatch = _default_kbatch(kcall)
     zvals0 = None if z_slots is None else np.asarray(point0)[z_slots]
@@ -78,6 +98,7 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
 
     def nv(rp, p, zvals=zvals0):
         return null_residues(rp, f, p) if residue_fn is None else residue_fn(rp, p, zvals)
+
     rel = direction_relevance(f, ref, pivots, z_slots, n_leaves, point0, rel_probe, residue_fn)
     base_nv, support_cols = rel["base_nv"], rel["support_cols"]
     relevant, rel_by_entry = rel["relevant"], rel["rel_by_entry"]
@@ -89,11 +110,13 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
     def const_entry(col):
         if box["const_base"] is None:
             kr = kbatch([point0] * len(PRIMES), list(PRIMES), nt_used)
-            box["const_base"] = [nv(kr[k], PRIMES[k]) if _pivots_eq(kr[k], pivots) else None
-                                 for k in range(len(PRIMES))]
+            box["const_base"] = [
+                nv(kr[k], PRIMES[k]) if _pivots_eq(kr[k], pivots) else None for k in range(len(PRIMES))
+            ]
         # a prime without the kernel at the base point (a resting state without a root modulo it) is left out
         got = [(int(nvp[col]), p) for nvp, p in zip(box["const_base"], PRIMES) if nvp is not None]
         return _lift_const([v for v, _ in got], [p for _, p in got]) if got else None
+
     if not relevant:
         entries = {}
         for c in support_cols:
@@ -102,12 +125,20 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
                 return fallback("a constant entry could not be lifted from the residues")
             entries[znames[c]] = e
         entries[znames[f]] = "1"
-        return {"pool_next": box["pool_next"], "entry": {"support": sym_sort(list(entries)),
-                                                         "vector": entries, "type": "general",
-                                                         "closed_form": True, "fit_how": "constant"}}
+        return {
+            "pool_next": box["pool_next"],
+            "entry": {
+                "support": sym_sort(list(entries)),
+                "vector": entries,
+                "type": "general",
+                "closed_form": True,
+                "fit_how": "constant",
+            },
+        }
     if getattr(residue_fn, "pinned_support", False) and rel_probe is not None:
-        mono = pinned_monomials(f, pivots, znames, leaf_names, point0, nt_used, kcall, nv, base_nv,
-                                support_cols, rel_by_entry, rel_probe)
+        mono = pinned_monomials(
+            f, pivots, znames, leaf_names, point0, nt_used, kcall, nv, base_nv, support_cols, rel_by_entry, rel_probe
+        )
         if mono is not None:
             return {"pool_next": box["pool_next"], "entry": mono}
         if fast_only:
@@ -116,12 +147,15 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
 
     def ex(v):
         return [x for x in v if x not in aux]
+
     rel_phys = ex(relevant)
     max_rel_phys = max([0] + [len(ex(e)) for e in rel_by_entry])
     if len(rel_phys) > ctrl["relevance_cap_dir"] or max_rel_phys > ctrl["relevance_cap_sparse"]:
-        return fallback(f"direction couples {len(rel_phys)} parameters (an entry up to {max_rel_phys}), "
-                        f"above relevance_cap_dir={ctrl['relevance_cap_dir']} / relevance_cap_sparse="
-                        f"{ctrl['relevance_cap_sparse']}; raise the relevant cap")
+        return fallback(
+            f"direction couples {len(rel_phys)} parameters (an entry up to {max_rel_phys}), "
+            f"above relevance_cap_dir={ctrl['relevance_cap_dir']} / relevance_cap_sparse="
+            f"{ctrl['relevance_cap_sparse']}; raise the relevant cap"
+        )
     nrel = len(relevant)
     n_p = len(PRIMES)
     degs = list(degrees) if degrees is not None else [None] * len(support_cols)
@@ -160,8 +194,10 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
                     return fallback("no valid steady state under perturbation of the relevant leaves")
                 # the hit rate so far cannot fill the need within the budget: stop early
                 if tries >= 2 * max_need and len(rows_u) + len(rows_u) / tries * (30 * max_need - tries) < max_need:
-                    return fallback("dense sampling could not collect enough pivot-consistent points; "
-                                    "raise sample_slack or probe_retries")
+                    return fallback(
+                        "dense sampling could not collect enough pivot-consistent points; "
+                        "raise sample_slack or probe_retries"
+                    )
                 chunk = max(1, min(max_need - len(rows_u) + ctrl["sample_slack"], 30 * max_need - tries))
                 tries += chunk
                 uv = []
@@ -196,8 +232,10 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
                     for i in range(len(support_cols)):
                         rows_r[i].append(rrow[i])
             if len(rows_u) < max_need:
-                return fallback("dense sampling could not collect enough pivot-consistent points; "
-                                "raise sample_slack or probe_retries")
+                return fallback(
+                    "dense sampling could not collect enough pivot-consistent points; "
+                    "raise sample_slack or probe_retries"
+                )
             sample_u = np.vstack(rows_u)
             rstore = [np.vstack(r) for r in rows_r]
     entries = {}
@@ -212,19 +250,21 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
             how.append("constant")
             continue
         if len(reli) > ctrl["relevance_cap"]:
-            e = sparse_entry(reli, c, f, point0, leaf_names, nt_used, kcall, pivots, residue_fn,
-                             ctrl, z_slots, kbatch)
+            e = sparse_entry(reli, c, f, point0, leaf_names, nt_used, kcall, pivots, residue_fn, ctrl, z_slots, kbatch)
             how.append("sparse Laurent")
             if e is None:
-                e = general_rational_entry(reli, c, f, point0, leaf_names, nt_used, kcall, pivots,
-                                           residue_fn, ctrl, z_slots, kbatch)
+                e = general_rational_entry(
+                    reli, c, f, point0, leaf_names, nt_used, kcall, pivots, residue_fn, ctrl, z_slots, kbatch
+                )
                 how[-1] = "sparse rational"
             if e is None:
-                return fallback(f"an entry couples {len(reli)} variables and the sparse fit hit the caps "
-                                f"(laurent_deg_num={ctrl['laurent_deg_num']}, general_deg_num="
-                                f"{ctrl['general_deg_num']}, general_deg_den={ctrl['general_deg_den']}, "
-                                f"term_cap={ctrl['term_cap']}); raise these, or raise relevance_cap="
-                                f"{ctrl['relevance_cap']} to use the dense fit")
+                return fallback(
+                    f"an entry couples {len(reli)} variables and the sparse fit hit the caps "
+                    f"(laurent_deg_num={ctrl['laurent_deg_num']}, general_deg_num="
+                    f"{ctrl['general_deg_num']}, general_deg_den={ctrl['general_deg_den']}, "
+                    f"term_cap={ctrl['term_cap']}); raise these, or raise relevance_cap="
+                    f"{ctrl['relevance_cap']} to use the dense fit"
+                )
             entries[znames[c]] = simplify(e)
             continue
         cols_i = [relevant.index(r) for r in reli]
@@ -246,9 +286,16 @@ def interpolate_direction(f, ref, pivots, znames, z_slots, leaf_names, n_leaves,
         entries[znames[c]] = simplify(expr)
         how.append("dense")
     entries[znames[f]] = "1"
-    return {"pool_next": box["pool_next"],
-            "entry": {"support": sym_sort(list(entries)), "vector": entries, "type": "general",
-                      "closed_form": True, "fit_how": ", ".join(dict.fromkeys(how))}}
+    return {
+        "pool_next": box["pool_next"],
+        "entry": {
+            "support": sym_sort(list(entries)),
+            "vector": entries,
+            "type": "general",
+            "closed_form": True,
+            "fit_how": ", ".join(dict.fromkeys(how)),
+        },
+    }
 
 
 def exp_backsub(vector, back, atoms=None):

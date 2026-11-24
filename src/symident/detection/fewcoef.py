@@ -286,7 +286,7 @@ def _rank_select(found, order, n, q, rng):
             basis.append([x * inv % q for x in row])
             piv.append(c)
             first.append(e)
-    return first, first + [e for e in order if e not in first][:len(first)]
+    return first, first + [e for e in order if e not in first][: len(first)]
 
 
 class _Bounds:
@@ -314,11 +314,14 @@ class _Bounds:
         t = [{k: sum(m[v] * dict(funcs[v].exps).get(k, 0) for v in range(len(funcs))) for k in used} for m in pr.mons]
         T = {k: max(tj[k] for tj in t) for k in used}
         self.r = len(pr.mons)
-        self.degree = sum(sum(m[v] * dN[v] for v in range(len(funcs))) + sum((T[k] - tj[k]) * dF[k] for k in used)
-                          for m, tj in zip(pr.mons, t))
-        self.height = math.lgamma(self.r + 1) / math.log(2) + \
-            sum(sum(m[v] * hN[v] for v in range(len(funcs))) + sum((T[k] - tj[k]) * hF[k] for k in used)
-                for m, tj in zip(pr.mons, t))
+        self.degree = sum(
+            sum(m[v] * dN[v] for v in range(len(funcs))) + sum((T[k] - tj[k]) * dF[k] for k in used)
+            for m, tj in zip(pr.mons, t)
+        )
+        self.height = math.lgamma(self.r + 1) / math.log(2) + sum(
+            sum(m[v] * hN[v] for v in range(len(funcs))) + sum((T[k] - tj[k]) * hF[k] for k in used)
+            for m, tj in zip(pr.mons, t)
+        )
         self.rows_degree = sum(dF.values())
 
     def trial(self, extra_degree=0, extra_height=0.0, hi=None):
@@ -338,6 +341,7 @@ def verified_functions(series, syms, large, cap, rng, log):
     the matrices reduced. `exist` bounds the probability that no relation exists on the support, `checks` per
     function that it differs from the coefficient of the relation; both are those of _TRIALS independent trials."""
     from . import fieldproof
+
     end = work.ticks() + cap
     out = {"functions": [], "exist": None, "checks": {}, "why": None, "kernels": 0, "terms": None}
     rel = fieldproof._relations(series, syms)
@@ -382,14 +386,19 @@ def verified_functions(series, syms, large, cap, rng, log):
     # the rank of the coefficients found on the axis lines: the rank the functions verified aim at
     target = rref_modp(np.array(list(grads.values()), dtype=np.int64).reshape(-1, n), p)["rank"]
     # the simplest entries first: the fewest exponent vectors in the ranges
-    order = sorted((e for e, rg in ranges.items() if e != r0 and any(L or H for L, H in rg) and
-                    math.prod(H - L + 1 for L, H in rg) <= _BOX),
-                   key=lambda e: (math.prod(H - L + 1 for L, H in ranges[e]), sum(H - L for L, H in ranges[e]), e))
+    order = sorted(
+        (
+            e
+            for e, rg in ranges.items()
+            if e != r0 and any(L or H for L, H in rg) and math.prod(H - L + 1 for L, H in rg) <= _BOX
+        ),
+        key=lambda e: (math.prod(H - L + 1 for L, H in ranges[e]), sum(H - L for L, H in ranges[e]), e),
+    )
     # Ben-Or and Tiwari modulo two primes, a third where the rational coefficients need it
     bts = {q: _BT(orc, n, q, rng) for q in all_primes()[:2]}
     found, tried, first, need = {}, 0, [], 8
     while len(first) < target:
-        batch = order[tried:tried + _CANDIDATES * n]
+        batch = order[tried : tried + _CANDIDATES * n]
         if not batch:
             return stop(f"the coefficients found raise the rank to {len(first)} of {target}")
         tried += len(batch)
@@ -433,8 +442,13 @@ def verified_functions(series, syms, large, cap, rng, log):
     out["exist"] = bounds.trial(hi=hi) ** _TRIALS
     for e in pins:
         co = found[e]
-        expr = sum((spy.Rational(c.numerator, c.denominator) * spy.prod([s ** k for s, k in zip(params, m)])
-                    for m, c in co.items()), spy.Integer(0))
+        expr = sum(
+            (
+                spy.Rational(c.numerator, c.denominator) * spy.prod([s**k for s, k in zip(params, m)])
+                for m, c in co.items()
+            ),
+            spy.Integer(0),
+        )
         # w = N / (L theta^a) with N a polynomial: the degree and height that the check adds to a minor
         L = math.lcm(*[c.denominator for c in co.values()])
         a = [max(0, -min(m[v] for m in co)) for v in range(n)]
@@ -443,7 +457,12 @@ def verified_functions(series, syms, large, cap, rng, log):
         text = str(spy.cancel(expr))
         out["functions"].append(text)
         out["checks"][text] = bounds.trial(extra_d, extra_h, hi) ** _TRIALS
-    out.update(kernels=orc.calls + _TRIALS, reference=str(pr.mons[r0]), degree=bounds.degree,
-               height=round(bounds.height), trials=_TRIALS)
+    out.update(
+        kernels=orc.calls + _TRIALS,
+        reference=str(pr.mons[r0]),
+        degree=bounds.degree,
+        height=round(bounds.height),
+        trials=_TRIALS,
+    )
     log.append(f"projection of {r} terms: {len(pins)} coefficients verified with {out['kernels']} kernels")
     return out

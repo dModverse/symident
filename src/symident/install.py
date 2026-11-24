@@ -43,8 +43,7 @@ def msolve_check(path):
         with open(fi, "w") as fh:
             fh.write("x, y\n65521\nx^2+y-7,\nx*y-6\n")
         try:
-            r = subprocess.run([path, "-f", fi, "-o", fo, "-P", "1", "-t", "1"],
-                               capture_output=True)
+            r = subprocess.run([path, "-f", fi, "-o", fo, "-P", "1", "-t", "1"], capture_output=True)
         except (OSError, subprocess.SubprocessError):
             return None
         if r.returncode != 0 or not os.path.exists(fo):
@@ -61,11 +60,15 @@ def msolve_check(path):
 
 
 def _cache_bins():
-    dirs = [d for d in glob.glob(os.path.join(cache_dir(), "deps-msolve-*"))
-            if os.path.exists(os.path.join(d, ".msolve-complete"))]
+    dirs = [
+        d
+        for d in glob.glob(os.path.join(cache_dir(), "deps-msolve-*"))
+        if os.path.exists(os.path.join(d, ".msolve-complete"))
+    ]
 
     def key(d):
         return tuple(int(x) if x.isdigit() else 0 for x in os.path.basename(d)[12:].split("."))
+
     return [os.path.join(d, "bin", _EXE) for d in sorted(dirs, key=key, reverse=True)]
 
 
@@ -134,11 +137,14 @@ def install_msolve(dir=None, version=None, jobs=None, quiet=False, ask=None):
     version = version or state.env_value("MSOLVE_VERSION") or MSOLVE_VERSION
     jobs = jobs or state.env_value("JOBS")
     if jobs is None:
-        jobs = max(1, min(8, len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity")
-                          else (os.cpu_count() or 2)))
+        jobs = max(
+            1, min(8, len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 2))
+        )
     if sys.platform == "win32":
-        raise RuntimeError("install_msolve() does not build on Windows; set SYMIDENT_MSOLVE to "
-                           "an msolve.exe, or place one in the cache, see find_msolve().")
+        raise RuntimeError(
+            "install_msolve() does not build on Windows; set SYMIDENT_MSOLVE to "
+            "an msolve.exe, or place one in the cache, see find_msolve()."
+        )
     if not (shutil.which("curl") or shutil.which("wget")):
         raise RuntimeError("install_msolve() needs curl or wget to download the sources.")
     missing = [t for t in ("make", "m4") if not shutil.which(t)]
@@ -148,22 +154,36 @@ def install_msolve(dir=None, version=None, jobs=None, quiet=False, ask=None):
     if ask is None:
         ask = sys.stdin is not None and sys.stdin.isatty()
     if ask:
-        reply = input(f"This downloads and builds msolve {version} with GMP, MPFR and FLINT\n"
-                      f"into: {dir}\nIt requires network access and takes a few minutes. "
-                      "Proceed? [Y/n] ").strip().lower()
+        reply = (
+            input(
+                f"This downloads and builds msolve {version} with GMP, MPFR and FLINT\n"
+                f"into: {dir}\nIt requires network access and takes a few minutes. "
+                "Proceed? [Y/n] "
+            )
+            .strip()
+            .lower()
+        )
         if reply not in ("", "y", "yes"):
             print("Aborted; nothing was downloaded or written.")
             return None
     os.makedirs(dir, exist_ok=True)
     script = resources.files("symident").joinpath("tools", "build-msolve.sh")
     with resources.as_file(script) as sp:
-        env = dict(os.environ, **{"SYMIDENT_" + k: state.env_value(k) for k in
-                                  ("GMP_VERSION", "MPFR_VERSION", "FLINT_VERSION")
-                                  if state.env_value(k)},
-                   SYMIDENT_LIBS_CACHE=dir, SYMIDENT_MSOLVE_VERSION=str(version),
-                   SYMIDENT_JOBS=str(int(jobs)), CC=os.environ.get("CC", "cc"))
-        r = subprocess.run(["sh", str(sp)], env=env, stdout=subprocess.PIPE, text=True,
-                           stderr=subprocess.DEVNULL if quiet else None)
+        env = dict(
+            os.environ,
+            **{
+                "SYMIDENT_" + k: state.env_value(k)
+                for k in ("GMP_VERSION", "MPFR_VERSION", "FLINT_VERSION")
+                if state.env_value(k)
+            },
+            SYMIDENT_LIBS_CACHE=dir,
+            SYMIDENT_MSOLVE_VERSION=str(version),
+            SYMIDENT_JOBS=str(int(jobs)),
+            CC=os.environ.get("CC", "cc"),
+        )
+        r = subprocess.run(
+            ["sh", str(sp)], env=env, stdout=subprocess.PIPE, text=True, stderr=subprocess.DEVNULL if quiet else None
+        )
     if r.returncode != 0:
         raise RuntimeError("the msolve build failed; see the messages above.")
     lines = [line for line in r.stdout.splitlines() if line.strip()]

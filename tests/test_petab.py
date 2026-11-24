@@ -54,8 +54,9 @@ def test_a_preequilibration_rests_and_a_later_period_switches_by_events():
     m = v2("0009")
     assert m.equilibrate is True and m.inputs == ["k1_si_input"]
     assert "((3/10))+k1_si_input" in m.odes["A"] and m.odes["k1_si_input"] == "0"
-    assert m.events == [{"time": "0.0", "method": "replace", "cond": [0], "var": "k1_si_input",
-                         "value": "((4/5)) - ((3/10))"}]
+    assert m.events == [
+        {"time": "0.0", "method": "replace", "cond": [0], "var": "k1_si_input", "value": "((4/5)) - ((3/10))"}
+    ]
     assert m.reduce_cq is True and m.totals == {"total1": "A + B"}
     m = v2("0010")
     assert {"var": "B", "value": "1"}.items() <= next(e for e in m.events if e["var"] == "B").items()
@@ -81,16 +82,20 @@ def _problem(tmp_path, build):
     libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
     (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tx\t1\n")
     (tmp_path / "measurements.tsv").write_text("observableId\texperimentId\ttime\tmeasurement\nobs\t\t1\t1\n")
-    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
-                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\n")
-    (tmp_path / "p.yaml").write_text("format_version: 2.0.0\nparameter_files: [parameters.tsv]\n"
-                                     "model_files: {m: {language: sbml, location: model.xml}}\n"
-                                     "observable_files: [observables.tsv]\nmeasurement_files: [measurements.tsv]\n")
+    (tmp_path / "parameters.tsv").write_text(
+        "parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue\testimate\nk\tlog10\t0.1\t10\t1\t1\n"
+    )
+    (tmp_path / "p.yaml").write_text(
+        "format_version: 2.0.0\nparameter_files: [parameters.tsv]\n"
+        "model_files: {m: {language: sbml, location: model.xml}}\n"
+        "observable_files: [observables.tsv]\nmeasurement_files: [measurements.tsv]\n"
+    )
     return si.read_petab(str(tmp_path / "p.yaml"))
 
 
 def _species(model, rule=None):
     import libsbml
+
     c = model.createCompartment()
     c.setId("V"), c.setSize(2), c.setConstant(rule is None)
     x = model.createSpecies()
@@ -122,6 +127,7 @@ def test_an_unsupported_feature_is_an_error(tmp_path):
     def algebraic(model):
         _species(model)
         model.createAlgebraicRule().setMath(libsbml.parseL3Formula("x - k"))
+
     with pytest.raises(si.PEtabError, match="algebraic"):
         _problem(tmp_path, algebraic)
 
@@ -134,8 +140,10 @@ BENCH = {
     "Lucarelli_CellSystems2018": [],
     "Weber_BMC2015": [],
     "Bachmann_MSB2011": [["init_EpoRJAK2"]],
-    "Raia_CancerResearch2011": [["CD274mRNA_production", "scaling_CD274mRNA"],
-                                ["SOCS3_accumulation", "SOCS3mRNA_production", "scaling_SOCS3mRNA"]],
+    "Raia_CancerResearch2011": [
+        ["CD274mRNA_production", "scaling_CD274mRNA"],
+        ["SOCS3_accumulation", "SOCS3mRNA_production", "scaling_SOCS3mRNA"],
+    ],
 }
 
 
@@ -213,11 +221,13 @@ def test_a_switch_in_fixed_parameters_takes_its_value_per_experiment(tmp_path):
         p = model.createParameter()
         p.setId("lvl"), p.setValue(0), p.setConstant(True)
         model.getReaction(0).getKineticLaw().setMath(libsbml.parseL3Formula("piecewise(2, lvl > 0, 1)*k*x*V"))
+
     _problem(tmp_path, build)
     (tmp_path / "conditions.tsv").write_text("conditionId\ttargetId\ttargetValue\nc0\tlvl\t0\nc1\tlvl\t1\n")
     (tmp_path / "experiments.tsv").write_text("experimentId\ttime\tconditionId\ne0\t0\tc0\ne1\t0\tc1\n")
-    (tmp_path / "measurements.tsv").write_text("observableId\texperimentId\ttime\tmeasurement\n"
-                                              "obs\te0\t1\t1\nobs\te1\t1\t1\n")
+    (tmp_path / "measurements.tsv").write_text(
+        "observableId\texperimentId\ttime\tmeasurement\nobs\te0\t1\t1\nobs\te1\t1\t1\n"
+    )
     y = (tmp_path / "p.yaml").read_text()
     (tmp_path / "p.yaml").write_text(y + "condition_files: [conditions.tsv]\nexperiment_files: [experiments.tsv]\n")
     m = si.read_petab(str(tmp_path / "p.yaml"))
@@ -228,8 +238,9 @@ def _conditions(tmp_path, rows):
     """Two experiments e0 and e1 of the problem in `tmp_path`, with the condition table `rows`."""
     (tmp_path / "conditions.tsv").write_text("conditionId\ttargetId\ttargetValue\n" + rows)
     (tmp_path / "experiments.tsv").write_text("experimentId\ttime\tconditionId\ne0\t0\tc0\ne1\t0\tc1\n")
-    (tmp_path / "measurements.tsv").write_text("observableId\texperimentId\ttime\tmeasurement\n"
-                                              "obs\te0\t1\t1\nobs\te1\t1\t1\n")
+    (tmp_path / "measurements.tsv").write_text(
+        "observableId\texperimentId\ttime\tmeasurement\nobs\te0\t1\t1\nobs\te1\t1\t1\n"
+    )
     y = (tmp_path / "p.yaml").read_text()
     (tmp_path / "p.yaml").write_text(y + "condition_files: [conditions.tsv]\nexperiment_files: [experiments.tsv]\n")
     return si.read_petab(str(tmp_path / "p.yaml"))
@@ -248,6 +259,7 @@ def test_the_time_of_an_sbml_event_takes_its_value_per_experiment(tmp_path):
         tr.setInitialValue(False), tr.setPersistent(True), tr.setMath(libsbml.parseL3Formula("time >= t_on"))
         a = e.createEventAssignment()
         a.setVariable("x"), a.setMath(libsbml.parseL3Formula("5"))
+
     _problem(tmp_path, build)
     m = _conditions(tmp_path, "c0\tt_on\t1\nc1\tk\tk\n")
     assert [(e["time"], e["cond"]) for e in m.events] == [("(1)", [0]), ("(2)", [1])]
@@ -262,11 +274,14 @@ def test_an_id_the_expression_language_cannot_read_is_renamed_in_the_model_and_t
             p = model.createParameter()
             p.setId(name), p.setValue(1), p.setConstant(True)
         model.getReaction(0).getKineticLaw().setMath(libsbml.parseL3Formula("_k*X_k*k*x*V"))
+
     _problem(tmp_path, build)
     (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\t_s*x\t1\n")
-    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
-                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\n_s\tlog10\t0.1\t10\t1\t1\n"
-                                             "_k\tlog10\t0.1\t10\t1\t1\nX_k\tlin\t0\t10\t3\t0\n")
+    (tmp_path / "parameters.tsv").write_text(
+        "parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+        "\testimate\nk\tlog10\t0.1\t10\t1\t1\n_s\tlog10\t0.1\t10\t1\t1\n"
+        "_k\tlog10\t0.1\t10\t1\t1\nX_k\tlin\t0\t10\t3\t0\n"
+    )
     m = _conditions(tmp_path, "c0\t_k\t_s\nc1\tpi\t2\n")
     assert m.petab["renamed"] == {"_k": "X_k_", "pi": "pi_", "_s": "X_s"}
     assert m.observables == [{"obs": "X_s*x"}] * 2 and sorted(m.petab["estimated"]) == ["X_k_", "X_s", "k"]
@@ -276,12 +291,14 @@ def test_an_id_the_expression_language_cannot_read_is_renamed_in_the_model_and_t
 @pytest.mark.parametrize("name", sorted(BENCH))
 def test_the_totals_of_a_benchmark_model_are_conserved_exactly(name):
     from symident.detection.cq import check_conserved
+
     m = bench(name)
     check_conserved(dict(m.totals or {}), m.odes)
 
 
 def test_a_table_with_a_byte_order_mark_keeps_the_name_of_the_first_column(tmp_path):
     from symident.petab import _table
+
     p = tmp_path / "conditions.tsv"
     p.write_bytes("﻿conditionId\tk\nc1\t2\n".encode())
     assert _table(p) == [{"conditionId": "c1", "k": "2"}]
@@ -310,13 +327,18 @@ def test_a_parameter_named_by_an_initial_assignment_takes_the_value_of_the_condi
     libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
     (tmp_path / "conditions.tsv").write_text("conditionId\tks\nc1\t\nc2\t0\n")
     (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tx\t1\n")
-    (tmp_path / "measurements.tsv").write_text("observableId\tsimulationConditionId\ttime\tmeasurement\n"
-                                               "obs\tc1\t1\t1\nobs\tc2\t1\t1\n")
-    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
-                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\nks\tlin\t0\t10\t2\t0\n")
-    (tmp_path / "p.yaml").write_text("format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
-                                     "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
-                                     "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n")
+    (tmp_path / "measurements.tsv").write_text(
+        "observableId\tsimulationConditionId\ttime\tmeasurement\nobs\tc1\t1\t1\nobs\tc2\t1\t1\n"
+    )
+    (tmp_path / "parameters.tsv").write_text(
+        "parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+        "\testimate\nk\tlog10\t0.1\t10\t1\t1\nks\tlin\t0\t10\t2\t0\n"
+    )
+    (tmp_path / "p.yaml").write_text(
+        "format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
+        "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
+        "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n"
+    )
     m = si.read_petab(str(tmp_path / "p.yaml"))
     vals = [str(t.get("m")).strip("()") for t in m.trafo]
     assert vals == ["2", "0"] and "ks" not in str(m.odes) + str(m.trafo)
@@ -347,13 +369,18 @@ def test_a_parameter_that_no_period_changes_leaves_no_input(tmp_path, xi0):
     libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
     (tmp_path / "conditions.tsv").write_text("conditionId\tks\tinh\npre\t1\t0\nsim\t2\t0\n")
     (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tx + xi\t1\n")
-    (tmp_path / "measurements.tsv").write_text("observableId\tpreequilibrationConditionId\tsimulationConditionId"
-                                               "\ttime\tmeasurement\nobs\tpre\tsim\t1\t1\n")
-    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
-                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\nkb\tlog10\t0.1\t10\t1\t1\n")
-    (tmp_path / "p.yaml").write_text("format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
-                                     "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
-                                     "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n")
+    (tmp_path / "measurements.tsv").write_text(
+        "observableId\tpreequilibrationConditionId\tsimulationConditionId\ttime\tmeasurement\nobs\tpre\tsim\t1\t1\n"
+    )
+    (tmp_path / "parameters.tsv").write_text(
+        "parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+        "\testimate\nk\tlog10\t0.1\t10\t1\t1\nkb\tlog10\t0.1\t10\t1\t1\n"
+    )
+    (tmp_path / "p.yaml").write_text(
+        "format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
+        "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
+        "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n"
+    )
     m = si.read_petab(str(tmp_path / "p.yaml"))
     assert "ks_si_input" in m.inputs and "inh_si_input" not in m.inputs
     assert "inh_si_input" not in str(m.odes) + str(m.events)
@@ -385,13 +412,18 @@ def _rest_problem(tmp_path, times, conditions="conditionId\tks\nc1\t1\nc2\t2\n")
     libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
     (tmp_path / "conditions.tsv").write_text(conditions)
     (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tx\t1\n")
-    (tmp_path / "measurements.tsv").write_text("observableId\tsimulationConditionId\ttime\tmeasurement\n" +
-                                               "".join(f"obs\t{c}\t{t}\t1\n" for c, t in times))
-    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
-                                             "\testimate\nk\tlog10\t0.1\t10\t1\t1\nkp\tlog10\t0.1\t10\t1\t1\n")
-    (tmp_path / "p.yaml").write_text("format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
-                                     "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
-                                     "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n")
+    (tmp_path / "measurements.tsv").write_text(
+        "observableId\tsimulationConditionId\ttime\tmeasurement\n" + "".join(f"obs\t{c}\t{t}\t1\n" for c, t in times)
+    )
+    (tmp_path / "parameters.tsv").write_text(
+        "parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+        "\testimate\nk\tlog10\t0.1\t10\t1\t1\nkp\tlog10\t0.1\t10\t1\t1\n"
+    )
+    (tmp_path / "p.yaml").write_text(
+        "format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
+        "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
+        "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n"
+    )
     return si.read_petab(str(tmp_path / "p.yaml"))
 
 
@@ -405,8 +437,7 @@ def test_an_experiment_measured_only_at_inf_is_a_readout_at_rest(tmp_path):
     assert [sorted(s.support) for s in r.symmetries] == [["k", "kp"]]
 
 
-@pytest.mark.parametrize("times", [[("c1", "1"), ("c1", "inf"), ("c2", "1")],
-                                   [("c1", "inf"), ("c2", "2")]])
+@pytest.mark.parametrize("times", [[("c1", "1"), ("c1", "inf"), ("c2", "1")], [("c1", "inf"), ("c2", "2")]])
 def test_an_experiment_with_a_finite_time_keeps_the_trajectory(tmp_path, times):
     # an experiment with a finite measurement time is a trajectory; with one of them in the problem, an
     # experiment measured only at inf is a trajectory as well, since every condition starts alike
@@ -443,13 +474,18 @@ def test_a_readout_at_rest_starts_from_the_values_of_its_condition(tmp_path):
     libsbml.writeSBMLToFile(doc, str(tmp_path / "model.xml"))
     (tmp_path / "conditions.tsv").write_text("conditionId\tA\nc1\t3\nc2\t5\n")
     (tmp_path / "observables.tsv").write_text("observableId\tobservableFormula\tnoiseFormula\nobs\tA\t1\n")
-    (tmp_path / "measurements.tsv").write_text("observableId\tsimulationConditionId\ttime\tmeasurement\n"
-                                               "obs\tc1\tinf\t1\nobs\tc2\tinf\t1\n")
-    (tmp_path / "parameters.tsv").write_text("parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
-                                             "\testimate\nkf\tlog10\t0.1\t10\t1\t1\nkb\tlog10\t0.1\t10\t1\t1\n")
-    (tmp_path / "p.yaml").write_text("format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
-                                     "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
-                                     "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n")
+    (tmp_path / "measurements.tsv").write_text(
+        "observableId\tsimulationConditionId\ttime\tmeasurement\nobs\tc1\tinf\t1\nobs\tc2\tinf\t1\n"
+    )
+    (tmp_path / "parameters.tsv").write_text(
+        "parameterId\tparameterScale\tlowerBound\tupperBound\tnominalValue"
+        "\testimate\nkf\tlog10\t0.1\t10\t1\t1\nkb\tlog10\t0.1\t10\t1\t1\n"
+    )
+    (tmp_path / "p.yaml").write_text(
+        "format_version: 1\nparameter_file: parameters.tsv\nproblems:\n"
+        "- condition_files: [conditions.tsv]\n  measurement_files: [measurements.tsv]\n"
+        "  observable_files: [observables.tsv]\n  sbml_files: [model.xml]\n"
+    )
     m = si.read_petab(str(tmp_path / "p.yaml"))
     assert m.equilibrate is True and not m.events and m.totals
     tot = next(iter(m.totals))

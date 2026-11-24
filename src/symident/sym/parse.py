@@ -9,8 +9,7 @@ from sympy.parsing.sympy_parser import parse_expr
 from sympy.printing.str import StrPrinter
 
 # primes below 1518500213, msolve's bound for FGLM
-_PRIMES = [1518500183, 1518500173, 1518500171, 1518500143,
-           1518500141, 1518500131, 1518500101, 1518500077]
+_PRIMES = [1518500183, 1518500173, 1518500171, 1518500143, 1518500141, 1518500131, 1518500101, 1518500077]
 
 
 def _as_list(x):
@@ -22,7 +21,7 @@ def _as_list(x):
 
 
 def _clean(line):
-    return line.replace('"', '').replace('^', '**').strip()
+    return line.replace('"', "").replace("^", "**").strip()
 
 
 def _build_symbol_table(all_lines):
@@ -39,11 +38,11 @@ def _build_symbol_table(all_lines):
         for i, t in enumerate(toks):
             if t.type == tokenize.NAME:
                 nxt = toks[i + 1] if i + 1 < len(toks) else None
-                if nxt is not None and nxt.type == tokenize.OP and nxt.string == '(':
+                if nxt is not None and nxt.type == tokenize.OP and nxt.string == "(":
                     funcs.add(t.string)
                 else:
                     syms.add(t.string)
-    syms -= funcs | {'pi'}
+    syms -= funcs | {"pi"}
     return {s: spy.Symbol(s) for s in syms}
 
 
@@ -55,35 +54,58 @@ def _function_aliases():
     return dict(_ALIASES)
 
 
-_ALIASES = {}
+_ALIASES: dict = {}
 
 
 def _build_function_aliases():
-    x = spy.Symbol('_x_')
+    x = spy.Symbol("_x_")
     return {
-        'log10': spy.Lambda(x, spy.log(x) / spy.log(10)),
-        'log2': spy.Lambda(x, spy.log(x) / spy.log(2)),
-        'exp10': spy.Lambda(x, spy.Integer(10) ** x),
-        'exp2': spy.Lambda(x, spy.Integer(2) ** x),
-        'ln': spy.log,
-        'acot': spy.Lambda(x, spy.atan(1 / x)),
-        'asec': spy.Lambda(x, spy.acos(1 / x)),
-        'acsc': spy.Lambda(x, spy.asin(1 / x)),
-        'acoth': spy.Lambda(x, spy.atanh(1 / x)),
-        'asech': spy.Lambda(x, spy.acosh(1 / x)),
-        'acsch': spy.Lambda(x, spy.asinh(1 / x)),
-        'round': spy.Lambda(x, spy.floor(x + spy.Rational(1, 2))),
+        "log10": spy.Lambda(x, spy.log(x) / spy.log(10)),
+        "log2": spy.Lambda(x, spy.log(x) / spy.log(2)),
+        "exp10": spy.Lambda(x, spy.Integer(10) ** x),
+        "exp2": spy.Lambda(x, spy.Integer(2) ** x),
+        "ln": spy.log,
+        "acot": spy.Lambda(x, spy.atan(1 / x)),
+        "asec": spy.Lambda(x, spy.acos(1 / x)),
+        "acsc": spy.Lambda(x, spy.asin(1 / x)),
+        "acoth": spy.Lambda(x, spy.atanh(1 / x)),
+        "asech": spy.Lambda(x, spy.acosh(1 / x)),
+        "acsch": spy.Lambda(x, spy.asinh(1 / x)),
+        "round": spy.Lambda(x, spy.floor(x + spy.Rational(1, 2))),
     }
 
 
 # the functions of the model language that are not switches, by name
 _MODEL_FUNCTIONS = {
-    'exp': spy.exp, 'log': spy.log, 'sqrt': spy.sqrt, 'cbrt': spy.cbrt, 'root': spy.root, 'pow': spy.Pow,
-    'sin': spy.sin, 'cos': spy.cos, 'tan': spy.tan, 'cot': spy.cot, 'sec': spy.sec, 'csc': spy.csc,
-    'asin': spy.asin, 'acos': spy.acos, 'atan': spy.atan, 'atan2': spy.atan2,
-    'sinh': spy.sinh, 'cosh': spy.cosh, 'tanh': spy.tanh, 'coth': spy.coth, 'sech': spy.sech,
-    'csch': spy.csch, 'asinh': spy.asinh, 'acosh': spy.acosh, 'atanh': spy.atanh,
-    'erf': spy.erf, 'erfc': spy.erfc, 'floor': spy.floor, 'ceiling': spy.ceiling,
+    "exp": spy.exp,
+    "log": spy.log,
+    "sqrt": spy.sqrt,
+    "cbrt": spy.cbrt,
+    "root": spy.root,
+    "pow": spy.Pow,
+    "sin": spy.sin,
+    "cos": spy.cos,
+    "tan": spy.tan,
+    "cot": spy.cot,
+    "sec": spy.sec,
+    "csc": spy.csc,
+    "asin": spy.asin,
+    "acos": spy.acos,
+    "atan": spy.atan,
+    "atan2": spy.atan2,
+    "sinh": spy.sinh,
+    "cosh": spy.cosh,
+    "tanh": spy.tanh,
+    "coth": spy.coth,
+    "sech": spy.sech,
+    "csch": spy.csch,
+    "asinh": spy.asinh,
+    "acosh": spy.acosh,
+    "atanh": spy.atanh,
+    "erf": spy.erf,
+    "erfc": spy.erfc,
+    "floor": spy.floor,
+    "ceiling": spy.ceiling,
 }
 
 
@@ -117,6 +139,7 @@ def _make_parse(local_dict):
             e = parse_expr(_clean(rhs), local_dict=local_dict, evaluate=True)
             memo[key] = e
         return e
+
     return parse
 
 
@@ -143,9 +166,9 @@ def _read_equations(lines, parse):
     variables, functions = [], []
     for raw in lines:
         line = _clean(raw)
-        if '=' not in line:
+        if "=" not in line:
             continue
-        lhs, rhs = line.split('=', 1)
+        lhs, rhs = line.split("=", 1)
         variables.append(spy.Symbol(lhs.strip()))
         functions.append(parse(rhs))
     allsyms = set()

@@ -12,9 +12,15 @@ SPEC = {"f": {"x": "-k*x"}, "g": {"y": "s*x"}, "reconstruct": True}
 
 
 def test_kwargs_of_maps_host_spellings():
-    kw = rjson.kwargs_of({"f": {"x": "-k*x"}, "trafo": None, "gauge_preference": "AUTO",
-                          "control": {"term_cap": 7, "degree_cap": None},
-                          "unknown": 1})
+    kw = rjson.kwargs_of(
+        {
+            "f": {"x": "-k*x"},
+            "trafo": None,
+            "gauge_preference": "AUTO",
+            "control": {"term_cap": 7, "degree_cap": None},
+            "unknown": 1,
+        }
+    )
     assert set(kw) == {"f", "gauge_preference", "control"}
     assert kw["gauge_preference"] is None
     assert kw["control"]["term_cap"] == 7
@@ -22,10 +28,21 @@ def test_kwargs_of_maps_host_spellings():
 
 
 def test_dumps_cleans_values_json_cannot_hold():
-    out = json.loads(rjson._dumps({"a": float("inf"), 1: (1, 2), "f": len, "n": np.int64(3),
-                                   "r": np.float64(0.5), "v": np.arange(2), "s": {5}, "q": Fraction(1, 2)}))
-    assert out == {"a": "inf", "1": [1, 2], "n": 3, "r": 0.5, "v": [0, 1], "s": [5],
-                   "q": "1/2"}
+    out = json.loads(
+        rjson._dumps(
+            {
+                "a": float("inf"),
+                1: (1, 2),
+                "f": len,
+                "n": np.int64(3),
+                "r": np.float64(0.5),
+                "v": np.arange(2),
+                "s": {5},
+                "q": Fraction(1, 2),
+            }
+        )
+    )
+    assert out == {"a": "inf", "1": [1, 2], "n": 3, "r": 0.5, "v": [0, 1], "s": [5], "q": "1/2"}
 
 
 def test_detect_and_reduce_round_trip(monkeypatch):
@@ -67,6 +84,7 @@ def test_the_json_loop_composes_a_model_trafo():
 
 def test_the_json_reduction_takes_the_declared_domain_of_the_detection():
     import symident as si
+
     f, g, pos = {"x": "-k*x", "z": "a*x - e*z"}, {"y": "s*z"}, ["k", "e", "s", "a"]
     r = si.detect(si.Model(f, g, positive=pos), reconstruct=True)
     out = rjson.detect_json(json.dumps({"f": f, "g": g, "positive": pos, "reconstruct": True}))

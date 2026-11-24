@@ -22,14 +22,23 @@ class InapplicableError(TypeError, ValueError):
 
 # failures of SymPy on a valid expression: no polynomial form, no solution method, a
 # value that is not a number, a pole, an expression too deep to traverse or to parse
-SYMPY_FAILS = (BasePolynomialError, NotImplementedError, TypeError, ValueError, ArithmeticError,
-               RecursionError, SyntaxError, TokenError)
+SYMPY_FAILS = (
+    BasePolynomialError,
+    NotImplementedError,
+    TypeError,
+    ValueError,
+    ArithmeticError,
+    RecursionError,
+    SyntaxError,
+    TokenError,
+)
 
 
 def swallow(exc, where):
     """Record `exc` from the route at `where` in info["errors"]; raise it on DEBUG, missing msolve or a prime rerun."""
     from .gfp import NeedPrimesError
     from .sym.msolve import MsolveMissingError
+
     if state.env("DEBUG") or isinstance(exc, (NeedPrimesError, MsolveMissingError)):
         raise exc
     session.note("errors", f"{where}: {type(exc).__name__}: {str(exc)[:200]}")
@@ -45,8 +54,12 @@ def sympy_fail(exc):
     while tb is not None:
         in_sympy = in_sympy or "/sympy/" in tb.tb_frame.f_code.co_filename.replace("\\", "/")
         tb = tb.tb_next
-    if state.env("DEBUG") and isinstance(exc, (TypeError, ValueError)) and not isinstance(exc, InapplicableError) \
-            and not in_sympy:
+    if (
+        state.env("DEBUG")
+        and isinstance(exc, (TypeError, ValueError))
+        and not isinstance(exc, InapplicableError)
+        and not in_sympy
+    ):
         raise exc
     s = state.get("session")
     if s is None or len(s.notes["errors"]) >= ERRORS_KEPT:

@@ -40,8 +40,14 @@ Issues = "https://github.com/dModverse/symident/issues"
 
 [project.optional-dependencies]
 petab = ["python-libsbml>=5.20", "pyyaml>=6"]
-test = ["pytest>=8", "pytest-xdist", "pytest-timeout", "python-libsbml>=5.20", "pyyaml>=6"]
+test = ["pytest>=9", "pytest-xdist", "pytest-timeout", "python-libsbml>=5.20", "pyyaml>=6"]
 docs = ["sphinx>=8", "numpydoc", "pydata-sphinx-theme", "myst-parser", "sphinxcontrib-bibtex>=2.6"]
+
+# the extras above stay for `pip install symident[test]`; the groups serve uv, nox and `pip install --group`
+[dependency-groups]
+test = ["pytest>=9", "pytest-xdist", "pytest-timeout", "python-libsbml>=5.20", "pyyaml>=6"]
+docs = ["sphinx>=8", "numpydoc", "pydata-sphinx-theme", "myst-parser", "sphinxcontrib-bibtex>=2.6"]
+dev = [{ include-group = "test" }, { include-group = "docs" }, "nox", "pre-commit"]
 
 [tool.scikit-build]
 wheel.packages = ["src/symident"]
@@ -60,14 +66,48 @@ test-skip = "cp311-* cp312-* cp313-* cp314-*"
 test-command = 'pytest -q -n auto {project}/tests'
 
 [tool.pytest.ini_options]
+minversion = "9"
 testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
+log_level = "INFO"
+# the fork warning of Python and the warnings symident emits by design, in tests that do not assert them;
+# a colon in a message is written as "."
+filterwarnings = [
+    "error",
+    'ignore:This process \(pid=\d+\) is multi-threaded, use of fork\(\) may lead to deadlocks:DeprecationWarning',
+    "ignore:estimated parameters without effect on the model as fitted:UserWarning",
+    'ignore:equilibrate. at \d+ of \d+ random parameter values the resting balances have no solution:UserWarning',
+    "ignore:`positive` names .* (is|are) no symbol of the model:UserWarning",
+    "ignore:the default positive=True decides the sign of:UserWarning",
+    "ignore:`verify`. the rank still grows past the Lie or gap order:UserWarning",
+    "ignore:no effect. .*not a coordinate of the analysis:UserWarning",
+    "ignore:a direction is verified, not proven:UserWarning",
+    "ignore:a direction is checked at random points only:UserWarning",
+]
 # a test that runs past this many seconds is a failure, not a hang
 timeout = 900
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+
+[tool.ruff.format]
+exclude = ["tests/data/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "N8"]
 ignore = ["E741", "N802", "N803", "N806", "B905", "UP031", "B023"]
+
+[tool.mypy]
+files = ["src"]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true
+warn_unused_configs = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[tool.codespell]
+# identifiers (series, numerator, equilibrate, inhibitor, closure) and author names in refs.bib
+ignore-words-list = "ane,bu,clos,equil,fo,hass,inh,loos,mis,nd,numer,ser,statics,te,theis"
+skip = "tests/data/*"

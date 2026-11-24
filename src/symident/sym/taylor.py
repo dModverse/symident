@@ -39,6 +39,7 @@ def _recip(b, n, p):
 def _root(a, q, n, p):
     """The q-th root of the series a from the smaller square or the unique odd root of a[0], then q A B' = A' B."""
     from ..gfp import sqrt_mod
+
     a0 = a[0] % p
     if q == 2:
         r = sqrt_mod(a0, p)
@@ -114,7 +115,7 @@ def output_series(f, observables, point, order, p):
     x = {s: _const(point[s], order, p) for s in states}
     for k in range(order - 1):
         env = dict(point)
-        env.update({s: x[s][:k + 1] for s in states})
+        env.update({s: x[s][: k + 1] for s in states})
         memo = {}
         for s in states:
             c = _eval(f[s], env, k + 1, p, memo)[k]

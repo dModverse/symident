@@ -16,7 +16,7 @@ def _atoms(e):
 
 def _nonzero_at(e, syms, rng):
     """Whether e is nonzero at a random rational point: then e is not the zero function."""
-    pt = {s: spy.Rational(rng.randint(2, 10 ** 4), rng.randint(2, 10 ** 4)) for s in syms}
+    pt = {s: spy.Rational(rng.randint(2, 10**4), rng.randint(2, 10**4)) for s in syms}
     try:
         v = spy.cancel(e.xreplace(pt))
     except ZeroDivisionError:
@@ -94,6 +94,7 @@ def rest_chart(odes, observables, inputs, coords, positive, fixed=(), events=(),
             d = dummies.setdefault(a, spy.Dummy("w"))
             e = e.xreplace({a: d})
         return e
+
     bal = {x: flat(spy.together(rhs[x])) for x in U}
     if any(_atoms(e) for e in bal.values()):
         raise ValueError("a transcendental term at rest is nested")
@@ -107,12 +108,18 @@ def rest_chart(odes, observables, inputs, coords, positive, fixed=(), events=(),
     inside = {s for a in dummies for s in a.free_symbols}
 
     def candidates(e):
-        return [p for p in sorted(e.free_symbols & cs, key=str)
-                if p not in inside and str(p) not in fixed and spy.Poly(e, p).degree() == 1]
+        return [
+            p
+            for p in sorted(e.free_symbols & cs, key=str)
+            if p not in inside and str(p) not in fixed and spy.Poly(e, p).degree() == 1
+        ]
+
     nb = {p: sum(p in e.free_symbols for e in hb) for p in cs}
     exch = None
-    for key in (lambda p: (pos is None or str(p) in pos, nb[p], str(p)),
-                lambda p: (nb[p], pos is None or str(p) in pos, str(p))):
+    for key in (
+        lambda p: (pos is None or str(p) in pos, nb[p], str(p)),
+        lambda p: (nb[p], pos is None or str(p) in pos, str(p)),
+    ):
         pick = []
         for e in sorted(hb, key=lambda e: len(candidates(e))):
             c = [p for p in sorted(candidates(e), key=key) if p not in pick]
@@ -124,14 +131,17 @@ def rest_chart(odes, observables, inputs, coords, positive, fixed=(), events=(),
             if exch is not None:
                 break
     if exch is None:
-        raise ValueError("no coordinates enter the balances of " + ", ".join(map(str, H)) + " linearly with an "
-                         "invertible coefficient matrix")
+        raise ValueError(
+            "no coordinates enter the balances of " + ", ".join(map(str, H)) + " linearly with an "
+            "invertible coefficient matrix"
+        )
     back = {d: a.xreplace(held) for a, d in dummies.items()}
     exch = {p: v.xreplace(back) for p, v in exch.items()}
     sol = {x: v.xreplace(exch).xreplace(back) for x, v in sol.items()}
 
     def sub(e):
         return model_sympify(str(e)).xreplace(exch)
+
     trafo = {str(x): _str(v) for x, v in {**start, **R, **sol}.items()}
     trafo = {k: _str(sub(v)) for k, v in trafo.items()}
     new_pos = positive
@@ -142,8 +152,13 @@ def rest_chart(odes, observables, inputs, coords, positive, fixed=(), events=(),
         if spy.Symbol(ev["var"]) in inside or spy.Symbol(ev["var"]) in H:
             raise ValueError(f"an event changes {ev['var']}, read by a transcendental term")
         evs.append({**ev, "value": _str(sub(ev["value"]))})
-    return {"odes": {str(x): _str(sub(v)) for x, v in f.items()},
-            "observables": {y: _str(sub(v)) for y, v in g.items()}, "trafo": trafo, "events": evs,
-            "exchanged": {str(p): _str(v) for p, v in exch.items()}, "rest": {str(x): str(r) for x, r in R.items()},
-            "positive": new_pos,
-            "coordinates": [c for c in coords if spy.Symbol(c) not in exch] + [str(R[x]) for x in H]}
+    return {
+        "odes": {str(x): _str(sub(v)) for x, v in f.items()},
+        "observables": {y: _str(sub(v)) for y, v in g.items()},
+        "trafo": trafo,
+        "events": evs,
+        "exchanged": {str(p): _str(v) for p, v in exch.items()},
+        "rest": {str(x): str(r) for x, r in R.items()},
+        "positive": new_pos,
+        "coordinates": [c for c in coords if spy.Symbol(c) not in exch] + [str(R[x]) for x in H],
+    }

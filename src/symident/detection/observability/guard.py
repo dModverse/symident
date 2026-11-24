@@ -28,6 +28,7 @@ def saturation_guard(kcall, point0, nt_used):
             swallow(exc, "saturation guard")
             return None
         return int(rank_of(rk)) if _ok(rk) else None
+
     top = rank_at(margin)
     if top is not None:
         max_r = max(max_r, top)
@@ -43,9 +44,17 @@ def saturation_guard(kcall, point0, nt_used):
         if grow_at is None and top is not None and top > base:
             grow_at = int(nt_used + margin)
     stable = grow_at is None
-    return {"ok": stable, "method": "saturation guard", "lie_order_used": int(nt_used),
-            "orders_checked": int(nt_used + margin), "kernel_rank": base, "kernel_rank_extended": max_r,
-            "grow_at": grow_at,
-            "reason": (f"rank {base} stable through Lie order {nt_used + margin} ({margin} orders "
-                       "beyond the reported saturation)") if stable else
-            (f"rank grows {base} -> {max_r} at Lie order {grow_at} (the reported Lie order was premature)")}
+    return {
+        "ok": stable,
+        "method": "saturation guard",
+        "lie_order_used": int(nt_used),
+        "orders_checked": int(nt_used + margin),
+        "kernel_rank": base,
+        "kernel_rank_extended": max_r,
+        "grow_at": grow_at,
+        "reason": (
+            f"rank {base} stable through Lie order {nt_used + margin} ({margin} orders beyond the reported saturation)"
+        )
+        if stable
+        else (f"rank grows {base} -> {max_r} at Lie order {grow_at} (the reported Lie order was premature)"),
+    }

@@ -63,6 +63,7 @@ def linear_flow(preps, fixed=(), prefer=None):
 
     def size(c):
         return sum(int(spy.count_ops(col[c])) + len(col[c].free_symbols) for col in cols)
+
     # by structure: observation-only coordinates first, initial values last, then linear before logarithmic,
     # then the smaller components; the name breaks remaining ties only
     cand = [c for c in moved if any(col[c] != 0 for col in cols)]
@@ -117,16 +118,37 @@ def linear_flow(preps, fixed=(), prefer=None):
         f"s in R^{r}, with every moved coordinate on the whole line",
         f"section {pin_txt}: the minor of the components on {', '.join(P)} is {_model(det)}, of one sign on "
         f"the domain, so x_P + Xi_P(u) s = 0 has exactly one solution s on every orbit",
-        "section met at most once: two points of one orbit on the section have equal pinned coordinates, so "
-        "equal s",
+        "section met at most once: two points of one orbit on the section have equal pinned coordinates, so equal s",
         "every level set of the invariants is one orbit: the invariants and u fix the point of the orbit on "
         "the section, and every orbit meets it",
     ]
-    note = (f"{pin_txt} meets every orbit once; the other moved coordinates become the invariants listed "
-            f"under the same names")
-    return {"type": "curved", "support": moved, "stage": "linear flow", "status": "reduced",
-            "target": len(moved) - r, "count": "exact", "invariants": list(meaning.values()),
-            "certificates": certs, "reason": None, "module_combos": None, "transversal": P, "section": None,
-            "pins": pins, "new_parameters": meaning, "solved_domain": solved_domain, "face": False,
-            "injective": True, "reach": True, "section_monotone": False, "coverage": "total",
-            "unproven_entries": [], "sign_conditions": [], "gauge_note": note, "preps": preps}
+    note = (
+        f"{pin_txt} meets every orbit once; the other moved coordinates become the invariants listed "
+        f"under the same names"
+    )
+    return {
+        "type": "curved",
+        "support": moved,
+        "stage": "linear flow",
+        "status": "reduced",
+        "target": len(moved) - r,
+        "count": "exact",
+        "invariants": list(meaning.values()),
+        "certificates": certs,
+        "reason": None,
+        "module_combos": None,
+        "transversal": P,
+        "section": None,
+        "pins": pins,
+        "new_parameters": meaning,
+        "solved_domain": solved_domain,
+        "face": False,
+        "injective": True,
+        "reach": True,
+        "section_monotone": False,
+        "coverage": "total",
+        "unproven_entries": [],
+        "sign_conditions": [],
+        "gauge_note": note,
+        "preps": preps,
+    }

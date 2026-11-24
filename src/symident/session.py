@@ -49,7 +49,7 @@ def marks():
 def notes_since(m):
     """The records added after marks() returned `m`."""
     s = state.get("session")
-    return None if s is None or m is None else {k: v[m[k]:] for k, v in s.notes.items()}
+    return None if s is None or m is None else {k: v[m[k] :] for k, v in s.notes.items()}
 
 
 def merge_notes(new):
@@ -67,6 +67,7 @@ def current():
 def _model_text(f, g):
     def strs(d):
         return {str(k): str(v) for k, v in dict(d).items()}
+
     gs = [strs(x) for x in g] if isinstance(g, (list, tuple)) else strs(g or {})
     return json.dumps([strs(f or {}), gs], sort_keys=True)
 
@@ -78,6 +79,7 @@ def opened(kw):
         yield state.get("session")
         return
     from .options import reconst_control
+
     control = {**reconst_control(), **dict(kw.get("control") or {})}
     s = Session(control["seed"], _model_text(kw.get("f"), kw.get("g")))
     s.control = control

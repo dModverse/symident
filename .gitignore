@@ -14,3 +14,6 @@ build.ninja
 .ruff_cache/
 docs/_build/
 docs/generated/
+.mypy_cache/
+.nox/
+dist/

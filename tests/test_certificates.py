@@ -9,24 +9,38 @@ from symident.gfp import PRIMES
 
 def _rotation(value, method="replace"):
     # the observable moves only in the segment that an event value reading a state starts
-    return si.Model({"A": "u*D", "D": "-k*A*u", "B": "c*(1 - u)", "u": "0"}, {"y": "A"},
-                    trafo={"A": "0", "D": "0", "B": "0", "u": "0"},
-                    events=[{"var": "u", "time": 0, "value": "0", "method": "replace"},
-                            {"var": "A", "time": 5, "value": value, "method": method},
-                            {"var": "u", "time": 5, "value": "1", "method": "replace"}])
+    return si.Model(
+        {"A": "u*D", "D": "-k*A*u", "B": "c*(1 - u)", "u": "0"},
+        {"y": "A"},
+        trafo={"A": "0", "D": "0", "B": "0", "u": "0"},
+        events=[
+            {"var": "u", "time": 0, "value": "0", "method": "replace"},
+            {"var": "A", "time": 5, "value": value, "method": method},
+            {"var": "u", "time": 5, "value": "1", "method": "replace"},
+        ],
+    )
 
 
 def _moving_gap():
-    return si.Model({"x": "u*w - k*x", "w": "c*(1 - u)*v", "v": "1 - u", "u": "0"}, {"y": "s*x"},
-                    trafo={"w": "0", "v": "0", "u": "0"},
-                    events=[{"var": "u", "time": 0, "value": "0", "method": "replace"},
-                            {"var": "u", "time": "tau", "value": "1", "method": "replace"}])
+    return si.Model(
+        {"x": "u*w - k*x", "w": "c*(1 - u)*v", "v": "1 - u", "u": "0"},
+        {"y": "s*x"},
+        trafo={"w": "0", "v": "0", "u": "0"},
+        events=[
+            {"var": "u", "time": 0, "value": "0", "method": "replace"},
+            {"var": "u", "time": "tau", "value": "1", "method": "replace"},
+        ],
+    )
 
 
 def _sum_after_dose():
     # a direction that no scaling proves, behind a gap
-    return si.Model({"x": "-k*x"}, {"y": "(a + b)*x"}, trafo={"x": "1"},
-                    events=[{"var": "x", "time": 2, "value": "1", "method": "add"}])
+    return si.Model(
+        {"x": "-k*x"},
+        {"y": "(a + b)*x"},
+        trafo={"x": "1"},
+        events=[{"var": "x", "time": 2, "value": "1", "method": "add"}],
+    )
 
 
 def test_an_event_value_that_reads_a_state_keeps_the_lie_certificate_sound():
@@ -39,6 +53,7 @@ def test_an_event_value_that_reads_a_state_keeps_the_lie_certificate_sound():
 
 def test_a_certified_order_below_the_scanned_rank_keeps_the_scan(monkeypatch):
     import symident.detection.observability.analysis as an
+
     monkeypatch.setattr(an, "lie_certificate", lambda segs, *a, **k: [1] * len(segs))
     r = si.detect(_rotation("B + d", "add"))
     assert (r.rank, r.dim) == (2, 3)
@@ -48,6 +63,7 @@ def test_a_certified_order_below_the_scanned_rank_keeps_the_scan(monkeypatch):
 
 def test_the_affine_space_after_an_event_is_a_basis():
     from symident.detection.fields import event_space
+
     p = PRIMES[0]
     V = np.array([[1, 1, 0], [0, 1, 0]], dtype=np.int64)
     # a replace by a value that reads no state resets the target
@@ -77,6 +93,7 @@ def test_a_used_gap_bound_is_at_least_the_rank():
 
 def test_a_rank_above_the_gap_bound_certifies_nothing(monkeypatch):
     import symident.detection.gapcert as gc
+
     monkeypatch.setattr(gc, "gap_bound", lambda *a, **k: {"bound": 1, "why": None, "terms": 0.0})
     r = si.detect(_sum_after_dose())
     assert r.info["gap_certified"] is False
@@ -86,10 +103,12 @@ def test_a_rank_above_the_gap_bound_certifies_nothing(monkeypatch):
 CERTIFIED = [
     ({"A": "-k1*A", "B": "k1*A - k2*B"}, {"y": "s*B"}, {"A": "A0", "B": "0"}),
     ({"x": "th"}, {"y": "x^5"}, {"x": "0"}),
-    ({"x1": "-k1*x1", "x2": "k1*x1 - k2*x2 + a*x3", "x3": "-k3*x3"}, {"y": "x2"},
-     {"x1": "1", "x2": "0", "x3": "0"}),
-    ({"x1": "a - (d + f)*x1", "x2": "b - (d + f)*x2", "f": "-c*f"}, {"y": "x1 + x2"},
-     {"x1": "a/d", "x2": "b/d", "f": "1"}),
+    ({"x1": "-k1*x1", "x2": "k1*x1 - k2*x2 + a*x3", "x3": "-k3*x3"}, {"y": "x2"}, {"x1": "1", "x2": "0", "x3": "0"}),
+    (
+        {"x1": "a - (d + f)*x1", "x2": "b - (d + f)*x2", "f": "-c*f"},
+        {"y": "x1 + x2"},
+        {"x1": "a/d", "x2": "b/d", "f": "1"},
+    ),
 ]
 
 
@@ -102,11 +121,17 @@ def test_certified_orders_have_an_error_bound(f, g, trafo):
 
 def test_a_verified_rank_includes_the_order_bound():
     f = {"A": "k1 - d1*A + kx*X", "B": "k2*A - d2*B", "X": "kp*plasmid - dx*X"}
-    rest = [{"X": f"kp*{u}/dx", "A": f"(k1 + kx*kp*{u}/dx)/d1", "B": f"k2*(k1 + kx*kp*{u}/dx)/(d1*d2)",
-             "plasmid": str(u)} for u in (0, 1)]
-    m = si.Model(f, {"yA": "s*(A + X)", "yB": "B"}, trafo=rest,
-                 conditions={"rows": ["ctrl", "oe"], "cols": {"dose": [1, 1]}},
-                 events=[{"var": "A", "time": 0, "value": "dose", "method": "add"}])
+    rest = [
+        {"X": f"kp*{u}/dx", "A": f"(k1 + kx*kp*{u}/dx)/d1", "B": f"k2*(k1 + kx*kp*{u}/dx)/(d1*d2)", "plasmid": str(u)}
+        for u in (0, 1)
+    ]
+    m = si.Model(
+        f,
+        {"yA": "s*(A + X)", "yB": "B"},
+        trafo=rest,
+        conditions={"rows": ["ctrl", "oe"], "cols": {"dose": [1, 1]}},
+        events=[{"var": "A", "time": 0, "value": "dose", "method": "add"}],
+    )
     r = si.detect(m, reconstruct=True)
     st, ob = r.info["rank_status"], r.info["order_bound"]
     assert st["status"] == "verified" and ob is not None and ob > 0
@@ -116,8 +141,12 @@ def test_a_verified_rank_includes_the_order_bound():
 
 
 def test_a_free_exponent_of_a_positive_state_keeps_the_order_bound():
-    m = si.Model({"x": "v0 + b*v1 - V*x^n/(K^n + x^n)", "z": "V*x^n/(K^n + x^n) - e*z"}, {"y": "s*z"},
-                 trafo={"x": "x0", "z": "z0"}, positive=True)
+    m = si.Model(
+        {"x": "v0 + b*v1 - V*x^n/(K^n + x^n)", "z": "V*x^n/(K^n + x^n) - e*z"},
+        {"y": "s*z"},
+        trafo={"x": "x0", "z": "z0"},
+        positive=True,
+    )
     r = si.detect(m, reconstruct=True)
     assert r.info["lie_certified"] and r.info["order_bound"] is not None and r.info["order_bound_why"] is None
     assert r.info["rank_status"]["status"] == "proven"
@@ -127,6 +156,7 @@ def test_a_free_exponent_of_a_positive_state_keeps_the_order_bound():
 def test_a_start_at_rest_certifies_its_orders_modulo_the_verification_prime(monkeypatch):
     from symident.detection.observability.joint import JointSystem
     from symident.gfp import verify_prime
+
     m = si.Model({"x": "k1 - k2*x*z", "z": "k3 - k4*z"}, {"y": "s*x"})
     r = si.detect(m, equilibrate=True)
     assert r.info["order_bound_why"] is None and 0 < r.info["order_bound"] < 1e-5
@@ -134,6 +164,7 @@ def test_a_start_at_rest_certifies_its_orders_modulo_the_verification_prime(monk
 
     def none_at_q(self, point, p, ci):
         return None if p == verify_prime() else orig(self, point, p, ci)
+
     monkeypatch.setattr(JointSystem, "solve_direct", none_at_q)
     r = si.detect(m, equilibrate=True)
     assert r.info["order_bound"] is None
@@ -144,6 +175,7 @@ def test_the_order_bound_multiplies_by_the_resting_points_drawn(monkeypatch):
     from symident.detection.observability.analysis import Analysis
     from symident.detection.observability.joint import JointSystem
     from symident.gfp import verify_prime
+
     m = si.Model({"x": "k1 - k2*x*z", "z": "k3 - k4*z"}, {"y": "s*x"})
     r0 = si.detect(m, equilibrate=True)
     assert r0.info["order_draws"] == 1 and r0.info["order_bound"] > 0
@@ -160,6 +192,7 @@ def test_the_order_bound_multiplies_by_the_resting_points_drawn(monkeypatch):
             misses["left"] -= 1
             return None
         return solve(self, point, p, ci)
+
     monkeypatch.setattr(Analysis, "_cert_segments", cert_segments)
     monkeypatch.setattr(JointSystem, "solve_direct", solve_direct)
     r = si.detect(m, equilibrate=True)
@@ -169,6 +202,7 @@ def test_the_order_bound_multiplies_by_the_resting_points_drawn(monkeypatch):
 
 def test_each_term_of_the_order_bound_multiplies_by_the_points_drawn_for_it():
     from symident.detection.fields import _sz_term
+
     deg = {"mds": [(2, 1, [(1, 2)]), (1, 2, [(1, 1)])], "d0s": [1, 2]}
     one = _sz_term(deg, 4, 5)
     # without outputs only the closure stops remain
@@ -181,6 +215,7 @@ def test_each_term_of_the_order_bound_multiplies_by_the_points_drawn_for_it():
 
 def test_the_degree_on_a_resting_variety_multiplies_by_the_bezout_numbers():
     from symident.detection.bound import balance_degrees, rest_identity_degree
+
     assert balance_degrees(["-d*x**2 + (kb - d*K + v)*x + kb*K", "k*x - c*z"]) == (6, 3)
     assert balance_degrees([]) == (1, 0)
     assert balance_degrees(["exp(a)*x - b"]) is None
@@ -208,6 +243,7 @@ def test_a_known_input_leaves_its_jets_out_of_the_certificate():
 def test_verification_points_are_uniform_modulo_q():
     from symident import session
     from symident.gfp import uniform_point
+
     q = 1000000007
     with session.opened({}):
         pts = np.concatenate([uniform_point(1000, q, seed=s) for s in range(4)])
@@ -218,6 +254,7 @@ def test_verification_points_are_uniform_modulo_q():
 
 def test_initial_values_enter_the_degree_over_their_common_denominator():
     from symident.detection.bound import _model_degrees
+
     md = _model_degrees((("x", "-k*x"), ("z", "-k*z")), (("y", "x + z"),), (("x", "1/b"), ("z", "1/d")))
     assert md[3] == 2
 
@@ -225,6 +262,7 @@ def test_initial_values_enter_the_degree_over_their_common_denominator():
 def test_a_unit_fill_is_checked_at_the_verification_points(monkeypatch):
     import symident.detection.observability.analysis as an
     from symident.detection.observability.reconstruct import Reconstruction
+
     monkeypatch.setattr(Reconstruction, "run", lambda self: [])
     m = si.Model({"x": "-k*x", "z": "-a*z"}, {"y": "x"}, trafo={"x": "1", "z": "1"})
     ctrl = si.reconst_control(exact_proof=False)
@@ -238,6 +276,7 @@ def test_a_unit_fill_is_checked_at_the_verification_points(monkeypatch):
 
 def test_a_homotopy_direction_is_checked_at_two_points(monkeypatch):
     import symident.detection.observability.homotopy as hm
+
     passed = []
     orig = hm.in_kernel
 
@@ -245,9 +284,13 @@ def test_a_homotopy_direction_is_checked_at_two_points(monkeypatch):
         ok = orig(*a, **k)
         passed.extend([1] if ok else [])
         return ok
+
     monkeypatch.setattr(hm, "in_kernel", counted)
-    m = si.Model({"x": "v*u*x/(K + x) + kb - d*x", "z": "k*x - c*z"}, {"y": "s*z"},
-                 conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}})
+    m = si.Model(
+        {"x": "v*u*x/(K + x) + kb - d*x", "z": "k*x - c*z"},
+        {"y": "s*z"},
+        conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}},
+    )
     r = si.detect(m, equilibrate=True, reconstruct=True, control=si.reconst_control(homotopy=True))
     hom = [s for s in r.symmetries if (s.route or "").startswith("homotopy")]
     assert len(hom) == 2 and len(passed) >= 2 * len(hom)
@@ -255,8 +298,13 @@ def test_a_homotopy_direction_is_checked_at_two_points(monkeypatch):
 
 def test_a_skipped_verification_point_widens_the_bound(monkeypatch):
     import symident.detection.verify as vf
-    m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2"}, {"y": "s*x2"},
-                 trafo={"x1": "D", "x2": "0"}, conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}})
+
+    m = si.Model(
+        {"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2"},
+        {"y": "s*x2"},
+        trafo={"x1": "D", "x2": "0"},
+        conditions={"rows": ["a", "b"], "cols": {"u": [1, 2]}},
+    )
     with si.switches(NOFIELDS=True):
         r0 = si.detect(m, reconstruct=True)
     orig, calls = vf._in_nullspace_at, []
@@ -264,6 +312,7 @@ def test_a_skipped_verification_point_widens_the_bound(monkeypatch):
     def skip_first(*a, **k):
         calls.append(1)
         return None if len(calls) == 1 else orig(*a, **k)
+
     monkeypatch.setattr(vf, "_in_nullspace_at", skip_first)
     with si.switches(NOFIELDS=True):
         r1 = si.detect(m, reconstruct=True)
@@ -276,6 +325,7 @@ def test_a_skipped_verification_point_widens_the_bound(monkeypatch):
 
 def _has_msolve():
     from symident.sym.msolve import MsolveMissingError, _msolve_binary
+
     try:
         _msolve_binary()
     except MsolveMissingError:
@@ -301,6 +351,7 @@ def test_balances_without_a_resting_state_raise_with_an_error_bound():
 
     from symident.errors import InputError
     from symident.sym.restcheck import modular_decision
+
     # z rests at k3/k4, where the balance of x is k1 - k2*k3/k4, nonzero for generic values
     m = si.Model({"x": "k1 - k2*z", "z": "k3 - k4*z"}, {"y": "s*x"})
     with pytest.raises(InputError, match="error bound"):

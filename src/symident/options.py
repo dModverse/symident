@@ -1,12 +1,31 @@
 """Settings of the observability engine."""
 
 
-def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=30, degree_cap=4,
-                    sample_slack=5, probe_retries=8, laurent_deg_num=4, laurent_deg_den=2,
-                    laurent_cand_cap=200000, term_cap=60, general_deg_num=4, general_deg_den=3,
-                    gap_order_cap=8, minsupport_cand_cap=20000, perprime_cap=120, perprime_min_primes=3,
-                    homotopy=True, homotopy_degree=4, seed=0, exact_proof=True,
-                    degree_cap_max=8, exact_work_cap=500000, input_jet_order=0):
+def reconst_control(
+    relevance_cap=6,
+    relevance_cap_dir=24,
+    relevance_cap_sparse=30,
+    degree_cap=4,
+    sample_slack=5,
+    probe_retries=8,
+    laurent_deg_num=4,
+    laurent_deg_den=2,
+    laurent_cand_cap=200000,
+    term_cap=60,
+    general_deg_num=4,
+    general_deg_den=3,
+    gap_order_cap=8,
+    minsupport_cand_cap=20000,
+    perprime_cap=120,
+    perprime_min_primes=3,
+    homotopy=True,
+    homotopy_degree=4,
+    seed=0,
+    exact_proof=True,
+    degree_cap_max=8,
+    exact_work_cap=500000,
+    input_jet_order=0,
+):
     """Saturation and closed-form reconstruction settings.
 
     Parameters
@@ -66,23 +85,51 @@ def reconst_control(relevance_cap=6, relevance_cap_dir=24, relevance_cap_sparse=
     -------
     dict
     """
-    if not (relevance_cap >= 0 and relevance_cap_dir >= 1 and relevance_cap_sparse >= relevance_cap
-            and degree_cap >= 0 and sample_slack >= 0 and probe_retries >= 1 and term_cap >= 1
-            and laurent_deg_num >= 1 and laurent_deg_den >= 0 and laurent_cand_cap >= 1
-            and general_deg_num >= 1 and general_deg_den >= 1 and gap_order_cap >= 0
-            and minsupport_cand_cap >= 1 and perprime_cap >= 1 and perprime_min_primes >= 2
-            and homotopy_degree >= 1 and degree_cap_max >= 0 and exact_work_cap > 0
-            and input_jet_order >= 0):
+    if not (
+        relevance_cap >= 0
+        and relevance_cap_dir >= 1
+        and relevance_cap_sparse >= relevance_cap
+        and degree_cap >= 0
+        and sample_slack >= 0
+        and probe_retries >= 1
+        and term_cap >= 1
+        and laurent_deg_num >= 1
+        and laurent_deg_den >= 0
+        and laurent_cand_cap >= 1
+        and general_deg_num >= 1
+        and general_deg_den >= 1
+        and gap_order_cap >= 0
+        and minsupport_cand_cap >= 1
+        and perprime_cap >= 1
+        and perprime_min_primes >= 2
+        and homotopy_degree >= 1
+        and degree_cap_max >= 0
+        and exact_work_cap > 0
+        and input_jet_order >= 0
+    ):
         raise ValueError("reconst_control: invalid setting")
-    return {"relevance_cap": int(relevance_cap), "relevance_cap_dir": int(relevance_cap_dir),
-            "relevance_cap_sparse": int(relevance_cap_sparse), "degree_cap": int(degree_cap),
-            "sample_slack": int(sample_slack), "probe_retries": int(probe_retries),
-            "laurent_deg_num": int(laurent_deg_num), "laurent_deg_den": int(laurent_deg_den),
-            "laurent_cand_cap": int(laurent_cand_cap), "term_cap": int(term_cap),
-            "general_deg_num": int(general_deg_num), "general_deg_den": int(general_deg_den),
-            "gap_order_cap": int(gap_order_cap), "minsupport_cand_cap": int(minsupport_cand_cap),
-            "perprime_cap": int(perprime_cap), "perprime_min_primes": int(perprime_min_primes),
-            "homotopy": bool(homotopy), "homotopy_degree": int(homotopy_degree),
-            "seed": int(seed),
-            "exact_proof": bool(exact_proof), "degree_cap_max": int(max(degree_cap, degree_cap_max)),
-            "exact_work_cap": float(exact_work_cap), "input_jet_order": int(input_jet_order)}
+    return {
+        "relevance_cap": int(relevance_cap),
+        "relevance_cap_dir": int(relevance_cap_dir),
+        "relevance_cap_sparse": int(relevance_cap_sparse),
+        "degree_cap": int(degree_cap),
+        "sample_slack": int(sample_slack),
+        "probe_retries": int(probe_retries),
+        "laurent_deg_num": int(laurent_deg_num),
+        "laurent_deg_den": int(laurent_deg_den),
+        "laurent_cand_cap": int(laurent_cand_cap),
+        "term_cap": int(term_cap),
+        "general_deg_num": int(general_deg_num),
+        "general_deg_den": int(general_deg_den),
+        "gap_order_cap": int(gap_order_cap),
+        "minsupport_cand_cap": int(minsupport_cand_cap),
+        "perprime_cap": int(perprime_cap),
+        "perprime_min_primes": int(perprime_min_primes),
+        "homotopy": bool(homotopy),
+        "homotopy_degree": int(homotopy_degree),
+        "seed": int(seed),
+        "exact_proof": bool(exact_proof),
+        "degree_cap_max": int(max(degree_cap, degree_cap_max)),
+        "exact_work_cap": float(exact_work_cap),
+        "input_jet_order": int(input_jet_order),
+    }

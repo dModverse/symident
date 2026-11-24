@@ -38,6 +38,7 @@ def exact_rank(rows):
 def certified_rank(rows):
     """A lower bound of the rank of a matrix of exact numbers, modulo a prime or by a certified nonzero minor."""
     import scipy.linalg
+
     r = exact_rank(rows)
     if r is not None:
         return r
@@ -51,11 +52,11 @@ def certified_rank(rows):
         if not np.all(np.isfinite(f)):
             continue
         cand = sel + [row]
-        cols = sorted(scipy.linalg.qr(np.array(fl + [f]), pivoting=True)[2][:len(cand)])
+        cols = sorted(scipy.linalg.qr(np.array(fl + [f]), pivoting=True)[2][: len(cand)])
         try:
             det = spy.Matrix([[r_[c] for c in cols] for r_ in cand]).det(method="berkowitz")
             ok = det.evalf(30, strict=True) != 0
-        except (SYMPY_FAILS + (spy.core.evalf.PrecisionExhausted,)) as exc:
+        except SYMPY_FAILS + (spy.core.evalf.PrecisionExhausted,) as exc:
             sympy_fail(exc)
             ok = False
         if ok:
@@ -107,7 +108,7 @@ def modular_nullspace(rows_at, n, eval_vars, min_rows=0):
             if pend.shape[0] < chunk and rows.shape[0] <= 4 * n + 20:
                 continue
             rr = rref_modp(np.vstack([red, pend]) % p, p)
-            red = rr["R"][:rr["rank"]]
+            red = rr["R"][: rr["rank"]]
             pend = np.zeros((0, n), dtype=np.int64)
             r = rr["rank"]
             if r == n:
@@ -144,11 +145,11 @@ def modular_nullspace(rows_at, n, eval_vars, min_rows=0):
         return {"basis": None, "rows": n_rows}
     num = [int(x) for x in rec["num"]]
     den = [int(x) for x in rec["den"]]
-    if any(abs(x) > 2 ** 40 for x in num) or any(x > 2 ** 40 for x in den):
+    if any(abs(x) > 2**40 for x in num) or any(x > 2**40 for x in den):
         return {"basis": None, "rows": n_rows}
     B = np.zeros((n, nf), dtype=object)
     for j in range(nf):
-        dj = den[j * n:(j + 1) * n]
+        dj = den[j * n : (j + 1) * n]
         L = 1
         for d in set(dj):
             L = L * d // math.gcd(L, d)
@@ -166,11 +167,9 @@ def monomial_invariants(preps):
     ns = modular_nullspace(lambda pt, p: eta_rows(preps, vars_, pt, p), n, eval_vars)
     cert = f"monomial stage: exact modular nullspace over {len(PRIMES)} primes, {ns['rows']} sampling rows"
     if ns["basis"] is None:
-        return {"ok": False, "invariants": [], "exps": None,
-                "cert": cert + "; reconstruction failed (inconclusive)"}
+        return {"ok": False, "invariants": [], "exps": None, "cert": cert + "; reconstruction failed (inconclusive)"}
     if ns["basis"].shape[1] == 0:
-        return {"ok": False, "invariants": [], "exps": None,
-                "cert": f"no Laurent-monomial invariant ({cert})"}
+        return {"ok": False, "invariants": [], "exps": None, "cert": f"no Laurent-monomial invariant ({cert})"}
     inv = [mono_string(ns["basis"][:, j], vars_) for j in range(ns["basis"].shape[1])]
     return {"ok": True, "invariants": inv, "exps": ns["basis"], "vars": vars_, "cert": cert}
 
@@ -203,12 +202,14 @@ def _rows_mono(preps, vars_, expts):
         mv = np.asarray(_core.sym_mono_residues(expts, [int(pt[v]) % p for v in vars_], p), dtype=np.int64)
         inner = (expts @ eta.T) % p
         return np.stack([mulmod(mv, inner[:, g], p) for g in range(eta.shape[0])])
+
     return rows_at
 
 
 def _direction_rank(preps, moved, vars_, ipt):
     """A certified lower bound of the rank of the block directions on the moved coordinates at the point `ipt`."""
     from ..sym.modp import eval_rational_mod
+
     P = PRIMES[0]
     rows = []
     try:
@@ -226,8 +227,15 @@ def _direction_rank(preps, moved, vars_, ipt):
     sub = {spy.Symbol(v): spy.Integer(int(x)) for v, x in zip(vars_, ipt)}
     loc = red_locals([str(x) for pr in preps for x in pr["comps"].values()])
     try:
-        M = [[red_sympify(str(pr["comps"][v]).replace("^", "**"), loc).xreplace(sub) if v in pr["comps"]
-              else spy.Integer(0) for v in moved] for pr in preps]
+        M = [
+            [
+                red_sympify(str(pr["comps"][v]).replace("^", "**"), loc).xreplace(sub)
+                if v in pr["comps"]
+                else spy.Integer(0)
+                for v in moved
+            ]
+            for pr in preps
+        ]
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return 0
@@ -242,8 +250,7 @@ def independent_poly(B, expts, vars_, moved, preps):
     deg = expts.sum(axis=1)
     key = [float(np.max(deg[B[:, j] != 0])) * 1e4 + float(np.sum(B[:, j] != 0)) for j in range(B.shape[1])]
     cfs = [[spy.Rational(x) for x in B[:, j]] for j in range(B.shape[1])]
-    P = next((q for q in PRIMES if all(int(c.q) % q for col in cfs for c in col)
-              and all(x % q for x in ip)), None)
+    P = next((q for q in PRIMES if all(int(c.q) % q for col in cfs for c in col) and all(x % q for x in ip)), None)
     if P is None:
         return list(range(min(1, B.shape[1])))
     mvp = [int(np.prod([pow(ip[k], int(e), P) for k, e in enumerate(row)], dtype=object) % P) for row in expts]
@@ -251,8 +258,10 @@ def independent_poly(B, expts, vars_, moved, preps):
     def grad_p(cf):
         # the gradient of sum_i cf_i m_i at the integer point, exactly modulo P
         c = [int(x.p) % P * invmod(int(x.q) % P, P) % P for x in cf]
-        return [sum(c[i] * int(expts[i, k]) * mvp[i] for i in range(len(c))) % P * invmod(ip[k] % P, P) % P
-                for k in m_idx]
+        return [
+            sum(c[i] * int(expts[i, k]) * mvp[i] for i in range(len(c))) % P * invmod(ip[k] % P, P) % P for k in m_idx
+        ]
+
     Jp, sel = [], []
     for j in sorted(range(B.shape[1]), key=lambda j: key[j]):
         if len(sel) >= target and target > 0:
@@ -269,6 +278,7 @@ def independent_poly(B, expts, vars_, moved, preps):
 def poly_invariants(preps, d_poly):
     """Polynomial invariants of total degree <= d_poly."""
     from ..gfp import mono_table
+
     moved = sym_sort(list(dict.fromkeys(v for pr in preps for v in pr["support"])))
     vars_ = sym_sort(list(dict.fromkeys(moved + [v for pr in preps for v in pr["vars"]])))
     expts = mono_table(len(vars_), int(d_poly))
@@ -278,19 +288,29 @@ def poly_invariants(preps, d_poly):
     if not N:
         return {"ok": False, "invariants": [], "cert": "polynomial stage skipped: empty ansatz"}
     ns = _checked_nullspace(preps, vars_, expts, N)
-    cert = (f"polynomial stage (degree <= {d_poly}, {N} monomials): exact modular nullspace over "
-            f"{len(PRIMES)} primes, {ns['rows']} sampling rows" + ns["note"])
+    cert = (
+        f"polynomial stage (degree <= {d_poly}, {N} monomials): exact modular nullspace over "
+        f"{len(PRIMES)} primes, {ns['rows']} sampling rows" + ns["note"]
+    )
     if ns["basis"] is None:
         return {"ok": False, "invariants": [], "cert": cert + "; reconstruction failed (inconclusive)"}
     if ns["basis"].shape[1] == 0:
-        return {"ok": False, "invariants": [],
-                "cert": f"no polynomial invariant of total degree <= {d_poly} beyond functions of "
-                        f"the unmoved coordinates ({cert})"}
+        return {
+            "ok": False,
+            "invariants": [],
+            "cert": f"no polynomial invariant of total degree <= {d_poly} beyond functions of "
+            f"the unmoved coordinates ({cert})",
+        }
     sel = independent_poly(ns["basis"], expts, vars_, moved, preps)
     inv = [poly_string(ns["basis"][:, j], expts, vars_) for j in sel]
-    return {"ok": True, "invariants": inv, "coefs": ns["basis"][:, sel], "expts": expts,
-            "vars": vars_,
-            "cert": cert + f"; {len(sel)} functionally independent of {ns['basis'].shape[1]}"}
+    return {
+        "ok": True,
+        "invariants": inv,
+        "coefs": ns["basis"][:, sel],
+        "expts": expts,
+        "vars": vars_,
+        "cert": cert + f"; {len(sel)} functionally independent of {ns['basis'].shape[1]}",
+    }
 
 
 def _checked_nullspace(preps, vars_, expts, N):
@@ -303,8 +323,9 @@ def _checked_nullspace(preps, vars_, expts, N):
             return ns
         gens = [dict(pr["comps"]) for pr in preps]
         try:
-            ok = verify_invariants([poly_string(B[:, j], expts, vars_).replace("^", "**")
-                                    for j in range(B.shape[1])], gens)
+            ok = verify_invariants(
+                [poly_string(B[:, j], expts, vars_).replace("^", "**") for j in range(B.shape[1])], gens
+            )
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             ns["basis"] = None
@@ -328,11 +349,13 @@ RATIONAL_CAP = 700
 def rational_invariants(preps, d_poly):
     """Rational invariants with a single-coordinate denominator (Laurent ansatz)."""
     from ..gfp import mono_table
+
     moved = sym_sort(list(dict.fromkeys(v for pr in preps for v in pr["support"])))
     vars_ = sym_sort(list(dict.fromkeys(moved + [v for pr in preps for v in pr["vars"]])))
 
     def skip(cert):
         return {"ok": False, "invariants": [], "cert": cert}
+
     if d_poly < 1:
         return skip("rational stage skipped (d_poly = 0)")
     pool = Pool()
@@ -353,8 +376,10 @@ def rational_invariants(preps, d_poly):
         divisible.append(ok)
     den_c = [m for m, d in zip(moved, divisible) if d]
     if not den_c:
-        return skip("rational stage skipped: no moved coordinate divides the generator component "
-                    "component (no usable denominator)")
+        return skip(
+            "rational stage skipped: no moved coordinate divides the generator component "
+            "component (no usable denominator)"
+        )
     moved_idx = [vars_.index(m) for m in moved]
     T0 = mono_table(len(vars_), int(d_poly))
     keep0 = T0[:, moved_idx].sum(axis=1) > 0
@@ -369,14 +394,17 @@ def rational_invariants(preps, d_poly):
     if N > RATIONAL_CAP:
         return skip(f"rational stage skipped ({N} Laurent monomials over the {RATIONAL_CAP}-unknown budget)")
     ns = _checked_nullspace(preps, vars_, expts, N)
-    cert = (f"rational stage (numerator degree <= {d_poly}, denominator one of {{{', '.join(den_c)}}}; "
-            f"{N} Laurent monomials): exact modular nullspace over {len(PRIMES)} primes, "
-            f"{ns['rows']} sampling rows" + ns["note"])
+    cert = (
+        f"rational stage (numerator degree <= {d_poly}, denominator one of {{{', '.join(den_c)}}}; "
+        f"{N} Laurent monomials): exact modular nullspace over {len(PRIMES)} primes, "
+        f"{ns['rows']} sampling rows" + ns["note"]
+    )
     if ns["basis"] is None:
         return skip(cert + "; reconstruction failed (inconclusive)")
     if ns["basis"].shape[1] == 0:
-        return skip(f"no rational invariant with a single-coordinate denominator and numerator "
-                    f"degree <= {d_poly} ({cert})")
+        return skip(
+            f"no rational invariant with a single-coordinate denominator and numerator degree <= {d_poly} ({cert})"
+        )
     sel = independent_poly(ns["basis"], expts, vars_, moved, preps)
     inv = [poly_string(ns["basis"][:, j], expts, vars_) for j in sel]
     loc = red_locals(inv)
@@ -388,5 +416,8 @@ def rational_invariants(preps, d_poly):
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             out.append(s)
-    return {"ok": True, "invariants": out,
-            "cert": cert + f"; {len(sel)} functionally independent of {ns['basis'].shape[1]}"}
+    return {
+        "ok": True,
+        "invariants": out,
+        "cert": cert + f"; {len(sel)} functionally independent of {ns['basis'].shape[1]}",
+    }

@@ -49,8 +49,7 @@ def _degs(e):
 
 
 def _rational(e):
-    return all(not a.is_Function for a in spy.preorder_traversal(e)) and \
-        all(a.exp.is_Integer for a in e.atoms(spy.Pow))
+    return all(not a.is_Function for a in spy.preorder_traversal(e)) and all(a.exp.is_Integer for a in e.atoms(spy.Pow))
 
 
 @functools.lru_cache(maxsize=65536)
@@ -121,8 +120,10 @@ def _model_degrees(f_items, g_items, x0_items):
     names = {}
 
     def rename(text):
-        return _NAME.sub(lambda m: m.group(0) if m.group(0) == "pi" else
-                         names.setdefault(m.group(0), f"_n{len(names)}"), str(text))
+        return _NAME.sub(
+            lambda m: m.group(0) if m.group(0) == "pi" else names.setdefault(m.group(0), f"_n{len(names)}"), str(text)
+        )
+
     items = [tuple((rename(k), rename(v)) for k, v in its) for its in (f_items, g_items, x0_items)]
     return _model_degrees_named(*items)
 
@@ -160,14 +161,14 @@ def field_degrees(F, G, X):
 def no_degree(exprs):
     """Why `exprs` have no degree bound: the first term that is not rational, or their size; None otherwise."""
     from ..sym.parse import to_r
+
     try:
         es = [model_sympify(str(e)) for e in exprs]
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return "an expression SymPy does not read"
     for e in es:
-        bad = next((a for a in spy.preorder_traversal(e)
-                    if a.is_Function or (a.is_Pow and not a.exp.is_Integer)), None)
+        bad = next((a for a in spy.preorder_traversal(e) if a.is_Function or (a.is_Pow and not a.exp.is_Integer)), None)
         if bad is not None:
             return f"{to_r(bad)} is not rational"
     if sum(spy.count_ops(e) for e in es) > _ROW_OPS:
@@ -280,16 +281,21 @@ def chain_degree(f, g, x0, events, order, gap_order, vector, times=None):
     """Degree bound of the cleared identity of the chain rows with events after the start, None where not rational."""
     fs = list(f) if isinstance(f, (list, tuple)) else [f] * (len(events) + 1)
     try:
-        mds = [_model_degrees(tuple(sorted(fj.items())), tuple(sorted(g.items())), tuple(sorted(x0.items())))
-               for fj in fs]
+        mds = [
+            _model_degrees(tuple(sorted(fj.items())), tuple(sorted(g.items())), tuple(sorted(x0.items()))) for fj in fs
+        ]
         if any(md is None for md in mds):
             return None
         comps = [model_sympify(v) for v in vector.values()]
         x0e = [model_sympify(v) for v in x0.values()]
-        evs = [[(str(e["var"]), model_sympify(str(e["value"])), str(e.get("method", "replace"))) for e in grp]
-               for grp in events]
-        tau = [model_sympify(str(t)) if t not in (None, "") else spy.Integer(0)
-               for t in (list(times) if times else [None] * (len(evs) + 1))]
+        evs = [
+            [(str(e["var"]), model_sympify(str(e["value"])), str(e.get("method", "replace"))) for e in grp]
+            for grp in events
+        ]
+        tau = [
+            model_sympify(str(t)) if t not in (None, "") else spy.Integer(0)
+            for t in (list(times) if times else [None] * (len(evs) + 1))
+        ]
         if not all(_rational(e) for e in comps + x0e + tau + [v for grp in evs for _, v, _ in grp]):
             return None
         states = {spy.Symbol(x) for fj in fs for x in fj}
@@ -297,8 +303,11 @@ def chain_degree(f, g, x0, events, order, gap_order, vector, times=None):
             return None
         moving = [bool(t.free_symbols) for t in tau]
         # the derivative of each moving start time along v joins the vector
-        dirs = [sum((spy.diff(t, spy.Symbol(k)) * c for k, c in zip(vector, comps)), spy.Integer(0))
-                for t, mv in zip(tau, moving) if mv]
+        dirs = [
+            sum((spy.diff(t, spy.Symbol(k)) * c for k, c in zip(vector, comps)), spy.Integer(0))
+            for t, mv in zip(tau, moving)
+            if mv
+        ]
         dV = _vector_degree(comps + dirs)
         M = int(gap_order)
         Gs = [max(_vector_degree(x0e) if x0e else 1, 1)]
@@ -333,6 +342,7 @@ def chain_degree(f, g, x0, events, order, gap_order, vector, times=None):
 def drawn(points):
     """The most points a kernel check of the running session drew for the `points` that passed."""
     from .. import state
+
     ses = state.get("session")
     return max([int(points)] + list((ses.notes["draws"] if ses is not None else None) or []))
 
@@ -348,5 +358,10 @@ def kernel_bound(f, g, x0, order, vectors, q, points, events=None, gap_order=0, 
     d = max(degs)
     draws = max(int(draws or points), points)
     # the passing points are `points` of the draws: a union over the subsets, each a uniform sample
-    return {"degree": d, "points": points, "draws": draws, "prime": int(q),
-            "probability": float(min(1.0, len(vectors) * math.comb(draws, points) * (min(1.0, d / q)) ** points))}
+    return {
+        "degree": d,
+        "points": points,
+        "draws": draws,
+        "prime": int(q),
+        "probability": float(min(1.0, len(vectors) * math.comb(draws, points) * (min(1.0, d / q)) ** points)),
+    }

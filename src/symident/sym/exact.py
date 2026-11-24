@@ -180,7 +180,7 @@ def _split_powers(e, atoms):
         terms, k = parts(e.exp)
         if not k.is_Integer or any(not c.is_Rational for c, _ in terms):
             return e
-        return spy.Mul(*[atom((b, m)) ** c for c, m in terms]) * b ** k
+        return spy.Mul(*[atom((b, m)) ** c for c, m in terms]) * b**k
     return e.func(*[_split_powers(a, atoms) for a in e.args])
 
 
@@ -279,13 +279,15 @@ def regime_identities(regime, field, skip=()):
         if x in skip or (x not in moved and not _free(fx) & moved):
             continue
         xi = Y.at(x)
-        out.append((f"[Y, F] on {x}", Y(fx) - sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F),
-                                               spy.Integer(0))))
+        out.append(
+            (f"[Y, F] on {x}", Y(fx) - sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F), spy.Integer(0)))
+        )
     for th, xi in Y.c.items():
         if th in F or th in skip or not xi.free_symbols & set(F):
             continue
-        out.append((f"[Y, F] on {th}", sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F),
-                                          spy.Integer(0))))
+        out.append(
+            (f"[Y, F] on {th}", sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F), spy.Integer(0)))
+        )
     for line in regime["g"]:
         h = _expr(str(line).split("=", 1)[1]) if "=" in str(line) else _expr(str(line))
         if h.free_symbols & moved:
@@ -298,6 +300,7 @@ def _in_span(target, fields, coords, label):
     coordinates fix the coefficients. The coefficients are solved from coordinates chosen at a random point, the
     identities are the other coordinates; fields[0] must take part."""
     import random
+
     A = spy.Matrix([[W.at(c) for W in fields] for c in coords])
     rng = random.Random(len(coords))
     pt = {x: spy.Rational(rng.randint(2, 997), rng.randint(2, 997)) for x in sorted(A.free_symbols, key=str)}
@@ -318,8 +321,11 @@ def _in_span(target, fields, coords, label):
     if None in coef:
         return None
     used = [fields[j] for j in keep]
-    out = [(f"{label} on {c}", target[c] - sum((m * W.at(c) for m, W in zip(coef, used)), spy.Integer(0)))
-           for i, c in enumerate(coords) if i not in rows]
+    out = [
+        (f"{label} on {c}", target[c] - sum((m * W.at(c) for m, W in zip(coef, used)), spy.Integer(0)))
+        for i, c in enumerate(coords)
+        if i not in rows
+    ]
     return coef, out
 
 
@@ -339,8 +345,9 @@ def line_identities(regime, field, others=(), skip=()):
     br = {}
     for c in coords:
         xi = Y.at(c)
-        br[c] = (Y(F[c]) if c in F else spy.Integer(0)) - \
-            sum((F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F), spy.Integer(0))
+        br[c] = (Y(F[c]) if c in F else spy.Integer(0)) - sum(
+            (F[s] * spy.diff(xi, s) for s in xi.free_symbols if s in F), spy.Integer(0)
+        )
     got = _in_span(br, [Y] + Zs, coords, "[Y, F] - lam Y - mu Z")
     if got is None:
         return None
@@ -373,6 +380,7 @@ def line_event_identities(events, field_from, field_to, states, others=(), skip=
 
         def at(self, c):
             return self.W.at(c).xreplace(E)
+
     got = _in_span(target, [_At(Yt)] + [_At(Z) for Z in Zs], coords, "event: DE Y - nu Y - nu Z")
     if got is None:
         return None
@@ -445,8 +453,7 @@ def initial_lift(field, ic_lines, states, f_lines=()):
     if not moved or not pars:
         return None
     eqs = [x - e for x, e in moved.items()]
-    totals = [sum((c * (x - x0.get(x, x)) for x, c in law.items()), spy.Integer(0))
-              for law in _conserved(f_lines, sts)]
+    totals = [sum((c * (x - x0.get(x, x)) for x, c in law.items()), spy.Integer(0)) for law in _conserved(f_lines, sts)]
     implicit = None
     try:
         sol = spy.solve([t for t in totals if t.free_symbols & set(pars)], pars, dict=True) if totals else []
@@ -595,6 +602,7 @@ def _triangular(nums, rest):
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             return None
+
     while left:
         todo = [spy.numer(spy.together(n.xreplace(sub))) for n in todo]
         todo = [n for n in todo if n != 0]
@@ -647,8 +655,7 @@ def _rest_parametrization(eqs, rest, params):
         chosen = []
         for p in params:
             trial = chosen + [p]
-            if not any(p in n.free_symbols for n in rem) or \
-                    any(spy.Poly(n, *trial).total_degree() > 1 for n in rem):
+            if not any(p in n.free_symbols for n in rem) or any(spy.Poly(n, *trial).total_degree() > 1 for n in rem):
                 continue
             A = spy.Matrix([[spy.diff(n, q).xreplace(pt) for q in trial] for n in rem])
             if A.rank() == len(trial):
@@ -680,8 +687,9 @@ def rest_identities(conds, vector):
         b = spy.Matrix([-sum((spy.diff(F[x], p) * c for p, c in vec.items()), spy.Integer(0)) for x in xs])
         xi = Jx.LUsolve(b) if xs else spy.Matrix([])
         for h in obs:
-            e = sum((spy.diff(h, p) * c for p, c in vec.items()), spy.Integer(0)) + \
-                sum((spy.diff(h, y) * xi[j] for j, y in enumerate(xs)), spy.Integer(0))
+            e = sum((spy.diff(h, p) * c for p, c in vec.items()), spy.Integer(0)) + sum(
+                (spy.diff(h, y) * xi[j] for j, y in enumerate(xs)), spy.Integer(0)
+            )
             out.append((f"resting output {h} of condition {k}", e))
     return out
 

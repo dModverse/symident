@@ -10,8 +10,9 @@ from .relevance import direction_relevance
 from .sparse import _pivots_eq
 
 
-def pinned_monomials(f, pivots, znames, leaf_names, point0, nt_used, kcall, nv, base_nv,
-                     support_cols, rel_by_entry, rel_probe, max_exp=6):
+def pinned_monomials(
+    f, pivots, znames, leaf_names, point0, nt_used, kcall, nv, base_nv, support_cols, rel_by_entry, rel_probe, max_exp=6
+):
     """Each entry of a support-pinned direction as a Laurent monomial; None otherwise."""
     P = PRIMES[0]
 
@@ -30,6 +31,7 @@ def pinned_monomials(f, pivots, znames, leaf_names, point0, nt_used, kcall, nv, 
             if acc == target:
                 return -a
         return None
+
     entries = {}
     for i, ci in enumerate(support_cols):
         reli = rel_by_entry[i]
@@ -59,6 +61,7 @@ def pinned_monomials(f, pivots, znames, leaf_names, point0, nt_used, kcall, nv, 
                 bv = int(point0[l]) % pj
                 d = d * (pow(bv, a, pj) if a >= 0 else pow(invmod(bv, pj), -a, pj)) % pj
             return d
+
         use_primes = [P]
         resid = [e0 * invmod(mono_denom(P), P) % P]
         for pj in PRIMES[1:]:
@@ -85,16 +88,19 @@ def pinned_monomials(f, pivots, znames, leaf_names, point0, nt_used, kcall, nv, 
         expr = num_s if not den else f"({num_s})/({'*'.join(den)})"
         entries[znames[ci]] = simplify(expr)
     entries[znames[f]] = "1"
-    return {"support": sym_sort(list(entries)), "vector": entries, "type": "general",
-            "closed_form": True}
+    return {"support": sym_sort(list(entries)), "vector": entries, "type": "general", "closed_form": True}
 
 
 def _fallback(pool_next, znames, base_nv, reason):
-    return {"pool_next": pool_next,
-            "entry": {"support": sym_sort([znames[i] for i in np.nonzero(base_nv)[0]]),
-                      "type": "general", "closed_form": False, "reason": reason}}
-
-
+    return {
+        "pool_next": pool_next,
+        "entry": {
+            "support": sym_sort([znames[i] for i in np.nonzero(base_nv)[0]]),
+            "type": "general",
+            "closed_form": False,
+            "reason": reason,
+        },
+    }
 
 
 def _lift_const(vals, prs):
@@ -104,15 +110,32 @@ def _lift_const(vals, prs):
     return rec["num"][0] if rec["den"][0] == "1" else f"{rec['num'][0]}/{rec['den'][0]}"
 
 
-def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, point0, pool,
-                         pool_next, nt_used, kcall, kbatch, rel_probe, ctrl, aux_leaves=(),
-                         phys_cols=None):
+def interpolate_perprime(
+    f,
+    ref,
+    pivots,
+    znames,
+    z_slots,
+    leaf_names,
+    n_leaves,
+    point0,
+    pool,
+    pool_next,
+    nt_used,
+    kcall,
+    kbatch,
+    rel_probe,
+    ctrl,
+    aux_leaves=(),
+    phys_cols=None,
+):
     """Per-prime fits over the points each prime solves, coefficients lifted by CRT."""
     n_p = len(PRIMES)
     aux = set(aux_leaves)
 
     def nv(rp, p):
         return null_residues(rp, f, p)
+
     rel = direction_relevance(f, ref, pivots, z_slots, n_leaves, point0, rel_probe, None)
     base_nv, support_cols, rel_by_entry = rel["base_nv"], rel["support_cols"], rel["rel_by_entry"]
     if phys_cols is not None:
@@ -124,10 +147,15 @@ def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, 
 
     def ex(v):
         return [x for x in v if x not in aux]
+
     max_rel_phys = max([0] + [len(ex(e)) for e in rel_by_entry])
     if len(ex(relevant)) > ctrl["relevance_cap_dir"] or max_rel_phys > ctrl["relevance_cap_sparse"]:
-        return _fallback(pool_next, znames, base_nv,
-                         f"direction couples {len(ex(relevant))} parameters (an entry up to {max_rel_phys})")
+        return _fallback(
+            pool_next,
+            znames,
+            base_nv,
+            f"direction couples {len(ex(relevant))} parameters (an entry up to {max_rel_phys})",
+        )
 
     def const_entry(col):
         vals, prs = [], []
@@ -143,6 +171,7 @@ def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, 
         if not prs:
             return None
         return _lift_const(vals, prs)
+
     if not relevant:
         entries = {}
         for c in support_cols:
@@ -151,9 +180,16 @@ def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, 
                 return _fallback(pool_next, znames, base_nv, "a constant entry could not be lifted")
             entries[znames[c]] = e
         entries[znames[f]] = "1"
-        return {"pool_next": pool_next, "entry": {"support": sym_sort(list(entries)),
-                                                  "vector": entries, "type": "general",
-                                                  "closed_form": True, "relevant_leaves": []}}
+        return {
+            "pool_next": pool_next,
+            "entry": {
+                "support": sym_sort(list(entries)),
+                "vector": entries,
+                "type": "general",
+                "closed_form": True,
+                "relevant_leaves": [],
+            },
+        }
     nrel = len(relevant)
     bank_u = [np.zeros((0, nrel), dtype=np.int64) for _ in range(n_p)]
     bank_r = [np.zeros((0, len(support_cols)), dtype=np.int64) for _ in range(n_p)]
@@ -192,6 +228,7 @@ def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, 
             if tries_p[j] >= 80 * need + 256:
                 break
         return bank_u[j].shape[0] >= need
+
     entries = {}
     for i, c in enumerate(support_cols):
         reli = rel_by_entry[i]
@@ -238,19 +275,35 @@ def interpolate_perprime(f, ref, pivots, znames, z_slots, leaf_names, n_leaves, 
             if any(d == "0" for d in rec["den"]):
                 continue
             n_mon = mons.shape[0]
-            fitted = {"num_n": rec["num"][:n_mon], "num_d": rec["den"][:n_mon],
-                      "den_n": rec["num"][n_mon:], "den_d": rec["den"][n_mon:], "mons": mons}
+            fitted = {
+                "num_n": rec["num"][:n_mon],
+                "num_d": rec["den"][:n_mon],
+                "den_n": rec["num"][n_mon:],
+                "den_d": rec["den"][n_mon:],
+                "mons": mons,
+            }
             break
         if fitted is None:
-            return _fallback(box["pool_next"], znames, base_nv,
-                             "a joint entry could not be fit per-prime within degree_cap/perprime_cap; "
-                             "raise them or the direction is not a bounded-degree rational")
+            return _fallback(
+                box["pool_next"],
+                znames,
+                base_nv,
+                "a joint entry could not be fit per-prime within degree_cap/perprime_cap; "
+                "raise them or the direction is not a bounded-degree rational",
+            )
         vars_ = [leaf_names[r] for r in reli]
         num_str = poly_string(fitted["num_n"], fitted["num_d"], fitted["mons"], vars_)
         den_str = poly_string(fitted["den_n"], fitted["den_d"], fitted["mons"], vars_)
         expr = num_str if den_str == "1" else f"({num_str})/({den_str})"
         entries[znames[c]] = simplify(expr)
     entries[znames[f]] = "1"
-    return {"pool_next": box["pool_next"], "entry": {"support": sym_sort(list(entries)),
-                                                     "vector": entries, "type": "general",
-                                                     "closed_form": True, "relevant_leaves": relevant}}
+    return {
+        "pool_next": box["pool_next"],
+        "entry": {
+            "support": sym_sort(list(entries)),
+            "vector": entries,
+            "type": "general",
+            "closed_form": True,
+            "relevant_leaves": relevant,
+        },
+    }

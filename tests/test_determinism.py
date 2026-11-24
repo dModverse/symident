@@ -44,8 +44,15 @@ def _runs(settings):
     procs = []
     for hashseed, cores in settings:
         env = dict(os.environ, PYTHONHASHSEED=str(hashseed))
-        procs.append(subprocess.Popen([sys.executable, "-c", RUN, str(cores)], env=env,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+        procs.append(
+            subprocess.Popen(
+                [sys.executable, "-c", RUN, str(cores)],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        )
     outs = []
     for p in procs:
         out, err = p.communicate(timeout=600)
@@ -66,22 +73,27 @@ def test_same_result_in_every_process(settings):
 
 def test_session_seeds_depend_on_seed_model_and_stage_only():
     from symident.session import Session
+
     s = Session(0, "m")
     assert s.seed("point", 1) == 7274323681973122755
     assert s.rng("x", "a", 2).random() == s.rng("x", "a", 2).random()
-    assert len({Session(0, "m").seed("p"), Session(1, "m").seed("p"), Session(0, "n").seed("p"),
-                s.seed("q")}) == 4
+    assert len({Session(0, "m").seed("p"), Session(1, "m").seed("p"), Session(0, "n").seed("p"), s.seed("q")}) == 4
 
 
-INH = dict(odes={"R": "-kR*R", "S": "kact*R/(1 + kinh*I) - kd*S", "I": "b + ks*S - dI*I"},
-           observables={"z": "s2*S"},
-           events=[{"var": "R", "time": 0, "value": "d0", "method": "add"},
-                   {"var": "R", "time": 1, "value": "d1", "method": "add"}],
-           conditions={"rows": ["a", "b"], "cols": {"d0": [1, 2], "d1": [1, 1]}})
+INH = dict(
+    odes={"R": "-kR*R", "S": "kact*R/(1 + kinh*I) - kd*S", "I": "b + ks*S - dI*I"},
+    observables={"z": "s2*S"},
+    events=[
+        {"var": "R", "time": 0, "value": "d0", "method": "add"},
+        {"var": "R", "time": 1, "value": "d1", "method": "add"},
+    ],
+    conditions={"rows": ["a", "b"], "cols": {"d0": [1, 2], "d1": [1, 1]}},
+)
 
 
 def _detect(**kw):
     import symident as si
+
     d = si.detect(si.Model(**INH), reconstruct=True, equilibrate=True, **kw).to_dict()
     d["info"].pop("elapsed", None)
     d["info"].pop("timing", None)
@@ -90,6 +102,7 @@ def _detect(**kw):
 
 def test_the_reconstruction_takes_no_time_limit():
     import symident as si
+
     with pytest.raises(TypeError):
         si.reconst_control(timeout=10)
     assert "timeout" not in si.reconst_control()
@@ -97,6 +110,7 @@ def test_the_reconstruction_takes_no_time_limit():
 
 def test_the_jet_route_stops_at_its_work_limit():
     from symident.sym.jets import jet_generator
+
     cond = {"f": ["x = -k*x + a*y", "y = -m*y"], "g": ["x"], "ic": ["x = x0", "y = y0"]}
     assert jet_generator([cond], ["a", "y0"], "a")["ok"]
     assert jet_generator([cond], ["a", "y0"], "a", work_limit=1)["reason"] == "work limit"

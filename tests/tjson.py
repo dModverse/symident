@@ -22,8 +22,7 @@ def tdec(o):
     elif t == "int":
         a = np.array(d, dtype=np.int64)
     elif t == "dbl":
-        a = np.array([float(x) if x not in ("Inf", "-Inf", "NaN") else float(x.lower()) for x in d],
-                     dtype=float)
+        a = np.array([float(x) if x not in ("Inf", "-Inf", "NaN") else float(x.lower()) for x in d], dtype=float)
     elif t == "chr":
         a = list(d)
     else:

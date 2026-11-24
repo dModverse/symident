@@ -35,15 +35,23 @@ def public_symmetry(d):
     inp = d.get("input_vector") or None
     if inp is not None and gen is not None:
         from .fields import rescaled_lift
+
         inp = rescaled_lift(gen, d.get("input_form") or gen, inp)
     if inp is not None:
         inp = {k: str(v).replace("**", "^") for k, v in inp.items()}
-    return {"type": re.sub(r"^Type: ", "", str(d.get("type"))), "generator": gen,
-            "weights": weights, "degree": d.get("degree"),
-            "support": d.get("support") if d.get("support") is not None else list(gen or []),
-            "explicit": gen is not None, "reason": d.get("reason"), "route": d.get("route"),
-            "level": level_of(d, gen),
-            "state_components": _lift(d, gen), "input_change": inp}
+    return {
+        "type": re.sub(r"^Type: ", "", str(d.get("type"))),
+        "generator": gen,
+        "weights": weights,
+        "degree": d.get("degree"),
+        "support": d.get("support") if d.get("support") is not None else list(gen or []),
+        "explicit": gen is not None,
+        "reason": d.get("reason"),
+        "route": d.get("route"),
+        "level": level_of(d, gen),
+        "state_components": _lift(d, gen),
+        "input_change": inp,
+    }
 
 
 def _lift(d, gen):
@@ -52,11 +60,12 @@ def _lift(d, gen):
     if sc is None or gen is None or d.get("lift_form") is None:
         return sc
     from .fields import rescaled_lift
+
     return rescaled_lift(gen, d["lift_form"], sc)
 
 
 def level_of(d, gen):
-    """"exact" when proven over Q, "verified" when checked modulo a prime on every entry, "checked" when on part
+    """ "exact" when proven over Q, "verified" when checked modulo a prime on every entry, "checked" when on part
     of them, "open" without a closed form."""
     if gen is None:
         return "open"
@@ -126,8 +135,7 @@ def complete(syms, positive=True, coordinates=None):
     if isinstance(positive, (list, tuple)) and coordinates:
         unknown = [p for p in positive if p not in set(coordinates)]
         if unknown:
-            warnings.warn("`positive` names no coordinate: "
-                          f"{', '.join(unknown)}; ignored.", stacklevel=2)
+            warnings.warn(f"`positive` names no coordinate: {', '.join(unknown)}; ignored.", stacklevel=2)
     out = []
     for d in syms:
         if d["generator"] is None:
@@ -171,37 +179,55 @@ def finalize(raw, method, settings, elapsed=None, coordinates=None):
     rank = int(raw["rank"]) if raw.get("rank") is not None else None
     dim = int(raw["dim"]) if raw.get("dim") is not None else None
     identifiable = (rank == dim) if is_obs else None
-    engine = "integer-kernel" if method == "scaling" else \
-        ("symbolic" if raw.get("engine") == "symbolic" else "modular")
+    engine = "integer-kernel" if method == "scaling" else ("symbolic" if raw.get("engine") == "symbolic" else "modular")
     keep = bool(state.get("keep_kernel"))
-    info = {"engine": engine, "lie_order_used": raw.get("lie_order_used"),
-            "lie_order_driver": raw.get("lie_order_driver"), "lie_plateau": raw.get("lie_plateau"),
-            "lie_certified": raw.get("lie_certified"), "lie_uncertified": raw.get("lie_uncertified"),
-            "lie_certificate": raw.get("lie_certificate"),
-            "lie_block_orders": raw.get("lie_block_orders"),
-            "kernel": raw.get("kernel") if keep else None,
-            "sat_score": raw.get("sat_score") if keep else None,
-            "stacked": raw.get("stacked") if keep else None,
-            "rank_proven": raw.get("rank_proven"), "rank_proof": raw.get("rank_proof"),
-            "rank_fields": raw.get("rank_fields"), "rank_fields_bound": raw.get("rank_fields_bound"),
-            "gap_order_used": raw.get("gap_order_used"), "gap_certified": raw.get("gap_certified"),
-            "gap_certificate": raw.get("gap_certificate"), "gap_bound": raw.get("gap_bound"),
-            "order_bound": raw.get("order_bound"), "order_bound_why": raw.get("order_bound_why"),
-            "order_draws": raw.get("order_draws"),
-            "projection": raw.get("projection"),
-            "series_certified": raw.get("series_certified"), "series_certificate": raw.get("series_certificate"),
-            "conditions": raw.get("conditions"), "selection": raw.get("selection"),
-            "segments": raw.get("segments"),
-            "coordinates": list(raw["coordinates"]) if raw.get("coordinates") is not None else coordinates,
-            "settings": settings, "elapsed": elapsed, "timing": raw.get("timing"),
-            "verification": raw.get("verification"),
-            "bound": raw.get("bound"),
-            "attempts": [{"support": d.get("support"), "attempts": [list(a) for a in d["attempts"]]}
-                         for d in raw_syms if d.get("attempts")],
-            "proof": [{"support": s["support"], "reason": d.get("proof") or "no exact proof on this path"}
-                      for d, s in zip(raw_syms, syms) if s["level"] == "verified"]}
-    return {"method": method, "identifiable": identifiable, "rank": rank, "dim": dim,
-            "symmetries": syms, "info": info}
+    info = {
+        "engine": engine,
+        "lie_order_used": raw.get("lie_order_used"),
+        "lie_order_driver": raw.get("lie_order_driver"),
+        "lie_plateau": raw.get("lie_plateau"),
+        "lie_certified": raw.get("lie_certified"),
+        "lie_uncertified": raw.get("lie_uncertified"),
+        "lie_certificate": raw.get("lie_certificate"),
+        "lie_block_orders": raw.get("lie_block_orders"),
+        "kernel": raw.get("kernel") if keep else None,
+        "sat_score": raw.get("sat_score") if keep else None,
+        "stacked": raw.get("stacked") if keep else None,
+        "rank_proven": raw.get("rank_proven"),
+        "rank_proof": raw.get("rank_proof"),
+        "rank_fields": raw.get("rank_fields"),
+        "rank_fields_bound": raw.get("rank_fields_bound"),
+        "gap_order_used": raw.get("gap_order_used"),
+        "gap_certified": raw.get("gap_certified"),
+        "gap_certificate": raw.get("gap_certificate"),
+        "gap_bound": raw.get("gap_bound"),
+        "order_bound": raw.get("order_bound"),
+        "order_bound_why": raw.get("order_bound_why"),
+        "order_draws": raw.get("order_draws"),
+        "projection": raw.get("projection"),
+        "series_certified": raw.get("series_certified"),
+        "series_certificate": raw.get("series_certificate"),
+        "conditions": raw.get("conditions"),
+        "selection": raw.get("selection"),
+        "segments": raw.get("segments"),
+        "coordinates": list(raw["coordinates"]) if raw.get("coordinates") is not None else coordinates,
+        "settings": settings,
+        "elapsed": elapsed,
+        "timing": raw.get("timing"),
+        "verification": raw.get("verification"),
+        "bound": raw.get("bound"),
+        "attempts": [
+            {"support": d.get("support"), "attempts": [list(a) for a in d["attempts"]]}
+            for d in raw_syms
+            if d.get("attempts")
+        ],
+        "proof": [
+            {"support": s["support"], "reason": d.get("proof") or "no exact proof on this path"}
+            for d, s in zip(raw_syms, syms)
+            if s["level"] == "verified"
+        ],
+    }
+    return {"method": method, "identifiable": identifiable, "rank": rank, "dim": dim, "symmetries": syms, "info": info}
 
 
 def log_arg_back(raw, la):
@@ -217,9 +243,9 @@ def log_arg_back(raw, la):
     def back(vec):
         if not vec:
             return vec
-        out = log_arg_back_vec({k: str(x).replace("^", "**") for k, x in vec.items()},
-                               la["map"])
+        out = log_arg_back_vec({k: str(x).replace("^", "**") for k, x in vec.items()}, la["map"])
         return {k: str(x).replace("**", "^") for k, x in out.items()}
+
     ab_syms = set(get_symbols([x for m in la["map"] for x in (m["a"], m["b"])]))
     Lset = set(la["L"])
     pat = re.compile(r"\b(" + "|".join(re.escape(l) for l in la["L"]) + r")\b") if la["L"] else None
@@ -227,10 +253,17 @@ def log_arg_back(raw, la):
     def fix_dir(d):
         if not isinstance(d, dict):
             return d
-        names = list((d.get("vector") or {}).keys()) + list((d.get("infinitesimals") or {}).keys()) + \
-            list(d.get("support") or [])
-        vals = [str(v) for v in list((d.get("vector") or {}).values()) +
-                list((d.get("infinitesimals") or {}).values()) + list((d.get("input_vector") or {}).values())]
+        names = (
+            list((d.get("vector") or {}).keys())
+            + list((d.get("infinitesimals") or {}).keys())
+            + list(d.get("support") or [])
+        )
+        vals = [
+            str(v)
+            for v in list((d.get("vector") or {}).values())
+            + list((d.get("infinitesimals") or {}).values())
+            + list((d.get("input_vector") or {}).values())
+        ]
         hit = any(n in Lset | ab_syms for n in names) or (pat is not None and any(pat.search(v) for v in vals))
         if not hit:
             return d
@@ -258,8 +291,11 @@ def log_arg_back(raw, la):
         elif d.get("support") is not None:
             sup = ren(d["support"])
             while True:
-                add = [m["v"] for m in la["map"] if m["v"] not in sup and
-                       any(s in sup for s in get_symbols([m["a"], m["b"]]))]
+                add = [
+                    m["v"]
+                    for m in la["map"]
+                    if m["v"] not in sup and any(s in sup for s in get_symbols([m["a"], m["b"]]))
+                ]
                 if not add:
                     break
                 sup = sup + add
@@ -271,6 +307,7 @@ def log_arg_back(raw, la):
             d["input_vector"] = {k: str(model_sympify(str(v)).xreplace(at)) for k, v in d["input_vector"].items()}
             d["input_form"] = back(d.get("input_form"))
         return d
+
     raw = dict(raw)
     if raw.get("coordinates") is not None:
         raw["coordinates"] = ren(raw["coordinates"])

@@ -30,8 +30,7 @@ class DiagonalStart:
         self.rhs = {ci: _rhs(models[ci]) for ci in dict.fromkeys(self.reps + [fwd])}
         self.cand = set(candidates)
         base = {str(s) for s in self._symbols(self.fwd)}
-        priv = [str(s) for ci in self.reps for s in self._symbols(ci)
-                if str(s) in self.cand and str(s) not in base]
+        priv = [str(s) for ci in self.reps for s in self._symbols(ci) if str(s) in self.cand and str(s) not in base]
         Z = [z for z in dict.fromkeys(priv) if self._regular(Z=[z])]
         self.ok = False
         for _ in range(cap + 1):
@@ -86,8 +85,9 @@ class DiagonalStart:
         sub = {spy.Symbol(n): 0 for n in list(Z) + list(S) + list(self.held_of(self.fwd))}
         f0 = self.rhs[self.fwd]
         before = set().union(*(e.free_symbols for e in f0.values()))
-        after = set().union(*(spy.cancel(spy.together(e.xreplace(sub))).free_symbols
-                              for k, e in f0.items() if k not in S))
+        after = set().union(
+            *(spy.cancel(spy.together(e.xreplace(sub))).free_symbols for k, e in f0.items() if k not in S)
+        )
         return sorted(str(x) for x in before - after if str(x) in self.cand and str(x) not in Z)
 
     def _symbols(self, ci):

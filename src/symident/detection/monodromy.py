@@ -29,6 +29,7 @@ _SQUARE = 200
 class _Batch:
     """Values at a batch of points with the gradients over the coordinates, in complex floating point: the
     arithmetic of Series._outputs for many points at once."""
+
     __slots__ = ("v", "d")
 
     def __init__(self, v, d=None):
@@ -85,13 +86,13 @@ class _Batch:
     def __pow__(self, e):
         if e == 0:
             return self._of(1)
-        v = self.v ** e
+        v = self.v**e
         return _Batch(v, None if self.d is None else self.d * (e * self.v ** (e - 1))[:, None])
 
     def __eq__(self, x):
         return bool(np.any(self.v == self._of(x).v))
 
-    __hash__ = None
+    __hash__ = None  # type: ignore[assignment]
 
 
 def _flat(ys, orders, gap, free):
@@ -102,7 +103,7 @@ def _flat(ys, orders, gap, free):
         if j in free:
             continue
         for k in range(min(orders[j], len(y) - 1) + 1):
-            for m, c in enumerate(y[k][:gap + 1]):
+            for m, c in enumerate(y[k][: gap + 1]):
                 out.append(c)
                 index.append((j, k, m))
     return out, index
@@ -126,8 +127,10 @@ def coefficients(series, X, orders, gap=0, jac=True):
     vals = np.stack([r.v if isinstance(r, _Batch) else np.full(P, complex(r)) for r in rows], axis=1)
     J = None
     if jac:
-        J = np.stack([r.d if isinstance(r, _Batch) and r.d is not None else np.zeros((P, n), dtype=complex)
-                      for r in rows], axis=1)
+        J = np.stack(
+            [r.d if isinstance(r, _Batch) and r.d is not None else np.zeros((P, n), dtype=complex) for r in rows],
+            axis=1,
+        )
     return vals, J, index
 
 
@@ -197,7 +200,7 @@ def _eval_safe(F, X):
     J = np.full((len(X), n, n), np.nan, dtype=complex)
     ok = np.zeros(len(X), dtype=bool)
     for i in range(len(X)):
-        g = F(X[i:i + 1])
+        g = F(X[i : i + 1])
         if g is not None:
             v[i], J[i], ok[i] = g[0][0], g[1][0], True
     return v, J, ok
@@ -315,6 +318,7 @@ def rur_points(fib, point, digits=40):
 
     from .discrete import FiberTooLargeError
     from .discrete import _solve as solve_block
+
     try:
         sysd = fib.system(point)
     except (FiberTooLargeError, ZeroDivisionError):
@@ -331,6 +335,7 @@ def rur_points(fib, point, digits=40):
             return None
         elim, den, params = par[1][0][1], par[1][1][1], par[1][2]
         with mpmath.workdps(digits):
+
             def mp(c):
                 c = Fraction(c)
                 return mpmath.mpf(c.numerator) / c.denominator
@@ -338,8 +343,11 @@ def rur_points(fib, point, digits=40):
             def ev(cs, t):
                 return mpmath.polyval([mp(c) for c in reversed(cs)], t)
 
-            roots = mpmath.polyroots([mp(c) for c in reversed(elim)], maxsteps=400, extraprec=4 * digits) \
-                if len(elim) > 2 else [-mp(elim[0]) / mp(elim[1])]
+            roots = (
+                mpmath.polyroots([mp(c) for c in reversed(elim)], maxsteps=400, extraprec=4 * digits)
+                if len(elim) > 2
+                else [-mp(elim[0]) / mp(elim[1])]
+            )
             sols = []
             last = len(vn) - 1
             for t in roots:
@@ -347,8 +355,9 @@ def rur_points(fib, point, digits=40):
                 if dv == 0:
                     continue
                 vals = {vn[j]: -ev(q[0][1], t) / (mp(q[1]) * dv) for j, q in enumerate(params)}
-                vals[vn[last]] = (t - sum((mp(lin[j]) * vals[vn[j]] for j in range(last)), mpmath.mpf(0))) / \
-                    mp(lin[last])
+                vals[vn[last]] = (t - sum((mp(lin[j]) * vals[vn[j]] for j in range(last)), mpmath.mpf(0))) / mp(
+                    lin[last]
+                )
                 sols.append({k: complex(v) for k, v in vals.items()})
         per.append(sols)
     out = []
@@ -363,6 +372,7 @@ def rur_points(fib, point, digits=40):
 
 # ---- the Krawczyk operator in interval arithmetic --------------------------------------------
 
+
 def _dn(x):
     return np.nextafter(x, -np.inf)
 
@@ -374,6 +384,7 @@ def _up(x):
 class _Rect:
     """Complex rectangles [rl, rh] + i [il, ih], arrays of one shape, with outward rounding: each floating-point
     operation is correctly rounded, so one step to the next float outward encloses the exact result."""
+
     __slots__ = ("rl", "rh", "il", "ih")
 
     def __init__(self, rl, rh, il, ih):
@@ -455,6 +466,7 @@ def _sum(rects, shape):
 class _IDual:
     """An enclosure of a value with enclosures of the gradient over the coordinates: the arithmetic of
     Series._outputs over a box."""
+
     __slots__ = ("v", "d")
     n = 0
 
@@ -514,7 +526,7 @@ class _IDual:
         # a value whose enclosure holds zero cannot be divided by
         return bool((self - self._of(x)).v.has_zero())
 
-    __hash__ = None
+    __hash__ = None  # type: ignore[assignment]
 
 
 def _bcast(r):
@@ -539,6 +551,7 @@ def square_rows(series, orders, gap, x):
     """n rows of the coefficients up to `orders` with independent gradients at x, chosen by a pivoted QR
     decomposition of the Jacobian with rows of unit norm: the best conditioned square subsystem it finds."""
     import scipy.linalg as sl
+
     got = coefficients(series, np.asarray(x)[None, :], orders, gap)
     if got is None:
         return None
@@ -548,7 +561,7 @@ def square_rows(series, orders, gap, x):
     if len(keep) < A.shape[1]:
         return None
     _, _, piv = sl.qr((A[keep] / nrm[keep, None]).T, pivoting=True)
-    return sorted(int(keep[i]) for i in piv[:A.shape[1]])
+    return sorted(int(keep[i]) for i in piv[: A.shape[1]])
 
 
 def krawczyk(series, orders, gap, rows, base, x, radius):
@@ -579,20 +592,28 @@ def krawczyk(series, orders, gap, rows, base, x, radius):
         return None
     if not np.all(np.isfinite(Y)):
         return None
-    J = _Rect(np.array([c.d.rl for c in JX]), np.array([c.d.rh for c in JX]),
-              np.array([c.d.il for c in JX]), np.array([c.d.ih for c in JX]))
-    G = _Rect(np.array([v.rl for v in g]), np.array([v.rh for v in g]), np.array([v.il for v in g]),
-              np.array([v.ih for v in g]))
+    J = _Rect(
+        np.array([c.d.rl for c in JX]),
+        np.array([c.d.rh for c in JX]),
+        np.array([c.d.il for c in JX]),
+        np.array([c.d.ih for c in JX]),
+    )
+    G = _Rect(
+        np.array([v.rl for v in g]),
+        np.array([v.rh for v in g]),
+        np.array([v.il for v in g]),
+        np.array([v.ih for v in g]),
+    )
     dX = box - _Rect.point(xm)
     for i in range(n):
         Yi = _Rect.point(Y[i])
-        yg = _sum([(Yi[l:l + 1] * G[l:l + 1]) for l in range(n)], (1,))
+        yg = _sum([(Yi[l : l + 1] * G[l : l + 1]) for l in range(n)], (1,))
         # row i of I - Y J(X)
-        E = _Rect.const(0, (n,)) - _sum([Yi[l:l + 1] * J[l] for l in range(n)], (n,))
+        E = _Rect.const(0, (n,)) - _sum([Yi[l : l + 1] * J[l] for l in range(n)], (n,))
         E.rl[i], E.rh[i] = _dn(E.rl[i] + 1), _up(E.rh[i] + 1)
         # the row sum of |I - Y J(X)| weighted by the radii, below the radius: a contraction in the weighted norm
         q = float(_up(np.sum(E.mag() * r) * (1 + 4 * n * np.finfo(float).eps)))
-        k = _Rect.point(xm[i:i + 1]) - yg + _sum([E[j:j + 1] * dX[j:j + 1] for j in range(n)], (1,))
+        k = _Rect.point(xm[i : i + 1]) - yg + _sum([E[j : j + 1] * dX[j : j + 1] for j in range(n)], (1,))
         inside = k.rl[0] > box.rl[i] and k.rh[0] < box.rh[i] and k.il[0] > box.il[i] and k.ih[0] < box.ih[i]
         if not inside or not q < r[i]:
             return None
@@ -623,6 +644,7 @@ def disjoint(a, b):
 
 # ---- maps read from the points ----------------------------------------------------------------
 
+
 def _nice(z, den=12, tol=1e-7):
     """z as a Gaussian rational with denominators up to `den`, or None."""
     out = []
@@ -631,8 +653,9 @@ def _nice(z, den=12, tol=1e-7):
         if abs(float(f) - part) > tol * (1 + abs(part)):
             return None
         out.append(f)
-    return spy.Rational(out[0].numerator, out[0].denominator) + \
-        spy.I * spy.Rational(out[1].numerator, out[1].denominator)
+    return spy.Rational(out[0].numerator, out[0].denominator) + spy.I * spy.Rational(
+        out[1].numerator, out[1].denominator
+    )
 
 
 def _coordinate_forms(base, img, moved, syms):
@@ -644,9 +667,9 @@ def _coordinate_forms(base, img, moved, syms):
         for j, s in enumerate(syms):
             b = base[j]
             for e in (1, -1):
-                c = _nice(z / b ** e)
+                c = _nice(z / b**e)
                 if c is not None and c != 0:
-                    forms.append(c * s ** e)
+                    forms.append(c * s**e)
             if j == i:
                 d = _nice(z - b)
                 if d is not None and d != 0:
@@ -707,6 +730,7 @@ def propose(series, fib, meter=None, target=None):
     parametrization of msolve over Q; those enclosed in disjoint Krawczyk boxes. The paths stop at the cap
     monodromy_products of work.CAPS on the work of their steps (_step_work()), or of `meter`."""
     from .discrete import Fiber, complex_count
+
     meter = meter or work.Meter("the monodromy", work.CAPS["monodromy_products"], "term products")
     out = {"points": 0, "square": None, "source": None, "certified": 0, "boxes": [], "why": None}
     if series.free_rows:
@@ -719,7 +743,7 @@ def propose(series, fib, meter=None, target=None):
         out["why"] = "no square subsystem of independent coefficients"
         return out, []
     srng = session.current().rng("discrete monodromy", tuple(series.coords))
-    rng = np.random.default_rng(srng.randint(0, 2 ** 32 - 1))
+    rng = np.random.default_rng(srng.randint(0, 2**32 - 1))
     base = {s: spy.Rational(srng.randint(5, 40), srng.randint(4, 12)) for s in series.cs}
     out["base"] = {str(s): str(v) for s, v in base.items()}
     try:
@@ -729,7 +753,7 @@ def propose(series, fib, meter=None, target=None):
         out["why"] = "the random point is a pole"
         return out, []
     # the size of the square fiber decides whether monodromy can reach it
-    pt = {s: spy.Integer(srng.randint(2, 10 ** 6)) for s in series.cs}
+    pt = {s: spy.Integer(srng.randint(2, 10**6)) for s in series.cs}
     with work.quick_msolve():
         est = complex_count(Fiber(series, system.sub_orders, fib.positive), pt, PRIMES[0])
     out["square"] = est
@@ -769,6 +793,7 @@ def proposals(series, fib, k, known, meter=None):
     `known`, where the group of the known maps has fewer points than the count `k` or no count exists; (None, [])
     otherwise."""
     from .discrete import _same_map, group
+
     if getattr(fib, "too_large", None) or not series.cs:
         return None, []
     grp = group(known, series.cs) if known else [dict(zip(series.cs, series.cs))]

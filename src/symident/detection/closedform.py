@@ -53,8 +53,12 @@ def reconstruct_entry(sample_u, mons, residues, primes):
     rec = rat_recon(coef_res, list(primes))
     if any(d == "0" for d in rec["den"]):
         return None
-    return {"num_coef_n": rec["num"][:n_mon], "num_coef_d": rec["den"][:n_mon],
-            "den_coef_n": rec["num"][n_mon:], "den_coef_d": rec["den"][n_mon:]}
+    return {
+        "num_coef_n": rec["num"][:n_mon],
+        "num_coef_d": rec["den"][:n_mon],
+        "den_coef_n": rec["num"][n_mon:],
+        "den_coef_d": rec["den"][n_mon:],
+    }
 
 
 def simplify(expr):

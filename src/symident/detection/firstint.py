@@ -37,7 +37,7 @@ def _diff(P, j):
     out = {}
     for m, c in P.items():
         if m[j]:
-            mm = m[:j] + (m[j] - 1,) + m[j + 1:]
+            mm = m[:j] + (m[j] - 1,) + m[j + 1 :]
             out[mm] = out.get(mm, 0) + c * m[j]
     return out
 
@@ -134,15 +134,23 @@ def _galois(K, J, blocks, laws):
                     continue
                 # the multiplicity over K is at least the one of the laws and at most the one modulo a prime
                 zeros = mult
-                need = {b: {"n": len(B) - zeros[b], "full": None, "minus": None if len(B) - zeros[b] > 2 else "n/a",
-                            "transposition": None} for b, B in enumerate(blocks) if len(B) - zeros[b] >= 2}
+                need = {
+                    b: {
+                        "n": len(B) - zeros[b],
+                        "full": None,
+                        "minus": None if len(B) - zeros[b] > 2 else "n/a",
+                        "transposition": None,
+                    }
+                    for b, B in enumerate(blocks)
+                    if len(B) - zeros[b] >= 2
+                }
                 pairs = {(a, b): None for a in need for b in need if a < b}
             if mult != zeros:
                 continue
             types = {}
             where = [p, int(tau)] if K.d > 1 else p
             for b, rec in need.items():
-                ct = cycle_type(chis[b][:len(chis[b]) - zeros[b]], p)
+                ct = cycle_type(chis[b][: len(chis[b]) - zeros[b]], p)
                 if ct is None:
                     continue
                 types[b] = ct
@@ -156,18 +164,26 @@ def _galois(K, J, blocks, laws):
             for a, b in pairs:
                 if pairs[(a, b)] is None and a in types and b in types and order_of(types[a]) != order_of(types[b]):
                     pairs[(a, b)] = where
-        if zeros is not None and all(r["full"] is not None and r["minus"] is not None for r in need.values()) and \
-                all(v is not None for v in pairs.values()):
+        if (
+            zeros is not None
+            and all(r["full"] is not None and r["minus"] is not None for r in need.values())
+            and all(v is not None for v in pairs.values())
+        ):
             break
     if zeros is None:
-        raise _OpenError(f"the Jacobian at the equilibrium has the eigenvalue 0 more often than the {laws} "
-                         "conservation laws give, at every prime read" if laws else
-                         "the Jacobian at the equilibrium has the eigenvalue 0 modulo every prime read, as under a "
-                         "conservation law")
+        raise _OpenError(
+            f"the Jacobian at the equilibrium has the eigenvalue 0 more often than the {laws} "
+            "conservation laws give, at every prime read"
+            if laws
+            else "the Jacobian at the equilibrium has the eigenvalue 0 modulo every prime read, as under a "
+            "conservation law"
+        )
     for r in need.values():
         if r["full"] is None or r["minus"] is None:
-            raise _OpenError(f"no prime of the {seen} read shows the cycles that make the Galois group of a block "
-                             f"of degree {r['n']} 2-transitive")
+            raise _OpenError(
+                f"no prime of the {seen} read shows the cycles that make the Galois group of a block "
+                f"of degree {r['n']} 2-transitive"
+            )
     if any(v is None for v in pairs.values()):
         raise _OpenError("no prime of those read separates the splitting fields of two blocks of the Jacobian")
     return zeros, need, pairs
@@ -178,8 +194,9 @@ def _text(K, a):
     if len(a) == 1:
         return str(a[0])
     s = spy.Symbol("s")
-    return str(sum((spy.Rational(c.numerator, c.denominator) * s ** k for k, c in enumerate(a)),
-                   spy.Integer(0))).replace("**", "^")
+    return str(sum((spy.Rational(c.numerator, c.denominator) * s**k for k, c in enumerate(a)), spy.Integer(0))).replace(
+        "**", "^"
+    )
 
 
 def _test(K, J, names, laws=0):
@@ -196,13 +213,14 @@ def _test(K, J, names, laws=0):
     if len(keep) == 1 and K.is_zero(traces[keep[0]]):
         raise _OpenError("the trace of the Jacobian at the equilibrium is 0")
     if rank_over_q([traces[b] for b in keep]) < len(keep):
-        raise _OpenError(f"the traces of the {len(keep)} diagonal blocks are linearly dependent over Q in a field "
-                         f"of degree {max(K.d, 1)}")
+        raise _OpenError(
+            f"the traces of the {len(keep)} diagonal blocks are linearly dependent over Q in a field "
+            f"of degree {max(K.d, 1)}"
+        )
     out = []
     for b in keep:
         r = need.get(b)
-        e = {"states": [names[i] for i in blocks[b]], "degree": len(blocks[b]) - zeros[b],
-             "trace": _text(K, traces[b])}
+        e = {"states": [names[i] for i in blocks[b]], "degree": len(blocks[b]) - zeros[b], "trace": _text(K, traces[b])}
         if zeros[b]:
             e["zero_eigenvalues"] = zeros[b]
         if r is not None:
@@ -250,14 +268,21 @@ def _attempt(K, F, U, allv, names, laws, d):
 def _proven(K, point, alpha, sym, fixed, reads, st, equilibrium, laws, got, t0):
     """The fields of a proven certificate."""
     blocks, pairs = got
-    return {"proven": True, "why": None, "point": point,
-            "alpha": None if alpha is None else
-            str(sum(c * sym ** k for k, c in enumerate(alpha))).replace("**", "^") + " = 0",
-            "inputs": {st[i]: str(v) for i, v in fixed.items() if i in reads},
-            "field": repr(K), "equilibrium": equilibrium,
-            "laws": [" + ".join(f"({c})*{x}" for x, c in law.items()) for law in laws],
-            "blocks": blocks, "splitting_fields": pairs,
-            "seconds": round(time.monotonic() - t0, 2)}
+    return {
+        "proven": True,
+        "why": None,
+        "point": point,
+        "alpha": None
+        if alpha is None
+        else str(sum(c * sym**k for k, c in enumerate(alpha))).replace("**", "^") + " = 0",
+        "inputs": {st[i]: str(v) for i, v in fixed.items() if i in reads},
+        "field": repr(K),
+        "equilibrium": equilibrium,
+        "laws": [" + ".join(f"({c})*{x}" for x, c in law.items()) for law in laws],
+        "blocks": blocks,
+        "splitting_fields": pairs,
+        "seconds": round(time.monotonic() - t0, 2),
+    }
 
 
 def _field_poly(rng, d):
@@ -276,6 +301,7 @@ def _equilibria(F, U, fixed, theta, alpha, nonzero, level=()):
     [(K, {variable: element})], each Galois orbit one field, smallest first; None and the reason where msolve finds
     none or a family."""
     from .discrete import _msolve
+
     names = [f"z{i}" for i in range(len(U))]
     syms = [spy.Symbol(n) for n in names]
     a = spy.Symbol("a")
@@ -285,8 +311,14 @@ def _equilibria(F, U, fixed, theta, alpha, nonzero, level=()):
         gvals[i] = s
 
     def expr(P):
-        return sum((spy.Rational(c.numerator, c.denominator) * spy.prod([gvals[j] ** e for j, e in enumerate(m) if e])
-                    for m, c in P.items()), spy.Integer(0))
+        return sum(
+            (
+                spy.Rational(c.numerator, c.denominator) * spy.prod([gvals[j] ** e for j, e in enumerate(m) if e])
+                for m, c in P.items()
+            ),
+            spy.Integer(0),
+        )
+
     eqs, dens = [], spy.Integer(1)
     for i in U:
         N, D = F[i]
@@ -310,15 +342,17 @@ def _equilibria(F, U, fixed, theta, alpha, nonzero, level=()):
             m = "*".join(f"{g}^{k}" if k > 1 else str(g) for g, k in zip(gens, mono) if k)
             out.append(f"{c}*{m}" if m else str(c))
         return "+".join(out).replace("+-", "-")
+
     # a balance that vanishes identically is a conservation law, whose level set enters below
     lines = [x for x in (ms(e) for e in eqs) if x is not None]
     lines += [ms(e) for e in level]
     if alpha is not None:
-        lines.append(ms(sum(c * a ** k for k, c in enumerate(alpha))))
+        lines.append(ms(sum(c * a**k for k, c in enumerate(alpha))))
     lines.append(ms(spy.Symbol("si_w") * sat - 1))
     data = _msolve(msnames, 0, lines, ["-P", "1"])
     if data is None:
         from . import work
+
         why = work.msolve_too_large(msnames + ["si_w"], lines)
         return None, "msolve did not solve the balances" + (f": {why}" if why else "")
     if data[0] == 1:
@@ -364,12 +398,22 @@ def _linear_point(F, U, fixed, nt, ns, rng, alpha):
     K = NumberField(alpha) if alpha is not None else NumberField([0, 1])
 
     def draw():
-        return K._reduce([Fraction(rng.randint(2, 40))] + [Fraction(rng.randint(-9, 9)) for _ in range(K.d - 1)]) \
-            if K.d > 1 else (Fraction(rng.randint(2, 40)),)
+        return (
+            K._reduce([Fraction(rng.randint(2, 40))] + [Fraction(rng.randint(-9, 9)) for _ in range(K.d - 1)])
+            if K.d > 1
+            else (Fraction(rng.randint(2, 40)),)
+        )
+
     # the states in K as well: identities of the balances can tie traces with a rational factor of the states
-    xs = {i: K.add(K.rational(Fraction(rng.randint(1, 30), rng.randint(1, 7))),
-                   K._reduce([Fraction(0)] + [Fraction(rng.randint(-5, 5), rng.randint(1, 7)) for _ in range(K.d - 1)])
-                   if K.d > 1 else K.zero) for i in U}
+    xs = {
+        i: K.add(
+            K.rational(Fraction(rng.randint(1, 30), rng.randint(1, 7))),
+            K._reduce([Fraction(0)] + [Fraction(rng.randint(-5, 5), rng.randint(1, 7)) for _ in range(K.d - 1)])
+            if K.d > 1
+            else K.zero,
+        )
+        for i in U
+    }
     vals = dict(xs)
     vals.update({i: K.rational(int(v)) for i, v in fixed.items()})
     held = {}
@@ -395,6 +439,7 @@ def _linear_point(F, U, fixed, nt, ns, rng, alpha):
                 for _ in range(e):
                     out = K.mul(out, vals[j])
         return out
+
     # rows: sum_k A_ik theta_k = b_i over K
     rows = []
     for i in U:
@@ -477,7 +522,7 @@ def certificate(series, laws=()):
         for k in range(len(params)):
             v = spy.Integer(rng.randint(2, 40))
             if alpha is not None:
-                v = v + sum(rng.randint(-9, 9) * a ** j for j in range(1, d))
+                v = v + sum(rng.randint(-9, 9) * a**j for j in range(1, d))
             theta[ns + k] = v
         # an equilibrium chosen first, the parameters solved, where the balances are linear in them
         lin = _linear_point(F, U, fixed, len(params), ns, rng, alpha) if nonzero else None
@@ -496,16 +541,35 @@ def certificate(series, laws=()):
                 if retry is not None:
                     plan.insert(0, (retry, nonzero))
                 continue
-            out.update(_proven(K, {p: _text(K, tv[k]) for k, p in enumerate(params)}, alpha, spy.Symbol("s"),
-                               fixed, reads, st, {names[j]: _text(K, xv[i]) for j, i in enumerate(U)}, laws, got,
-                               t0))
+            out.update(
+                _proven(
+                    K,
+                    {p: _text(K, tv[k]) for k, p in enumerate(params)},
+                    alpha,
+                    spy.Symbol("s"),
+                    fixed,
+                    reads,
+                    st,
+                    {names[j]: _text(K, xv[i]) for j, i in enumerate(U)},
+                    laws,
+                    got,
+                    t0,
+                )
+            )
             return out
         # a level set of the laws, at random values
         level = []
         for law in laws:
-            g = sum((model_sympify(str(c)).xreplace(series.known).xreplace(
-                {spy.Symbol(p): theta[ns + k] for k, p in enumerate(params)}) * spy.Symbol(f"z{U.index(st.index(x))}")
-                for x, c in law.items()), spy.Integer(0))
+            g = sum(
+                (
+                    model_sympify(str(c))
+                    .xreplace(series.known)
+                    .xreplace({spy.Symbol(p): theta[ns + k] for k, p in enumerate(params)})
+                    * spy.Symbol(f"z{U.index(st.index(x))}")
+                    for x, c in law.items()
+                ),
+                spy.Integer(0),
+            )
             level.append(spy.fraction(spy.together(g - rng.randint(2, 30)))[0])
         found, why = _equilibria(F, U, fixed, theta, alpha, nonzero, level)
         if not found:
@@ -536,8 +600,21 @@ def certificate(series, laws=()):
                 continue
             al = spy.Symbol("alpha")
             point = {p: str(theta[ns + k].xreplace({a: al})).replace("**", "^") for k, p in enumerate(params)}
-            out.update(_proven(K, point, alpha, al, fixed, reads, st,
-                               {names[j]: _text(K, xj) for j, xj in enumerate(x)}, laws, got, t0))
+            out.update(
+                _proven(
+                    K,
+                    point,
+                    alpha,
+                    al,
+                    fixed,
+                    reads,
+                    st,
+                    {names[j]: _text(K, xj) for j, xj in enumerate(x)},
+                    laws,
+                    got,
+                    t0,
+                )
+            )
             return out
     out["why"] = last or "no equilibrium of the draws settles the test"
     out["seconds"] = round(time.monotonic() - t0, 2)

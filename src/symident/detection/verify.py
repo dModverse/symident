@@ -42,8 +42,22 @@ def verify_direction(entry, f, znames, leaf_names, point0, nt_used, kcall, resid
     return False
 
 
-def verify_in_nullspace(entry, f, znames, leaf_names, point0, nt_used, kcall, pool_next, nz,
-                        dir_call=None, tries=6, need=2, cols=None, env_fn=None):
+def verify_in_nullspace(
+    entry,
+    f,
+    znames,
+    leaf_names,
+    point0,
+    nt_used,
+    kcall,
+    pool_next,
+    nz,
+    dir_call=None,
+    tries=6,
+    need=2,
+    cols=None,
+    env_fn=None,
+):
     """Gauge-independent check that a direction lies in the nullspace at `need` of `tries` fresh seeded points;
     `env_fn(point, q)` adds the values of names off the leaves, such as resting states."""
     if entry.get("vector") is None:
@@ -72,8 +86,11 @@ def verify_batch(entries, anchors, znames, leaf_names, n_point, nt_used, batch_f
     q = verify_prime()
     leaves = set(leaf_names)
     out = [None] * len(entries)
-    todo = [i for i, e in enumerate(entries)
-            if all(nm in znames and set(_IDENT.findall(str(ex))) <= leaves for nm, ex in e["vector"].items())]
+    todo = [
+        i
+        for i, e in enumerate(entries)
+        if all(nm in znames and set(_IDENT.findall(str(ex))) <= leaves for nm, ex in e["vector"].items())
+    ]
     passed = {i: 0 for i in todo}
     off = set()
     for k in range(tries):

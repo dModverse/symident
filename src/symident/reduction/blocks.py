@@ -36,9 +36,16 @@ def block_corank(preps):
 
 _IV_PREC = 200
 # the functions mpmath has in interval arithmetic; an invariant with another one is evaluated exactly
-_IV_MODULE = {"exp": mpmath.iv.exp, "log": mpmath.iv.log, "sqrt": mpmath.iv.sqrt,
-              "sin": mpmath.iv.sin, "cos": mpmath.iv.cos, "tan": mpmath.iv.tan,
-              "pi": mpmath.iv.pi, "E": mpmath.iv.e}
+_IV_MODULE = {
+    "exp": mpmath.iv.exp,
+    "log": mpmath.iv.log,
+    "sqrt": mpmath.iv.sqrt,
+    "sin": mpmath.iv.sin,
+    "cos": mpmath.iv.cos,
+    "tan": mpmath.iv.tan,
+    "pi": mpmath.iv.pi,
+    "E": mpmath.iv.e,
+}
 
 
 @contextmanager
@@ -147,8 +154,7 @@ def independent_set(invs, vars_, target, moved=None):
             with _ivprec():
                 ivx = [mpmath.iv.mpf(str(spy.N(x, 80, strict=True))) for x in ex]
             # a point value from 80 digits is widened to an interval of that accuracy
-            ivx = [x + mpmath.iv.mpf([-1, 1]) * (abs(x).b * mpmath.mpf(10) ** -70 + mpmath.mpf(10) ** -70)
-                   for x in ivx]
+            ivx = [x + mpmath.iv.mpf([-1, 1]) * (abs(x).b * mpmath.mpf(10) ** -70 + mpmath.mpf(10) ** -70) for x in ivx]
             return ivx, np.array([float(x.mid) for x in ivx])
         except spy.core.evalf.PrecisionExhausted:
             return None
@@ -159,10 +165,12 @@ def independent_set(invs, vars_, target, moved=None):
     def certified(rows, fl):
         # a nonzero maximal minor: columns chosen by pivoted QR, the interval of the minor free of zero
         from scipy.linalg import qr
-        cols = sorted(qr(fl, pivoting=True)[2][:len(rows)])
+
+        cols = sorted(qr(fl, pivoting=True)[2][: len(rows)])
         with _ivprec():
             det = _iv_det([[r[c] for c in cols] for r in rows])
         return det is not None and not (det.a <= 0 <= det.b)
+
     cand = list(dict.fromkeys(invs))
 
     def select(exact):
@@ -189,6 +197,7 @@ def independent_set(invs, vars_, target, moved=None):
                 Jn.append(gr[0])
                 sel.append(iv)
         return sel
+
     out = select(True)
     return out if out is not None else select(False)
 
@@ -198,10 +207,15 @@ def solve_block(preps, d_poly, d_darboux, d_exp, sep=True):
     moved, vars_ = _moved_vars(preps)
     target, count_exact = block_corank(preps)
     certs, found, stage_ = [], [], "monomial"
-    certs.append(f"invariant count {target}: " + ("exact, the directions are independent at a point" if count_exact
-                                                  else "an upper bound, from a rank at one point"))
-    moved_re = re.compile(r"(?<![0-9A-Za-z_.])(" + "|".join(re.escape(m) for m in moved) +
-                          r")(?![0-9A-Za-z_.])")
+    certs.append(
+        f"invariant count {target}: "
+        + (
+            "exact, the directions are independent at a point"
+            if count_exact
+            else "an upper bound, from a rank at one point"
+        )
+    )
+    moved_re = re.compile(r"(?<![0-9A-Za-z_.])(" + "|".join(re.escape(m) for m in moved) + r")(?![0-9A-Za-z_.])")
     sgn_cache = {}
 
     def definite(iv):
@@ -227,8 +241,8 @@ def solve_block(preps, d_poly, d_darboux, d_exp, sep=True):
         return len(found) < target or not all(definite(f) for f in found)
 
     def better(got):
-        return len(got) > len(found) or (len(got) == len(found) and
-                                         sum(map(definite, got)) > sum(map(definite, found)))
+        return len(got) > len(found) or (len(got) == len(found) and sum(map(definite, got)) > sum(map(definite, found)))
+
     mono = monomial_invariants(preps)
     certs.append(mono["cert"])
     if mono["ok"]:
@@ -290,12 +304,22 @@ def solve_block(preps, d_poly, d_darboux, d_exp, sep=True):
                     stage_ = "intfactor"
         else:
             certs.append("exp stage skipped (d_exp = 0)")
-    reason = None if len(found) >= target else (
-        f"found {len(found)} of {target} independent invariants (poly/rational degree <= {d_poly}, "
-        f"Darboux degree <= {d_darboux}, exp numerator degree <= {d_exp}); gauge pinning needs the full set")
-    return {"stage": stage_, "invariants": found, "target": target, "certificates": certs,
-            "count": "exact" if count_exact else "upper bound",
-            "reason": reason}
+    reason = (
+        None
+        if len(found) >= target
+        else (
+            f"found {len(found)} of {target} independent invariants (poly/rational degree <= {d_poly}, "
+            f"Darboux degree <= {d_darboux}, exp numerator degree <= {d_exp}); gauge pinning needs the full set"
+        )
+    )
+    return {
+        "stage": stage_,
+        "invariants": found,
+        "target": target,
+        "certificates": certs,
+        "count": "exact" if count_exact else "upper bound",
+        "reason": reason,
+    }
 
 
 def fixed_reduce(preps, fixed):
@@ -333,8 +357,13 @@ def fixed_reduce(preps, fixed):
             continue
         out_p.append(pr)
         out_s.append(sources[j])
-    return {"preps": out_p, "sources": out_s, "removed": sum(used_pivot),
-            "removed_idx": [i for i in range(k) if used_pivot[i]], "fixed_cols": fixed_cols}
+    return {
+        "preps": out_p,
+        "sources": out_s,
+        "removed": sum(used_pivot),
+        "removed_idx": [i for i in range(k) if used_pivot[i]],
+        "fixed_cols": fixed_cols,
+    }
 
 
 def _axis_signed(v, reduced, originals):
@@ -369,18 +398,24 @@ def _input_absorbed(d, prefer):
     p = ", ".join(params) or "the moved parameters"
     verb = "is" if len(params) == 1 else "are"
     if d.get("input_refusal") == "setting":
-        return (f"the direction changes the trajectory of {w} together with {p}; the proofs that unknown inputs absorb "
-                "a direction cover models with one condition, without events and equilibrate, so the reduction has "
-                f"no section for it; {p} {verb} non-identifiable")
+        return (
+            f"the direction changes the trajectory of {w} together with {p}; the proofs that unknown inputs absorb "
+            "a direction cover models with one condition, without events and equilibrate, so the reduction has "
+            f"no section for it; {p} {verb} non-identifiable"
+        )
     if d.get("input_refusal"):
-        return (f"the direction changes the trajectory of {w} together with {p}; neither the inversion of the inputs "
-                f"from the observables nor a pointwise lift of the parameter field proves that {w} "
-                f"{'absorbs' if len(inputs) == 1 else 'absorb'} it, so the reduction has no section for it; {p} {verb} "
-                "non-identifiable")
-    return (f"the direction changes the trajectory of {w} together with {p}, with components that depend on "
-            f"{', '.join(hit)}, which vary in time: it is no vector field on the parameters, so the reduction "
-            f"has no chart for it; {p} {verb} non-identifiable because {w} "
-            f"{'absorbs' if len(inputs) == 1 else 'absorb'} the change")
+        return (
+            f"the direction changes the trajectory of {w} together with {p}; neither the inversion of the inputs "
+            f"from the observables nor a pointwise lift of the parameter field proves that {w} "
+            f"{'absorbs' if len(inputs) == 1 else 'absorb'} it, so the reduction has no section for it; {p} {verb} "
+            "non-identifiable"
+        )
+    return (
+        f"the direction changes the trajectory of {w} together with {p}, with components that depend on "
+        f"{', '.join(hit)}, which vary in time: it is no vector field on the parameters, so the reduction "
+        f"has no chart for it; {p} {verb} non-identifiable because {w} "
+        f"{'absorbs' if len(inputs) == 1 else 'absorb'} the change"
+    )
 
 
 def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=None, prefer=None):
@@ -391,19 +426,34 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
     blocks = []
 
     def unresolved(labs, support, reason):
-        return {"labels": labs, "type": "curved", "support": support, "stage": "none",
-                "status": "unresolved", "invariants": [], "certificates": [], "reason": reason,
-                "module_combos": None, "transversal": None, "new_parameters": None, "pins": None}
+        return {
+            "labels": labs,
+            "type": "curved",
+            "support": support,
+            "stage": "none",
+            "status": "unresolved",
+            "invariants": [],
+            "certificates": [],
+            "reason": reason,
+            "module_combos": None,
+            "transversal": None,
+            "new_parameters": None,
+            "pins": None,
+        }
+
     scal_labs = {labels[i] for i, d in enumerate(syms) if d.get("type") == "scaling"}
 
     def kind_of(labs):
         return "scaling" if labs and all(l in scal_labs for l in labs) else "curved"
+
     has_gen = []
     for i in idx:
         if syms[i].get("generator") is None:
-            why = ("no closed-form generator: the reconstruction of the detection found none (level open)"
-                   if (prefer or {}).get("reconstructed") else
-                   "no closed-form generator; re-run the detection with reconstruct=True")
+            why = (
+                "no closed-form generator: the reconstruction of the detection found none (level open)"
+                if (prefer or {}).get("reconstructed")
+                else "no closed-form generator; re-run the detection with reconstruct=True"
+            )
             blocks.append(unresolved([labels[i]], coords_of(syms[i]), why))
             continue
         why = _input_absorbed(syms[i], prefer)
@@ -426,33 +476,55 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
     for grp in group_by([pr["support"] for pr in preps]):
         glab = [labels[gi[g]] for g in grp]
         fx = fixed_reduce([preps[g] for g in grp], fixed)
-        fix_cert = [f"fixed-coordinate elimination: {fx['removed']} of {len(grp)} direction(s) cannot "
-                    f"combine away from {{{', '.join(fx['fixed_cols'])}}}"] if fx["removed"] > 0 else []
+        fix_cert = (
+            [
+                f"fixed-coordinate elimination: {fx['removed']} of {len(grp)} direction(s) cannot "
+                f"combine away from {{{', '.join(fx['fixed_cols'])}}}"
+            ]
+            if fx["removed"] > 0
+            else []
+        )
         fixed_labs = []
         if fx["removed"] > 0:
             used = {s for src in fx["sources"] for s in src}
             fixed_labs = [glab[i] for i in fx["removed_idx"] if i not in used]
         if fixed_labs or not fx["preps"]:
             fl = fixed_labs if fx["preps"] else glab
-            blocks.append({"labels": fl, "type": "curved", "kind": kind_of(fl),
-                           "support": sym_sort(list(dict.fromkeys(c for g in grp for c in preps[g]["support"]))),
-                           "stage": "fixed", "status": "fixed", "removed_by_fixed": fx["removed"],
-                           "invariants": [], "certificates": fix_cert, "reason": None,
-                           "module_combos": None, "transversal": None, "new_parameters": None,
-                           "pins": None, "gauge_note": "removed entirely by the user's fixed coordinates"})
+            blocks.append(
+                {
+                    "labels": fl,
+                    "type": "curved",
+                    "kind": kind_of(fl),
+                    "support": sym_sort(list(dict.fromkeys(c for g in grp for c in preps[g]["support"]))),
+                    "stage": "fixed",
+                    "status": "fixed",
+                    "removed_by_fixed": fx["removed"],
+                    "invariants": [],
+                    "certificates": fix_cert,
+                    "reason": None,
+                    "module_combos": None,
+                    "transversal": None,
+                    "new_parameters": None,
+                    "pins": None,
+                    "gauge_note": "removed entirely by the user's fixed coordinates",
+                }
+            )
         if not fx["preps"]:
             continue
         # the generators as detected, for the exact check of the invariants; those that move a
         # fixed coordinate act only through the combinations that do not
         originals = [preps[g] for g in grp if not set(preps[g]["support"]) & set(fixed or [])]
-        glab_k = [glab[s[0]] if len(s) == 1 else "(" + "+".join(glab[i] for i in s) + ")"
-                  for s in fx["sources"]]
+        glab_k = [glab[s[0]] if len(s) == 1 else "(" + "+".join(glab[i] for i in s) + ")" for s in fx["sources"]]
         # a block that translates linear and logarithmic coordinates needs no invariant search
         lf = linear_flow(fx["preps"], fixed, prefer)
         if lf is not None:
-            own = sym_sort([l for l in glab if l not in set(fixed_labs)])[:len(fx["preps"])]
-            lf.update(labels=own, kind=kind_of(own), originals=originals,
-                      removed_by_fixed=fx["removed"] if fx["removed"] > 0 and not fixed_labs else None)
+            own = sym_sort([l for l in glab if l not in set(fixed_labs)])[: len(fx["preps"])]
+            lf.update(
+                labels=own,
+                kind=kind_of(own),
+                originals=originals,
+                removed_by_fixed=fx["removed"] if fx["removed"] > 0 and not fixed_labs else None,
+            )
             lf["certificates"] = fix_cert + lf["certificates"]
             blocks.append(lf)
             continue
@@ -480,6 +552,7 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
             if tc is not None:
                 pr = tc["back_prep"](pr)
             return pr
+
         mr = module_reduce(p2, glab_k)
         subs = group_by([pr["support"] for pr in mr["preps"]])
         # the sub-blocks share the group's labels: each label goes to one sub-block, the
@@ -487,7 +560,7 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
         src_of = [{s for j in sub for li in mr["labels_of"][j] for s in fx["sources"][li]} for sub in subs]
         taken = set()
         for k in sorted(range(len(subs)), key=lambda k: len(src_of[k])):
-            own = sym_sort([glab[s] for s in src_of[k] if glab[s] not in taken])[:len(subs[k])]
+            own = sym_sort([glab[s] for s in src_of[k] if glab[s] not in taken])[: len(subs[k])]
             taken.update(own)
             src_of[k] = own
         for sub, sub_labs in zip(subs, src_of):
@@ -495,11 +568,15 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
             if len(supp) == 1:
                 # a direction along one coordinate: the orbit is the axis where the component keeps one sign
                 blk = scaling_block(np.array([[1]], dtype=np.int64), supp, sub_labs, fixed)
-                if blk.get("pins") and not _axis_signed(supp[0], [decomp(mr["preps"][j]) for j in sub],
-                                                        [preps[g] for g in grp]):
-                    blk.update(reach=False, coverage="partial",
-                               gauge_note=f"the component on {supp[0]} is not proven of one sign on the domain; "
-                                          f"the orbits between the zeros miss the pin")
+                if blk.get("pins") and not _axis_signed(
+                    supp[0], [decomp(mr["preps"][j]) for j in sub], [preps[g] for g in grp]
+                ):
+                    blk.update(
+                        reach=False,
+                        coverage="partial",
+                        gauge_note=f"the component on {supp[0]} is not proven of one sign on the domain; "
+                        f"the orbits between the zeros miss the pin",
+                    )
                 blocks.append(blk)
                 continue
             sol = solve_block([mr["preps"][j] for j in sub], d_poly, d_darboux, d_exp, sep)
@@ -508,49 +585,74 @@ def curved(syms, idx, labels, fixed, d_poly, d_darboux, d_exp, sep=True, pins=No
                 if uc is not None:
                     face_inv = sol["invariants"] if tc is None else tc["back"](sol["invariants"])
                     sol["invariants"] = uc["back"](sol["invariants"])
-                    sol["certificates"].append("searched in the unmoved monomial(s) " +
-                                               "; ".join(uc["note"]) +
-                                               " (constants along every orbit), invariants substituted back")
+                    sol["certificates"].append(
+                        "searched in the unmoved monomial(s) "
+                        + "; ".join(uc["note"])
+                        + " (constants along every orbit), invariants substituted back"
+                    )
                 if tc is not None:
                     sol["invariants"] = tc["back"](sol["invariants"])
-                    sol["certificates"].append("searched in the translation-group sum(s) " +
-                                               "; ".join(tc["note"]) + ", invariants substituted back")
+                    sol["certificates"].append(
+                        "searched in the translation-group sum(s) "
+                        + "; ".join(tc["note"])
+                        + ", invariants substituted back"
+                    )
             preps_orig = [mr["preps"][j] for j in sub]
             if uc is not None or tc is not None:
                 preps_orig = [decomp(pr) for pr in preps_orig]
-            blocks.append({"labels": sub_labs, "type": "curved", "kind": kind_of(sub_labs),
-                           "support": sym_sort(list(dict.fromkeys(c for pr in preps_orig for c in pr["support"]))),
-                           "stage": sol["stage"], "target": sol["target"], "count": sol.get("count"),
-                           "status": "invariant_only" if sol["invariants"] else "unresolved",
-                           "removed_by_fixed": fx["removed"] if fx["removed"] > 0 and not fixed_labs else None,
-                           "invariants": sol["invariants"],
-                           "certificates": fix_cert + sol["certificates"], "reason": sol["reason"],
-                           "module_combos": mr["combos"], "transversal": None,
-                           "new_parameters": None, "pins": None, "preps": preps_orig,
-                           "originals": originals, "face_invariants": face_inv,
-                           "face_back": uc["back"] if uc is not None else None})
+            blocks.append(
+                {
+                    "labels": sub_labs,
+                    "type": "curved",
+                    "kind": kind_of(sub_labs),
+                    "support": sym_sort(list(dict.fromkeys(c for pr in preps_orig for c in pr["support"]))),
+                    "stage": sol["stage"],
+                    "target": sol["target"],
+                    "count": sol.get("count"),
+                    "status": "invariant_only" if sol["invariants"] else "unresolved",
+                    "removed_by_fixed": fx["removed"] if fx["removed"] > 0 and not fixed_labs else None,
+                    "invariants": sol["invariants"],
+                    "certificates": fix_cert + sol["certificates"],
+                    "reason": sol["reason"],
+                    "module_combos": mr["combos"],
+                    "transversal": None,
+                    "new_parameters": None,
+                    "pins": None,
+                    "preps": preps_orig,
+                    "originals": originals,
+                    "face_invariants": face_inv,
+                    "face_back": uc["back"] if uc is not None else None,
+                }
+            )
     return blocks
 
 
 def verify_blocks(blocks):
     """X(I) = 0 for every invariant and every generator, exactly."""
+
     def chk(inv, preps):
         try:
-            return [bool(x) for x in verify_invariants([s.replace("^", "**") for s in inv],
-                                                         [dict(pr["comps"]) for pr in preps])]
+            return [
+                bool(x)
+                for x in verify_invariants([s.replace("^", "**") for s in inv], [dict(pr["comps"]) for pr in preps])
+            ]
         except Exception as exc:
             swallow(exc, "invariant verification")
             return [False] * len(inv)
+
     ident = re.compile(r"[A-Za-z._][A-Za-z0-9._]*")
     for bi, b in enumerate(blocks):
         if b["type"] == "scaling":
-            if b.get("Wres") is not None and b.get("inv_exps") is not None and \
-                    b["inv_exps"].shape[1] and b["Wres"].shape[0]:
+            if (
+                b.get("Wres") is not None
+                and b.get("inv_exps") is not None
+                and b["inv_exps"].shape[1]
+                and b["Wres"].shape[0]
+            ):
                 cols = b["Wcols"]
                 sel = [cols.index(c) for c in b["support"]]
                 if np.any(b["Wres"][:, sel] @ b["inv_exps"] != 0):
-                    raise RuntimeError("internal error: scaling invariant not "
-                                       "in the weight kernel.")
+                    raise RuntimeError("internal error: scaling invariant not in the weight kernel.")
                 b["certificates"].append("verified: integer weight annihilation, exact")
             continue
         if not b.get("invariants") or b.get("preps") is None:
@@ -566,8 +668,10 @@ def verify_blocks(blocks):
         if b.get("originals") and b["invariants"]:
             keep = chk(b["invariants"], b["originals"])
             if not all(keep):
-                b["certificates"].append(f"verification DROPPED {sum(not k for k in keep)} invariant(s): "
-                                         "X(I) != 0 for a generator as detected")
+                b["certificates"].append(
+                    f"verification DROPPED {sum(not k for k in keep)} invariant(s): "
+                    "X(I) != 0 for a generator as detected"
+                )
                 b["invariants"] = [i for i, k in zip(b["invariants"], keep) if k]
                 if not any(keep):
                     b["status"] = "unresolved"
@@ -580,13 +684,17 @@ def verify_blocks(blocks):
             continue
         other = [pr for pr in other if set(pr["support"]) & inv_syms]
         if not other:
-            b["certificates"].append("verified: X(I) = 0 for every direction of every other block too, "
-                                     "none of which moves a symbol of these invariants")
+            b["certificates"].append(
+                "verified: X(I) = 0 for every direction of every other block too, "
+                "none of which moves a symbol of these invariants"
+            )
             continue
         keep = chk(inv, other)
         if not all(keep):
-            b["certificates"].append(f"verification DROPPED {sum(not k for k in keep)} invariant(s): "
-                                     "X(I) != 0 for a direction of another block")
+            b["certificates"].append(
+                f"verification DROPPED {sum(not k for k in keep)} invariant(s): "
+                "X(I) != 0 for a direction of another block"
+            )
             b["invariants"] = [i for i, k in zip(inv, keep) if k]
             if not any(keep):
                 b["status"] = "unresolved"

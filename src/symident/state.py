@@ -3,8 +3,8 @@
 import contextlib
 import os
 
-_OPTIONS = {}
-_SWITCHES = {}
+_OPTIONS: dict = {}
+_SWITCHES: dict = {}
 _MISSING = object()
 
 
@@ -88,14 +88,24 @@ SWITCHES = {
     "LIEPLATEAU_BLOCK": ("number", "the plateau per condition block; 0 for one plateau"),
     "VERIFY_MARGIN": ("number", "orders the saturation guard checks past the reported one (6)"),
     "JETWORK": ("number", "characters of jets the jet route may form (1000000)"),
-    "BLOCKMB": ("number", "megabytes of Taylor values per column block of the kernel (an eighth of the physical "
-                          "memory over the cores, 256 to 1024); environment only"),
-    "JETMB": ("number", "megabytes of the jets the kernel keeps for calls at higher orders (eight column blocks); "
-                        "environment only"),
-    "KERNEL_MODE": ("debug", "forward or reverse fixes the mode of the kernel rows, check builds every call in "
-                             "both and raises where the rows differ; environment only"),
-    "MSOLVE_GB": ("number", "gigabytes of address space of one call of msolve in discrete() where memory is "
-                            "not given (8)"),
+    "BLOCKMB": (
+        "number",
+        "megabytes of Taylor values per column block of the kernel (an eighth of the physical "
+        "memory over the cores, 256 to 1024); environment only",
+    ),
+    "JETMB": (
+        "number",
+        "megabytes of the jets the kernel keeps for calls at higher orders (eight column blocks); environment only",
+    ),
+    "KERNEL_MODE": (
+        "debug",
+        "forward or reverse fixes the mode of the kernel rows, check builds every call in "
+        "both and raises where the rows differ; environment only",
+    ),
+    "MSOLVE_GB": (
+        "number",
+        "gigabytes of address space of one call of msolve in discrete() where memory is not given (8)",
+    ),
     "FIBER_TERMS": ("number", "terms of the equations of the fiber that one count of discrete() takes (400000)"),
     "MSOLVE": ("install", "path of the msolve executable"),
     "CACHE": ("install", "directory of the symident cache"),
@@ -125,14 +135,17 @@ def env(name):
 
 def active():
     """The switches that are set, by name."""
-    names = {k[len("SYMIDENT_"):] for k in os.environ if k.startswith("SYMIDENT_")} | set(_SWITCHES)
+    names = {k[len("SYMIDENT_") :] for k in os.environ if k.startswith("SYMIDENT_")} | set(_SWITCHES)
     return {n: env_value(n) for n in sorted(names) if env_value(n) not in (None, "")}
 
 
 def check_names():
     """Warn about SYMIDENT_* variables and switches that name no switch."""
     import warnings
+
     unknown = [n for n in active() if n not in SWITCHES]
     if unknown:
-        warnings.warn("unknown switch " + ", ".join("SYMIDENT_" + n for n in unknown) +
-                      "; see symident.state.SWITCHES", stacklevel=4)
+        warnings.warn(
+            "unknown switch " + ", ".join("SYMIDENT_" + n for n in unknown) + "; see symident.state.SWITCHES",
+            stacklevel=4,
+        )

@@ -156,7 +156,7 @@ class _Chain:
                 raise OverflowError("a Lie derivative grows past the size cap")
             self.orders.append([[spy.diff(g, w) for w in self.W] for g in self.jets])
             self.jets = [_lie(g, self.F) for g in self.jets]
-        return [r for o in self.orders[:k + 1] for r in o]
+        return [r for o in self.orders[: k + 1] for r in o]
 
 
 def gap_bound(tapes, chains, znames, n_lie, p, rng, cap=None):
@@ -170,16 +170,20 @@ def gap_bound(tapes, chains, znames, n_lie, p, rng, cap=None):
 def _gap_bound(tapes, chains, znames, n_lie, p, rng, cap):
     # a moving boundary shifts the series and the state at the event, which the family leaves out
     for c in chains:
-        if any(str(tapes[i].get("ver_time") or "").strip() and model_sympify(str(tapes[i]["ver_time"])).free_symbols
-               for i in c):
+        if any(
+            str(tapes[i].get("ver_time") or "").strip() and model_sympify(str(tapes[i]["ver_time"])).free_symbols
+            for i in c
+        ):
             return {"bound": None, "why": "an event time with a free symbol"}
     try:
         cs = [_Chain(tapes, c, n_lie, p, rng) for c in chains]
     except (OverflowError, LookupError, *SYMPY_FAILS) as exc:
         if not isinstance(exc, (OverflowError, LookupError)):
             sympy_fail(exc)
-        return {"bound": None, "why": str(exc) if isinstance(exc, LookupError) else
-                f"no symbolic family ({type(exc).__name__})"}
+        return {
+            "bound": None,
+            "why": str(exc) if isinstance(exc, LookupError) else f"no symbolic family ({type(exc).__name__})",
+        }
     zs = [spy.Symbol(z) for z in znames]
     zval = {z: spy.Integer(rng.randrange(2, p)) for z in zs}
     total, term, tdeg = [], 0, 0
@@ -226,8 +230,10 @@ def _gap_bound(tapes, chains, znames, n_lie, p, rng, cap):
             return {"bound": None, "why": "initial values that are not rational"}
         A = np.asarray(reach[1], dtype=object)
         B = np.asarray(Jv, dtype=object)
-        total += [[int(sum(int(a) * int(b) for a, b in zip(A[i], B[:, j])) % p) for j in range(len(zs))]
-                  for i in range(A.shape[0])]
+        total += [
+            [int(sum(int(a) * int(b) for a, b in zip(A[i], B[:, j])) % p) for j in range(len(zs))]
+            for i in range(A.shape[0])
+        ]
         dr, dj = rows_degree(reach[0]), rows_degree([[e for r in J for e in r]])
         tdeg = None if tdeg is None or dr is None or dj is None else max(tdeg, dr + dj)
     U = _rank(total, p)

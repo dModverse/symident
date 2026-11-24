@@ -15,9 +15,16 @@ from symident.sym.switching import Switches
 
 def det(f, g, **kw):
     kw.setdefault("cores", 1)
-    model = si.Model(f, g, trafo=kw.pop("trafo", None), fixed=kw.pop("fixed", ()),
-                     events=kw.pop("events", None), inputs=kw.pop("inputs", ()),
-                     conditions=kw.pop("conditions", None), regimes=kw.pop("regimes", None))
+    model = si.Model(
+        f,
+        g,
+        trafo=kw.pop("trafo", None),
+        fixed=kw.pop("fixed", ()),
+        events=kw.pop("events", None),
+        inputs=kw.pop("inputs", ()),
+        conditions=kw.pop("conditions", None),
+        regimes=kw.pop("regimes", None),
+    )
     return si.detect(model, **kw)
 
 
@@ -35,8 +42,8 @@ def same_span(res, expected):
     pt = {spy.Symbol(z): spy.Rational(rng.randint(2, 60), rng.randint(2, 60)) for z in coords}
 
     def col(g):
-        return spy.Matrix([spy.sympify(str(g.get(z, 0)).replace("^", "**")).xreplace(pt)
-                           for z in coords])
+        return spy.Matrix([spy.sympify(str(g.get(z, 0)).replace("^", "**")).xreplace(pt) for z in coords])
+
     got = [col(s.sympy()) for s in res.symmetries]
     want = [col(g) for g in expected]
     assert len(got) == len(want) == res.dim - res.rank
@@ -45,34 +52,49 @@ def same_span(res, expected):
         assert A.rank() == B.rank() == spy.Matrix.hstack(A, B).rank() == len(want)
 
 
-@pytest.mark.parametrize("text, point, expect", [
-    ("piecewise(a, x > t1 && x < t2, b)", {"x": "1.5", "t1": "1", "t2": "2"}, "a"),
-    ("piecewise(a, x > t1 && x < t2, b)", {"x": "3", "t1": "1", "t2": "2"}, "b"),
-    ("piecewise(a, x < t1 || x > t2, b)", {"x": "3", "t1": "1", "t2": "2"}, "a"),
-    ("piecewise(a, x < t1, b, x < t2)", {"x": "1.5", "t1": "1", "t2": "2"}, "b"),
-    ("piecewise(a, x < t1, b, x < t2)", {"x": "3", "t1": "1", "t2": "2"}, "0"),
-    ("ifelse(!(x > t1), a, b)", {"x": "3", "t1": "1"}, "b"),
-    ("Heaviside(x - t1)*a", {"x": "3", "t1": "1"}, "a"),
-    ("sign(t1 - x)*a", {"x": "3", "t1": "1"}, "-a"),
-    ("abs(t1 - x)", {"x": "3", "t1": "1"}, "2"),
-    ("max(x, t1, t2)", {"x": "1.5", "t1": "1", "t2": "2"}, "2"),
-    ("min(x, t1, t2)", {"x": "1.5", "t1": "1", "t2": "2"}, "1"),
-    ("-x^2 + (x >= t1)", {"x": "3", "t1": "1"}, "-8"),
-])
+@pytest.mark.parametrize(
+    "text, point, expect",
+    [
+        ("piecewise(a, x > t1 && x < t2, b)", {"x": "1.5", "t1": "1", "t2": "2"}, "a"),
+        ("piecewise(a, x > t1 && x < t2, b)", {"x": "3", "t1": "1", "t2": "2"}, "b"),
+        ("piecewise(a, x < t1 || x > t2, b)", {"x": "3", "t1": "1", "t2": "2"}, "a"),
+        ("piecewise(a, x < t1, b, x < t2)", {"x": "1.5", "t1": "1", "t2": "2"}, "b"),
+        ("piecewise(a, x < t1, b, x < t2)", {"x": "3", "t1": "1", "t2": "2"}, "0"),
+        ("ifelse(!(x > t1), a, b)", {"x": "3", "t1": "1"}, "b"),
+        ("Heaviside(x - t1)*a", {"x": "3", "t1": "1"}, "a"),
+        ("sign(t1 - x)*a", {"x": "3", "t1": "1"}, "-a"),
+        ("abs(t1 - x)", {"x": "3", "t1": "1"}, "2"),
+        ("max(x, t1, t2)", {"x": "1.5", "t1": "1", "t2": "2"}, "2"),
+        ("min(x, t1, t2)", {"x": "1.5", "t1": "1", "t2": "2"}, "1"),
+        ("-x^2 + (x >= t1)", {"x": "3", "t1": "1"}, "-8"),
+    ],
+)
 def test_parse(text, point, expect):
     sw = Switches(True)
     e = sw.parse(text)
     got = value(sw, e, point)
-    assert spy.simplify(got - spy.sympify(expect).xreplace(
-        {spy.Symbol(k): spy.Rational(v) for k, v in point.items()})) == 0
+    assert (
+        spy.simplify(got - spy.sympify(expect).xreplace({spy.Symbol(k): spy.Rational(v) for k, v in point.items()}))
+        == 0
+    )
 
 
-@pytest.mark.parametrize("text, expect", [
-    ("log(x, 2)", "log(x)/log(2)"), ("log10(x)", "log(x)/log(10)"), ("log2(x)", "log(x)/log(2)"),
-    ("exp10(x)", "10**x"), ("sin(x)", "sin(x)"), ("foo(x)", "foo(x)"),
-    ("ln(x)", "log(x)"), ("exp2(x)", "2**x"), ("acot(x)", "atan(1/x)"),
-    ("pow(x, 3) + cbrt(x)", "x**3 + x**(1/3)"), ("cot(x) + erf(x)", "cot(x) + erf(x)"),
-])
+@pytest.mark.parametrize(
+    "text, expect",
+    [
+        ("log(x, 2)", "log(x)/log(2)"),
+        ("log10(x)", "log(x)/log(10)"),
+        ("log2(x)", "log(x)/log(2)"),
+        ("exp10(x)", "10**x"),
+        ("sin(x)", "sin(x)"),
+        ("foo(x)", "foo(x)"),
+        ("ln(x)", "log(x)"),
+        ("exp2(x)", "2**x"),
+        ("acot(x)", "atan(1/x)"),
+        ("pow(x, 3) + cbrt(x)", "x**3 + x**(1/3)"),
+        ("cot(x) + erf(x)", "cot(x) + erf(x)"),
+    ],
+)
 def test_parse_functions_without_switch(text, expect):
     sw = Switches(True)
     assert sw.parse(text) == spy.sympify(expect)
@@ -134,8 +156,7 @@ def test_hidden_state_across_thresholds():
     # (ii) a parameter that acts only in one regime, on a state hidden there, is identifiable
     # once another regime observes that state: a field commuting with both regimes keeps
     # their mixed Lie derivatives
-    f = {"x": "-k*x + piecewise(0, x > c1, z)",
-         "z": "piecewise(-a*z, x > c1, -b*z, x > c2, 0)"}
+    f = {"x": "-k*x + piecewise(0, x > c1, z)", "z": "piecewise(-a*z, x > c1, -b*z, x > c2, 0)"}
     r = det(f, {"y": "x"}, trafo={"x": "2", "z": "1"})
     assert r.identifiable and r.info["coordinates"] == ["a", "b", "c1", "c2", "k"]
 
@@ -163,14 +184,18 @@ def test_surface_kept_or_moved():
 def test_time_event_and_input():
     # (v) events on an input: a symmetry keeps the event times and the input values
     f = {"x": "b*u - piecewise(k1, x > c, k2)*x", "u": "0"}
-    ev = [{"var": "u", "time": 0, "value": 0, "method": "replace"},
-          {"var": "u", "time": 1, "value": 1, "method": "replace"}]
+    ev = [
+        {"var": "u", "time": 0, "value": 0, "method": "replace"},
+        {"var": "u", "time": 1, "value": 1, "method": "replace"},
+    ]
     r = det(f, {"y": "s*x"}, inputs=["u"], events=ev, reconstruct=True)
     assert (r.rank, r.dim) == (5, 6)
     same_span(r, [{"x": "x", "b": "b", "c": "c", "s": "-s"}])
     # an event time in a parameter is kept fixed by every symmetry
-    ev = [{"var": "u", "time": 0, "value": 0, "method": "replace"},
-          {"var": "u", "time": "te", "value": 1, "method": "replace"}]
+    ev = [
+        {"var": "u", "time": 0, "value": 0, "method": "replace"},
+        {"var": "u", "time": "te", "value": 1, "method": "replace"},
+    ]
     r = det(f, {"y": "s*x"}, inputs=["u"], events=ev, reconstruct=True)
     assert (r.rank, r.dim) == (6, 7)
     same_span(r, [{"x": "x", "b": "b", "c": "c", "s": "-s"}])
@@ -208,8 +233,7 @@ def test_infeasible_regime_is_excluded():
     sw = r.info["switching"]
     assert len(sw["regimes"]) == 3 and len(sw["excluded"]) == 1
     assert r.info["coordinates"] == ["x", "c1", "d", "k1", "k3"]
-    assert sw["conditions"][0]["visibility"] == {"c1 - x = 0": "visible",
-                                                 "c1 + d - x = 0": "invisible"}
+    assert sw["conditions"][0]["visibility"] == {"c1 - x = 0": "visible", "c1 + d - x = 0": "invisible"}
     assert (r.rank, r.dim) == (4, 5)
     same_span(r, [{"d": "1"}])
 
@@ -241,8 +265,7 @@ def test_named_regimes():
     assert list(r.info["assumptions"]["starts"].values()) == [["c - x < 0 at the start"]]
     # a start that contradicts the known initial values is an error
     with pytest.raises(ValueError, match="initial values give"):
-        det({"x": "piecewise(-k1*x, x > 1, -k2*x)"}, {"y": "x"}, trafo={"x": "2"},
-            regimes=["x < 1"])
+        det({"x": "piecewise(-k1*x, x > 1, -k2*x)"}, {"y": "x"}, trafo={"x": "2"}, regimes=["x < 1"])
     # both regimes named: the result of the rule over all regimes
     r = det(f, {"y": "x"}, trafo={"x": "2"}, regimes=["x > c", "x < c"])
     assert r.identifiable
@@ -260,25 +283,34 @@ _SW = {"x": "piecewise(-k1*x, x > c, -k2*x)"}
 _ROOT2 = [{"var": "x", "root": "(x - c)*(x - d)", "value": "0", "method": "replace"}]
 
 
-@pytest.mark.parametrize("f, kw, match", [
-    (_SW, {"free_initial": ["x"]}, "does not support `free_initial`"),
-    (_SW, {"engine": "symbolic"}, 'needs engine="modular"'),
-    ({"time": "1", **_SW}, {}, "clashes with the clock"),
-    (_SW, {"regimes": {"zz": ["x > c"]}}, "unknown conditions: zz"),
-    (_SW, {"regimes": "x > c"}, "a list of regimes or a dict"),
-    (_SW, {"regimes": ["x > d"]}, "names no switching surface"),
-    (_SW, {"regimes": [["x > c", "x < c"]]}, "names both sides of c - x = 0"),
-    ({"x": "-k*x"}, {"regimes": ["x > c"]}, "has no switch that the declared signs leave open"),
-    ({"x": "piecewise(-k1*x, x > c1, -k2*x, x > c1 + d, -k3*x)"},
-     {"regimes": [["x < c1", "x > c1 + d"]]}, "names no feasible regime"),
-    ({"x": "ifelse(x > c, -k1*x)"}, {}, r"ifelse\(\) needs three arguments"),
-    ({"x": "piecewise(-k1*x, k1 - k2, -k2*x)"}, {}, "is not a comparison"),
-    ({"x": "piecewise(-k1*x, abs(x - c) > d, -k2*x)"}, {}, "condition on a switched expression"),
-    ({"x": "a - k*x"}, {"trafo": {"x": "0"}, "events": _ROOT2}, "is not one switching surface"),
-    ({"x": "-k*x + " + " + ".join(f"piecewise(a{i}, x > c{i}, 0)" for i in range(13))}, {},
-     "8192 sign patterns, more than 4096"),
-    ({"x": "b - piecewise(k1*x^5 + x, x > c, k2*x)"}, {"equilibrate": True}, "has no closed form"),
-])
+@pytest.mark.parametrize(
+    "f, kw, match",
+    [
+        (_SW, {"free_initial": ["x"]}, "does not support `free_initial`"),
+        (_SW, {"engine": "symbolic"}, 'needs engine="modular"'),
+        ({"time": "1", **_SW}, {}, "clashes with the clock"),
+        (_SW, {"regimes": {"zz": ["x > c"]}}, "unknown conditions: zz"),
+        (_SW, {"regimes": "x > c"}, "a list of regimes or a dict"),
+        (_SW, {"regimes": ["x > d"]}, "names no switching surface"),
+        (_SW, {"regimes": [["x > c", "x < c"]]}, "names both sides of c - x = 0"),
+        ({"x": "-k*x"}, {"regimes": ["x > c"]}, "has no switch that the declared signs leave open"),
+        (
+            {"x": "piecewise(-k1*x, x > c1, -k2*x, x > c1 + d, -k3*x)"},
+            {"regimes": [["x < c1", "x > c1 + d"]]},
+            "names no feasible regime",
+        ),
+        ({"x": "ifelse(x > c, -k1*x)"}, {}, r"ifelse\(\) needs three arguments"),
+        ({"x": "piecewise(-k1*x, k1 - k2, -k2*x)"}, {}, "is not a comparison"),
+        ({"x": "piecewise(-k1*x, abs(x - c) > d, -k2*x)"}, {}, "condition on a switched expression"),
+        ({"x": "a - k*x"}, {"trafo": {"x": "0"}, "events": _ROOT2}, "is not one switching surface"),
+        (
+            {"x": "-k*x + " + " + ".join(f"piecewise(a{i}, x > c{i}, 0)" for i in range(13))},
+            {},
+            "8192 sign patterns, more than 4096",
+        ),
+        ({"x": "b - piecewise(k1*x^5 + x, x > c, k2*x)"}, {"equilibrate": True}, "has no closed form"),
+    ],
+)
 def test_documented_errors(f, kw, match):
     # each unsupported or contradictory input stops before any analysis
     with pytest.raises(ValueError, match=match):
@@ -292,13 +324,18 @@ def test_surface_without_a_rational_point_is_undecided():
     assert r.info["switching"]["conditions"][0]["visibility"] == {"x^2 - 2 = 0": "undecided"}
 
 
-@pytest.mark.parametrize("f, g, events, weights", [
-    ({"x": "-k*x"}, {"y": "piecewise(s1*x, x > c, s2*x)"}, None,
-     {"c": "1", "s1": "-1", "s2": "-1", "x": "1"}),
-    ({"x": "piecewise(-k1*x, x > c, -k2*x)"}, {"y": "s*x"},
-     [{"var": "x", "time": "1", "value": "2", "method": "multiply", "root": None}],
-     {"c": "1", "s": "-1", "x": "1"}),
-])
+@pytest.mark.parametrize(
+    "f, g, events, weights",
+    [
+        ({"x": "-k*x"}, {"y": "piecewise(s1*x, x > c, s2*x)"}, None, {"c": "1", "s1": "-1", "s2": "-1", "x": "1"}),
+        (
+            {"x": "piecewise(-k1*x, x > c, -k2*x)"},
+            {"y": "s*x"},
+            [{"var": "x", "time": "1", "value": "2", "method": "multiply", "root": None}],
+            {"c": "1", "s": "-1", "x": "1"},
+        ),
+    ],
+)
 def test_scaling_through_a_switched_observable_or_event(f, g, events, weights):
     # a joint scaling of state and threshold survives a switched observable and a
     # multiplicative event alike
@@ -316,8 +353,14 @@ def test_heaviside_jump_observed_directly():
 def test_regimes_per_condition():
     # each condition keeps to the regime it names, so neither sees a surface
     cg = {"rows": ["a", "b"], "cols": {"x0": [3, 1]}}
-    r = det({"x": "piecewise(-k1*x, x > 2, -k2*x)"}, {"y": "x"}, trafo={"x": "x0"}, fixed=["x0"],
-            conditions=cg, regimes={"a": ["x > 2"], "b": ["x < 2"]})
+    r = det(
+        {"x": "piecewise(-k1*x, x > 2, -k2*x)"},
+        {"y": "x"},
+        trafo={"x": "x0"},
+        fixed=["x0"],
+        conditions=cg,
+        regimes={"a": ["x > 2"], "b": ["x < 2"]},
+    )
     assert r.identifiable and r.info["coordinates"] == ["k1", "k2"]
     assert [c["visibility"] for c in r.info["switching"]["conditions"]] == [{}, {}]
 
@@ -344,6 +387,7 @@ def test_root_event():
 def test_visibility_of_a_step_input_is_shared_across_switching_times(monkeypatch):
     # the jets that show a switch are computed once for conditions that differ only in the switching time
     from symident.detection import hybrid
+
     calls = []
     series = hybrid.output_series
     monkeypatch.setattr(hybrid, "output_series", lambda *a, **k: calls.append(1) or series(*a, **k))
@@ -356,6 +400,7 @@ def test_visibility_of_a_step_input_is_shared_across_switching_times(monkeypatch
 
 def test_output_series_are_the_taylor_coefficients_modulo_p():
     from symident.sym.taylor import NoSeriesError, output_series
+
     x, k, s = spy.symbols("x k s")
     p = 1000003
     (h,) = output_series({x: -k * x}, [s * x / (1 + x)], {x: 2, k: 3, s: 5}, 3, p)
@@ -367,13 +412,22 @@ def test_output_series_are_the_taylor_coefficients_modulo_p():
 
 def test_a_switched_input_model_at_rest_keeps_its_directions():
     f = {"x1": "kb + kin*u - (k1 + piecewise(kl, x1 > thr, kl2))*x1", "x2": "k1*x1 - k2*x2", "u": "0"}
-    m = si.Model(f, {"y": "s*x2"}, inputs=["u"], regimes=["x1 > thr"],
-                 events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"}],
-                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
+    m = si.Model(
+        f,
+        {"y": "s*x2"},
+        inputs=["u"],
+        regimes=["x1 > thr"],
+        events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"}],
+        conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}},
+    )
     r = si.detect(m, equilibrate=True, reconstruct=True)
     assert (r.rank, r.dim) == (4, 8)
-    assert sorted(sorted(s.support) for s in r.symmetries) == \
-        [["k1", "kb", "kin", "kl"], ["kb", "kin", "s"], ["kl2"], ["thr"]]
+    assert sorted(sorted(s.support) for s in r.symmetries) == [
+        ["k1", "kb", "kin", "kl"],
+        ["kb", "kin", "s"],
+        ["kl2"],
+        ["thr"],
+    ]
 
 
 def test_a_field_with_integer_weights_is_a_scaling():
@@ -384,8 +438,11 @@ def test_a_field_with_integer_weights_is_a_scaling():
 
 
 def test_a_direction_the_rule_does_not_prove_is_a_candidate_not_a_symmetry():
-    m = si.Model({"x": "-k*x", "z": "a"}, {"y": "s*x"},
-                 events=[{"var": "x", "root": "z - c", "value": "x0", "method": "replace"}])
+    m = si.Model(
+        {"x": "-k*x", "z": "a"},
+        {"y": "s*x"},
+        events=[{"var": "x", "root": "z - c", "value": "x0", "method": "replace"}],
+    )
     r = si.detect(m, reconstruct=True)
     assert {s.level for s in r.symmetries} == {"exact"}
     cands = r.info["switching"]["candidates"]
@@ -396,10 +453,16 @@ def test_a_direction_the_rule_does_not_prove_is_a_candidate_not_a_symmetry():
 
 
 def test_directions_through_a_condition_and_a_root_are_proven():
-    m = si.Model({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"},
-                 inputs=["u"], events=[{"var": "u", "time": 0, "value": "dose", "method": "replace"},
-                                       {"var": "x2", "root": "x1 - c", "value": "0", "method": "replace"}],
-                 conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}})
+    m = si.Model(
+        {"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"},
+        {"y": "s*x2"},
+        inputs=["u"],
+        events=[
+            {"var": "u", "time": 0, "value": "dose", "method": "replace"},
+            {"var": "x2", "root": "x1 - c", "value": "0", "method": "replace"},
+        ],
+        conditions={"rows": ["low", "high"], "cols": {"dose": [1, 10]}},
+    )
     r = si.detect(m, equilibrate=True, reconstruct=True)
     assert (r.rank, r.dim) == (5, 7) and {s.level for s in r.symmetries} == {"exact"}
     assert len(r.symmetries) == r.dim - r.rank and not r.info["switching"]["candidates"]
@@ -407,8 +470,11 @@ def test_directions_through_a_condition_and_a_root_are_proven():
 
 
 def test_a_direction_that_moves_a_root_surface_is_no_symmetry():
-    m = si.Model({"x": "-k*x", "z": "a"}, {"y": "s*x"},
-                 events=[{"var": "x", "root": "z - c", "value": "x0", "method": "replace"}])
+    m = si.Model(
+        {"x": "-k*x", "z": "a"},
+        {"y": "s*x"},
+        events=[{"var": "x", "root": "z - c", "value": "x0", "method": "replace"}],
+    )
     r = si.detect(m, reconstruct=True)
     assert all(s.level == "exact" for s in r.symmetries)
     assert {"a", "z"} not in [set(s.support) for s in r.symmetries]
@@ -437,17 +503,35 @@ def _brief(r):
     return r.rank, r.dim, r.info["coordinates"], sorted((s.type, s.level) for s in r.symmetries)
 
 
-@pytest.mark.parametrize("clock, plain", [
-    (dict(trafo={"x": "a + time"}), dict(trafo={"x": "a"})),
-    (dict(trafo={"x": "1"}, events=[{"var": "x", "time": 2, "value": "c2*time", "method": "add"}]),
-     dict(trafo={"x": "1"}, events=[{"var": "x", "time": 2, "value": "2*c2", "method": "add"}])),
-    (dict(trafo={"x": "1", "k1": "a*time"}), dict(trafo={"x": "1"}, f={"x": "piecewise(-a*time*x, x > thr, -k2*x)"})),
-    (dict(trafo={"x": "1"}, events=[{"var": "x", "time": "tau", "value": "c2", "method": "add"}],
-          conditions={"rows": ["a", "b"], "cols": {"tau": [0, 1]}}),
-     dict(trafo={"x": "1"}, events=[{"var": "x", "time": "0", "value": "c2", "method": "add", "cond": [0]},
-                                    {"var": "x", "time": "1", "value": "c2", "method": "add", "cond": [1]}],
-          conditions={"rows": ["a", "b"], "cols": {}})),
-])
+@pytest.mark.parametrize(
+    "clock, plain",
+    [
+        (dict(trafo={"x": "a + time"}), dict(trafo={"x": "a"})),
+        (
+            dict(trafo={"x": "1"}, events=[{"var": "x", "time": 2, "value": "c2*time", "method": "add"}]),
+            dict(trafo={"x": "1"}, events=[{"var": "x", "time": 2, "value": "2*c2", "method": "add"}]),
+        ),
+        (
+            dict(trafo={"x": "1", "k1": "a*time"}),
+            dict(trafo={"x": "1"}, f={"x": "piecewise(-a*time*x, x > thr, -k2*x)"}),
+        ),
+        (
+            dict(
+                trafo={"x": "1"},
+                events=[{"var": "x", "time": "tau", "value": "c2", "method": "add"}],
+                conditions={"rows": ["a", "b"], "cols": {"tau": [0, 1]}},
+            ),
+            dict(
+                trafo={"x": "1"},
+                events=[
+                    {"var": "x", "time": "0", "value": "c2", "method": "add", "cond": [0]},
+                    {"var": "x", "time": "1", "value": "c2", "method": "add", "cond": [1]},
+                ],
+                conditions={"rows": ["a", "b"], "cols": {}},
+            ),
+        ),
+    ],
+)
 def test_a_switch_reads_the_clock_and_the_event_times_of_each_condition(clock, plain):
     f = {"x": "piecewise(-k1*x, x > thr, -k2*x)"}
     clock, plain = dict(clock), dict(plain)
@@ -457,15 +541,22 @@ def test_a_switch_reads_the_clock_and_the_event_times_of_each_condition(clock, p
 
 def test_every_copy_of_a_switch_starts_its_inputs_by_an_event(monkeypatch):
     from symident.detection import hybrid
+
     rows, build = {}, hybrid._rows_model
 
     def keep(*a):
         rows.update(build(*a))
         return rows
+
     monkeypatch.setattr(hybrid, "_rows_model", keep)
     f = {"x": "piecewise(-k1*x*u, x > thr, -k2*x)", "u": "0"}
-    det(f, {"y": "c*x"}, inputs=["u"], trafo={"x": "1"},
-        events=[{"var": "u", "time": 0, "value": "w", "method": "replace"}])
+    det(
+        f,
+        {"y": "c*x"},
+        inputs=["u"],
+        trafo={"x": "1"},
+        events=[{"var": "u", "time": 0, "value": "w", "method": "replace"}],
+    )
     starts = [e for e in rows["events"] if e["var"] == "u"]
     assert not any("u" in t for t in rows["trafo"]) and len(rows["trafo"]) > 4
     assert sorted(e["cond"][0] for e in starts) == list(range(len(rows["trafo"])))
@@ -498,9 +589,14 @@ def test_every_regime_enters_a_start_and_a_switched_copy():
     from types import SimpleNamespace
 
     from symident.detection.hybrid import _uncovered
+
     cd = SimpleNamespace(name="c1", regimes=[[1], [-1]])
-    full = [{"cd": cd, "sides": [1]}, {"cd": cd, "sides": [1], "switch": (1, [-1])},
-            {"cd": cd, "sides": [-1]}, {"cd": cd, "sides": [-1], "switch": (1, [1])}]
+    full = [
+        {"cd": cd, "sides": [1]},
+        {"cd": cd, "sides": [1], "switch": (1, [-1])},
+        {"cd": cd, "sides": [-1]},
+        {"cd": cd, "sides": [-1], "switch": (1, [1])},
+    ]
     st = SimpleNamespace(conds=[cd], unknown=[])
     assert _uncovered(st, full) == []
     assert _uncovered(st, full[:2]) == [("c1", [1], "switched"), ("c1", [-1], "start")]
@@ -524,8 +620,7 @@ def test_fresh_coordinates_that_drop_rank_together_are_checked_at_a_random_point
 
 def test_rows_of_full_rank_without_fresh_coordinates_prove_the_rank():
     k = "piecewise(k1, w > 1, k2)"
-    r = det({"w": "-w", "x1": f"-{k}*x1", "x2": f"-{k}*x2"}, {"y1": "w", "y2": "x1 + x2"},
-            trafo={"w": "2", "x1": "1"})
+    r = det({"w": "-w", "x1": f"-{k}*x1", "x2": f"-{k}*x2"}, {"y1": "w", "y2": "x1 + x2"}, trafo={"w": "2", "x1": "1"})
     assert r.identifiable and r.dim == 3
     assert r.info["projection"] is None and r.info["rank_status"]["status"] == "proven"
 
@@ -547,8 +642,13 @@ def test_start_points_whose_fresh_columns_drop_rank_are_left_out_of_the_proof():
 def test_an_event_of_one_condition_acts_in_that_condition_only():
     f = {"x": "-k*x", "w": "piecewise(-a*w, w > h, -b*w)"}
     ev = [{"var": "x", "time": 1, "value": "1", "method": "replace", "cond": [0]}]
-    r = det(f, [{"y1": "x", "y2": "w"}, {"y1": "s*x", "y2": "w"}], trafo=[{"x": "1", "w": "1"}, {"x": "x0", "w": "1"}],
-            events=ev, conditions={"rows": ["A", "B"], "cols": {}})
+    r = det(
+        f,
+        [{"y1": "x", "y2": "w"}, {"y1": "s*x", "y2": "w"}],
+        trafo=[{"x": "1", "w": "1"}, {"x": "x0", "w": "1"}],
+        events=ev,
+        conditions={"rows": ["A", "B"], "cols": {}},
+    )
     assert (r.rank, r.dim) == (5, 6)
 
 
@@ -569,15 +669,15 @@ def test_a_state_that_every_regime_keeps_at_zero_leaves_the_model():
 
 
 def test_a_state_driven_off_zero_through_a_chain_stays_in_the_model():
-    f = {"x1": "-c*x1", "x2": "piecewise(a, x1 > h, -k*x2)", "x3": "x2 - d*x3", "x4": "x3 - d*x4",
-         "x5": "-e*x5"}
+    f = {"x1": "-c*x1", "x2": "piecewise(a, x1 > h, -k*x2)", "x3": "x2 - d*x3", "x4": "x3 - d*x4", "x5": "-e*x5"}
     r = det(f, {"y1": "x1", "y2": "x4 + x5"}, trafo={"x1": "1", "x2": "0", "x3": "0", "x4": "0", "x5": "0"})
     assert r.info["zero_states"] == ["x5"]
 
 
 def _with_input(f, g, trafo, **kw):
-    m = si.Model(f, g, trafo=trafo, unknown_inputs=["w"], events=kw.pop("events", None),
-                 conditions=kw.pop("conditions", None))
+    m = si.Model(
+        f, g, trafo=trafo, unknown_inputs=["w"], events=kw.pop("events", None), conditions=kw.pop("conditions", None)
+    )
     return si.detect(m, cores=1, reconstruct=True, **kw)
 
 
@@ -593,8 +693,9 @@ def test_an_unknown_input_is_continuous_across_a_switch():
 
 
 def test_an_unknown_input_takes_up_only_the_rates_of_what_it_drives():
-    r = _with_input({"x": "w - k*x", "z": "piecewise(a, x < c, b)*x - d*z"}, {"y1": "x", "y2": "z"},
-                    {"x": "x0", "z": "z0"})
+    r = _with_input(
+        {"x": "w - k*x", "z": "piecewise(a, x < c, b)*x - d*z"}, {"y1": "x", "y2": "z"}, {"x": "x0", "z": "z0"}
+    )
     (s,) = r.symmetries
     assert s.support == ["k"] and s.level == "exact" and r.rank == r.dim - 1 and r.info["rank_proven"] == 1
 
@@ -609,8 +710,12 @@ def test_a_switch_that_a_kink_of_the_input_can_hide_is_not_visible():
 
 def test_unknown_inputs_with_switches_refuse_later_events_and_switches_on_the_input():
     with pytest.raises(ValueError, match="events after the start"):
-        _with_input({"x": "w - piecewise(k1, x < c, k2)*x"}, {"y": "x"}, {"x": "x0"},
-                    events=[{"var": "x", "time": 2, "value": 1, "method": "add"}])
+        _with_input(
+            {"x": "w - piecewise(k1, x < c, k2)*x"},
+            {"y": "x"},
+            {"x": "x0"},
+            events=[{"var": "x", "time": 2, "value": 1, "method": "add"}],
+        )
     with pytest.raises(ValueError, match="switch on the unknown input"):
         _with_input({"x": "piecewise(a, w < c, b) - k*x"}, {"y": "x"}, {"x": "x0"})
     f, cols = {"x": "s*w - piecewise(k1, x < c, k2)*x"}, {"s": [1, 2]}
@@ -620,11 +725,21 @@ def test_unknown_inputs_with_switches_refuse_later_events_and_switches_on_the_in
 
 def test_an_unknown_input_of_its_own_per_condition_with_switches():
     f, g = {"x": "s*w - piecewise(k1, x < c, k2)*x"}, {"y": "x"}
-    m = si.Model(f, g, trafo={"x": "x0"}, unknown_inputs=["w", "w2"],
-                 conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "w2"]}})
+    m = si.Model(
+        f,
+        g,
+        trafo={"x": "x0"},
+        unknown_inputs=["w", "w2"],
+        conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "w2"]}},
+    )
     r = si.detect(m, cores=1, reconstruct=True)
     assert (r.rank, r.dim) == (3, 4) and r.info["rank_proven"] == 1
     same_span(r, [{"k1": 1, "k2": 1}])
-    m = si.Model(f, g, trafo={"x": "x0"}, unknown_inputs=["w"],
-                 conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "0"]}})
+    m = si.Model(
+        f,
+        g,
+        trafo={"x": "x0"},
+        unknown_inputs=["w"],
+        conditions={"rows": ["a", "b"], "cols": {"s": [1, 2], "w": ["w", "0"]}},
+    )
     assert si.detect(m, cores=1).identifiable

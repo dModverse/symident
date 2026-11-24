@@ -24,9 +24,12 @@ def gauge_state(kernel, coords):
     N = np.asarray(kernel["N"], dtype=np.int64)
     p = kernel["p"]
     rr = _core.sym_rref_mod((N.T % p).astype(np.float64), p)
-    return {"R": np.asarray(rr["R"], dtype=np.float64).reshape(-1, N.shape[0]),
-            "piv": np.atleast_1d(rr["piv"]).astype(np.int64), "p": p,
-            "coords": list(kernel["coords"])}
+    return {
+        "R": np.asarray(rr["R"], dtype=np.float64).reshape(-1, N.shape[0]),
+        "piv": np.atleast_1d(rr["piv"]).astype(np.int64),
+        "p": p,
+        "coords": list(kernel["coords"]),
+    }
 
 
 def outside_span(W, chosen_idx):
@@ -36,7 +39,7 @@ def outside_span(W, chosen_idx):
     A = W[:, chosen_idx]
     coef, *_ = np.linalg.lstsq(A, W, rcond=None)
     r = W - A @ coef
-    return np.sqrt((r ** 2).sum(axis=0)) > 1e-7 * np.maximum(1, np.sqrt((W ** 2).sum(axis=0)))
+    return np.sqrt((r**2).sum(axis=0)) > 1e-7 * np.maximum(1, np.sqrt((W**2).sum(axis=0)))
 
 
 def gauge_shape(kernel, coords, count=None):
@@ -62,6 +65,7 @@ def gauge_shape(kernel, coords, count=None):
         free = np.atleast_1d(rr["piv"]) >= len(cs)
         cols = [i for i, c in enumerate(order) if count is None or c in set(count)]
         return [int(x) for x in (R[free][:, cols] != 0).sum(axis=1)]
+
     return shape
 
 
@@ -81,10 +85,8 @@ def gauge_suggest(syms, kernel, coordinates, fixed=()):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         best = choose_gauge(scal, None, fixed=fixed, kernel=kernel)
-        plain = choose_gauge(scal, None, fixed=fixed,
-                             avoid=list(dict.fromkeys(c for d in gen for c in _coords_of(d))))
-    return {"gauge": best, "sizes": sorted(shape(best)), "plain": plain,
-            "plain_sizes": sorted(shape(plain))}
+        plain = choose_gauge(scal, None, fixed=fixed, avoid=list(dict.fromkeys(c for d in gen for c in _coords_of(d))))
+    return {"gauge": best, "sizes": sorted(shape(best)), "plain": plain, "plain_sizes": sorted(shape(plain))}
 
 
 def choose_gauge(scal, pref, avoid=(), fixed=(), kernel=None):
@@ -117,8 +119,7 @@ def choose_gauge(scal, pref, avoid=(), fixed=(), kernel=None):
                 break
             top = min(pref_rank[j] for j in ok)
             cand = [coords[j] for j in ok if pref_rank[j] == top]
-            score = _core.sym_gauge_scores(st["R"], st["piv"], st["p"],
-                                         [st["coords"].index(c) for c in cand])
+            score = _core.sym_gauge_scores(st["R"], st["piv"], st["p"], [st["coords"].index(c) for c in cand])
             k = cand[int(np.argmin(np.asarray(score)))]
             fx = _core.sym_gauge_fix(st["R"], st["piv"], st["p"], st["coords"].index(k))
             st["R"] = np.asarray(fx["R"], dtype=np.float64)
@@ -132,14 +133,17 @@ def choose_gauge(scal, pref, avoid=(), fixed=(), kernel=None):
             if len(chosen) == W.shape[0]:
                 break
     if len(chosen) < W.shape[0]:
-        warnings.warn(f"the scaling weights have rank {len(chosen)} for "
-                      f"{W.shape[0]} scalings; the gauge fixes {len(chosen)}.", stacklevel=2)
+        warnings.warn(
+            f"the scaling weights have rank {len(chosen)} for {W.shape[0]} scalings; the gauge fixes {len(chosen)}.",
+            stacklevel=2,
+        )
     return chosen
 
 
 def gauged_detection(args, pref, fixed, reconstruct):
     """Scalings first, then the general directions in a gauge of the scalings."""
     from .core import symmetry_detection
+
     args = dict(args, gauge_preference=False)
     t0 = time.monotonic()
     a1 = dict(args, reconstruct=False)
@@ -147,25 +151,39 @@ def gauged_detection(args, pref, fixed, reconstruct):
         s1 = symmetry_detection(**a1)
 
     def split(s):
-        return ([d for d in s["symmetries"] if d["type"] == "scaling"],
-                [d for d in s["symmetries"] if d["type"] != "scaling"])
+        return (
+            [d for d in s["symmetries"] if d["type"] == "scaling"],
+            [d for d in s["symmetries"] if d["type"] != "scaling"],
+        )
+
     scal, gen = split(s1)
-    if not _settled(s1["info"]) and not s1["info"].get("lie_certified") and \
-            (not (gen and reconstruct) or s1["info"].get("stacked")):
+    if (
+        not _settled(s1["info"])
+        and not s1["info"].get("lie_certified")
+        and (not (gen and reconstruct) or s1["info"].get("stacked"))
+    ):
         with state.options(keep_kernel=True, stacked_first=False):
             s1 = symmetry_detection(**a1)
         scal, gen = split(s1)
-    gauge = choose_gauge(scal, pref, avoid=list(dict.fromkeys(s for d in gen for s in d["support"])),
-                         fixed=list(fixed or []), kernel=s1["info"]["kernel"] if gen else None)
+    gauge = choose_gauge(
+        scal,
+        pref,
+        avoid=list(dict.fromkeys(s for d in gen for s in d["support"])),
+        fixed=list(fixed or []),
+        kernel=s1["info"]["kernel"] if gen else None,
+    )
     if pref and gen:
         coords_i = list(s1["info"]["coordinates"])
         shape = gauge_shape(s1["info"]["kernel"], coords_i, count=coords_i)
         sug = gauge_suggest(s1["symmetries"], s1["info"]["kernel"], coords_i, fixed=list(fixed or []))
         if shape is not None and sug is not None and max(shape(gauge) or [0]) > max(sug["sizes"] or [0]):
-            warnings.warn(f"the preferred gauge ({', '.join(gauge)}) leaves "
-                          f"general directions on up to {max(shape(gauge))} coordinates; fixing "
-                          f"{', '.join(sug['gauge'])} leaves at most {max(sug['sizes'])}, which "
-                          "reduce() handles faster.", stacklevel=2)
+            warnings.warn(
+                f"the preferred gauge ({', '.join(gauge)}) leaves "
+                f"general directions on up to {max(shape(gauge))} coordinates; fixing "
+                f"{', '.join(sug['gauge'])} leaves at most {max(sug['sizes'])}, which "
+                "reduce() handles faster.",
+                stacklevel=2,
+            )
     res = s1
     s1info = dict(s1["info"])
     res["info"] = dict(s1info, kernel=None, sat_score=None, stacked=None)
@@ -174,13 +192,17 @@ def gauged_detection(args, pref, fixed, reconstruct):
         s1ok = bool(s1info.get("lie_certified")) or _settled(s1info)
         hint = None
         if s1info.get("lie_block_orders"):
-            hint = {"block_orders": [int(x) for x in s1info["lie_block_orders"]],
-                    "nt_used": int(s1info["lie_order_used"]), "sat_score": s1info.get("sat_score"),
-                    "Mtot": int(s1info.get("gap_order_used") or 0), "certified": s1ok,
-                    "order_bound": s1info.get("order_bound"),
-                    "order_bound_why": s1info.get("order_bound_why"),
-                    "order_draws": s1info.get("order_draws"),
-                    "gap_stop": "full" if s1info.get("gap_certified") else "plateau"}
+            hint = {
+                "block_orders": [int(x) for x in s1info["lie_block_orders"]],
+                "nt_used": int(s1info["lie_order_used"]),
+                "sat_score": s1info.get("sat_score"),
+                "Mtot": int(s1info.get("gap_order_used") or 0),
+                "certified": s1ok,
+                "order_bound": s1info.get("order_bound"),
+                "order_bound_why": s1info.get("order_bound_why"),
+                "order_draws": s1info.get("order_draws"),
+                "gap_stop": "full" if s1info.get("gap_certified") else "plateau",
+            }
         with state.options(order_hint=hint):
             s2 = symmetry_detection(**a2)
         res["symmetries"] = scal + s2["symmetries"]
@@ -216,6 +238,9 @@ def _joint_bound(b1, b2):
     for b in (b1, b2):
         if b.get("probability") is None:
             return b
-    return dict(b2, probability=float(min(1.0, b1["probability"] + b2["probability"])),
-                degree=max(int(b1.get("degree") or 0), int(b2.get("degree") or 0)),
-                draws=max(int(b1.get("draws") or 0), int(b2.get("draws") or 0)))
+    return dict(
+        b2,
+        probability=float(min(1.0, b1["probability"] + b2["probability"])),
+        degree=max(int(b1.get("degree") or 0), int(b2.get("degree") or 0)),
+        draws=max(int(b1.get("draws") or 0), int(b2.get("draws") or 0)),
+    )

@@ -44,6 +44,7 @@ def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves):
         z[r] = z[r] % P * aval % P
         z[v] = z[v] % P * ainv % P
         return z
+
     moves = {"add": add, "mul": mul}
     nt = sc["nt_used"]
 
@@ -53,6 +54,7 @@ def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves):
 
     def same(a, b):
         return a is not None and b is not None and a[0] == b[0] and np.array_equal(a[1], b[1])
+
     def shift(z, v):
         z = z.copy()
         z[v] += tval
@@ -62,6 +64,7 @@ def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves):
         z = z.copy()
         z[v] = z[v] % P * aval % P
         return z
+
     single = {"add": shift, "mul": scale}
     at_z1 = outcome(kb_s([z1], [P], nt)[0])
     groups = []
@@ -71,13 +74,12 @@ def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves):
         todo = [x for x in relevant if x not in grouped]
         # leaves that enter only through their sum (product) give the same kernel when either alone
         # is shifted (scaled): only pairs with the same such signature are tested
-        sig = [outcome(o) for o in kb_s([single[type_](z1, v) for v in todo], [P] * len(todo), nt)] \
-            if todo else []
+        sig = [outcome(o) for o in kb_s([single[type_](z1, v) for v in todo], [P] * len(todo), nt)] if todo else []
         sig = dict(zip(todo, sig))
         # one kernel call per block against every possible representative; the greedy
         # assignment replays in order
         for start in range(0, len(todo), _BLOCK):
-            block = todo[start:start + _BLOCK]
+            block = todo[start : start + _BLOCK]
             keys = [(r, v) for i, v in enumerate(block) for r in reps + block[:i] if same(sig[r], sig[v])]
             outs = kb_s([mv(z1, r, v) for r, v in keys], [P] * len(keys), nt) if keys else []
             got = {k: outcome(o) for k, o in zip(keys, outs)}
@@ -97,6 +99,7 @@ def translation_groups(rel_s, ref_s, res_s, kb_s, sc, P, n_leaves):
 def shift_groups(vec, groups, leaf_names, point0):
     """Entries fitted with group members held at the base point, mapped back to the groups."""
     import sympy as spy
+
     taken = set(vec) | set(leaf_names)
     U = []
     for k in range(len(groups)):

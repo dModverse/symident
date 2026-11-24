@@ -20,6 +20,7 @@ def direction_relevance(f, ref, pivots, z_slots, n_leaves, point0, rel_probe, re
 
     def nv(rp, p, zvals=zvals0):
         return null_residues(rp, f, p) if residue_fn is None else residue_fn(rp, p, zvals)
+
     optimistic = _optimistic(residue_fn)
     base_nv = nv(ref, P)
     if base_nv is None:
@@ -44,17 +45,21 @@ def direction_relevance(f, ref, pivots, z_slots, n_leaves, point0, rel_probe, re
         for i, c in enumerate(support_cols):
             if nvp[c] != base_nv[c]:
                 rel_by_entry[i].append(li)
-    return {"base_nv": base_nv, "support_cols": support_cols, "relevant": relevant,
-            "rel_by_entry": rel_by_entry}
+    return {"base_nv": base_nv, "support_cols": support_cols, "relevant": relevant, "rel_by_entry": rel_by_entry}
 
 
 def dense_need(rel_by_entry, ctrl, degrees=None):
     """Sample count the dense interpolation needs, and whether any entry is dense."""
+
     def is_dense(r):
         return 1 <= len(r) <= ctrl["relevance_cap"]
+
     degs = degrees or [None] * len(rel_by_entry)
-    needs = [2 * math.comb(len(r) + (ctrl["degree_cap"] if d is None else d), len(r)) - 1 + ctrl["sample_slack"]
-             for r, d in zip(rel_by_entry, degs) if is_dense(r)]
+    needs = [
+        2 * math.comb(len(r) + (ctrl["degree_cap"] if d is None else d), len(r)) - 1 + ctrl["sample_slack"]
+        for r, d in zip(rel_by_entry, degs)
+        if is_dense(r)
+    ]
     return {"max_need": int(max(needs, default=0)), "any_dense": bool(needs)}
 
 
@@ -106,9 +111,10 @@ def build_shared_bank(union, need_pts, point0, pool, pool_next, kbatch, pivots, 
             points.append(cand[ci])
             rps.append(rpc)
     if bd:
-        print(f"[bankdiag] union={nu} need_pts={need_pts} tries={tries} good={n_good} "
-              f"solve_fail={n_solve_fail} piv_mismatch={n_piv_mismatch}")
+        print(
+            f"[bankdiag] union={nu} need_pts={need_pts} tries={tries} good={n_good} "
+            f"solve_fail={n_solve_fail} piv_mismatch={n_piv_mismatch}"
+        )
     if len(points) < need_pts:
         return {"ok": False, "pool_next": pool_next}
-    return {"ok": True, "U": U, "points": points, "rps": rps, "union": list(union),
-            "pool_next": pool_next}
+    return {"ok": True, "U": U, "points": points, "rps": rps, "union": list(union), "pool_next": pool_next}

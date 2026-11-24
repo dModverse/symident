@@ -11,7 +11,7 @@ from .. import session, state
 from ..errors import SYMPY_FAILS, InapplicableError, sympy_fail
 from .parse import _as_list, _clean, _make_local_parse
 
-_LIFT_CACHE = {}
+_LIFT_CACHE: dict = {}
 
 
 class _DistCheck:
@@ -32,10 +32,9 @@ class _DistCheck:
         if fn is None:
             # decimals as exact rationals, rationals as Fraction: no float enters
             ex = e.xreplace({x: spy.Rational(str(x)) for x in e.atoms(spy.Float)})
-            frac = spy.Function('Fraction')
-            ex = ex.xreplace({x: frac(x.p, x.q) for x in ex.atoms(spy.Rational)
-                              if not x.is_Integer})
-            fn = spy.lambdify(syms, ex, modules=[{'Fraction': Fraction}])
+            frac = spy.Function("Fraction")
+            ex = ex.xreplace({x: frac(x.p, x.q) for x in ex.atoms(spy.Rational) if not x.is_Integer})
+            fn = spy.lambdify(syms, ex, modules=[{"Fraction": Fraction}])
             self.fns[key] = fn
         try:
             v = fn(*vals)
@@ -83,7 +82,8 @@ def _span_coeffs(B, v, p):
 
 class _DualMod:
     """a + b*eps over GF(p) with eps^2 = 0, for directional derivatives of lambdified rational expressions."""
-    __slots__ = ('a', 'b', 'p')
+
+    __slots__ = ("a", "b", "p")
 
     def __init__(self, a, b, p):
         self.a, self.b, self.p = a % p, b % p, p
@@ -94,11 +94,10 @@ class _DualMod:
         if isinstance(o, Fraction):
             if o.denominator % self.p == 0:
                 raise ZeroDivisionError
-            return _DualMod(o.numerator % self.p * pow(o.denominator % self.p, self.p - 2,
-                                                       self.p), 0, self.p)
+            return _DualMod(o.numerator % self.p * pow(o.denominator % self.p, self.p - 2, self.p), 0, self.p)
         if isinstance(o, int):
             return _DualMod(o, 0, self.p)
-        raise InapplicableError('unsupported operand')
+        raise InapplicableError("unsupported operand")
 
     def __add__(self, o):
         o = self._c(o)
@@ -137,7 +136,7 @@ class _DualMod:
         if isinstance(n, Fraction) and n.denominator == 1:
             n = n.numerator
         if not isinstance(n, int):
-            raise InapplicableError('non-integer power')
+            raise InapplicableError("non-integer power")
         if n < 0:
             return _DualMod(1, 0, self.p) / (self ** (-n))
         if n == 0:
@@ -156,28 +155,28 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
     mod = p
     lines = []
     for rg in regimes:
-        lines += list(_as_list(rg['f'])) + list(_as_list(rg['g']))
+        lines += list(_as_list(rg["f"])) + list(_as_list(rg["g"]))
     for gl in gens:
         for gg in gl:
-            lines += ['_ = %s' % v for v in dict(gg).values()]
+            lines += ["_ = %s" % v for v in dict(gg).values()]
     for ev in events:
-        lines += ['_ = %s' % e['value'] for e in _as_list(ev['ev'])]
+        lines += ["_ = %s" % e["value"] for e in _as_list(ev["ev"])]
     ck = _DistCheck(lines)
     rng = session.current().rng("distribution", seed)
     states = []
     for rg in regimes:
-        for l in _as_list(rg['f']):
-            nm = _clean(l).split('=', 1)[0].strip()
+        for l in _as_list(rg["f"]):
+            nm = _clean(l).split("=", 1)[0].strip()
             if nm not in states:
                 states.append(nm)
     F, H = [], []
     for rg in regimes:
         rhs = {}
-        for l in _as_list(rg['f']):
-            lhs, e = _clean(l).split('=', 1)
+        for l in _as_list(rg["f"]):
+            lhs, e = _clean(l).split("=", 1)
             rhs[lhs.strip()] = ck.expr(e)
         F.append(rhs)
-        H.append([ck.expr(_clean(l).split('=', 1)[1]) for l in _as_list(rg['g'])])
+        H.append([ck.expr(_clean(l).split("=", 1)[1]) for l in _as_list(rg["g"])])
     Xm = [[{str(k): ck.expr(v) for k, v in dict(gg).items()} for gg in gl] for gl in gens]
     syms = set()
     for rhs in F:
@@ -191,11 +190,11 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
             for e in gg.values():
                 syms |= e.free_symbols
     for ev in events:
-        for e in _as_list(ev['ev']):
-            syms |= ck.expr(e['value']).free_symbols
+        for e in _as_list(ev["ev"]):
+            syms |= ck.expr(e["value"]).free_symbols
     for lf in lifts:
-        syms |= {spy.Symbol(str(k)) for k in dict(lf['point'])}
-        for v in _as_list(lf['vectors']):
+        syms |= {spy.Symbol(str(k)) for k in dict(lf["point"])}
+        for v in _as_list(lf["vectors"]):
             syms |= {spy.Symbol(str(k)) for k in dict(v)}
     coords = states + sorted({str(s) for s in syms} - set(states))
     in_model = set()
@@ -223,13 +222,12 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
         return d
 
     def deriv_dir(e, field):
-        return sum((dpart(e, s) * comp(field, str(s)) for s in e.free_symbols
-                    if str(s) in field), zero)
+        return sum((dpart(e, s) * comp(field, str(s)) for s in e.free_symbols if str(s) in field), zero)
 
     def vec(exprs, vals):
         out = []
         for e in exprs:
-            v = ck.value(e, sym_list, vals, mod, skey='vd')
+            v = ck.value(e, sym_list, vals, mod, skey="vd")
             if v is None:
                 return None
             out.append(v)
@@ -242,7 +240,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
         for nm, e in x.items():
             if nm not in pos_of or e == zero:
                 continue
-            v = ck.value(e, sym_list, vals, mod, skey='vd')
+            v = ck.value(e, sym_list, vals, mod, skey="vd")
             if v is None:
                 return None
             out[pos_of[nm]] = v
@@ -257,9 +255,10 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
         key = (r, j)
         if key not in bracket_cache:
             x, Fr = Xm[r][j], {nm: F[r].get(nm, zero) for nm in states}
-            bracket_cache[key] = [deriv_dir(comp(Fr, nm), x) - deriv_dir(comp(x, nm), Fr)
-                                  if nm in Fr else -deriv_dir(comp(x, nm), Fr)
-                                  for nm in coords]
+            bracket_cache[key] = [
+                deriv_dir(comp(Fr, nm), x) - deriv_dir(comp(x, nm), Fr) if nm in Fr else -deriv_dir(comp(x, nm), Fr)
+                for nm in coords
+            ]
         return bracket_cache[key]
 
     def fields_at(r, vals):
@@ -288,20 +287,21 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
         fn = lam_cache.get(key)
         if fn is None:
             ex = []
-            frac = spy.Function('Fraction')
+            frac = spy.Function("Fraction")
             for e in exprs:
                 e = spy.sympify(e)
                 e = e.xreplace({x: spy.Rational(str(x)) for x in e.atoms(spy.Float)})
-                e = e.xreplace({x: frac(x.p, x.q) for x in e.atoms(spy.Rational)
-                                if not x.is_Integer})
+                e = e.xreplace({x: frac(x.p, x.q) for x in e.atoms(spy.Rational) if not x.is_Integer})
                 ex.append(e)
-            fn = lam_cache[key] = spy.lambdify(sym_list, ex, modules=[{'Fraction': Fraction}])
+            fn = lam_cache[key] = spy.lambdify(sym_list, ex, modules=[{"Fraction": Fraction}])
         return fn
 
     def along(key, exprs, vals, dirv):
         """Values and derivatives of exprs at vals along dirv (residues), or None."""
-        args = [_DualMod(int(v.numerator) % mod * pow(int(v.denominator) % mod, mod - 2, mod),
-                         d, mod) for v, d in zip(vals, dirv)]
+        args = [
+            _DualMod(int(v.numerator) % mod * pow(int(v.denominator) % mod, mod - 2, mod), d, mod)
+            for v, d in zip(vals, dirv)
+        ]
         try:
             out = lam(key, exprs)(*args)
         except SYMPY_FAILS as exc:
@@ -327,8 +327,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
 
     def rat_idx(r):
         if r not in rat_of:
-            rat_of[r] = [k for k, nm in enumerate(states)
-                         if not F[r].get(nm, zero).atoms(spy.Function)]
+            rat_of[r] = [k for k, nm in enumerate(states) if not F[r].get(nm, zero).atoms(spy.Function)]
         return rat_of[r]
 
     def bracket_at(r, j, vals):
@@ -340,7 +339,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
         n_s = len(states)
         ri = rat_idx(r)
         df = [0] * n_s
-        fx = along(('F', r), [F[r].get(states[k], zero) for k in ri], vals, x)
+        fx = along(("F", r), [F[r].get(states[k], zero) for k in ri], vals, x)
         if fx is None:
             return None
         for k, (_, d) in zip(ri, fx):
@@ -350,7 +349,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
             e = F[r].get(states[k], zero)
             if not supp & {str(t) for t in e.free_symbols}:
                 continue
-            v = ck.value(deriv_dir(e, X), sym_list, vals, mod, skey='vd')
+            v = ck.value(deriv_dir(e, X), sym_list, vals, mod, skey="vd")
             if v is None:
                 return None
             df[k] = v
@@ -360,7 +359,7 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
             cx = comp(X, nm)
             dx = 0
             if cx != zero:
-                dx = ck.value(deriv_dir(cx, Fr), sym_list, vals, mod, skey='vd')
+                dx = ck.value(deriv_dir(cx, Fr), sym_list, vals, mod, skey="vd")
                 if dx is None:
                     return None
             out.append(((df[k] if k < n_s else 0) - dx) % mod)
@@ -376,21 +375,20 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
                 x = field_at(Xm[r][j], vals)
                 hr = [h for h in H[r] if not h.atoms(spy.Function)]
                 hs = [h for h in H[r] if h.atoms(spy.Function)]
-                ha = along(('H', r), hr, vals, x) if x is not None else None
+                ha = along(("H", r), hr, vals, x) if x is not None else None
                 hb = vec([deriv_dir(h, Xm[r][j]) for h in hs], vals) if hs else []
                 if ha is None or hb is None or any(d for _, d in ha) or any(hb):
-                    return None, 'regime %d: a field changes the output' % (r + 1)
+                    return None, "regime %d: a field changes the output" % (r + 1)
                 bv = bracket_at(r, j, vals)
                 if bv is None:
-                    return None, 'regime %d: a bracket has a pole' % (r + 1)
+                    return None, "regime %d: a bracket has a pole" % (r + 1)
                 sup = support(r, vals, bv)
                 if sup is None:
-                    return None, ('regime %d: the fields are not invariant under the '
-                                  'dynamics' % (r + 1))
+                    return None, ("regime %d: the fields are not invariant under the dynamics" % (r + 1))
                 for k in sup - S:
                     S.add(k)
                     todo.append(k)
-        return S, ''
+        return S, ""
 
     def image(ev_list, vals, x):
         """D E applied to the field or vector x at the point, and E of the point."""
@@ -398,84 +396,95 @@ def verify_distribution(regimes, gens, events, lifts, p, npts=2, seed=1, q=None)
         img = dict(val_of)
         xd = dict(zip(coords, x))
         for e in ev_list:
-            ve = ck.expr(e['value'])
-            v = ck.value(ve, sym_list, vals, mod, skey='vd')
+            ve = ck.expr(e["value"])
+            v = ck.value(ve, sym_list, vals, mod, skey="vd")
             if v is None:
                 return None, None
             dv = 0
             for s_ in ve.free_symbols:
-                d = ck.value(spy.diff(ve, s_), sym_list, vals, mod, skey='vd')
+                d = ck.value(spy.diff(ve, s_), sym_list, vals, mod, skey="vd")
                 if d is None:
                     return None, None
                 dv = (dv + d * x[coords.index(str(s_))]) % mod if str(s_) in coords else dv
-            s0 = int(val_of[e['var']]) % mod
-            img[e['var']] = Fraction({'replace': v, 'add': (s0 + v) % mod,
-                                      'multiply': s0 * v % mod}[e['method']])
-            xd[e['var']] = {'replace': dv, 'add': (xd[e['var']] + dv) % mod,
-                            'multiply': (xd[e['var']] * v + s0 * dv) % mod}[e['method']]
+            s0 = int(val_of[e["var"]]) % mod
+            img[e["var"]] = Fraction({"replace": v, "add": (s0 + v) % mod, "multiply": s0 * v % mod}[e["method"]])
+            xd[e["var"]] = {
+                "replace": dv,
+                "add": (xd[e["var"]] + dv) % mod,
+                "multiply": (xd[e["var"]] * v + s0 * dv) % mod,
+            }[e["method"]]
         return [xd[nm] for nm in coords], [img[nm] for nm in coords]
 
     visits, crossed = [], []
     joins_of = {}
     for ev in events:
-        if ev.get('lift') is not None:
-            joins_of.setdefault(int(ev['lift']), []).append(ev)
+        if ev.get("lift") is not None:
+            joins_of.setdefault(int(ev["lift"]), []).append(ev)
 
     for li, lf in enumerate(lifts):
-        r = int(lf['regime'])
-        pt = {str(k): int(v) for k, v in dict(lf['point']).items()}
+        r = int(lf["regime"])
+        pt = {str(k): int(v) for k, v in dict(lf["point"]).items()}
         vals0 = [Fraction(pt.get(nm, 0)) for nm in coords]
-        taus = [ck.expr(t) for t in _as_list(lf.get('times', []))]
+        taus = [ck.expr(t) for t in _as_list(lf.get("times", []))]
         mod = p
-        vecs = [{str(k): int(x) % p for k, x in dict(v).items()}
-                for v in _as_list(lf['vectors'])]
+        vecs = [{str(k): int(x) % p for k, x in dict(v).items()} for v in _as_list(lf["vectors"])]
         # (D) the lifted directions in the span at the start, and the fields they reach
         S = set()
         for vd in vecs:
             sup = support(r, vals0, [vd.get(nm, 0) for nm in coords])
             if sup is None:
-                return {'ok': False, 'why': 'a kernel direction is not in the span of the fields'}
+                return {"ok": False, "why": "a kernel direction is not in the span of the fields"}
             S |= sup
             for tau in taus:
-                dv = [ck.value(spy.diff(tau, s_), sym_list, vals0, mod, skey='vd') for s_ in tau.free_symbols]
-                if any(x is None for x in dv) or sum(
-                        x * vd.get(str(sy), 0) for x, sy in zip(dv, tau.free_symbols)) % mod:
-                    return {'ok': False, 'why': 'a kernel direction moves an event time'}
+                dv = [ck.value(spy.diff(tau, s_), sym_list, vals0, mod, skey="vd") for s_ in tau.free_symbols]
+                if (
+                    any(x is None for x in dv)
+                    or sum(x * vd.get(str(sy), 0) for x, sy in zip(dv, tau.free_symbols)) % mod
+                ):
+                    return {"ok": False, "why": "a kernel direction moves an event time"}
         mod = q
         S, why = close(r, S)
         if S is None:
-            return {'ok': False, 'why': why}
+            return {"ok": False, "why": why}
         visits.append((r, frozenset(S)))
         us = [[vd.get(nm, 0) if nm in free else 0 for nm in coords] for vd in vecs]
         # (C) the joins of the chain in order
         for ev in joins_of.get(li, []):
-            r2 = int(ev['to'])
-            evs = _as_list(ev['ev'])
+            r2 = int(ev["to"])
+            evs = _as_list(ev["ev"])
             S2 = set()
             for _ in range(npts):
                 vals = rand_point()
                 items = [field_at(Xm[r][j], vals) for j in S] + us
                 for x in items:
                     if x is None:
-                        return {'ok': False, 'why': 'a field has a pole before an event'}
+                        return {"ok": False, "why": "a field has a pole before an event"}
                     xi, zi = image(evs, vals, x)
                     if xi is None:
-                        return {'ok': False, 'why': 'an event value has a pole'}
+                        return {"ok": False, "why": "an event value has a pole"}
                     sup = support(r2, zi, xi)
                     if sup is None:
-                        return {'ok': False, 'why': 'an event leaves the span of the fields'}
+                        return {"ok": False, "why": "an event leaves the span of the fields"}
                     S2 |= sup
             crossed.append((r, r2, evs, frozenset(S), us))
             S, why = close(r2, S2)
             if S is None:
-                return {'ok': False, 'why': why}
+                return {"ok": False, "why": why}
             visits.append((r2, frozenset(S)))
             r = r2
     if q == p:
-        return {'ok': True, 'why': ''}
-    rows = {'F': F, 'H': H, 'X': Xm, 'units': len(free), 'sym': dict(zip(coords, sym_list)),
-            'expr': ck.expr, 'deriv': deriv_dir, 'bracket': bracket}
-    return {'ok': True, 'why': '', 'bound': distribution_bound(rows, visits, crossed, q, npts)}
+        return {"ok": True, "why": ""}
+    rows = {
+        "F": F,
+        "H": H,
+        "X": Xm,
+        "units": len(free),
+        "sym": dict(zip(coords, sym_list)),
+        "expr": ck.expr,
+        "deriv": deriv_dir,
+        "bracket": bracket,
+    }
+    return {"ok": True, "why": "", "bound": distribution_bound(rows, visits, crossed, q, npts)}
 
 
 # operations of the expressions of one check beyond which no degree bound is taken
@@ -485,8 +494,9 @@ _BOUND_OPS = 5000
 def distribution_bound(rows, visits, crossed, q, npts):
     """{'degree', 'points', 'prime', 'probability'} of verify_distribution's checks, or {'applies': False}."""
     from ..detection.bound import _rational, _vector_degree
+
     zero = spy.Integer(0)
-    sym = rows['sym']
+    sym = rows["sym"]
 
     def deg(exprs):
         exprs = [spy.sympify(e) for e in exprs]
@@ -494,49 +504,54 @@ def distribution_bound(rows, visits, crossed, q, npts):
         if not exprs:
             return 0
         if sum(spy.count_ops(e) for e in exprs) > _BOUND_OPS:
-            raise InapplicableError('an expression is too large for a degree bound')
+            raise InapplicableError("an expression is too large for a degree bound")
         if not all(_rational(e) for e in exprs):
-            raise InapplicableError('an expression is not rational')
+            raise InapplicableError("an expression is not rational")
         return _vector_degree(exprs)
 
     def image(evs, x):
         """D E applied to the field x and E itself, symbolically, as image() of the check."""
         img, xd = dict(sym), dict(x)
         for e in evs:
-            ve = rows['expr'](e['value'])
+            ve = rows["expr"](e["value"])
             dv = sum((spy.diff(ve, s_) * x.get(str(s_), zero) for s_ in ve.free_symbols), zero)
-            s0, var = sym[e['var']], e['var']
-            img[var] = {'replace': ve, 'add': s0 + ve, 'multiply': s0 * ve}[e['method']]
-            xd[var] = {'replace': dv, 'add': xd.get(var, zero) + dv,
-                       'multiply': xd.get(var, zero) * ve + s0 * dv}[e['method']]
+            s0, var = sym[e["var"]], e["var"]
+            img[var] = {"replace": ve, "add": s0 + ve, "multiply": s0 * ve}[e["method"]]
+            xd[var] = {"replace": dv, "add": xd.get(var, zero) + dv, "multiply": xd.get(var, zero) * ve + s0 * dv}[
+                e["method"]
+            ]
         return xd, {sym[k]: v for k, v in img.items()}
 
     try:
         D, checks = 0, 0
         for r, S in visits:
-            span = sum(deg(X.values()) for X in rows['X'][r])
+            span = sum(deg(X.values()) for X in rows["X"][r])
             for j in S:
-                X = rows['X'][r][j]
-                tests = [rows['bracket'](r, j)] + [[rows['deriv'](h, X)] for h in rows['H'][r]]
+                X = rows["X"][r][j]
+                tests = [rows["bracket"](r, j)] + [[rows["deriv"](h, X)] for h in rows["H"][r]]
                 D = max([D] + [span + deg(t) for t in tests])
                 checks += len(tests)
         for r, r2, evs, S, us in crossed:
-            items = [rows['X'][r][j] for j in S]
+            items = [rows["X"][r][j] for j in S]
             items += [{nm: spy.Integer(int(c)) for nm, c in zip(sym, u) if c} for u in us]
             sub = image(evs, {})[1]
-            span = sum(deg([v.xreplace(sub) for v in X.values()]) for X in rows['X'][r2])
+            span = sum(deg([v.xreplace(sub) for v in X.values()]) for X in rows["X"][r2])
             for x in items:
                 D = max(D, span + deg(image(evs, x)[0].values()))
                 checks += 1
     except InapplicableError as exc:
-        return {'applies': False, 'why': str(exc)}
+        return {"applies": False, "why": str(exc)}
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
-        return {'applies': False, 'why': 'no degree bound of an expression'}
+        return {"applies": False, "why": "no degree bound of an expression"}
     # every identity and every decomposition that picks the fields reached
     m = 2 * checks
-    return {'degree': int(D), 'points': int(npts), 'prime': int(q),
-            'probability': float(min(1.0, m * min(1.0, D / (q - 3)) ** npts))}
+    return {
+        "degree": int(D),
+        "points": int(npts),
+        "prime": int(q),
+        "probability": float(min(1.0, m * min(1.0, D / (q - 3)) ** npts)),
+    }
 
 
 def static_fields_symbolic(conds, param_names, forcings=None):
@@ -548,19 +563,20 @@ def static_fields_symbolic(conds, param_names, forcings=None):
     def eqs(lines):
         out = {}
         for ln in _as_list(lines):
-            k, v = str(ln).split('=', 1)
+            k, v = str(ln).split("=", 1)
             out[k.strip()] = v.strip()
         return out
 
     def evkey(evs):
-        return tuple((str(e['var']), str(e['value']), str(e['method'])) for e in _as_list(evs))
+        return tuple((str(e["var"]), str(e["value"]), str(e["method"])) for e in _as_list(evs))
+
     lines = []
     for c in conds:
-        lines += list(eqs(c['rest']).values())
-        for sg in c['segs']:
-            lines += list(eqs(sg['f']).values()) + list(eqs(sg['g']).values())
-            lines += [str(e['value']) for e in _as_list(sg.get('ev'))]
-        lines += [str(e['value']) for e in _as_list(c.get('t0'))]
+        lines += list(eqs(c["rest"]).values())
+        for sg in c["segs"]:
+            lines += list(eqs(sg["f"]).values()) + list(eqs(sg["g"]).values())
+            lines += [str(e["value"]) for e in _as_list(sg.get("ev"))]
+        lines += [str(e["value"]) for e in _as_list(c.get("t0"))]
     _, parse0 = _make_local_parse(lines + pnames)
     parse = functools.lru_cache(maxsize=None)(parse0)
 
@@ -570,28 +586,38 @@ def static_fields_symbolic(conds, param_names, forcings=None):
     static_of = []
     reduced = set()
     for c in conds:
-        key = (tuple(_as_list(c['rest'])),
-               tuple((tuple(_as_list(sg['f'])), tuple(_as_list(sg['g'])), evkey(sg.get('ev')))
-                     for sg in c['segs']), evkey(c.get('t0')))
+        key = (
+            tuple(_as_list(c["rest"])),
+            tuple((tuple(_as_list(sg["f"])), tuple(_as_list(sg["g"])), evkey(sg.get("ev"))) for sg in c["segs"]),
+            evkey(c.get("t0")),
+        )
         if key in info:
-            static_of.append(info[key]['static'])
+            static_of.append(info[key]["static"])
             continue
-        rest = {k: parse(v) for k, v in eqs(c['rest']).items()}
-        segs = [({k: parse(v) for k, v in eqs(sg['f']).items()},
-                 {k: parse(v) for k, v in eqs(sg['g']).items()},
-                 _as_list(sg.get('ev'))) for sg in c['segs']]
+        rest = {k: parse(v) for k, v in eqs(c["rest"]).items()}
+        segs = [
+            (
+                {k: parse(v) for k, v in eqs(sg["f"]).items()},
+                {k: parse(v) for k, v in eqs(sg["g"]).items()},
+                _as_list(sg.get("ev")),
+            )
+            for sg in c["segs"]
+        ]
         states = set(rest) | {k for f, _, _ in segs for k in f}
         # forcings held and the condition's zero states (as the resting model has them)
         held = {spy.Symbol(x): 0 for x in forcings}
-        held.update({spy.Symbol(str(z)): 0 for z in _as_list(c.get('zero'))})
+        held.update({spy.Symbol(str(z)): 0 for z in _as_list(c.get("zero"))})
         rest = {k: v.xreplace(held) for k, v in rest.items()}
         moved = set()
-        for ev in list(_as_list(c.get('t0'))) + [e for _, _, evs in segs for e in evs]:
-            v = parse(str(ev['value']))
-            m = str(ev['method'])
-            var = str(ev['var'])
-            if (m == 'add' and v != 0) or (m == 'multiply' and v != 1) or \
-               (m == 'replace' and not (var in forcings and v == 0)):
+        for ev in list(_as_list(c.get("t0"))) + [e for _, _, evs in segs for e in evs]:
+            v = parse(str(ev["value"]))
+            m = str(ev["method"])
+            var = str(ev["var"])
+            if (
+                (m == "add" and v != 0)
+                or (m == "multiply" and v != 1)
+                or (m == "replace" and not (var in forcings and v == 0))
+            ):
                 moved.add(var)
         dyn = set(moved)
         while True:
@@ -602,8 +628,11 @@ def static_fields_symbolic(conds, param_names, forcings=None):
                     e = f.get(s_)
                     if e is None:
                         continue
-                    if {str(x) for x in e.free_symbols} & dyn or r0 is None or \
-                       (e.xreplace(held) != r0 and spy.expand(e.xreplace(held) - r0) != 0):
+                    if (
+                        {str(x) for x in e.free_symbols} & dyn
+                        or r0 is None
+                        or (e.xreplace(held) != r0 and spy.expand(e.xreplace(held) - r0) != 0)
+                    ):
                         dyn.add(s_)
                         break
             if len(dyn) == n0:
@@ -620,23 +649,22 @@ def static_fields_symbolic(conds, param_names, forcings=None):
             for e in g.values():
                 seen |= e.free_symbols
             for ev in evs:
-                seen |= parse(str(ev['value'])).free_symbols
-        for ev in _as_list(c.get('t0')):
-            seen |= parse(str(ev['value'])).free_symbols
+                seen |= parse(str(ev["value"])).free_symbols
+        for ev in _as_list(c.get("t0")):
+            seen |= parse(str(ev["value"])).free_symbols
         reduced |= {str(x) for x in seen if str(x) in pset}
-        info[key] = {'static': static, 'rest': rest, 'seen': seen,
-                     'zero': [str(z) for z in _as_list(c.get('zero'))]}
+        info[key] = {"static": static, "rest": rest, "seen": seen, "zero": [str(z) for z in _as_list(c.get("zero"))]}
         static_of.append(static)
     # a parameter outside every static resting equation (one that enters only through
     # a recast atom, say) is not absorbed
     in_static = set()
     for inf in info.values():
-        for x in inf['static']:
-            if x in inf['rest']:
-                in_static |= {str(y) for y in inf['rest'][x].free_symbols}
+        for x in inf["static"]:
+            if x in inf["rest"]:
+                in_static |= {str(y) for y in inf["rest"][x].free_symbols}
     absorbed = [x for x in pnames if x not in reduced and x in in_static]
     if not absorbed:
-        return {'fields': [], 'absorbed': [], 'static': static_of}
+        return {"fields": [], "absorbed": [], "static": static_of}
     aset = {parse(x) for x in absorbed}
 
     # pass 2: fields that leave every static rest in place (delta rho = 0). Each resting
@@ -644,8 +672,8 @@ def static_fields_symbolic(conds, param_names, forcings=None):
     # a row d e / d theta_A; zero states (forced or sink clusters) are taken out first
     rows = []
     for inf in info.values():
-        rest, static = inf['rest'], inf['static']
-        zero = {spy.Symbol(x): 0 for x in inf.get('zero', [])}
+        rest, static = inf["rest"], inf["static"]
+        zero = {spy.Symbol(x): 0 for x in inf.get("zero", [])}
         for x in static:
             if x not in rest or spy.Symbol(x) in zero:
                 continue
@@ -659,27 +687,22 @@ def static_fields_symbolic(conds, param_names, forcings=None):
             except spy.PolynomialError:
                 linear = False
             if not linear:
-                return {'fields': [], 'why': 'a static resting equation not linear in the state',
-                        'static': static_of}
+                return {"fields": [], "why": "a static resting equation not linear in the state", "static": static_of}
             try:
                 own = spy.solve(num, xs)
             except NotImplementedError:
                 own = []
             if len(own) != 1:
-                return {'fields': [], 'why': 'a static resting equation not solved for the state',
-                        'static': static_of}
-            rows.append([spy.cancel(spy.diff(e, a).xreplace({xs: own[0]})) for a in
-                         [parse(y) for y in absorbed]])
+                return {"fields": [], "why": "a static resting equation not solved for the state", "static": static_of}
+            rows.append([spy.cancel(spy.diff(e, a).xreplace({xs: own[0]})) for a in [parse(y) for y in absorbed]])
     if state.env("STATICDIAG"):
-        sys.stderr.write("[staticdiag] %d row(s) over %d absorbed parameter(s)\n"
-                         % (len(rows), len(absorbed)))
+        sys.stderr.write("[staticdiag] %d row(s) over %d absorbed parameter(s)\n" % (len(rows), len(absorbed)))
     asy = [parse(x) for x in absorbed]
     if rows:
         basis = spy.Matrix(rows).nullspace(simplify=True)
     else:
-        basis = [spy.Matrix([1 if j == i else 0 for j in range(len(asy))])
-                 for i in range(len(asy))]
-    state_syms = {spy.Symbol(x) for inf in info.values() for x in inf['rest']}
+        basis = [spy.Matrix([1 if j == i else 0 for j in range(len(asy))]) for i in range(len(asy))]
+    state_syms = {spy.Symbol(x) for inf in info.values() for x in inf["rest"]}
     fields = []
     for v in basis:
         v = spy.Matrix([spy.cancel(spy.together(x)) for x in v])
@@ -688,46 +711,47 @@ def static_fields_symbolic(conds, param_names, forcings=None):
         den = spy.lcm([spy.fraction(x)[1] for x in v])
         v = spy.Matrix([spy.factor(spy.cancel(x * den)) for x in v])
         fields.append({absorbed[i]: str(v[i]) for i in range(len(absorbed)) if v[i] != 0})
-    return {'fields': fields, 'absorbed': absorbed, 'static': static_of}
+    return {"fields": fields, "absorbed": absorbed, "static": static_of}
 
 
 def extend_fields(fields, ic_lines, event_groups, states):
     """Fields extended to the parameters set by initial values or events; a state-dependent one is dropped."""
     ic_lines = _as_list(ic_lines)
     groups = [_as_list(g) for g in _as_list(event_groups)]
-    lines = list(ic_lines) + ['_ = %s' % e['value'] for g in groups for e in g]
+    lines = list(ic_lines) + ["_ = %s" % e["value"] for g in groups for e in g]
     for fld in _as_list(fields):
-        lines += ['_ = %s' % v for v in dict(fld).values()]
-    local, parse = _make_local_parse(lines + ['_ = %s' % st for st in _as_list(states)])
+        lines += ["_ = %s" % v for v in dict(fld).values()]
+    local, parse = _make_local_parse(lines + ["_ = %s" % st for st in _as_list(states)])
     state_set = set(_as_list(states))
+
     def sym(nm):
         return local.get(nm, spy.Symbol(nm))
+
     state_syms = {sym(nm) for nm in state_set}
     out = []
     for fld in _as_list(fields):
         eta = {str(k): spy.sympify(parse(str(v))) for k, v in dict(fld).items()}
         ext = {}
         for l in ic_lines:
-            lhs, rhs = _clean(l).split('=', 1)
+            lhs, rhs = _clean(l).split("=", 1)
             x, e = lhs.strip(), spy.sympify(parse(rhs))
             if e.is_Symbol and str(e) not in state_set:
                 ext[str(e)] = eta.get(x, spy.Integer(0)).subs(sym(x), e)
         for g in groups:
-            vals = {str(ev['var']): spy.sympify(parse(str(ev['value']))) for ev in g}
+            vals = {str(ev["var"]): spy.sympify(parse(str(ev["value"]))) for ev in g}
             E = {}
             for ev in g:
-                s_, v = str(ev['var']), vals[str(ev['var'])]
+                s_, v = str(ev["var"]), vals[str(ev["var"])]
                 xs = sym(s_)
-                E[xs] = {'add': xs + v, 'replace': v, 'multiply': xs * v}[ev['method']]
+                E[xs] = {"add": xs + v, "replace": v, "multiply": xs * v}[ev["method"]]
             for ev in g:
-                s_, v = str(ev['var']), vals[str(ev['var'])]
+                s_, v = str(ev["var"]), vals[str(ev["var"])]
                 if not (v.is_Symbol and str(v) not in state_set):
                     continue
                 xs = sym(s_)
                 es = eta.get(s_, spy.Integer(0))
                 e_e = es.xreplace(E) if E else es
-                ext[str(v)] = {'add': e_e - es, 'replace': e_e,
-                               'multiply': (e_e - v * es) / xs}[ev['method']]
+                ext[str(v)] = {"add": e_e - es, "replace": e_e, "multiply": (e_e - v * es) / xs}[ev["method"]]
         ok = True
         for k, val in ext.items():
             val = spy.simplify(val)
@@ -750,14 +774,12 @@ def lift_start(ic_lines, t0events, point, vector, p, joint=False):
     vv = {str(k): int(v) % p for k, v in dict(vector).items()}
     names = sorted(pt)
     # parsed lines, lambdified values and derivatives are reused across points and primes
-    key = (tuple(ic_lines), tuple((e['var'], str(e['value']), e['method']) for e in evs),
-           tuple(names))
+    key = (tuple(ic_lines), tuple((e["var"], str(e["value"]), e["method"]) for e in evs), tuple(names))
     ck = _LIFT_CACHE.get(key)
     if ck is None:
         if len(_LIFT_CACHE) > 256:
             _LIFT_CACHE.clear()
-        ck = _DistCheck(ic_lines + ['_ = %s' % e['value'] for e in evs] +
-                        ['_ = %s' % k for k in names])
+        ck = _DistCheck(ic_lines + ["_ = %s" % e["value"] for e in evs] + ["_ = %s" % k for k in names])
         ck.parsed, ck.derivs = {}, {}
         _LIFT_CACHE[key] = ck
     syms = [ck.local.get(n, spy.Symbol(n)) for n in names]
@@ -786,20 +808,20 @@ def lift_start(ic_lines, t0events, point, vector, p, joint=False):
 
     if not joint:
         for l in ic_lines:
-            lhs, e = _clean(l).split('=', 1)
+            lhs, e = _clean(l).split("=", 1)
             x, dx = val_and_dir(parsed(e))
             if x is None:
                 return None
             pt[lhs.strip()], vv[lhs.strip()] = x, dx
     for e in evs:
-        v, dv = val_and_dir(parsed(str(e['value'])))
+        v, dv = val_and_dir(parsed(str(e["value"])))
         if v is None:
             return None
-        s0, d0 = pt.get(e['var'], 0), vv.get(e['var'], 0)
-        if e['method'] == 'replace':
-            pt[e['var']], vv[e['var']] = v, dv
-        elif e['method'] == 'add':
-            pt[e['var']], vv[e['var']] = (s0 + v) % p, (d0 + dv) % p
+        s0, d0 = pt.get(e["var"], 0), vv.get(e["var"], 0)
+        if e["method"] == "replace":
+            pt[e["var"]], vv[e["var"]] = v, dv
+        elif e["method"] == "add":
+            pt[e["var"]], vv[e["var"]] = (s0 + v) % p, (d0 + dv) % p
         else:
-            pt[e['var']], vv[e['var']] = s0 * v % p, (d0 * v + s0 * dv) % p
-    return {'point': pt, 'vector': vv}
+            pt[e["var"]], vv[e["var"]] = s0 * v % p, (d0 * v + s0 * dv) % p
+    return {"point": pt, "vector": vv}

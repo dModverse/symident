@@ -17,8 +17,16 @@ from .sym.domain import declared
 # the types _data_copy() returns as they are
 _ATOMS = frozenset((str, int, float, bool, type(None)))
 # the settings global_options of detect() takes
-_GLOBAL_OPTIONS = ("order", "points", "memory", "experiments", "msolve_entries", "msolve_terms", "search_entries",
-                   "elimination_terms")
+_GLOBAL_OPTIONS = (
+    "order",
+    "points",
+    "memory",
+    "experiments",
+    "msolve_entries",
+    "msolve_terms",
+    "search_entries",
+    "elimination_terms",
+)
 
 
 def _rhs_from_reactions(species, smatrix, rates):
@@ -96,9 +104,26 @@ class Model:
         The default of :func:`detect`'s ``reduce_cq`` for this model.
     """
 
-    def __init__(self, odes=None, observables=None, *, reactions=None, totals=None, trafo=None,
-                 conditions=None, events=None, inputs=(), unknown_inputs=(), known_inputs=(), fixed=(),
-                 parameters=(), regimes=None, equilibrate=None, positive=None, reduce_cq=None):
+    def __init__(
+        self,
+        odes=None,
+        observables=None,
+        *,
+        reactions=None,
+        totals=None,
+        trafo=None,
+        conditions=None,
+        events=None,
+        inputs=(),
+        unknown_inputs=(),
+        known_inputs=(),
+        fixed=(),
+        parameters=(),
+        regimes=None,
+        equilibrate=None,
+        positive=None,
+        reduce_cq=None,
+    ):
         derived = None
         if reactions is not None:
             sp = list(reactions["species"])
@@ -106,13 +131,16 @@ class Model:
             rates = [str(r) for r in reactions["rates"]]
             shape = np.asarray(Sm, dtype=float).shape
             if shape != (len(rates), len(sp)):
-                raise InputError(f"`stoichiometry` has shape {shape}, but {len(rates)} rate(s) and {len(sp)} "
-                                 "species need one row per reaction and one column per species")
+                raise InputError(
+                    f"`stoichiometry` has shape {shape}, but {len(rates)} rate(s) and {len(sp)} "
+                    "species need one row per reaction and one column per species"
+                )
             self.reactions = {"species": sp, "smatrix": np.asarray(Sm, dtype=float).tolist(), "rates": rates}
             if odes is None:
                 odes = _rhs_from_reactions(sp, Sm, self.reactions["rates"])
             if totals is None:
                 from .detection.cq import conserved_totals
+
                 derived = conserved_totals(Sm, sp)
         else:
             self.reactions = None
@@ -124,8 +152,10 @@ class Model:
         self.odes = {str(k): str(v) for k, v in odes.items()}
         if totals is None:
             from .detection.cq import conserved_totals_of_odes, exact_totals
-            totals = (exact_totals(derived, self.odes) if reactions is not None
-                      else conserved_totals_of_odes(self.odes)) or None
+
+            totals = (
+                exact_totals(derived, self.odes) if reactions is not None else conserved_totals_of_odes(self.odes)
+            ) or None
         self.observables = observables
         self.totals = totals
         self.trafo = trafo
@@ -145,15 +175,25 @@ class Model:
     def from_petab(cls, path):
         """The model of a PEtab problem; see :func:`read_petab`."""
         from .petab import read_petab
+
         return read_petab(path)
 
     def _kwargs(self):
-        return dict(f=self.odes, g=self.observables, trafo=self.trafo, conditions=self.conditions,
-                    events=self.events, forcings=self.inputs or None, fixed=self.fixed or None,
-                    parameters=self.parameters or None, reactions=self.reactions,
-                    totals=self.totals, regimes=self.regimes,
-                    unknown_inputs=self.unknown_inputs or None,
-                    known_inputs=getattr(self, "known_inputs", None) or None)
+        return dict(
+            f=self.odes,
+            g=self.observables,
+            trafo=self.trafo,
+            conditions=self.conditions,
+            events=self.events,
+            forcings=self.inputs or None,
+            fixed=self.fixed or None,
+            parameters=self.parameters or None,
+            reactions=self.reactions,
+            totals=self.totals,
+            regimes=self.regimes,
+            unknown_inputs=self.unknown_inputs or None,
+            known_inputs=getattr(self, "known_inputs", None) or None,
+        )
 
 
 @contextlib.contextmanager
@@ -163,7 +203,6 @@ def _trace(on):
         return
     with state.switches(TIMING=True, LIEDIAG=True if on == "full" else None):
         yield
-
 
 
 def _data_copy(x):
@@ -260,6 +299,7 @@ class Symmetry(dict):
             Coordinate to expression; ``None`` without a closed form.
         """
         from .sym.parse import model_sympify
+
         if self.get("generator") is None:
             return None
         return {k: model_sympify(v) for k, v in self["generator"].items()}
@@ -410,19 +450,32 @@ class Symmetries:
             Where msolve is not found (:func:`install_msolve`).
         """
         from .detection.fiber import solution_count
+
         if self.model is None or not self.identifiable:
             raise ValueError("solution_count() needs a locally identifiable result of detect() on a Model")
         n = len(self.info["coordinates"])
         order = int(order or 2 * n)
         from .sym.switching import _SWITCHY
+
         st = self.info.get("settings") or {}
         if st.get("equilibrate") or st.get("reduce_cq"):
             raise ValueError("solution_count() needs a result of detect() without equilibrate and reduce_cq")
-        if any(_SWITCHY.search(str(v)) for v in list(self.model.odes.values()) + [
-                str(e) for o in (self.model.observables if isinstance(self.model.observables, (list, tuple))
-                                 else [self.model.observables]) for e in dict(o).values()]):
+        if any(
+            _SWITCHY.search(str(v))
+            for v in list(self.model.odes.values())
+            + [
+                str(e)
+                for o in (
+                    self.model.observables
+                    if isinstance(self.model.observables, (list, tuple))
+                    else [self.model.observables]
+                )
+                for e in dict(o).values()
+            ]
+        ):
             raise ValueError("solution_count() handles models without switches")
         from .detection.rationalize import NotRationalError
+
         try:
             got = self._fiber_parts(order, "solution_count()", switches=False)
         except NotRationalError:
@@ -436,8 +489,18 @@ class Symmetries:
         f, g, ic = seg["f"], seg["g"], seg["ic"]
         return solution_count(f, g, ic, list(self.info["coordinates"]), order)
 
-    def discrete(self, order=None, points=5, cores=1, memory=None, experiments=None, msolve_entries=None,
-                 msolve_terms=None, search_entries=None, elimination_terms=None):
+    def discrete(
+        self,
+        order=None,
+        points=5,
+        cores=1,
+        memory=None,
+        experiments=None,
+        msolve_entries=None,
+        msolve_terms=None,
+        search_entries=None,
+        elimination_terms=None,
+    ):
         """The discrete symmetries: other values of the coordinates in the domain with the same output.
 
         The Taylor coefficients of the observables up to `order` are equated with their values at
@@ -538,8 +601,13 @@ class Symmetries:
             Where msolve is not found (:func:`install_msolve`).
         """
         from .detection import work
-        limits = {"msolve_entries": msolve_entries, "msolve_terms": msolve_terms, "search_entries": search_entries,
-                  "elimination_terms": elimination_terms}
+
+        limits = {
+            "msolve_entries": msolve_entries,
+            "msolve_terms": msolve_terms,
+            "search_entries": search_entries,
+            "elimination_terms": elimination_terms,
+        }
         for k, v in limits.items():
             if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or v < 1):
                 raise InputError(f"`{k}` must be a positive number, not {v!r}")
@@ -548,17 +616,22 @@ class Symmetries:
 
     def _discrete(self, order, points, cores, experiments=None):
         from .detection.discrete import analyze
+
         if self.model is None or self.identifiable is None:
             raise ValueError("discrete() needs a result of detect() on a Model")
         if not self.identifiable:
             from .detection.relax import terms_of_states
+
             obs = self.model.observables
             if isinstance(obs, dict) and terms_of_states(self.model.odes, obs):
                 # the relaxed model is rational: the directions reduce there, without a reduction of this model
                 try:
-                    out = self._relaxed_discrete(ValueError("discrete() needs a model rational in the states"),
-                                                 order=order, points=points,
-                                                 cores=cores)
+                    out = self._relaxed_discrete(
+                        ValueError("discrete() needs a model rational in the states"),
+                        order=order,
+                        points=points,
+                        cores=cores,
+                    )
                     if not (out["info"].get("certificate") or {}).get("relaxed_why"):
                         return out
                 except ValueError:
@@ -569,20 +642,24 @@ class Symmetries:
             except ValueError as exc:
                 from .detection.rationalize import _blocking
                 from .sym.parse import model_sympify
+
                 obs = self.model.observables
                 texts = list(self.model.odes.values()) + (list(dict(obs).values()) if isinstance(obs, dict) else [])
                 if all(_blocking(model_sympify(str(t))) is None for t in texts):
                     raise
                 # a direction the reduction does not remove can be a scaling of the relaxed model
-                return self._relaxed_discrete(exc, order=order, points=points, cores=cores,
-                                              experiments=experiments)
+                return self._relaxed_discrete(exc, order=order, points=points, cores=cores, experiments=experiments)
             out = red.discrete(order=order, points=points, cores=cores, experiments=experiments)
-            out["info"]["reduced"] = {"trafo": red.model.trafo, "fixed": list(red.model.fixed or []),
-                                      "coordinates": list(red.info["coordinates"]),
-                                      "section": getattr(red, "_section", None)}
+            out["info"]["reduced"] = {
+                "trafo": red.model.trafo,
+                "fixed": list(red.model.fixed or []),
+                "coordinates": list(red.info["coordinates"]),
+                "section": getattr(red, "_section", None),
+            }
             return self._keep_discrete(out)
         coords = list(self.info["coordinates"])
         from .detection.rationalize import NotRationalError
+
         try:
             # the jets of known inputs reach past the highest order the count may take
             parts, rw = self._fiber_parts(int(order or 2 * len(coords)), "discrete()")
@@ -594,13 +671,23 @@ class Symmetries:
             # X = b^theta is positive whatever the domain of theta
             positive = list(declared(positive)[0] or ()) + [str(x) for x in declared(positive)[1]] + list(rw["logs"])
         from .sym.msolve import msolve_threads
+
         with msolve_threads(cores):
-            out = analyze(parts, coords, positive, rw["states"], order=order,
-                          start=self.info.get("lie_order_used"), points=points,
-                          inputs=[str(u) for u in getattr(self.model, "known_inputs", None) or []],
-                          experiments=experiments)
-        out["info"]["limits"] = ["the counts are at random points: the count over the algebraic closure modulo "
-                                 "a prime, the real count at rational points"] + out["info"]["limits"]
+            out = analyze(
+                parts,
+                coords,
+                positive,
+                rw["states"],
+                order=order,
+                start=self.info.get("lie_order_used"),
+                points=points,
+                inputs=[str(u) for u in getattr(self.model, "known_inputs", None) or []],
+                experiments=experiments,
+            )
+        out["info"]["limits"] = [
+            "the counts are at random points: the count over the algebraic closure modulo "
+            "a prime, the real count at rational points"
+        ] + out["info"]["limits"]
         out["info"]["rewrites"] = rw["rewrites"]
         if rw["eliminated"]:
             out["info"]["eliminated"] = {x: v.replace("**", "^") for x, v in rw["eliminated"].items()}
@@ -610,11 +697,13 @@ class Symmetries:
                 out["info"]["limits"].append(
                     "the totals " + ", ".join(free) + " are coordinates; the domain holds them in their declared "
                     "signs, not the species " + ", ".join(rw["eliminated"]) + " solved through them "
-                    "(info['discrete']['eliminated']), so count_domain stands only at 1")
+                    "(info['discrete']['eliminated']), so count_domain stands only at 1"
+                )
                 if (out["info"].get("count_domain") or 1) > 1:
                     out["info"]["count_domain"] = None
         if rw["logs"]:
             from .detection.rationalize import report_given
+
             report_given(out, rw["logs"])
         return self._keep_discrete(out)
 
@@ -631,6 +720,7 @@ class Symmetries:
         the count of the model, which is proven where the new coordinates are absorbed or independent and the maps
         keep the starts of the new states (docs/method/global.rst, "Rational form of the fiber")."""
         from .detection.relax import independent_leaves, keeps_leaves, relax, scalings_keep_leaves
+
         if getattr(self, "_relaxed", False):
             # a relaxed model is not relaxed again
             raise exc
@@ -638,9 +728,14 @@ class Symmetries:
         st = self.info.get("settings") or {}
         obs = m.observables
         equil = bool(st.get("equilibrate"))
-        if (m.events and not equil) or m.conditions or isinstance(obs, (list, tuple)) or \
-                isinstance(m.trafo, (list, tuple)) or self.info.get("switching") or (equil and (
-                m.known_inputs or set(m.trafo or {}) & set(m.odes))):
+        if (
+            (m.events and not equil)
+            or m.conditions
+            or isinstance(obs, (list, tuple))
+            or isinstance(m.trafo, (list, tuple))
+            or self.info.get("switching")
+            or (equil and (m.known_inputs or set(m.trafo or {}) & set(m.odes)))
+        ):
             raise exc
         coords = list(self.info["coordinates"])
         odes, trafo, positive, events, chart = m.odes, m.trafo, st.get("positive", True), None, None
@@ -648,52 +743,89 @@ class Symmetries:
             if equil:
                 # the resting values inside transcendental terms become coordinates
                 from .detection.restchart import rest_chart
-                chart = rest_chart(m.odes, dict(obs), list(m.inputs or []), coords, positive, list(m.fixed or []),
-                                   m.events or [], m.trafo or {})
+
+                chart = rest_chart(
+                    m.odes,
+                    dict(obs),
+                    list(m.inputs or []),
+                    coords,
+                    positive,
+                    list(m.fixed or []),
+                    m.events or [],
+                    m.trafo or {},
+                )
                 odes, obs, trafo, positive = chart["odes"], chart["observables"], chart["trafo"], chart["positive"]
                 coords, events = chart["coordinates"], chart["events"] or None
             rx = relax(odes, dict(obs), trafo, coords, list(m.known_inputs or []), positive)
-        except ValueError as why:
-            raise ValueError(f"{exc}; the relaxation does not apply: {why}") from None
+        except ValueError as err:
+            raise ValueError(f"{exc}; the relaxation does not apply: {err}") from None
         fixed = [p for p in m.fixed or [] if p not in rx["dropped"]] + rx["known"]
-        mr = Model(rx["odes"], rx["observables"], trafo=rx["trafo"], known_inputs=rx["inputs"], fixed=fixed,
-                   positive=rx["positive"], events=events)
+        mr = Model(
+            rx["odes"],
+            rx["observables"],
+            trafo=rx["trafo"],
+            known_inputs=rx["inputs"],
+            fixed=fixed,
+            positive=rx["positive"],
+            events=events,
+        )
         r = detect(mr, positive=rx["positive"], engine=st.get("sym_engine", "modular"), reconstruct=True)
         r._relaxed = True
         out = r.discrete(**opts)
         info = out["info"]
         cert = info.get("certificate") or {}
-        why = scalings_keep_leaves(r._raw.get("symmetries") or [], rx["leaves"], rx["dropped"]) \
-            if not r.identifiable else None
+        why = (
+            scalings_keep_leaves(r._raw.get("symmetries") or [], rx["leaves"], rx["dropped"])
+            if not r.identifiable
+            else None
+        )
         moved = {n for s in r._raw.get("symmetries") or [] for n in s.get("support") or []}
         free = [lf for lf in rx["leaves"] if lf["absorbs"] is None and lf["name"] not in moved]
         kinds = {lf["kind"] for lf in free}
         premise = None
         if free and not (len(kinds) == 1 and kinds <= {"exp", "log"} and independent_leaves(free, coords)):
-            premise = ("the starts of the new states " + ", ".join(lf["name"] for lf in free) + " are algebraically "
-                       "independent over the rational functions of the coordinates")
+            premise = (
+                "the starts of the new states " + ", ".join(lf["name"] for lf in free) + " are algebraically "
+                "independent over the rational functions of the coordinates"
+            )
         keep = [s for s in out["symmetries"] if s.get("level") == "exact"]
         lost = [s for s in keep if not keeps_leaves(s.get("map") or {}, rx["leaves"], rx["dropped"])]
         count = info.get("count")
         if why is None and lost and count != 1:
             why = "an exact map of the relaxed model moves a new coordinate or a coordinate the new states start from"
         info["relaxed"] = {
-            "rewrites": rx["rewrites"], "dropped": rx["dropped"], "premise": premise, "why": why,
-            "leaves": [{"name": lf["name"], "kind": lf["kind"], "start": str(lf["value"]).replace("**", "^"),
-                        "absorbs": lf["absorbs"]} for lf in rx["leaves"]],
+            "rewrites": rx["rewrites"],
+            "dropped": rx["dropped"],
+            "premise": premise,
+            "why": why,
+            "leaves": [
+                {
+                    "name": lf["name"],
+                    "kind": lf["kind"],
+                    "start": str(lf["value"]).replace("**", "^"),
+                    "absorbs": lf["absorbs"],
+                }
+                for lf in rx["leaves"]
+            ],
             "model": {"odes": rx["odes"], "observables": rx["observables"], "trafo": rx["trafo"]},
             "rest_chart": None if chart is None else {"rest": chart["rest"], "exchanged": chart["exchanged"]},
-            "coordinates": list(r.info.get("coordinates") or [])}
+            "coordinates": list(r.info.get("coordinates") or []),
+        }
         info["limits"] = list(info.get("limits") or []) + [
             "the count is that of the relaxed model, in the coordinates of that model: each non-rational term of the "
             "states is a new state times or plus a new coordinate, the value of the term at the start "
-            "(info['discrete']['relaxed'])"]
+            "(info['discrete']['relaxed'])"
+        ]
         if chart is not None:
             info["limits"].append(
                 "under equilibrate the count is over the points of the resting set, in the chart where the resting "
-                "values " + ", ".join(chart["rest"].values()) + " are coordinates in place of " +
-                ", ".join(chart["exchanged"]) + " (info['discrete']['relaxed']['rest_chart']); the counts in the "
-                "domain do not hold these in their declared signs")
+                "values "
+                + ", ".join(chart["rest"].values())
+                + " are coordinates in place of "
+                + ", ".join(chart["exchanged"])
+                + " (info['discrete']['relaxed']['rest_chart']); the counts in the "
+                "domain do not hold these in their declared signs"
+            )
         if why is not None:
             # the count of the relaxed model bounds nothing here
             info["relaxed"]["count"], info["count"] = count, None
@@ -710,7 +842,8 @@ class Symmetries:
                 cert["axiom"] = cert["premise"]
         cert.setdefault("proven", []).append(
             "the values of the coordinates with the output of a generic point map injectively into the fiber of the "
-            "relaxed model modulo the continuous directions")
+            "relaxed model modulo the continuous directions"
+        )
         for s in out["symmetries"]:
             if s.get("map"):
                 s["relaxed"] = True
@@ -721,19 +854,30 @@ class Symmetries:
         st = self.info.get("settings") or {}
         res = self
         if any(d.get("level") == "open" for d in self.symmetries):
-            res = detect(self.model, positive=st.get("positive", True), engine=st.get("sym_engine", "modular"),
-                         equilibrate=bool(st.get("equilibrate")), reconstruct=True)
+            res = detect(
+                self.model,
+                positive=st.get("positive", True),
+                engine=st.get("sym_engine", "modular"),
+                equilibrate=bool(st.get("equilibrate")),
+                reconstruct=True,
+            )
         # a rational trafo keeps the reduced model rational: a section met once is a chart by itself where it solves so
         with state.options(section_charts=True):
             red = reduce(res).to_dict()
         if red.get("remaining"):
-            raise ValueError("discrete() needs a reduction that removes every direction; directions remain: "
-                             + ", ".join(str(d) for d in red["remaining"]))
+            raise ValueError(
+                "discrete() needs a reduction that removes every direction; directions remain: "
+                + ", ".join(str(d) for d in red["remaining"])
+            )
         m, why = _reduced_copy(self.model, red, res.gauge, bool(st.get("equilibrate")))
         if why is not None:
             raise ValueError("discrete(): " + why)
-        r = detect(m, positive=_reduced_positive(st.get("positive", True), red, list(m.odes)),
-                   engine=st.get("sym_engine", "modular"), equilibrate=bool(st.get("equilibrate")))
+        r = detect(
+            m,
+            positive=_reduced_positive(st.get("positive", True), red, list(m.odes)),
+            engine=st.get("sym_engine", "modular"),
+            equilibrate=bool(st.get("equilibrate")),
+        )
         if not r.identifiable:
             raise ValueError("discrete(): the reduced model is not locally identifiable")
         r._section = red.get("trafo")
@@ -759,6 +903,7 @@ class Symmetries:
         from .errors import SYMPY_FAILS
         from .rexpr import get_symbols, replace_symbols
         from .sym.switching import _SWITCHY
+
         m = self.model
         st = self.info.get("settings") or {}
         unknown = [str(w) for w in m.unknown_inputs or []]
@@ -774,6 +919,7 @@ class Symmetries:
         if st.get("reduce_cq") and st.get("eliminated"):
             # the model on the level sets of the totals, as the detection read it: the totals are parameters
             from .detection.cq import reduced_by_totals
+
             f0, obs, events, recon = reduced_by_totals(f0, obs, events, m.totals, st["eliminated"])
         states = list(f0)
         obs_list = list(obs) if isinstance(obs, (list, tuple)) else None
@@ -805,25 +951,33 @@ class Symmetries:
         for c in range(K):
             g = {str(k): str(v) for k, v in dict(obs_list[c] if obs_list else obs).items()}
             # one simultaneous substitution as in the detection: the trafo, then the cells of the grid
-            tr = {str(k): num_str(replace_symbols(list(recon), list(recon.values()), str(v)) if recon else v)
-                  for k, v in dict((trafos[c] if trafos else m.trafo) or {}).items() if str(k) not in recon}
+            tr = {
+                str(k): num_str(replace_symbols(list(recon), list(recon.values()), str(v)) if recon else v)
+                for k, v in dict((trafos[c] if trafos else m.trafo) or {}).items()
+                if str(k) not in recon
+            }
             tr = initial_value_split([tr], list(f0), taken=list(g))["trafos"][0]
             sub = {k: v for k, v in tr.items() if k not in f0}
-            cells = {} if grid is None else {col: replace_symbols(list(sub), list(sub.values()), grid.cell(c, col))
-                                             for col in grid.colnames()}
+            cells = (
+                {}
+                if grid is None
+                else {col: replace_symbols(list(sub), list(sub.values()), grid.cell(c, col)) for col in grid.colnames()}
+            )
             steps = [s for s in (sub, {col: v for col, v in cells.items() if col not in f0}) if s]
 
             def apply(e, steps=steps):
                 for s in steps:
                     e = replace_symbols(list(s), list(s.values()), e)
                 return e
+
             ev = []
             for e in events:
                 if e.get("cond") is None or c in e["cond"]:
                     t = apply(str(e["time"]))
                     # an event value reads the clock at the event time
-                    ev.append({"var": e["var"], "method": e["method"], "time": t,
-                               "value": at_time(apply(str(e["value"])), t)})
+                    ev.append(
+                        {"var": e["var"], "method": e["method"], "time": t, "value": at_time(apply(str(e["value"])), t)}
+                    )
             per.append((g, tr, cells, apply, ev))
         # each condition starts at zero or at the earliest event that comes before
         nums = [time_value(e["time"]) for *_, ev in per for e in ev]
@@ -864,6 +1018,7 @@ class Symmetries:
 
                 def key(e):
                     return e["time"]
+
             if known:
                 # a known input is a chain of jets whose values are known symbols, long enough for the gaps
                 taken = set(get_symbols(list(f.values()) + list(g.values()))) | set(f)
@@ -873,8 +1028,10 @@ class Symmetries:
             if unknown:
                 # an unknown input is a chain of jets with free starts, unknowns of the fiber but no coordinates
                 from .detection.uinputs import unknown_chain
-                f, ic, free_jets = unknown_chain(f, g, ic, unknown, 2 * order + 12, hy is not None or bool(ev) or
-                                                 equil or K > 1, what)
+
+                f, ic, free_jets = unknown_chain(
+                    f, g, ic, unknown, 2 * order + 12, hy is not None or bool(ev) or equil or K > 1, what
+                )
             # the clock advances at rate one from the start
             f["time"], ic["time"] = "1", start
             one_seg = K == 1 and not keys
@@ -902,12 +1059,25 @@ class Symmetries:
                     fr["time"], icr["time"] = "1", None
                 for j in r["entries"]:
                     on = apply(r["surfaces"][j])
-                    parts.append({"segments": [{"f": fr, "g": gr, "ic": icr, "on": on, "t": start,
-                                                "label": f"{rows[c]}~{k + 1}|{j + 1}:"}]})
+                    parts.append(
+                        {
+                            "segments": [
+                                {
+                                    "f": fr,
+                                    "g": gr,
+                                    "ic": icr,
+                                    "on": on,
+                                    "t": start,
+                                    "label": f"{rows[c]}~{k + 1}|{j + 1}:",
+                                }
+                            ]
+                        }
+                    )
             if regimes is not None:
                 for part in parts[n0:]:
                     part["surfaces"] = [apply(q) for q in regimes[0]["surfaces"]]
         from .detection.rationalize import NotRationalError, rationalize
+
         try:
             parts, rewrites, logs = rationalize(parts, list(self.info.get("coordinates") or ()), states)
         except NotRationalError:
@@ -921,6 +1091,7 @@ class Symmetries:
         signs decide them all, or None."""
         from .errors import InapplicableError
         from .sym.switching import hybrid_model
+
         st = self.info.get("settings") or {}
         try:
             hy = hybrid_model(f, obs, st.get("positive", True), events=events, inputs=list(self.model.inputs or []))
@@ -940,9 +1111,13 @@ class Symmetries:
         from .detection.conditions import at_time
         from .sym.parse import model_sympify
         from .sym.switching import BACK, to_str
+
         conds = (self.info.get("switching") or {}).get("conditions") or []
-        allowed = (conds[c] if c < len(conds) else {}).get("regimes") or \
-            (self.info.get("switching") or {}).get("regimes") or []
+        allowed = (
+            (conds[c] if c < len(conds) else {}).get("regimes")
+            or (self.info.get("switching") or {}).get("regimes")
+            or []
+        )
         n = len(hy.sw.funcs)
         side = {hy.text(j, sgn): (j, int(sgn > 0)) for j in range(n) for sgn in (1, -1)}
         out = []
@@ -954,14 +1129,21 @@ class Symmetries:
 
             def text(e, assign=assign):
                 return to_str(e.xreplace(assign).xreplace(BACK))
-            out.append({"f": {x: text(e) for x, e in hy.f.items()},
-                        "g": {y: text(e) for y, e in hy.g[c if hy.g_list else 0].items()},
-                        "sides": [v for _, v in sorted(hit)]})
+
+            out.append(
+                {
+                    "f": {x: text(e) for x, e in hy.f.items()},
+                    "g": {y: text(e) for y, e in hy.g[c if hy.g_list else 0].items()},
+                    "sides": [v for _, v in sorted(hit)],
+                }
+            )
         surfaces = [to_str(q.xreplace(BACK)) for q in hy.sw.funcs]
         # the sides of the start at a random point of the domain
         rng = random.Random(f"{c}:{','.join(surfaces)}")
-        ic = {x: model_sympify(at_time(apply(tr.get(x, cells.get(x, x))), start)) if x not in inputs
-              else spy.Integer(0) for x in hy.f}
+        ic = {
+            x: model_sympify(at_time(apply(tr.get(x, cells.get(x, x))), start)) if x not in inputs else spy.Integer(0)
+            for x in hy.f
+        }
         sides = []
         for q in surfaces:
             e = model_sympify(apply(q)).xreplace({spy.Symbol(x): v for x, v in ic.items()})
@@ -976,8 +1158,9 @@ class Symmetries:
         allowed_sides = [tuple(r["sides"]) for r in out]
         for r in out:
             r["surfaces"] = surfaces
-            r["entries"] = [j for j in range(n) if tuple(1 - v if i == j else v for i, v in enumerate(r["sides"]))
-                            in allowed_sides]
+            r["entries"] = [
+                j for j in range(n) if tuple(1 - v if i == j else v for i, v in enumerate(r["sides"])) in allowed_sides
+            ]
         return first + [r for r in out if r is not first[0]]
 
     def reduce(self, **kwargs):
@@ -1162,9 +1345,24 @@ def _check_detect(model, *, cores, engine, trace, control, gauge, mode="local", 
         raise InputError(f"`gauge` must be False, None or a sequence of names, not the string {gauge!r}")
 
 
-def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free_initial=None,
-           reconstruct=False, positive=None, verify=True, gauge=False, cores=1, control=None,
-           engine="modular", trace=False, mode="local", global_options=None):
+def detect(
+    model,
+    *,
+    scalings_only=False,
+    equilibrate=None,
+    reduce_cq=None,
+    free_initial=None,
+    reconstruct=False,
+    positive=None,
+    verify=True,
+    gauge=False,
+    cores=1,
+    control=None,
+    engine="modular",
+    trace=False,
+    mode="local",
+    global_options=None,
+):
     """Structural non-identifiabilities of a model, locally and, with ``mode="global"``, globally.
 
     Parameters
@@ -1221,8 +1419,16 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
     -------
     Symmetries
     """
-    _check_detect(model, cores=cores, engine=engine, trace=trace, control=control, gauge=gauge, mode=mode,
-                  global_options=global_options)
+    _check_detect(
+        model,
+        cores=cores,
+        engine=engine,
+        trace=trace,
+        control=control,
+        gauge=gauge,
+        mode=mode,
+        global_options=global_options,
+    )
     if mode == "global":
         # the reduction before the count needs the closed forms
         reconstruct = True
@@ -1237,11 +1443,22 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
 
     def run(pivots, cq_pivots):
         with _trace(trace):
-            return symmetry_detection(**model._kwargs(), gauge_preference=gauge, equilibrate=equilibrate,
-                                      reduce_cq=reduce_cq, free_initial=pivots, cq_pivots=cq_pivots,
-                                      reconstruct=reconstruct, positive=positive, verify=verify,
-                                      cores=cores, control=control or reconst_control(),
-                                      scalings_only=scalings_only, sym_engine=engine)
+            return symmetry_detection(
+                **model._kwargs(),
+                gauge_preference=gauge,
+                equilibrate=equilibrate,
+                reduce_cq=reduce_cq,
+                free_initial=pivots,
+                cq_pivots=cq_pivots,
+                reconstruct=reconstruct,
+                positive=positive,
+                verify=verify,
+                cores=cores,
+                control=control or reconst_control(),
+                scalings_only=scalings_only,
+                sym_engine=engine,
+            )
+
     try:
         res = Symmetries(pivot_choice(run, free_initial, reduce_cq), model)
     finally:
@@ -1252,7 +1469,8 @@ def detect(model, *, scalings_only=False, equilibrate=None, reduce_cq=None, free
     if free_moiety and n_open:
         res.info["limits"] = list(res.info.get("limits") or []) + [
             "a direction without a closed form moves the resting value of a conserved total; "
-            "reduce_cq=True reconstructs it in the total"]
+            "reduce_cq=True reconstructs it in the total"
+        ]
     if mode == "global":
         global_step(res, global_options, cores)
     return res
@@ -1274,6 +1492,7 @@ def _reduced_positive(positive, red, states):
     """The declared domain in the chart of the reduction `red`: each new parameter with the domain the block solved,
     the other names as declared."""
     import re
+
     names, exprs = declared(positive)
     dom = {q: d for b in red.get("blocks") or [] for q, d in (b.get("solved_domain") or {}).items()}
     if names is None and all(d == "positive" for d in dom.values()):
@@ -1285,9 +1504,23 @@ def _reduced_positive(positive, red, states):
     return out + [str(e) for e in exprs if {str(x) for x in e.free_symbols} <= coords]
 
 
-def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2, separable=True,
-           zero_limits=False, alternatives=False, allow_open=True, allow_checked=True,
-           check=True, work_cap=4000, branch=None):
+def reduce(
+    result,
+    *,
+    fixed=None,
+    positive=None,
+    d_poly=3,
+    d_darboux=2,
+    d_exp=2,
+    separable=True,
+    zero_limits=False,
+    alternatives=False,
+    allow_open=True,
+    allow_checked=True,
+    check=True,
+    work_cap=4000,
+    branch=None,
+):
     """Reparametrization that removes the directions of a detection result.
 
     The model is described in the invariants of the directions, each a new parameter ``q_<k>``. The
@@ -1361,12 +1594,23 @@ def reduce(result, *, fixed=None, positive=None, d_poly=3, d_darboux=2, d_exp=2,
     if isinstance(result, Symmetries) and getattr(result.model, "unknown_inputs", None):
         # the directions the unknown inputs absorb, each with the proof that they do
         from .reduction.absorb import prepare
+
         absorbed, notes = prepare(raw, result.model)
-    red = symmetry_reduction(absorbed, fixed=fixed, positive=positive, d_poly=d_poly, d_darboux=d_darboux,
-                             d_exp=d_exp, separable_=separable, zero_compatibility=zero_limits,
-                             alternatives=alternatives, work_cap=work_cap)
+    red = symmetry_reduction(
+        absorbed,
+        fixed=fixed,
+        positive=positive,
+        d_poly=d_poly,
+        d_darboux=d_darboux,
+        d_exp=d_exp,
+        separable_=separable,
+        zero_compatibility=zero_limits,
+        alternatives=alternatives,
+        work_cap=work_cap,
+    )
     if notes:
         from .reduction.absorb import annotate
+
         annotate(red, absorbed, notes)
     if check and isinstance(result, Symmetries) and isinstance(red, dict) and red.get("trafo"):
         red.setdefault("checks", {})["loop"] = _closed_loop(result, red)
@@ -1382,13 +1626,14 @@ def attach_discrete(raw, red, positive, branch=None):
     `branch` replaced the trafo."""
     if not isinstance(red, dict) or raw.get("discrete_symmetries") is None:
         if branch is not None:
-            raise InputError("`branch` needs a detection with mode=\"global\" that found a discrete symmetry")
+            raise InputError('`branch` needs a detection with mode="global" that found a discrete symmetry')
         return False
     d = raw["info"]["discrete"]
     red["discrete"] = {
         "symmetries": [e for e in raw["discrete_symmetries"] if e.get("preserves_domain") is not False],
         "fundamental_domain": d.get("fundamental_domain") or [],
-        "coordinates": (d.get("reduced") or {}).get("coordinates") or raw["info"].get("coordinates")}
+        "coordinates": (d.get("reduced") or {}).get("coordinates") or raw["info"].get("coordinates"),
+    }
     _branches(red, d, raw, positive, branch)
     return branch is not None
 
@@ -1396,6 +1641,7 @@ def attach_discrete(raw, red, positive, branch=None):
 def _branches(red, d, raw, positive, branch):
     """The branch charts of the discrete symmetry in `red` (alternatives, or the trafo of the chosen `branch`)."""
     from .reduction.branches import branch_charts, pick_branch
+
     section = (d.get("reduced") or {}).get("section")
     if d.get("reduced") and section != red.get("trafo"):
         # the maps are stated in the coordinates of the section that the global analysis took
@@ -1409,8 +1655,15 @@ def _branches(red, d, raw, positive, branch):
     bs = red["discrete"]["branches"]
     if branch is None:
         red["alternatives"] = list(red.get("alternatives") or []) + [
-            {"branch": b["branch"], "trafo": b["trafo"], "removed": red.get("removed"),
-             "remaining": red.get("remaining"), "unproven": b["unproven"]} for b in bs]
+            {
+                "branch": b["branch"],
+                "trafo": b["trafo"],
+                "removed": red.get("removed"),
+                "remaining": red.get("remaining"),
+                "unproven": b["unproven"],
+            }
+            for b in bs
+        ]
         return
     if not bs:
         raise InputError("`branch`: no branch charts, " + red["discrete"].get("why", "no discrete symmetry"))
@@ -1418,8 +1671,7 @@ def _branches(red, d, raw, positive, branch):
     red["trafo"] = b["trafo"]
     red["discrete"]["branch"] = b
     if b["unproven"]:
-        warnings.warn(f"a claim of the branch {b['branch']} is not proven: " + "; ".join(b["unproven"]),
-                      stacklevel=3)
+        warnings.warn(f"a claim of the branch {b['branch']} is not proven: " + "; ".join(b["unproven"]), stacklevel=3)
 
 
 def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
@@ -1427,14 +1679,16 @@ def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
     reason it cannot take it. A key in the grid goes into the cells of the grid, a pinned resting value into `fixed`."""
     from .detection.conditions import Grid, as_events
     from .rexpr import get_symbols, is_number, replace_symbols
+
     outer = {str(k): str(v) for k, v in outer.items() if str(v).strip() != str(k)}
     fixed, why = [], None
     if equilibrate:
         # under equilibrate an entry for a state is the resting value of that state, known when it is a number
         for k in [k for k in outer if k in f]:
             if not is_number(outer[k]):
-                why = f"the reduction pins the resting value of {k} to {outer.pop(k)}, which `equilibrate` " \
-                      "does not take"
+                why = (
+                    f"the reduction pins the resting value of {k} to {outer.pop(k)}, which `equilibrate` does not take"
+                )
                 continue
             fixed.append(k)
             outer.pop(k)
@@ -1443,14 +1697,24 @@ def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
         cells = [v for vals in grid.cols.values() for v in vals if isinstance(v, str)]
         hit = [k for k in outer if k in set(get_symbols(cells)) | set(grid.colnames())]
         sub = {k: outer[k] for k in hit}
-        grid = Grid(grid.rows, {c: [replace_symbols(list(sub), list(sub.values()), v) if isinstance(v, str) else v
-                                    for v in vals] for c, vals in grid.cols.items()})
+        grid = Grid(
+            grid.rows,
+            {
+                c: [replace_symbols(list(sub), list(sub.values()), v) if isinstance(v, str) else v for v in vals]
+                for c, vals in grid.cols.items()
+            },
+        )
         conditions = {"rows": grid.rows, "cols": grid.cols}
         outer = {k: v for k, v in outer.items() if k not in set(grid.colnames()) and k not in sub}
     evs = as_events(events)
-    used = set(f) | set(get_symbols(list(f.values()) + [str(v) for x in (g if isinstance(g, (list, tuple)) else [g])
-                                                        for v in dict(x or {}).values()] +
-                                    [e["value"] for e in evs] + [e["time"] for e in evs]))
+    used = set(f) | set(
+        get_symbols(
+            list(f.values())
+            + [str(v) for x in (g if isinstance(g, (list, tuple)) else [g]) for v in dict(x or {}).values()]
+            + [e["value"] for e in evs]
+            + [e["time"] for e in evs]
+        )
+    )
     names, vals = list(outer), list(outer.values())
 
     def compose(inner):
@@ -1461,6 +1725,7 @@ def reduced_model(f, g, trafo, conditions, events, outer, equilibrate):
         # a symbol the model trafo replaced survives only inside the replaced values
         consumed = set(get_symbols(list(inner.values())))
         return {**{k: v for k, v in outer.items() if k not in out and (k in used or k not in consumed)}, **out}
+
     trafo = [compose(t) for t in trafo] if isinstance(trafo, (list, tuple)) else compose(trafo)
     return {"trafo": trafo, "conditions": conditions, "fixed": fixed, "why": why}
 
@@ -1473,8 +1738,7 @@ def _reduced_copy(model, red, gauge, equilibrate):
     if rm["why"] is not None:
         return None, rm["why"]
     m.trafo, m.conditions = rm["trafo"], rm["conditions"]
-    m.fixed = list(dict.fromkeys(list(m.fixed or []) + list(gauge or []) + list(red.get("fixed") or []) +
-                                 rm["fixed"]))
+    m.fixed = list(dict.fromkeys(list(m.fixed or []) + list(gauge or []) + list(red.get("fixed") or []) + rm["fixed"]))
     return m, None
 
 
@@ -1489,10 +1753,17 @@ def _closed_loop(result, red):
         return {"ok": None, "directions": None, "expected": want, "reason": "not run, " + why}
 
     def run():
-        r = detect(m, equilibrate=bool(st.get("equilibrate")), reduce_cq=bool(st.get("reduce_cq")),
-                   positive=st.get("positive", True), verify=bool(st.get("verify", True)),
-                   engine=st.get("sym_engine", "modular"), control=st.get("control"))
+        r = detect(
+            m,
+            equilibrate=bool(st.get("equilibrate")),
+            reduce_cq=bool(st.get("reduce_cq")),
+            positive=st.get("positive", True),
+            verify=bool(st.get("verify", True)),
+            engine=st.get("sym_engine", "modular"),
+            control=st.get("control"),
+        )
         return r.to_dict()
+
     return loop_outcome(run, want)
 
 
@@ -1503,14 +1774,27 @@ def loop_outcome(run, want):
         try:
             r = run()
         except ValueError as exc:
-            return {"ok": None, "directions": None, "expected": want,
-                    "reason": "not run, " + ("the reduced model is not rational for the observability engine"
-                                             if "not rational" in str(exc) else str(exc).split("\n")[0])}
+            return {
+                "ok": None,
+                "directions": None,
+                "expected": want,
+                "reason": "not run, "
+                + (
+                    "the reduced model is not rational for the observability engine"
+                    if "not rational" in str(exc)
+                    else str(exc).split("\n")[0]
+                ),
+            }
     idle = [str(w.message) for w in rec if "had no effect" in str(w.message)]
     n = len(r.get("symmetries") or [])
-    out = {"directions": n, "expected": want, "rank": r.get("rank"), "dim": r.get("dim"),
-           "rank_status": ((r.get("info") or {}).get("rank_status") or {}).get("status"),
-           "ok": n == want and not idle}
+    out = {
+        "directions": n,
+        "expected": want,
+        "rank": r.get("rank"),
+        "dim": r.get("dim"),
+        "rank_status": ((r.get("info") or {}).get("rank_status") or {}).get("status"),
+        "ok": n == want and not idle,
+    }
     if idle:
         out["reason"] = idle[0]
     return out

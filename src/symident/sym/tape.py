@@ -56,6 +56,7 @@ _OP_SPOW = 10
 
 class StartPow(spy.Function):
     """base^n of a state that starts at 0, which the kernel expands in t and (c t^k)^n."""
+
     nargs = 2
 
 
@@ -64,7 +65,7 @@ def _start_powers(per_cond, S, fixed_names, blocked):
     base^c0 * StartPow(base, n)^c, and None; or (None, why) where such a power is not supported."""
     states = {str(X) for X in S}
     exps, at_zero, at_other = {}, set(), set()
-    for (f_c, g_c, ic_c, _f_ss) in per_cond:
+    for f_c, g_c, ic_c, _f_ss in per_cond:
         for e in list(f_c) + list(g_c):
             for pw in spy.sympify(e).atoms(spy.Pow):
                 if pw.exp.is_number or not pw.base.is_Symbol or str(pw.base) not in states:
@@ -80,26 +81,34 @@ def _start_powers(per_cond, S, fixed_names, blocked):
         return per_cond, None
     mixed = sorted(at_zero & at_other)
     if mixed:
-        return None, ('the state %s starts at 0 in one condition and not in another, and a free power of it '
-                      'is expanded differently at a start of 0; analyze the conditions separately' % mixed[0])
+        return None, (
+            "the state %s starts at 0 in one condition and not in another, and a free power of it "
+            "is expanded differently at a start of 0; analyze the conditions separately" % mixed[0]
+        )
     sym_of, owner = {}, {}
     for b in sorted(at_zero):
         ns = set()
         for ex in exps[b]:
             cn = _power_exponent(ex)
             if cn is None or not (cn[0].is_Integer and cn[0] >= 0 and cn[1].is_Integer and cn[1] > 0):
-                return None, ('the power %s^(%s) of a state that starts at 0 is supported as %s^(c0 + c*n) with '
-                              'integers c0 >= 0, c > 0 and a parameter n' % (b, ex, b))
+                return None, (
+                    "the power %s^(%s) of a state that starts at 0 is supported as %s^(c0 + c*n) with "
+                    "integers c0 >= 0, c > 0 and a parameter n" % (b, ex, b)
+                )
             ns.add(cn[2])
         if len(ns) > 1:
-            return None, 'the state %s starts at 0 and has powers with several free exponents' % b
+            return None, "the state %s starts at 0 and has powers with several free exponents" % b
         n = ns.pop()
         if str(n) in fixed_names or str(n) in states:
-            return None, ('the exponent %s of the state %s, which starts at 0, must be a coordinate, '
-                          'not a fixed value or a state' % (n, b))
+            return None, (
+                "the exponent %s of the state %s, which starts at 0, must be a coordinate, "
+                "not a fixed value or a state" % (n, b)
+            )
         if n in owner:
-            return None, ('the free exponent %s is the exponent of %s and %s, which both start at 0; '
-                          'their powers are not independent functions of t' % (n, owner[n], b))
+            return None, (
+                "the free exponent %s is the exponent of %s and %s, which both start at 0; "
+                "their powers are not independent functions of t" % (n, owner[n], b)
+            )
         owner[n] = b
         sym_of[b] = n
 
@@ -108,10 +117,14 @@ def _start_powers(per_cond, S, fixed_names, blocked):
             if pw.exp.is_number or str(pw.base) not in sym_of:
                 return pw
             c0, c, n = _power_exponent(pw.exp)
-            return pw.base ** c0 * StartPow(pw.base, n) ** c
+            return pw.base**c0 * StartPow(pw.base, n) ** c
+
         return spy.sympify(e).replace(lambda x: x.is_Pow, repl)
-    return [([sub(e) for e in f_c], [sub(e) for e in g_c], ic_c, [sub(e) for e in f_ss])
-            for (f_c, g_c, ic_c, f_ss) in per_cond], None
+
+    return [
+        ([sub(e) for e in f_c], [sub(e) for e in g_c], ic_c, [sub(e) for e in f_ss])
+        for (f_c, g_c, ic_c, f_ss) in per_cond
+    ], None
 
 
 def _emit_tape_shared(fexpr, gexpr, slot_of, base, allow_sqrt=False):
@@ -209,16 +222,16 @@ def _compose_t0_events(ic_map, t0evs, pval, subs_map):
     """Apply a segment's t0 events in place: x0 = E(x_ss), f = 0 stays on x_ss, values see the pre-event states."""
     pre = dict(ic_map)
     for e in t0evs or []:
-        Xv = spy.Symbol(str(e['var']))
+        Xv = spy.Symbol(str(e["var"]))
         if Xv not in ic_map:
             continue
-        val = spy.sympify(pval(e['value'])).subs(subs_map).xreplace(pre)
-        meth = str(e['method'])
-        if meth == 'replace':
+        val = spy.sympify(pval(e["value"])).subs(subs_map).xreplace(pre)
+        meth = str(e["method"])
+        if meth == "replace":
             ic_map[Xv] = val
-        elif meth == 'add':
+        elif meth == "add":
             ic_map[Xv] = ic_map[Xv] + val
-        elif meth == 'multiply':
+        elif meth == "multiply":
             ic_map[Xv] = ic_map[Xv] * val
     return ic_map
 
@@ -226,6 +239,7 @@ def _compose_t0_events(ic_map, t0evs, pval, subs_map):
 def _lie_reach(f_c, g_c, S, ic_c, evs, f_ss=None):
     """{name: order}: structural first Lie order at which each symbol can enter one segment's output jets."""
     import collections
+
     Sstr = [str(X) for X in S]
     rhs = {}
     for i, X in enumerate(Sstr):
@@ -250,7 +264,7 @@ def _lie_reach(f_c, g_c, S, ic_c, evs, f_ss=None):
     out = dict(dist)
 
     def lower(name, k):
-        if k < out.get(name, 10 ** 9):
+        if k < out.get(name, 10**9):
             out[name] = k
 
     for X, e in dict(ic_c).items():
@@ -258,9 +272,9 @@ def _lie_reach(f_c, g_c, S, ic_c, evs, f_ss=None):
             for s in spy.sympify(e).free_symbols:
                 lower(str(s), dist[str(X)])
     for ev in evs or []:
-        X = str(ev['var'])
+        X = str(ev["var"])
         if X in dist:
-            for s in spy.sympify(ev['value']).free_symbols:
+            for s in spy.sympify(ev["value"]).free_symbols:
                 lower(str(s), dist[X])
     if f_ss is not None:
         reached = [dist[X] for X in Sstr if X in dist]
@@ -270,7 +284,6 @@ def _lie_reach(f_c, g_c, S, ic_c, evs, f_ss=None):
                 for s in spy.sympify(e).free_symbols:
                     lower(str(s), k0)
     return out
-
 
 
 def _distinct(exprs):
@@ -301,34 +314,43 @@ def _str_memo():
         if v is None:
             v = memo[x] = str(x)
         return v
+
     return f
 
 
 def _zero_powers(e, positive):
     """0^n replaced by 0 where the exponent n is positive on the declared domain."""
+
     def pos(x):
-        sub = {v: spy.Symbol(str(v), positive=True) for v in x.free_symbols
-               if positive is True or str(v) in set(positive or ())}
+        sub = {
+            v: spy.Symbol(str(v), positive=True)
+            for v in x.free_symbols
+            if positive is True or str(v) in set(positive or ())
+        }
         return bool(x.xreplace(sub).is_positive)
+
     e = spy.sympify(e)
     if not any(p.base == 0 for p in e.atoms(spy.Pow)):
         return e
-    return e.replace(lambda x: x.is_Pow and x.base == 0 and not x.exp.is_number and pos(x.exp),
-                     lambda x: spy.Integer(0))
+    return e.replace(
+        lambda x: x.is_Pow and x.base == 0 and not x.exp.is_number and pos(x.exp), lambda x: spy.Integer(0)
+    )
 
 
 def _unmarked(e, S):
     """`e` with every pre_state() symbol as the state of S it stands for."""
     sym_of = {str(x): x for x in S}
-    return e.xreplace({x: sym_of.get(nm, spy.Symbol(nm)) for x in e.free_symbols
-                       if (nm := pre_state_name(x)) is not None})
+    return e.xreplace(
+        {x: sym_of.get(nm, spy.Symbol(nm)) for x in e.free_symbols if (nm := pre_state_name(x)) is not None}
+    )
 
 
 def _reads_states(e, S):
     """Whether e holds exp(), log() or a non-integer power of an expression in the states S."""
     e, states = spy.sympify(e), set(S)
-    return any(a.free_symbols & states for a in e.atoms(spy.exp, spy.log, spy.Pow)
-               if not (a.is_Pow and a.exp.is_Integer))
+    return any(
+        a.free_symbols & states for a in e.atoms(spy.exp, spy.log, spy.Pow) if not (a.is_Pow and a.exp.is_Integer)
+    )
 
 
 def _power_events(ev_per, power_recast, S):
@@ -339,40 +361,77 @@ def _power_events(ev_per, power_recast, S):
         evs = list(evs)
         bases = {}
         for e in evs:
-            b = sym_of.get(str(e['var']), spy.Symbol(str(e['var'])))
+            b = sym_of.get(str(e["var"]), spy.Symbol(str(e["var"])))
             cur = bases.get(b, b)
-            v = spy.sympify(e['value'])
-            bases[b] = {'replace': v, 'add': cur + v, 'multiply': cur * v}[str(e['method'])]
-        moved = [rc for rc in power_recast if sym_of.get(rc['base']) in bases]
+            v = spy.sympify(e["value"])
+            bases[b] = {"replace": v, "add": cur + v, "multiply": cur * v}[str(e["method"])]
+        moved = [rc for rc in power_recast if sym_of.get(rc["base"]) in bases]
         for rc in moved:
-            evs.append({'var': rc['E'], 'method': 'replace',
-                        'value': spy.exp(spy.Symbol(rc['exp']) * spy.log(bases[sym_of[rc['base']]]))})
-        for L in dict.fromkeys(rc['L'] for rc in moved):
-            rc = next(r for r in moved if r['L'] == L)
-            evs.append({'var': L, 'method': 'replace', 'value': spy.log(bases[sym_of[rc['base']]])})
+            evs.append(
+                {
+                    "var": rc["E"],
+                    "method": "replace",
+                    "value": spy.exp(spy.Symbol(rc["exp"]) * spy.log(bases[sym_of[rc["base"]]])),
+                }
+            )
+        for L in dict.fromkeys(rc["L"] for rc in moved):
+            rc = next(r for r in moved if r["L"] == L)
+            evs.append({"var": L, "method": "replace", "value": spy.log(bases[sym_of[rc["base"]]])})
         out.append(evs)
     return out
 
 
-def compile_observability_tape_multi(model, observation, condition_subs, condition_ic0,
-                                  fixed=None, parameters=None, equilibrate=False, forcings=None,
-                                  seg_equilibrate=None, condition_events=None,
-                                  condition_t0_events=None, joint_steady_state=False,
-                                  joint_fixed_states=None, held_state_params=None,
-                                  condition_obs=None, condition_times=None,
-                                  keep_coords=None, condition_rest_subs=None, const_states=None,
-                                  positive=True, condition_chain=None):
+def compile_observability_tape_multi(
+    model,
+    observation,
+    condition_subs,
+    condition_ic0,
+    fixed=None,
+    parameters=None,
+    equilibrate=False,
+    forcings=None,
+    seg_equilibrate=None,
+    condition_events=None,
+    condition_t0_events=None,
+    joint_steady_state=False,
+    joint_fixed_states=None,
+    held_state_params=None,
+    condition_obs=None,
+    condition_times=None,
+    keep_coords=None,
+    condition_rest_subs=None,
+    const_states=None,
+    positive=True,
+    condition_chain=None,
+):
     """Per-condition observability tapes over shared coordinates, without `const_states`, or {'ok': False, ...}."""
     if not state.env("NOSHARED"):
-        shared = shared_tape_compile(compile_observability_tape_multi, dict(
-            model=model, observation=observation, condition_subs=condition_subs, condition_ic0=condition_ic0,
-            fixed=fixed, parameters=parameters, equilibrate=equilibrate, forcings=forcings,
-            seg_equilibrate=seg_equilibrate, condition_events=condition_events,
-            condition_t0_events=condition_t0_events, joint_steady_state=joint_steady_state,
-            joint_fixed_states=joint_fixed_states, held_state_params=held_state_params,
-            condition_obs=condition_obs, condition_times=condition_times, keep_coords=keep_coords,
-            condition_rest_subs=condition_rest_subs, const_states=const_states, positive=positive,
-            condition_chain=condition_chain))
+        shared = shared_tape_compile(
+            compile_observability_tape_multi,
+            dict(
+                model=model,
+                observation=observation,
+                condition_subs=condition_subs,
+                condition_ic0=condition_ic0,
+                fixed=fixed,
+                parameters=parameters,
+                equilibrate=equilibrate,
+                forcings=forcings,
+                seg_equilibrate=seg_equilibrate,
+                condition_events=condition_events,
+                condition_t0_events=condition_t0_events,
+                joint_steady_state=joint_steady_state,
+                joint_fixed_states=joint_fixed_states,
+                held_state_params=held_state_params,
+                condition_obs=condition_obs,
+                condition_times=condition_times,
+                keep_coords=keep_coords,
+                condition_rest_subs=condition_rest_subs,
+                const_states=const_states,
+                positive=positive,
+                condition_chain=condition_chain,
+            ),
+        )
         if shared is not None:
             return shared
     _s = _str_memo()
@@ -392,9 +451,10 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
 
     # missing/None entries of `condition_obs` fall back to `observation`
     condition_obs = list(condition_obs) if condition_obs else []
-    obs_per_cond = [_as_list(condition_obs[c]) if (c < len(condition_obs) and
-                                                   condition_obs[c] is not None)
-                    else observation for c in range(K)]
+    obs_per_cond = [
+        _as_list(condition_obs[c]) if (c < len(condition_obs) and condition_obs[c] is not None) else observation
+        for c in range(K)
+    ]
 
     extra = []
     for d in condition_subs:
@@ -403,8 +463,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     for d in condition_ic0:
         for k, v in dict(d).items():
             extra += [_s(k), _s(v)]
-    all_lines = (model + observation + [l for o in obs_per_cond for l in o] +
-                 _as_list(parameters) + extra)
+    all_lines = model + observation + [l for o in obs_per_cond for l in o] + _as_list(parameters) + extra
     # symbol collection is order-insensitive and conditions repeat the same
     # trafo/IC strings, so tokenize each distinct line once
     all_lines = list(dict.fromkeys(all_lines))
@@ -413,8 +472,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     variables, diff_equations, _ = _read_equations(model, parse)
     obs_read = [_read_equations(o, parse) for o in obs_per_cond]
     obs_vars_per = [r[0] for r in obs_read]
-    fixed_names = set(_s(s) for s in
-                     [local.get(nm, spy.Symbol(nm)) for nm in _as_list(fixed)])
+    fixed_names = set(_s(s) for s in [local.get(nm, spy.Symbol(nm)) for nm in _as_list(fixed)])
     # held-variable moieties (equilibrate without reduce_cq): each pivot state's resting
     # value is a shared initial-value parameter (held_map), so in joint mode the moiety
     # freedom lands on a reported parameter, not a per-condition state column
@@ -422,11 +480,12 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     held_map = {_s(k): spy.Symbol(_s(v)) for k, v in held_state_params.items()}
     held_param_syms = [spy.Symbol(_s(v)) for v in held_state_params.values()]
 
-    is_const = [spy.sympify(e) == 0 and (const_states is None or _s(variables[i]) in set(const_states))
-                for i, e in enumerate(diff_equations)]
+    is_const = [
+        spy.sympify(e) == 0 and (const_states is None or _s(variables[i]) in set(const_states))
+        for i, e in enumerate(diff_equations)
+    ]
     S = [variables[i] for i in range(len(variables)) if not is_const[i]]
-    Srhs = [spy.sympify(diff_equations[i]) for i in range(len(variables))
-            if not is_const[i]]
+    Srhs = [spy.sympify(diff_equations[i]) for i in range(len(variables)) if not is_const[i]]
     n_s = len(S)
 
     parse_cache = {}
@@ -474,7 +533,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         return r
 
     per_cond = []
-    subs_per = []            # each condition's substitution map, aligned with per_cond
+    subs_per = []  # each condition's substitution map, aligned with per_cond
     for c in range(K):
         subs_map = {}
         for k, v in dict(condition_subs[c]).items():
@@ -513,11 +572,16 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         if r is None:
             r = hyp_cache[e] = _hyp_to_exp(e)
         return r
-    per_cond = [([hyp(e) for e in f_c],
-                [hyp(_strip_log_obs(e)) for e in g_c],
-                {k: hyp(v) for k, v in ic_c.items()},
-                [hyp(e) for e in f_ss])
-                for (f_c, g_c, ic_c, f_ss) in per_cond]
+
+    per_cond = [
+        (
+            [hyp(e) for e in f_c],
+            [hyp(_strip_log_obs(e)) for e in g_c],
+            {k: hyp(v) for k, v in ic_c.items()},
+            [hyp(e) for e in f_ss],
+        )
+        for (f_c, g_c, ic_c, f_ss) in per_cond
+    ]
 
     # log-parametrized parameters: one that occurs only as base^(c*theta) is replaced
     # by the rational coordinate X = base^theta, and the report maps X back to theta
@@ -525,12 +589,13 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     condition_times = condition_times or []
     ev_exprs = []
     for c in range(K):
-        for e in (list(condition_events[c]) if c < len(condition_events) else []):
-            ev_exprs.append(subs_memo(pval(e['value']), subs_per[c]))
+        for e in list(condition_events[c]) if c < len(condition_events) else []:
+            ev_exprs.append(subs_memo(pval(e["value"]), subs_per[c]))
         if c < len(condition_times) and condition_times[c] is not None:
             ev_exprs.append(subs_memo(pval(condition_times[c]), subs_per[c]))
-    lp_exprs = [e for (f_c, g_c, ic_c, f_ss) in per_cond
-                for e in list(f_c) + list(g_c) + list(ic_c.values()) + list(f_ss)]
+    lp_exprs = [
+        e for (f_c, g_c, ic_c, f_ss) in per_cond for e in list(f_c) + list(g_c) + list(ic_c.values()) + list(f_ss)
+    ]
     # the distinct expressions: the searches below do not depend on repetitions
     lp_all = list(dict.fromkeys(lp_exprs + ev_exprs))
     lp_base = _detect_log_params(lp_all, set(S))
@@ -541,31 +606,44 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         taken |= {_s(x) for x in spy.sympify(e).free_symbols}
     lp = {}
     for t, b in lp_base.items():
-        nm = 'exp_%s' % t
+        nm = "exp_%s" % t
         while nm in taken:
-            nm += '_'
+            nm += "_"
         taken.add(nm)
         lp[t] = (spy.Symbol(nm), b, lp_den[t])
     lp_sub = _log_param_sub(lp)
     if lp:
-        per_cond = [([lp_sub(e) for e in f_c], [lp_sub(e) for e in g_c],
-                    {k: lp_sub(v) for k, v in ic_c.items()}, [lp_sub(e) for e in f_ss])
-                    for (f_c, g_c, ic_c, f_ss) in per_cond]
+        per_cond = [
+            (
+                [lp_sub(e) for e in f_c],
+                [lp_sub(e) for e in g_c],
+                {k: lp_sub(v) for k, v in ic_c.items()},
+                [lp_sub(e) for e in f_ss],
+            )
+            for (f_c, g_c, ic_c, f_ss) in per_cond
+        ]
         for t, (X, _b, _L) in lp.items():
             if _s(t) in fixed_names:
                 fixed_names.add(_s(X))
-    log_params = [{'X': _s(X), 'theta': _s(t), 'base': 'E' if b ** spy.Rational(1, L) == spy.E
-                   else _s(b ** spy.Rational(1, L))}
-                  for t, (X, b, L) in sorted(lp.items(), key=lambda kv: _s(kv[0]))]
+    log_params = [
+        {"X": _s(X), "theta": _s(t), "base": "E" if b ** spy.Rational(1, L) == spy.E else _s(b ** spy.Rational(1, L))}
+        for t, (X, b, L) in sorted(lp.items(), key=lambda kv: _s(kv[0]))
+    ]
 
     # each condition's later events and segment start time, in the leaves
-    ev_per = [[{'var': _s(e['var']), 'method': _s(e['method']),
-                'value': lp_sub(subs_memo(pval(e['value']), subs_per[c]))}
-               for e in (list(condition_events[c]) if c < len(condition_events) else [])]
-              for c in range(K)]
-    tm_per = [lp_sub(subs_memo(pval(condition_times[c]), subs_per[c]))
-              if c < len(condition_times) and condition_times[c] is not None else None
-              for c in range(K)]
+    ev_per = [
+        [
+            {"var": _s(e["var"]), "method": _s(e["method"]), "value": lp_sub(subs_memo(pval(e["value"]), subs_per[c]))}
+            for e in (list(condition_events[c]) if c < len(condition_events) else [])
+        ]
+        for c in range(K)
+    ]
+    tm_per = [
+        lp_sub(subs_memo(pval(condition_times[c]), subs_per[c]))
+        if c < len(condition_times) and condition_times[c] is not None
+        else None
+        for c in range(K)
+    ]
 
     # power/Hill recast: base^exp with a parameter exponent becomes a state E with
     # E' = exp*E*base'/base plus L = log(base), so f stays rational; E is held generic
@@ -574,15 +652,17 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     power_recast = []
     inv_solve_name = {}
     per_cond = _split_power_bases(per_cond)
-    per_cond, why = _start_powers(per_cond, S, fixed_names,
-                                  equilibrate or any(ev_per) or any(t is not None for t in tm_per) or
-                                  any(condition_t0_events or []))
+    per_cond, why = _start_powers(
+        per_cond,
+        S,
+        fixed_names,
+        equilibrate or any(ev_per) or any(t is not None for t in tm_per) or any(condition_t0_events or []),
+    )
     if why is not None:
-        return {'ok': False, 'why': why}
+        return {"ok": False, "why": why}
     pairs = _detect_power_atoms(per_cond, S)
     if pairs is None:
-        return {'ok': False, 'nonrational':
-                ['unsupported power form: base must be a symbol and exponent c*param']}
+        return {"ok": False, "nonrational": ["unsupported power form: base must be a symbol and exponent c*param"]}
     if pairs:
         S, per_cond, power_recast = _apply_power_recast(pairs, S, per_cond)
         ev_per = _power_events(ev_per, power_recast, S[:n_s])
@@ -593,37 +673,45 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             # stay generic
             real_set = {_s(X) for X in S[:n_real]}
             bare_syms = set()
-            for (_f, _g, _ic, ss_r) in per_cond:
+            for _f, _g, _ic, ss_r in per_cond:
                 for e in ss_r[:n_real]:
                     bare_syms |= spy.fraction(spy.together(e))[0].free_symbols
             for rc in power_recast:
-                rc['inverted'] = (rc['base'] in real_set
-                                  and spy.Symbol(rc['base']) not in bare_syms)
+                rc["inverted"] = rc["base"] in real_set and spy.Symbol(rc["base"]) not in bare_syms
             by_base = {}
             for rc in power_recast:
-                by_base.setdefault(rc['base'], []).append(rc)
+                by_base.setdefault(rc["base"], []).append(rc)
             for base, group in by_base.items():
-                if group[0]['inverted'] and len(group) > 1:
-                    return {'ok': False, 'nonrational':
-                            ['free exponent base %s has multiple independent '
-                             'powers with no linear turnover term' % base]}
-            inv_solve_name = {rc['base']: rc['E']
-                              for rc in power_recast if rc['inverted']}
+                if group[0]["inverted"] and len(group) > 1:
+                    return {
+                        "ok": False,
+                        "nonrational": [
+                            "free exponent base %s has multiple independent powers with no linear turnover term" % base
+                        ],
+                    }
+            inv_solve_name = {rc["base"]: rc["E"] for rc in power_recast if rc["inverted"]}
         else:
             # transient: no steady-state solve, so nothing is inverted
             for rc in power_recast:
-                rc['inverted'] = False
+                rc["inverted"] = False
 
     def any_in(pred):
         # conditions and segments repeat the same expressions: each distinct one is tested once
-        return any(pred(e) for e in _distinct(
-            [e for (f_c, g_c, ic_c, _) in per_cond for e in list(f_c) + list(g_c) + list(ic_c.values())] +
-            [e['value'] for evs in ev_per for e in evs] + [t for t in tm_per if t is not None]))
+        return any(
+            pred(e)
+            for e in _distinct(
+                [e for (f_c, g_c, ic_c, _) in per_cond for e in list(f_c) + list(g_c) + list(ic_c.values())]
+                + [e["value"] for evs in ev_per for e in evs]
+                + [t for t in tm_per if t is not None]
+            )
+        )
 
     def taken_names():
         taken = {_s(x) for x in S} | set(fixed_names) | {_s(X) for X, *_ in lp.values()}
-        for e in _distinct([e for (f_c, g_c, ic_c, f_ss) in per_cond
-                            for e in list(f_c) + list(g_c) + list(ic_c.values()) + list(f_ss)] + list(lp_all)):
+        for e in _distinct(
+            [e for (f_c, g_c, ic_c, f_ss) in per_cond for e in list(f_c) + list(g_c) + list(ic_c.values()) + list(f_ss)]
+            + list(lp_all)
+        ):
             taken |= {_s(x) for x in spy.sympify(e).free_symbols}
         return taken
 
@@ -638,73 +726,104 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         evs = list(condition_t0_events[c]) if condition_t0_events and c < len(condition_t0_events) else []
         if not seg_eq[c] or not evs:
             continue
-        evs = [{'var': _s(e['var']), 'method': _s(e['method']),
-                'value': lp_sub(subs_memo(pval(e['value']), subs_per[c]))} for e in evs]
+        evs = [
+            {"var": _s(e["var"]), "method": _s(e["method"]), "value": lp_sub(subs_memo(pval(e["value"]), subs_per[c]))}
+            for e in evs
+        ]
         if power_recast:
             evs = _power_events([evs], power_recast, S)[0]
-        if any(_reads_states(e['value'], S) for e in evs):
+        if any(_reads_states(e["value"], S) for e in evs):
             ev_per[c] = [dict(e, t0=True) for e in evs] + list(ev_per[c])
             t0_moved[c] = True
     # a chain that starts at rest starts at the seeded coordinates: held pivots at their
     # parameters, forcings and forced-zero states at zero
     rest_recast = bool(equilibrate and any(seg_eq) and joint_steady_state)
-    if any(seg_eq) and joint_steady_state and (any(t0_moved) or any(
-            _reads_states(e['value'], S) for evs in ev_per for e in evs) or
-            any_in(_has_trig) or any_in(_has_exp) or any_in(_has_func)):
+    if (
+        any(seg_eq)
+        and joint_steady_state
+        and (
+            any(t0_moved)
+            or any(_reads_states(e["value"], S) for evs in ev_per for e in evs)
+            or any_in(_has_trig)
+            or any_in(_has_exp)
+            or any_in(_has_func)
+        )
+    ):
         jfs = set(joint_fixed_states or [])
-        per_cond = [(f_c, g_c, {**ic_c, **{_s(X): (held_map[_s(X)] if _s(X) in held_map else spy.Integer(0))
-                                             for X in S if _s(X) in held_map or _s(X) in forcings
-                                             or _s(X) in jfs}}, f_ss) if seg_eq[c] else (f_c, g_c, ic_c, f_ss)
-                    for c, (f_c, g_c, ic_c, f_ss) in enumerate(per_cond)]
+        per_cond = [
+            (
+                f_c,
+                g_c,
+                {
+                    **ic_c,
+                    **{
+                        _s(X): (held_map[_s(X)] if _s(X) in held_map else spy.Integer(0))
+                        for X in S
+                        if _s(X) in held_map or _s(X) in forcings or _s(X) in jfs
+                    },
+                },
+                f_ss,
+            )
+            if seg_eq[c]
+            else (f_c, g_c, ic_c, f_ss)
+            for c, (f_c, g_c, ic_c, f_ss) in enumerate(per_cond)
+        ]
     trig_recast = None
     # states the recasts add; at rest each starts at the value of the leaf, and the resting model
     # holds the same leaves (rest_recast)
     n_core = len(S)
     if any_in(_has_trig):
-        trig_recast = _apply_trig_recast(S, per_cond, ev_per, tm_per, taken_names(), condition_chain,
-                                         at_rest=rest_recast)
-        if 'why' in trig_recast:
-            return {'ok': False, 'why': trig_recast['why']}
-        S, per_cond = trig_recast['S'], trig_recast['per_cond']
-        ev_per, tm_per = trig_recast['ev_per'], trig_recast['tm_per']
+        trig_recast = _apply_trig_recast(
+            S, per_cond, ev_per, tm_per, taken_names(), condition_chain, at_rest=rest_recast
+        )
+        if "why" in trig_recast:
+            return {"ok": False, "why": trig_recast["why"]}
+        S, per_cond = trig_recast["S"], trig_recast["per_cond"]
+        ev_per, tm_per = trig_recast["ev_per"], trig_recast["tm_per"]
         n_s = len(S)
-        fixed_names |= set(trig_recast['consts'])
+        fixed_names |= set(trig_recast["consts"])
 
     # exponentials: auxiliary states and generic exponential leaves (_apply_exp_recast)
     exp_recast = None
-    if rest_recast and any(a.base.is_Rational and a.base > 0 and a.base != 1 and not a.exp.is_number
-                           and not (a.exp.free_symbols & set(S))
-                           for (_f, _g, _ic, f_ss) in per_cond for e in f_ss for a in spy.sympify(e).atoms(spy.Pow)):
+    if rest_recast and any(
+        a.base.is_Rational and a.base > 0 and a.base != 1 and not a.exp.is_number and not (a.exp.free_symbols & set(S))
+        for (_f, _g, _ic, f_ss) in per_cond
+        for e in f_ss
+        for a in spy.sympify(e).atoms(spy.Pow)
+    ):
         # detection.numbase joins the number into a base of the same power or holds it as a constant
-        return {'ok': False, 'why': 'equilibrate does not support a power b^x of a positive rational number b '
-                'in the resting model; write it as a power of a parameter'}
+        return {
+            "ok": False,
+            "why": "equilibrate does not support a power b^x of a positive rational number b "
+            "in the resting model; write it as a power of a parameter",
+        }
     if any_in(_has_exp):
-        exp_recast = _apply_exp_recast(S, per_cond, ev_per, tm_per, taken_names(), condition_chain,
-                                       at_rest=rest_recast)
-        if 'why' in exp_recast:
-            return {'ok': False, 'why': exp_recast['why']}
-        S, per_cond = exp_recast['S'], exp_recast['per_cond']
-        ev_per, tm_per = exp_recast['ev_per'], exp_recast['tm_per']
+        exp_recast = _apply_exp_recast(S, per_cond, ev_per, tm_per, taken_names(), condition_chain, at_rest=rest_recast)
+        if "why" in exp_recast:
+            return {"ok": False, "why": exp_recast["why"]}
+        S, per_cond = exp_recast["S"], exp_recast["per_cond"]
+        ev_per, tm_per = exp_recast["ev_per"], exp_recast["tm_per"]
         n_s = len(S)
-        fixed_names |= set(exp_recast['consts'])
+        fixed_names |= set(exp_recast["consts"])
     if trig_recast is not None:
         exp_recast = _merge_recast(trig_recast, exp_recast)
     func_recast = None
     if any_in(_has_func):
-        func_recast = _apply_func_recast(S, per_cond, ev_per, tm_per, taken_names(), condition_chain,
-                                         at_rest=rest_recast)
-        if 'why' in func_recast:
-            return {'ok': False, 'why': func_recast['why']}
-        S, per_cond = func_recast['S'], func_recast['per_cond']
-        ev_per, tm_per = func_recast['ev_per'], func_recast['tm_per']
+        func_recast = _apply_func_recast(
+            S, per_cond, ev_per, tm_per, taken_names(), condition_chain, at_rest=rest_recast
+        )
+        if "why" in func_recast:
+            return {"ok": False, "why": func_recast["why"]}
+        S, per_cond = func_recast["S"], func_recast["per_cond"]
+        ev_per, tm_per = func_recast["ev_per"], func_recast["tm_per"]
         n_s = len(S)
-        fixed_names |= set(func_recast['consts'])
+        fixed_names |= set(func_recast["consts"])
     if func_recast is not None:
         exp_recast = _merge_recast(exp_recast, func_recast)
     if any_in(lambda e: spy.sympify(e).has(spy.pi, spy.E)):
         const_recast = _apply_const_recast(S, per_cond, ev_per, tm_per, taken_names())
-        per_cond, ev_per, tm_per = const_recast['per_cond'], const_recast['ev_per'], const_recast['tm_per']
-        fixed_names |= set(const_recast['consts'])
+        per_cond, ev_per, tm_per = const_recast["per_cond"], const_recast["ev_per"], const_recast["tm_per"]
+        fixed_names |= set(const_recast["consts"])
         exp_recast = _merge_recast(exp_recast, const_recast)
     rest_aux = {_s(X) for X in S[n_core:]} if rest_recast else set()
     rest_inverted = {}
@@ -714,14 +833,14 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         eq_ss = [f_ss for c, (_f, _g, _ic, f_ss) in enumerate(per_cond) if seg_eq[c]]
         jfs = set(joint_fixed_states or [])
         leaves_of = {}
-        for W, z, _e in exp_recast['rel']:
+        for W, z, _e in exp_recast["rel"]:
             leaves_of.setdefault(z, []).append(W)
         taken_w = set(inv_solve_name.values())
         # the balances the resting solve keeps: held pivots, forcings and states at zero are no unknowns
-        lines = [i for i in range(n_real) if _s(S[i]) not in forcings and _s(S[i]) not in jfs
-                 and _s(S[i]) not in held_map]
-        reads = [set().union(*[{_s(x) for x in spy.sympify(f_ss[i]).free_symbols} for f_ss in eq_ss])
-                 for i in lines]
+        lines = [
+            i for i in range(n_real) if _s(S[i]) not in forcings and _s(S[i]) not in jfs and _s(S[i]) not in held_map
+        ]
+        reads = [set().union(*[{_s(x) for x in spy.sympify(f_ss[i]).free_symbols} for f_ss in eq_ss]) for i in lines]
 
         def matched(unknowns):
             # the size of a maximum matching of the balances to the unknowns they read
@@ -735,7 +854,9 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                             owner[u] = k
                             return True
                 return False
+
             return sum(augment(k, set()) for k in range(len(lines)))
+
         unknowns = [_s(S[i]) for i in lines]
         size = matched(unknowns)
         for nm in sorted(unknowns, key=lambda n: (len(leaves_of.get(n, ())), n)):
@@ -753,33 +874,46 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                     break
         inv_solve_name.update(rest_inverted)
         # a leaf of a resting state is one coordinate, shared by the conditions, so their resting states must agree
-        in_leaves = sorted({z for _W, z, _e in exp_recast['rel'] if z in {_s(X) for X in S[:n_real]}})
+        in_leaves = sorted({z for _W, z, _e in exp_recast["rel"] if z in {_s(X) for X in S[:n_real]}})
         if in_leaves and len({tuple(f_ss[:n_real]) for f_ss in eq_ss}) > 1:
-            return {'ok': False, 'why': 'equilibrate does not support conditions with different resting models '
-                    'when a state at rest (%s) enters a non-rational term; give the steady state through `trafo` '
-                    'or analyze the conditions with the same resting model together' % ', '.join(in_leaves)}
+            return {
+                "ok": False,
+                "why": "equilibrate does not support conditions with different resting models "
+                "when a state at rest (%s) enters a non-rational term; give the steady state through `trafo` "
+                "or analyze the conditions with the same resting model together" % ", ".join(in_leaves),
+            }
     if rest_recast:
         # a root of the states left in the resting model has no leaf
-        roots = sorted({str(a) for (_f, _g, _ic, f_ss) in per_cond for e in f_ss for a in _func_atoms(e)
-                        if _func_arg(a).free_symbols & set(S)})
+        roots = sorted(
+            {
+                str(a)
+                for (_f, _g, _ic, f_ss) in per_cond
+                for e in f_ss
+                for a in _func_atoms(e)
+                if _func_arg(a).free_symbols & set(S)
+            }
+        )
         if roots:
-            return {'ok': False, 'why': 'equilibrate does not support the non-integer power %s of an expression '
-                    'in the states in the resting model; give the steady state through `trafo` or start from '
-                    'free initial values' % roots[0].replace('**', '^')}
+            return {
+                "ok": False,
+                "why": "equilibrate does not support the non-integer power %s of an expression "
+                "in the states in the resting model; give the steady state through `trafo` or start from "
+                "free initial values" % roots[0].replace("**", "^"),
+            }
     if any(t0_moved):
         condition_t0_events = [list(x) for x in condition_t0_events]
         for c in range(K):
             if t0_moved[c]:
-                condition_t0_events[c] = [e for e in ev_per[c] if e.get('t0')]
-                ev_per[c] = [e for e in ev_per[c] if not e.get('t0')]
+                condition_t0_events[c] = [e for e in ev_per[c] if e.get("t0")]
+                ev_per[c] = [e for e in ev_per[c] if not e.get("t0")]
 
     nonrational = []
-    rat_ok = set()            # deduped exprs recur across conditions; check each once
+    rat_ok = set()  # deduped exprs recur across conditions; check each once
 
     def _rat(e):
         if e in rat_ok:
             return True
-        ok = _is_rational_expr(e.xreplace({a: spy.Symbol('_start_pow') for a in e.atoms(StartPow)}))
+        ok = _is_rational_expr(e.xreplace({a: spy.Symbol("_start_pow") for a in e.atoms(StartPow)}))
         if ok:
             rat_ok.add(e)
         return ok
@@ -787,15 +921,15 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     for c, (f_c, g_c, ic_c, _f_ss) in enumerate(per_cond):
         for X, e in zip(S, f_c):
             if not _rat(e):
-                nonrational.append('d%s/dt = %s' % (X, e))
+                nonrational.append("d%s/dt = %s" % (X, e))
         for y, e in zip(obs_vars_per[c], g_c):
             if not _rat(e):
-                nonrational.append('%s = %s' % (y, e))
+                nonrational.append("%s = %s" % (y, e))
         for X in S:
             if not (_rat(ic_c[_s(X)]) or _is_sqrt_rational(ic_c[_s(X)])):
-                nonrational.append('%s(0) = %s' % (X, ic_c[_s(X)]))
+                nonrational.append("%s(0) = %s" % (X, ic_c[_s(X)]))
     if nonrational:
-        return {'ok': False, 'nonrational': nonrational}
+        return {"ok": False, "nonrational": nonrational}
 
     # a state has a free initial-value leaf when the initial value still contains the
     # state symbol (possibly under a dose); equilibrate-seeded states have none
@@ -807,8 +941,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             if joint_steady_state:
                 jfs = set(joint_fixed_states or [])
                 for X in S:
-                    if (_s(X) not in forcings and _s(X) not in jfs
-                            and _s(X) not in held_map and _s(X) not in rest_aux):
+                    if _s(X) not in forcings and _s(X) not in jfs and _s(X) not in held_map and _s(X) not in rest_aux:
                         free_state[_s(X)] = True
             continue  # equilibrate-seeded: no state is a free coordinate (unless joint)
         for X in S:
@@ -821,12 +954,12 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     event_vals = []
     for c in range(K):
         evs = list(condition_events[c]) if c < len(condition_events) else []
-        event_vals.append([lp_sub(spy.sympify(pval(e['value']))) for e in evs])
+        event_vals.append([lp_sub(spy.sympify(pval(e["value"]))) for e in evs])
 
     # f_ss is included so parameters the perturbed dynamics drop still count
     paramset = set()
-    seen_ps = set()           # deduped exprs recur across conditions; walk each once
-    for (f_c, g_c, ic_c, f_ss) in per_cond:
+    seen_ps = set()  # deduped exprs recur across conditions; walk each once
+    for f_c, g_c, ic_c, f_ss in per_cond:
         for e in list(f_c) + list(g_c) + list(ic_c.values()) + list(f_ss):
             if e in seen_ps:
                 continue
@@ -837,14 +970,14 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             paramset |= set(e.free_symbols)
     for evs in ev_per:
         for e in evs:
-            paramset |= set(_unmarked(spy.sympify(e['value']), S).free_symbols)
+            paramset |= set(_unmarked(spy.sympify(e["value"]), S).free_symbols)
     for c in range(K):
         if t0_moved[c]:
             for e in condition_t0_events[c]:
-                paramset |= set(spy.sympify(e['value']).free_symbols)
+                paramset |= set(spy.sympify(e["value"]).free_symbols)
     if exp_recast is not None:
         by_name = {_s(x): x for x in paramset}
-        for rl in exp_recast['rel']:
+        for rl in exp_recast["rel"]:
             paramset |= set(rl[2].free_symbols)
             paramset.add(by_name.get(rl[1], spy.Symbol(rl[1])))
     # a segment's left boundary may sit at a time given in the parameters
@@ -852,24 +985,26 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         if tm is not None and c < K:
             paramset |= set(lp_sub(pval(tm)).free_symbols)
     paramset -= set(S)
-    paramset |= set(held_param_syms)   # held-variable initial-value parameters
+    paramset |= set(held_param_syms)  # held-variable initial-value parameters
     # coordinates a trafo absorbed stay coordinates
     paramset |= {local.get(_s(n), spy.Symbol(_s(n))) for n in _as_list(keep_coords)}
     # one coordinate per name: a leaf read off a relation by name is the leaf with its assumptions
-    params = sorted({_s(x): x for x in sorted(paramset, key=lambda x: (_s(x), bool(x.assumptions0)))}.values(),
-                    key=spy.default_sort_key)
+    params = sorted(
+        {_s(x): x for x in sorted(paramset, key=lambda x: (_s(x), bool(x.assumptions0)))}.values(),
+        key=spy.default_sort_key,
+    )
     # a base seen only under a free exponent vanished into the recast atom; re-added, the
     # recast relation ties it, and the co-scaling of the base is reported as an exact scaling
     if power_recast:
         known = set(_s(s) for s in S) | set(_s(s) for s in params) | set(forcings)
         for rc in power_recast:
-            if rc['base'] not in known:
-                params.append(spy.Symbol(rc['base']))
-                known.add(rc['base'])
+            if rc["base"] not in known:
+                params.append(spy.Symbol(rc["base"]))
+                known.add(rc["base"])
             # so does an exponent seen only there, which the relation E = base^n ties as well
-            if rc['exp'] not in known and rc['exp'] not in fixed_names:
-                params.append(spy.Symbol(rc['exp']))
-                known.add(rc['exp'])
+            if rc["exp"] not in known and rc["exp"] not in fixed_names:
+                params.append(spy.Symbol(rc["exp"]))
+                known.add(rc["exp"])
         params = sorted(params, key=spy.default_sort_key)
 
     free_states = [X for X in S if free_state[_s(X)]]
@@ -883,9 +1018,9 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
 
     tapes = []
     reach_cache = {}  # structural Lie reach per (model, initial values, events)
-    emit_cache = {}   # (f_c, g_c, obs names) recur across segments/conditions
+    emit_cache = {}  # (f_c, g_c, obs names) recur across segments/conditions
     ss_sol_cache = {}  # linear resting-state solutions, keyed on the f_ss tuple
-    ic_cache = {}     # emitted IC tapes, keyed on the seed-expression tuple
+    ic_cache = {}  # emitted IC tapes, keyed on the seed-expression tuple
     e_num = {spy.E: spy.exp(1, evaluate=False)}
     lines_memo = {}
 
@@ -896,6 +1031,7 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             x = spy.sympify(e).xreplace(e_num)
             r = lines_memo[e] = str(x.replace(lambda y: isinstance(y, StartPow), lambda y: y.args[0] ** y.args[1]))
         return r
+
     for c, (f_c, g_c, ic_c, f_ss) in enumerate(per_cond):
         subs_map = subs_per[c]
         ekey = (tuple(f_c), tuple(g_c), tuple(_s(v) for v in obs_vars_per[c]))
@@ -904,12 +1040,12 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             try:
                 emitted = _emit_tape_shared(f_c, g_c, slot_of, base)
             except _NotRationalError:
-                return {'ok': False}
+                return {"ok": False}
             # this segment's substituted model as lines for the scaling peel,
             # exponentials kept
             f0, g0 = scal_per_cond[c][0], scal_per_cond[c][1]
-            m_lines = ['%s = %s' % (_s(scal_s[i]), lines_expr(f0[i])) for i in range(len(scal_s))]
-            o_lines = ['%s = %s' % (_s(obs_vars_per[c][j]), lines_expr(g0[j])) for j in range(len(g0))]
+            m_lines = ["%s = %s" % (_s(scal_s[i]), lines_expr(f0[i])) for i in range(len(scal_s))]
+            o_lines = ["%s = %s" % (_s(obs_vars_per[c][j]), lines_expr(g0[j])) for j in range(len(g0))]
             cached = (emitted, m_lines, o_lines)
             emit_cache[ekey] = cached
         (op, a, b, cnum, cden, outslots), m_lines, o_lines = cached
@@ -917,35 +1053,54 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
         # structural first Lie order of every symbol in this segment's jets; the
         # saturation counts no flat step before it (a readout behind a transit chain is
         # flat at rank 0 until the chain has filled)
-        reach_key = (ekey, tuple(sorted((_s(k), _s(v)) for k, v in ic_c.items())),
-                     tuple((_s(e['var']), _s(e['value'])) for e in ev_per[c]),
-                     bool(seg_eq[c]))
+        reach_key = (
+            ekey,
+            tuple(sorted((_s(k), _s(v)) for k, v in ic_c.items())),
+            tuple((_s(e["var"]), _s(e["value"])) for e in ev_per[c]),
+            bool(seg_eq[c]),
+        )
         reach = reach_cache.get(reach_key)
         if reach is None:
-            reach = _lie_reach(f_c, g_c, S, ic_c,
-                               [dict(e, value=_unmarked(spy.sympify(e['value']), S)) for e in ev_per[c]],
-                               f_ss if seg_eq[c] else None)
+            reach = _lie_reach(
+                f_c,
+                g_c,
+                S,
+                ic_c,
+                [dict(e, value=_unmarked(spy.sympify(e["value"]), S)) for e in ev_per[c]],
+                f_ss if seg_eq[c] else None,
+            )
             reach_cache[reach_key] = reach
         tape = {
-            'op': op, 'a': a, 'b': b, 'cnum': cnum, 'cden': cden,
-            'state_slots': [n_leaves + i for i in range(n_s)],
-            'f_out': f_out,
-            'g_out': outslots[n_s:n_s + len(g_c)],
-            'ic_leaf': [-1] * n_s, 'ic_num': ['0'] * n_s, 'ic_den': ['1'] * n_s,
-            'model_lines': m_lines,
-            'obs_lines': o_lines,
+            "op": op,
+            "a": a,
+            "b": b,
+            "cnum": cnum,
+            "cden": cden,
+            "state_slots": [n_leaves + i for i in range(n_s)],
+            "f_out": f_out,
+            "g_out": outslots[n_s : n_s + len(g_c)],
+            "ic_leaf": [-1] * n_s,
+            "ic_num": ["0"] * n_s,
+            "ic_den": ["1"] * n_s,
+            "model_lines": m_lines,
+            "obs_lines": o_lines,
             # initial values, boundary events and start time, for verify_scalings()
-            'ver_ic': ['%s = %s' % (_s(X), _s(ic_c[_s(X)])) for X in S if _s(X) in ic_c],
-            'ver_ev': [{'var': _s(e['var']), 'method': _s(e['method']),
-                        'value': _s(e.get('plain', e['value']))} for e in ev_per[c]],
-            'ver_t0': [{'var': _s(e['var']), 'method': _s(e['method']),
-                        'value': _s(e['value'])} for e in
-                      (condition_t0_events[c] if condition_t0_events and
-                       c < len(condition_t0_events) else [])],
-            'ver_time': '' if tm_per[c] is None else _s(tm_per[c]),
+            "ver_ic": ["%s = %s" % (_s(X), _s(ic_c[_s(X)])) for X in S if _s(X) in ic_c],
+            "ver_ev": [
+                {"var": _s(e["var"]), "method": _s(e["method"]), "value": _s(e.get("plain", e["value"]))}
+                for e in ev_per[c]
+            ],
+            "ver_t0": [
+                {"var": _s(e["var"]), "method": _s(e["method"]), "value": _s(e["value"])}
+                for e in (condition_t0_events[c] if condition_t0_events and c < len(condition_t0_events) else [])
+            ],
+            "ver_time": "" if tm_per[c] is None else _s(tm_per[c]),
             # the resting model of a start at rest, which a scaling must leave invariant as well
-            'ver_rest': ['%s = %s' % (_s(scal_s[i]), spy.sympify(e).xreplace(e_num))
-                         for i, e in enumerate(scal_per_cond[c][3])] if seg_eq[c] else [],
+            "ver_rest": [
+                "%s = %s" % (_s(scal_s[i]), spy.sympify(e).xreplace(e_num)) for i, e in enumerate(scal_per_cond[c][3])
+            ]
+            if seg_eq[c]
+            else [],
         }
         if seg_eq[c] and joint_steady_state:
             # joint mode: each non-forcing state is an identity leaf seeded to x*;
@@ -953,25 +1108,38 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             jfs = set(joint_fixed_states or [])
             # held pivots seed from their parameter (held_map), forcings and forced-zero
             # states from 0
-            ic_map = {X: (held_map[_s(X)] if _s(X) in held_map
-                          else ic_c[_s(X)] if _s(X) in rest_aux
-                          else X if (_s(X) not in forcings and _s(X) not in jfs)
-                          else spy.Integer(0)) for X in S}
+            ic_map = {
+                X: (
+                    held_map[_s(X)]
+                    if _s(X) in held_map
+                    else ic_c[_s(X)]
+                    if _s(X) in rest_aux
+                    else X
+                    if (_s(X) not in forcings and _s(X) not in jfs)
+                    else spy.Integer(0)
+                )
+                for X in S
+            }
             # t0 events act on the pre-event coordinate x_ss (seeded from val_by);
             # the IC tape holds x0 = E(x_ss) with chain-rule duals
-            _compose_t0_events(ic_map, condition_t0_events[c]
-                               if condition_t0_events and c < len(condition_t0_events)
-                               else [], pval, subs_map)
+            _compose_t0_events(
+                ic_map,
+                condition_t0_events[c] if condition_t0_events and c < len(condition_t0_events) else [],
+                pval,
+                subs_map,
+            )
             try:
                 ic_op, ic_a, ic_b, ic_cnum, ic_cden, ic_out = _emit_tape_shared(
-                    [ic_map[X] for X in S], [], leaf_slot, n_leaves)
+                    [ic_map[X] for X in S], [], leaf_slot, n_leaves
+                )
             except _NotRationalError:
-                return {'ok': False}
-            tape.update({'ic_op': ic_op, 'ic_a': ic_a, 'ic_b': ic_b, 'ic_cnum': ic_cnum,
-                         'ic_cden': ic_cden, 'ic_out': ic_out})
-            tape['constraint_model'] = [
-                '%s = %s' % (inv_solve_name.get(_s(S[i]), _s(S[i])),
-                             spy.sympify(f_ss[i])) for i in range(n_real)]
+                return {"ok": False}
+            tape.update(
+                {"ic_op": ic_op, "ic_a": ic_a, "ic_b": ic_b, "ic_cnum": ic_cnum, "ic_cden": ic_cden, "ic_out": ic_out}
+            )
+            tape["constraint_model"] = [
+                "%s = %s" % (inv_solve_name.get(_s(S[i]), _s(S[i])), spy.sympify(f_ss[i])) for i in range(n_real)
+            ]
         elif seg_eq[c]:
             # equilibrate-seeded first segment: a generically linear resting state (no
             # recast) is solved symbolically and emitted as an IC tape; otherwise it is
@@ -982,37 +1150,47 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
                 if sskey in ss_sol_cache:
                     ss_sol = ss_sol_cache[sskey]
                 else:
-                    solve_s = [S[i] for i in range(n_real)
-                               if _s(S[i]) not in forcings]
-                    fss_polys = [spy.expand(spy.fraction(spy.together(
-                                    spy.sympify(f_ss[i])))[0])
-                                 for i in range(n_real) if _s(S[i]) not in forcings]
+                    solve_s = [S[i] for i in range(n_real) if _s(S[i]) not in forcings]
+                    fss_polys = [
+                        spy.expand(spy.fraction(spy.together(spy.sympify(f_ss[i])))[0])
+                        for i in range(n_real)
+                        if _s(S[i]) not in forcings
+                    ]
                     ss_sol = _linear_solution(fss_polys, solve_s)
                     ss_sol_cache[sskey] = ss_sol
                 if ss_sol is not None:
                     # recast coordinates (beyond n_real) stay generic; forcings and
                     # dead states stay 0
-                    ic_map = {X: (ss_sol[X] if X in ss_sol
-                                  else X if i >= n_real else spy.Integer(0))
-                              for i, X in enumerate(S)}
+                    ic_map = {
+                        X: (ss_sol[X] if X in ss_sol else X if i >= n_real else spy.Integer(0)) for i, X in enumerate(S)
+                    }
                     # t0 events compose onto the resting state
-                    _compose_t0_events(ic_map, condition_t0_events[c]
-                                       if condition_t0_events and
-                                       c < len(condition_t0_events) else [],
-                                       pval, subs_map)
+                    _compose_t0_events(
+                        ic_map,
+                        condition_t0_events[c] if condition_t0_events and c < len(condition_t0_events) else [],
+                        pval,
+                        subs_map,
+                    )
                     try:
                         ic_op, ic_a, ic_b, ic_cnum, ic_cden, ic_out = _emit_tape_shared(
-                            [ic_map[X] for X in S], [], leaf_slot, n_leaves)
-                        ss_ic = {'ic_op': ic_op, 'ic_a': ic_a, 'ic_b': ic_b,
-                                 'ic_cnum': ic_cnum, 'ic_cden': ic_cden, 'ic_out': ic_out}
+                            [ic_map[X] for X in S], [], leaf_slot, n_leaves
+                        )
+                        ss_ic = {
+                            "ic_op": ic_op,
+                            "ic_a": ic_a,
+                            "ic_b": ic_b,
+                            "ic_cnum": ic_cnum,
+                            "ic_cden": ic_cden,
+                            "ic_out": ic_out,
+                        }
                     except _NotRationalError:
                         ss_ic = None
             if ss_ic is not None:
                 tape.update(ss_ic)
             else:
-                tape['constraint_model'] = [
-                    '%s = %s' % (inv_solve_name.get(_s(S[i]), _s(S[i])),
-                                 spy.sympify(f_ss[i])) for i in range(n_real)]
+                tape["constraint_model"] = [
+                    "%s = %s" % (inv_solve_name.get(_s(S[i]), _s(S[i])), spy.sympify(f_ss[i])) for i in range(n_real)
+                ]
         else:
             # IC tape: seed each state from the initial-value expression in the
             # leaves (free initial values, z coordinates, doses, resets).
@@ -1020,67 +1198,74 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
             ic_emitted = ic_cache.get(ickey)
             if ic_emitted is None:
                 try:
-                    ic_emitted = _emit_tape_shared(list(ickey), [], leaf_slot,
-                                                   n_leaves, allow_sqrt=True)
+                    ic_emitted = _emit_tape_shared(list(ickey), [], leaf_slot, n_leaves, allow_sqrt=True)
                 except _NotRationalError:
-                    return {'ok': False}
+                    return {"ok": False}
                 ic_cache[ickey] = ic_emitted
             ic_op, ic_a, ic_b, ic_cnum, ic_cden, ic_out = ic_emitted
-            tape.update({'ic_op': ic_op, 'ic_a': ic_a, 'ic_b': ic_b,
-                         'ic_cnum': ic_cnum, 'ic_cden': ic_cden, 'ic_out': ic_out})
+            tape.update(
+                {"ic_op": ic_op, "ic_a": ic_a, "ic_b": ic_b, "ic_cnum": ic_cnum, "ic_cden": ic_cden, "ic_out": ic_out}
+            )
             # the symbolic jets of this segment, for jet_generator(): dynamics,
             # observables and initial values over the leaves; a power of a state at 0 has no
             # Taylor jets
             if not any(e.has(StartPow) for e in list(f_c) + list(g_c)):
-                tape['jet_f'] = ['%s = %s' % (_s(S[i]), _s(f_c[i])) for i in range(n_s)]
-                tape['jet_g'] = [_s(e) for e in g_c]
-            tape['jet_ic'] = ['%s = %s' % (_s(X), _s(ic_c[_s(X)])) for X in S]
+                tape["jet_f"] = ["%s = %s" % (_s(S[i]), _s(f_c[i])) for i in range(n_s)]
+                tape["jet_g"] = [_s(e) for e in g_c]
+            tape["jet_ic"] = ["%s = %s" % (_s(X), _s(ic_c[_s(X)])) for X in S]
             # a later segment's boundary events, and whether the segment start time is free of
             # the coordinates (the jets of a moving boundary need the time shift too)
-            tape['jet_ev'] = [{'var': _s(e['var']), 'method': _s(e['method']),
-                               'value': _s(e.get('plain', e['value']))} for e in ev_per[c]]
-            tape['jet_time_fixed'] = bool(tm_per[c] is None or
-                                          not spy.sympify(tm_per[c]).free_symbols)
+            tape["jet_ev"] = [
+                {"var": _s(e["var"]), "method": _s(e["method"]), "value": _s(e.get("plain", e["value"]))}
+                for e in ev_per[c]
+            ]
+            tape["jet_time_fixed"] = bool(tm_per[c] is None or not spy.sympify(tm_per[c]).free_symbols)
         # events at this segment's left boundary, applied by the kernel to the
         # propagated state; their values as an order-0 tape over the leaves
         evs = ev_per[c]
         if evs:
             idx_of_state = {_s(X): i for i, X in enumerate(S)}
-            method_code = {'replace': 0, 'add': 1, 'multiply': 2}
-            keep = [e for e in evs if _s(e['var']) in idx_of_state]
+            method_code = {"replace": 0, "add": 1, "multiply": 2}
+            keep = [e for e in evs if _s(e["var"]) in idx_of_state]
             if keep:
-                vals = [e['value'] for e in keep]
+                vals = [e["value"] for e in keep]
                 # values over the leaves and the states just before the event; a marked value
                 # reads those states as pre_state() and initial values by their names
-                marked = any(e.get('marked') for e in keep)
-                state_slot = {(_s(pre_state(nm)) if marked else nm): n_leaves + i
-                              for nm, i in idx_of_state.items()}
+                marked = any(e.get("marked") for e in keep)
+                state_slot = {(_s(pre_state(nm)) if marked else nm): n_leaves + i for nm, i in idx_of_state.items()}
                 ev_slot = dict(leaf_slot, **state_slot)
                 try:
-                    ev_op, ev_a, ev_b, ev_cnum, ev_cden, ev_o = _emit_tape_shared(
-                        [], vals, ev_slot, n_leaves + n_s)
+                    ev_op, ev_a, ev_b, ev_cnum, ev_cden, ev_o = _emit_tape_shared([], vals, ev_slot, n_leaves + n_s)
                 except _NotRationalError:
-                    return {'ok': False}
-                tape.update({
-                    'ev_op': ev_op, 'ev_a': ev_a, 'ev_b': ev_b, 'ev_cnum': ev_cnum,
-                    'ev_cden': ev_cden, 'ev_out': ev_o,
-                    'ev_var_idx': [idx_of_state[_s(e['var'])] for e in keep],
-                    'ev_state_slots': 1,
-                    'ev_leaf_only': [not ({str(x) for x in spy.sympify(v).free_symbols} & set(state_slot))
-                                     for v in vals],
-                    'ev_method': [method_code[_s(e['method'])] for e in keep]})
+                    return {"ok": False}
+                tape.update(
+                    {
+                        "ev_op": ev_op,
+                        "ev_a": ev_a,
+                        "ev_b": ev_b,
+                        "ev_cnum": ev_cnum,
+                        "ev_cden": ev_cden,
+                        "ev_out": ev_o,
+                        "ev_var_idx": [idx_of_state[_s(e["var"])] for e in keep],
+                        "ev_state_slots": 1,
+                        "ev_leaf_only": [
+                            not ({str(x) for x in spy.sympify(v).free_symbols} & set(state_slot)) for v in vals
+                        ],
+                        "ev_method": [method_code[_s(e["method"])] for e in keep],
+                    }
+                )
         # the segment's left boundary time as an order-0 tape: the value sets the gap
         # lengths, the duals hold a time that depends on the coordinates
         if tm_per[c] is not None:
             tv = tm_per[c]
             try:
-                tm_op, tm_a, tm_b, tm_cnum, tm_cden, tm_o = _emit_tape_shared(
-                    [], [tv], leaf_slot, n_leaves)
+                tm_op, tm_a, tm_b, tm_cnum, tm_cden, tm_o = _emit_tape_shared([], [tv], leaf_slot, n_leaves)
             except _NotRationalError:
-                return {'ok': False}
-            tape.update({'tm_op': tm_op, 'tm_a': tm_a, 'tm_b': tm_b, 'tm_cnum': tm_cnum,
-                         'tm_cden': tm_cden, 'tm_out': tm_o})
-        tape['_reach'] = reach
+                return {"ok": False}
+            tape.update(
+                {"tm_op": tm_op, "tm_a": tm_a, "tm_b": tm_b, "tm_cnum": tm_cnum, "tm_cden": tm_cden, "tm_out": tm_o}
+            )
+        tape["_reach"] = reach
         tapes.append(tape)
 
     z_state_names = [_s(X) for X in free_states if _s(X) not in fixed_names]
@@ -1089,61 +1274,68 @@ def compile_observability_tape_multi(model, observation, condition_subs, conditi
     z_slots = [leaf_slot[nm] for nm in znames]
     # per tape, the first Lie order at which each coordinate can enter (-1: never)
     for t in tapes:
-        r = t.pop('_reach', None) or {}
-        t['lie_reach'] = [int(r.get(nm, -1)) for nm in znames]
+        r = t.pop("_reach", None) or {}
+        t["lie_reach"] = [int(r.get(nm, -1)) for nm in znames]
 
     out = {
-        'ok': True,
-        'tapes': tapes,
-        'n_leaves': n_leaves,
-        'n_states': n_s,
-        'z_slots': z_slots,
-        'znames': znames,
-        'leaf_names': leaf_names,
-        'log_params': log_params,
+        "ok": True,
+        "tapes": tapes,
+        "n_leaves": n_leaves,
+        "n_states": n_s,
+        "z_slots": z_slots,
+        "znames": znames,
+        "leaf_names": leaf_names,
+        "log_params": log_params,
     }
     if exp_recast is not None:
         # relation rows dW = W log(r) d(tau/L): one tape output per (W, leaf) pair
-        rel = exp_recast['rel']
+        rel = exp_recast["rel"]
         try:
             r_op, r_a, r_b, r_cnum, r_cden, r_out = _emit_tape_shared(
-                [rl[2] for rl in rel], [], leaf_slot, n_leaves, allow_sqrt=True)
+                [rl[2] for rl in rel], [], leaf_slot, n_leaves, allow_sqrt=True
+            )
         except _NotRationalError:
-            return {'ok': False, 'why': 'an exponent that is not rational is not '
-                    'supported by engine="modular"; try engine="symbolic"'}
-        out['exp_relation'] = {'W': [rl[0] for rl in rel], 'z': [rl[1] for rl in rel],
-                               'op': r_op, 'a': r_a, 'b': r_b, 'cnum': r_cnum,
-                               'cden': r_cden, 'out': r_out}
-        out['exp_atoms'] = exp_recast['atoms']
-        out['exp_back'] = {'names': list(exp_recast['back'].keys()),
-                           'values': list(exp_recast['back'].values())}
-        out['exp_codim'] = exp_recast['codim']
+            return {
+                "ok": False,
+                "why": 'an exponent that is not rational is not supported by engine="modular"; try engine="symbolic"',
+            }
+        out["exp_relation"] = {
+            "W": [rl[0] for rl in rel],
+            "z": [rl[1] for rl in rel],
+            "op": r_op,
+            "a": r_a,
+            "b": r_b,
+            "cnum": r_cnum,
+            "cden": r_cden,
+            "out": r_out,
+        }
+        out["exp_atoms"] = exp_recast["atoms"]
+        out["exp_back"] = {"names": list(exp_recast["back"].keys()), "values": list(exp_recast["back"].values())}
+        out["exp_codim"] = exp_recast["codim"]
     if equilibrate:
-        out['equilibrate'] = True
-        out['state_names'] = [_s(X) for X in S]
-        out['param_names'] = [_s(s) for s in params]
-        out['forcings'] = sorted(forcings)
-        out['real_state_names'] = [inv_solve_name.get(_s(X), _s(X))
-                                   for X in S[:n_real]]
-        out['power_recast'] = power_recast
-        out['held_state_params'] = held_state_params
-        out['rest_aux'] = sorted(rest_aux)
-        out['rest_inverted'] = rest_inverted
+        out["equilibrate"] = True
+        out["state_names"] = [_s(X) for X in S]
+        out["param_names"] = [_s(s) for s in params]
+        out["forcings"] = sorted(forcings)
+        out["real_state_names"] = [inv_solve_name.get(_s(X), _s(X)) for X in S[:n_real]]
+        out["power_recast"] = power_recast
+        out["held_state_params"] = held_state_params
+        out["rest_aux"] = sorted(rest_aux)
+        out["rest_inverted"] = rest_inverted
         if joint_steady_state:
-            out['joint_steady_state'] = True
+            out["joint_steady_state"] = True
             # state z-columns (the free states that entered znames), for the joint
             # system to seed on-manifold and stack the df constraint rows
-            out['z_state_names'] = z_state_names
+            out["z_state_names"] = z_state_names
     elif power_recast:
         # transient free exponent: E and L are free-initial-value leaves; the analysis
         # stacks the recast relation rows and reports in real states + parameters
-        out['recast_transient'] = True
-        out['state_names'] = [_s(X) for X in S]
-        out['param_names'] = [_s(s) for s in params]
-        out['forcings'] = sorted(forcings)
-        out['real_state_names'] = [_s(X) for X in S[:n_real]]
-        out['power_recast'] = power_recast
+        out["recast_transient"] = True
+        out["state_names"] = [_s(X) for X in S]
+        out["param_names"] = [_s(s) for s in params]
+        out["forcings"] = sorted(forcings)
+        out["real_state_names"] = [_s(X) for X in S[:n_real]]
+        out["power_recast"] = power_recast
         # the recast atom coordinates (E and L), auxiliary to the physical report
-        out['recast_atom_names'] = ([rc['E'] for rc in power_recast] +
-                                    sorted(set(rc['L'] for rc in power_recast)))
+        out["recast_atom_names"] = [rc["E"] for rc in power_recast] + sorted(set(rc["L"] for rc in power_recast))
     return out

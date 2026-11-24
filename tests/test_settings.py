@@ -27,8 +27,7 @@ def test_result_records_control_switches_and_primes():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         with si.switches(NOJET=True):
-            r = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}),
-                          control=si.reconst_control(degree_cap=3, seed=5))
+            r = si.detect(si.Model({"x": "-k*x"}, {"y": "s*x"}), control=si.reconst_control(degree_cap=3, seed=5))
     st = r.info["settings"]
     assert st["control"]["degree_cap"] == 3 and st["control"]["seed"] == 5
     assert st["switches"]["NOJET"] == "1"
@@ -40,10 +39,14 @@ def test_route_errors_are_recorded_or_raised(monkeypatch):
 
     def broken(*a, **k):
         raise RuntimeError("broken field setup")
+
     monkeypatch.setattr(reconstruct, "field_setup", broken)
-    model = si.Model({"R": "-kR*R", "S": "kact*R/(1 + kinh*I) - kd*S", "I": "b + ks*S - dI*I"},
-                     {"z": "s2*S"}, events=[{"var": "R", "time": 0, "value": "d0", "method": "add"}],
-                     conditions={"rows": ["a", "b"], "cols": {"d0": [1, 2]}})
+    model = si.Model(
+        {"R": "-kR*R", "S": "kact*R/(1 + kinh*I) - kd*S", "I": "b + ks*S - dI*I"},
+        {"z": "s2*S"},
+        events=[{"var": "R", "time": 0, "value": "d0", "method": "add"}],
+        conditions={"rows": ["a", "b"], "cols": {"d0": [1, 2]}},
+    )
     with si.switches(DEBUG="0"):
         r = si.detect(model, reconstruct=True, equilibrate=True)
     assert any("broken field setup" in e for e in r.info["errors"])
@@ -62,6 +65,7 @@ def test_a_retired_route_switch_is_unknown():
 
     import symident as si
     from symident import state
+
     assert "NOFORK" not in state.SWITCHES and "NOFWDSEED" in state.SWITCHES
     with si.switches(NOFORK=True), pytest.warns(UserWarning, match="NOFORK"):
         si.detect(si.Model({"x": "-k*x"}, {"y": "x"}))

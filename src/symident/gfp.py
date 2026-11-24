@@ -24,6 +24,7 @@ def verify_prime():
     """The prime of the fresh-point checks: in a detection drawn from the seed of the detection among primes holding
     the roots."""
     from . import state
+
     s = state.get("session")
     if s is None:
         return _VERIFY[0]
@@ -31,9 +32,10 @@ def verify_prime():
     q = s.vprimes.get(key)
     if q is None:
         from sympy import prevprime
+
         rng = s.rng("verification prime", key)
         while q is None:
-            c = int(prevprime(rng.randrange(2 ** 30 + 64, 1400000000)))
+            c = int(prevprime(rng.randrange(2**30 + 64, 1400000000)))
             if holds_roots(_ROOTS[0], c, _ROOTS[1]):
                 q = c
         s.vprimes[key] = q
@@ -53,6 +55,7 @@ def extra_primes():
 def prime_run(n):
     """`n` primes: the engine primes, then lower primes holding the roots, without the verification prime."""
     from sympy import prevprime
+
     out, q = list(PRIMES), min(PRIMES)
     while len(out) < n:
         q = int(prevprime(q))
@@ -65,8 +68,10 @@ class NeedPrimesError(Exception):
     """Raised when an engine prime does not hold a root of the model; the analysis reruns under use_primes()."""
 
     def __init__(self, constants=(), degrees=()):
-        super().__init__("roots of degree %s and square roots of %s" % (
-            ", ".join(map(str, degrees)) or "-", ", ".join(map(str, constants)) or "-"))
+        super().__init__(
+            "roots of degree %s and square roots of %s"
+            % (", ".join(map(str, degrees)) or "-", ", ".join(map(str, constants)) or "-")
+        )
         self.constants = list(constants)
         self.degrees = list(degrees)
 
@@ -90,6 +95,7 @@ def holds_roots(constants, q, degrees=()):
 def use_primes(constants=(), degrees=()):
     """Eight primes below the default ones that hold every root of the model: four engine, one check, three more."""
     from sympy import Rational, prevprime
+
     consts = [(Rational(c), int(k)) for c, k in constants]
     found, q = [], PRIMES[0] + 1
     while len(found) < 8:
@@ -116,9 +122,9 @@ def sieve(n):
     while True:
         is_p = np.ones(limit + 1, dtype=bool)
         is_p[:2] = False
-        for i in range(2, int(limit ** 0.5) + 1):
+        for i in range(2, int(limit**0.5) + 1):
             if is_p[i]:
-                is_p[i * i::i] = False
+                is_p[i * i :: i] = False
         pr = np.nonzero(is_p)[0]
         if len(pr) >= n:
             return [int(x) for x in pr[:n]]
@@ -128,6 +134,7 @@ def sieve(n):
 def random_point(n, seed=1):
     """Residues below the smallest prime by the MINSTD generator, deterministic in seed and the session seed."""
     from .session import current
+
     m = 2147483647
     x = current().seed("point", int(seed)) % m
     if x == 0:
@@ -144,6 +151,7 @@ def random_point(n, seed=1):
 def uniform_point(n, q, seed=1):
     """Residues uniform on [0, q) by rejection from the MINSTD generator, deterministic in seed and the session seed."""
     from .session import current
+
     m = 2147483647
     if not 1 < q < m:
         raise ValueError("uniform_point: the modulus is not between 2 and 2^31 - 2")
@@ -198,7 +206,7 @@ def null_basis_rows(res, free_cols, p):
     R = np.asarray(res["R"], dtype=np.int64).reshape(-1, nz)
     piv = np.atleast_1d(np.asarray(res["pivots"], dtype=np.int64))
     if len(piv):
-        out[:, piv] = ((p - R[:len(piv)][:, fc]) % p).T
+        out[:, piv] = ((p - R[: len(piv)][:, fc]) % p).T
     return out
 
 
@@ -226,7 +234,7 @@ class SpanTest:
         v = np.asarray(v, dtype=np.int64) % self.p
         if not self.k:
             return v
-        c = v[self.piv[:self.k]]
+        c = v[self.piv[: self.k]]
         nzr = np.nonzero(c)[0]
         if not len(nzr):
             return v
@@ -246,7 +254,7 @@ class SpanTest:
         c = int(nzc[0])
         v = v * invmod(int(v[c]), p) % p
         # the other rows lose their entry in the new pivot column
-        hit = np.nonzero(self.rows[:self.k, c])[0]
+        hit = np.nonzero(self.rows[: self.k, c])[0]
         if len(hit):
             f = self.rows[hit, c]
             self.rows[hit] = (self.rows[hit] - (f[:, None] * v[None, :]) % p) % p
@@ -282,8 +290,7 @@ def rref_modp(M, p):
     M = np.asarray(M)
     nr, nc = M.shape if M.ndim == 2 else (0, 0)
     if nr == 0 or nc == 0:
-        return {"R": np.zeros((nr, nc), dtype=np.int64), "piv": np.zeros(0, dtype=np.int64),
-                "rank": 0}
+        return {"R": np.zeros((nr, nc), dtype=np.int64), "piv": np.zeros(0, dtype=np.int64), "rank": 0}
     rr = _core.sym_rref_mod(np.asarray(M, dtype=np.float64) % p, p)
     R = np.zeros((nr, nc), dtype=np.int64)
     rank = int(rr["rank"])
@@ -345,6 +352,7 @@ def reduce_mod_rows(S):
                 if fac[i]:
                     R[i] = (R[i] - mulmod(Sr["R"][j], fac[i], p)) % p
         return R
+
     return red
 
 
@@ -370,7 +378,9 @@ def gauge_from_rows(residual_free, rows_fn, ref_rows, P, k, nz):
             for l in range(k):
                 w = (w + mulmod(R[l], Binv[i, l], p)) % p
             return w
+
         return fn
+
     return {"anchors": [int(x) for x in dp], "residue_fns": [make(i) for i in range(k)]}
 
 
@@ -383,6 +393,7 @@ def canon_gauge(residual_free, scal_rows, P, nz, sc):
 
     def resid(rp, p, zvals=None):
         return reduce_scal(np.stack([null_residues(rp, fc, p) for fc in residual_free]), p)
+
     return gauge_from_rows(residual_free, resid, resid(sc["ref"], P), P, k, nz)
 
 
@@ -411,12 +422,14 @@ def logcoord_gauge(residual_free, scal_rows, P, nz, sc, zvals0):
                 continue
             R[:, c] = mulmod(R[:, c], invmod(zc, p), p)
         return reduce_scal(R, p)
+
     return gauge_from_rows(residual_free, eta_rows, eta_rows(sc["ref"], P, zvals0), P, k, nz)
 
 
 def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20000):
     """Residual directions of minimal support as residue functions on their supports, outside the scalings."""
     from .session import current
+
     k = len(residual_free)
     raw = {"anchors": list(residual_free), "residue_fns": [None] * k}
     if k == 0:
@@ -432,8 +445,8 @@ def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20
         nr = B.shape[0]
         M = B[:, keep]
         rr = rref_modp(np.concatenate([M % p, np.eye(nr, dtype=np.int64)], axis=1), p)
-        z = np.nonzero(np.sum(rr["R"][:, :M.shape[1]] % p != 0, axis=1) == 0)[0]
-        return rr["R"][z, M.shape[1]:] % p
+        z = np.nonzero(np.sum(rr["R"][:, : M.shape[1]] % p != 0, axis=1) == 0)[0]
+        return rr["R"][z, M.shape[1] :] % p
 
     def comb(c, B, p):
         w = np.zeros(nz, dtype=np.int64)
@@ -537,15 +550,22 @@ def minsupport_gauge(residual_free, scal_rows, P, nz, sc, free_cols, cand_cap=20
                     continue
                 eta[c] = int(mulmod(v[c], mulmod(za, invmod(zc, p), p), p))
             return eta
+
         fn.pinned_support = True
         return fn
-    return {"anchors": [fc["anchor"] for fc in found], "residue_fns": [make(fc) for fc in found],
-            "vectors": sel, "circuits": circuits}
+
+    return {
+        "anchors": [fc["anchor"] for fc in found],
+        "residue_fns": [make(fc) for fc in found],
+        "vectors": sel,
+        "circuits": circuits,
+    }
 
 
 def sqrt_mod(a, p):
     """The smaller square root of a modulo the odd prime p, as the kernel takes it; None for a non-residue."""
     from sympy.ntheory import sqrt_mod as _sqrt
+
     r = _sqrt(int(a) % p, p)
     return None if r is None else min(r, p - r)
 
@@ -596,6 +616,7 @@ def tape_fn(tp, n_leaves):
                     return None
                 v[s] = pow(v[a[i]], p - 2, p)
         return np.array([v[o] for o in out], dtype=np.int64)
+
     return fn
 
 
@@ -640,6 +661,7 @@ def mono_table(nvar, degree):
             for s in gen(n - 1, d - e):
                 out.append([e] + s)
         return out
+
     rows = gen(nvar, degree)
     rows.sort(key=lambda r: sum(r))
     return np.array(rows, dtype=np.int64)
@@ -650,4 +672,5 @@ def rat_recon(residues, primes):
     if getattr(_core, "has_int128", True):
         return _core.sym_rat_recon(residues, primes)
     from .sym.linalg import sym_rat_recon_big
+
     return sym_rat_recon_big(residues, primes)

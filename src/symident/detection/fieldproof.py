@@ -41,8 +41,8 @@ _CHAIN = 8
 _GROUP = 8
 
 # the _Var of each target function, and the _Relations of each series, built once
-_TARGETS = {}
-_REL = {}
+_TARGETS: dict = {}
+_REL: dict = {}
 
 
 class _Factored:
@@ -225,6 +225,7 @@ class _Taylor:
             for m, c in P.items():
                 out.setdefault(tuple(m[:ns]), []).append((m[ns:], c))
             return {k: ar.coef(v) for k, v in out.items()}
+
         polys = [split(P) for N, D in seg["F"] for P in (N, D)] + [split(P) for M, E in seg["G"] for P in (M, E)]
         mons, at, parent = [(0,) * ns], {(0,) * ns: 0}, [None]
 
@@ -232,11 +233,12 @@ class _Taylor:
             if m in at:
                 return
             v = next(i for i, e in enumerate(m) if e)
-            low = m[:v] + (m[v] - 1,) + m[v + 1:]
+            low = m[:v] + (m[v] - 1,) + m[v + 1 :]
             add(low)
             at[m] = len(mons)
             mons.append(m)
             parent.append((at[low], v))
+
         for P in polys:
             for m in P:
                 add(m)
@@ -397,11 +399,14 @@ def generators(grp, syms):
 
     def distinct(ims):
         return all(spy.cancel(a - b) != 0 for a, b in itertools.combinations(ims, 2))
+
     # the simplest alpha: one coordinate, else a combination of two or three with the simplest images
     order = sorted(moved, key=lambda s: sum(spy.count_ops(v) for v in imgs[s]))
-    cands = list(order) + \
-        [a + t * b for a, b in itertools.combinations(order, 2) for t in (2, 3)] + \
-        [a + 2 * b + 5 * c for a, b, c in itertools.combinations(order, 3)]
+    cands = (
+        list(order)
+        + [a + t * b for a, b in itertools.combinations(order, 2) for t in (2, 3)]
+        + [a + 2 * b + 5 * c for a, b, c in itertools.combinations(order, 3)]
+    )
     alpha = next((a for a in cands if distinct(imgs[a] if a in imgs else images(a))), None)
     if alpha is None:
         return None
@@ -415,6 +420,7 @@ def generators(grp, syms):
     def over_q(f):
         e = spy.cancel(spy.expand(f.as_expr())) if gauss else None
         return f if not gauss else None if e.has(spy.I) else K.from_expr(e)
+
     P = [Kg.one]
     for a in (Kg.from_expr(a) for a in aims):
         P = [(P[j - 1] if j else Kg.zero) - (a * P[j] if j < len(P) else Kg.zero) for j in range(len(P) + 1)]
@@ -426,8 +432,11 @@ def generators(grp, syms):
     traces = [t for t in traces if t is not None]
     F = [K.from_expr(x) for x in fixed] + P[:-1]
     F = [f for n_, f in enumerate(F) if not (f.numer.is_ground and f.denom.is_ground) and f not in F[:n_]]
-    traces = [t for n_, t in enumerate(traces) if not (t.numer.is_ground and t.denom.is_ground) and
-              t not in F and t not in traces[:n_]]
+    traces = [
+        t
+        for n_, t in enumerate(traces)
+        if not (t.numer.is_ground and t.denom.is_ground) and t not in F and t not in traces[:n_]
+    ]
     return alpha, [f.as_expr() for f in F], [t.as_expr() for t in traces], [s for s in moved if s != alpha]
 
 
@@ -442,7 +451,7 @@ def _parents(mons):
     out = [None]
     for m in mons[1:]:
         v = next(i for i, e in enumerate(m) if e)
-        out.append((at[m[:v] + (m[v] - 1,) + m[v + 1:]], v))
+        out.append((at[m[:v] + (m[v] - 1,) + m[v + 1 :]], v))
     return out
 
 
@@ -506,15 +515,17 @@ class _Var:
         """(numerator, denominator) at x modulo p in C++, both at once."""
         if not hasattr(self, "_arr"):
             terms = self.tn + self.td
-            self._arr = (np.array([m for m, _, _ in terms], dtype=np.int32).reshape(len(terms), -1),
-                         [(a, b) for _, a, b in terms], np.array([0, len(self.tn), len(terms)], dtype=np.int64))
+            self._arr = (
+                np.array([m for m, _, _ in terms], dtype=np.int32).reshape(len(terms), -1),
+                [(a, b) for _, a, b in terms],
+                np.array([0, len(self.tn), len(terms)], dtype=np.int64),
+            )
         E, co, off = self._arr
         res = self.__dict__.setdefault("_res", {})
         if p not in res:
             res[p] = np.array([a % p * pow(b, -1, p) % p for a, b in co], dtype=np.int64)
         nv, dv = _core.io_poly_eval(E, res[p], off, np.array([x], dtype=np.int64) % p, p, 1)[0]
         return int(nv), int(dv)
-
 
 
 def _find(f, W, syms, outs, pool, d, stop, mons=None):
@@ -538,8 +549,7 @@ def _find(f, W, syms, outs, pool, d, stop, mons=None):
         if work.ticks() > stop or not vals:
             return None
         # the monomials at every point in C++, then times -f for the columns of B
-        M = _core.io_mono_matrix(np.array(vals, dtype=np.int64).reshape(len(vals), len(W)), E, p,
-                                 ioproj._threads())
+        M = _core.io_mono_matrix(np.array(vals, dtype=np.int64).reshape(len(vals), len(W)), E, p, ioproj._threads())
         test.setdefault(p, [int(t) for t in M[0]])
         rows = np.hstack([M, M * ((-np.array(fvs, dtype=np.int64)) % p)[:, None] % p])
         work.tick(rows.shape)
@@ -589,6 +599,7 @@ def _check(vec, mons, W, target, syms, outs):
 
     def ring(e):
         return R.from_expr(spy.sympify(e).xreplace(tsym))
+
     fr = {i: cs[W[i].c] if W[i].c is not None else F.quo(ring(W[i].num), ring(W[i].den)) for i in used}
     pw = {}
 
@@ -608,6 +619,7 @@ def _check(vec, mons, W, target, syms, outs):
                     t = F.mul(t, power(i, m[i]))
             out.append(t)
         return F.total(out)
+
     B = value(vec[n:])
     if not B[0]:
         return None
@@ -618,8 +630,15 @@ def _check(vec, mons, W, target, syms, outs):
     names = [W[i].name for i in range(len(W))]
 
     def text(coefs):
-        return " + ".join(f"({q})" + "".join(f"*{nm}" + (f"^{e}" if e > 1 else "") for nm, e in zip(names, m) if e)
-                          for m, q in zip(mons, coefs) if q) or "0"
+        return (
+            " + ".join(
+                f"({q})" + "".join(f"*{nm}" + (f"^{e}" if e > 1 else "") for nm, e in zip(names, m) if e)
+                for m, q in zip(mons, coefs)
+                if q
+            )
+            or "0"
+        )
+
     return text(vec[:n]), text(vec[n:])
 
 
@@ -652,6 +671,7 @@ class _Relations:
         def reads(j):
             N, D = seg["F"][j]
             return {i for P in (N, D) for m in P for i in range(ns) if m[i]}
+
         # the known states (inputs and their jets, the clock) within _CHAIN steps of the others: a relation of
         # order m reads the jets of an input up to m, and the long chains would make the field too large
         keep = {j for j in range(ns) if j not in known}
@@ -669,14 +689,15 @@ class _Relations:
         extra = [str(c) for c in syms if str(c) not in names]
         # rational right-hand sides and observables: the field of the states and coordinates; the polynomial ring
         # where every denominator is a number, whose arithmetic needs no gcd
-        polynomial = all(all(not any(m) for m in D) for _, D in seg["F"]) and \
-            all(all(not any(m) for m in E) for _, E in seg["G"])
+        polynomial = all(all(not any(m) for m in D) for _, D in seg["F"]) and all(
+            all(not any(m) for m in E) for _, E in seg["G"]
+        )
         self.R, *gens = (spy.ring if polynomial else spy.field)(",".join(names + extra), spy.QQ)
         self.names = names + extra
         X = [None] * ns
         for j, g in zip(kept, gens):
             X[j] = g
-        P = gens[len(kept):len(kept) + len(params)]
+        P = gens[len(kept) : len(kept) + len(params)]
 
         def poly(Pd):
             out = self.R.zero
@@ -684,7 +705,7 @@ class _Relations:
                 t = self.R(spy.Rational(c.numerator, c.denominator))
                 for g, e in zip(X + list(P), m):
                     if e:
-                        t = t * g ** e
+                        t = t * g**e
                 out = out + t
             return out
 
@@ -693,6 +714,7 @@ class _Relations:
                 (c,) = D.values()
                 return poly(N) * self.R(spy.Rational(1) / spy.Rational(c.numerator, c.denominator))
             return poly(N) / poly(D)
+
         # the last jets kept stay constant: the relations tried read fewer derivatives than the chain holds
         self.f = [None if j not in keep else self.R.zero if j in cut else quo(*seg["F"][j]) for j in range(ns)]
         self.cut = cut
@@ -726,7 +748,7 @@ class _Relations:
             d = self._lie[r]
             while len(d) <= m:
                 d.append(self.lie(d[-1]))
-            ys.append(d[:m + 1])
+            ys.append(d[: m + 1])
         return ys
 
     def inputs(self, m):
@@ -757,8 +779,9 @@ def _relation_matrix(rel, x, p, ms, degree, K):
     if S is None:
         return None
     mons = _monomials(S.shape[0], degree)
-    ser = _core.io_series_monomials(S, np.array(mons, dtype=np.int32).reshape(len(mons), S.shape[0]), p,
-                                    ioproj._threads())
+    ser = _core.io_series_monomials(
+        S, np.array(mons, dtype=np.int32).reshape(len(mons), S.shape[0]), p, ioproj._threads()
+    )
     return ser.T.tolist(), mons
 
 
@@ -819,13 +842,16 @@ def _polys_at_once(S, entries, scale, primes, stop, degrees=range(0, 12), box=No
             rows = []
             for x, v in pts:
                 sc = scale(x, p) if scale else 1
-                mv = _mono_values(x, par, p) if par is not None else \
-                    [math.prod((pow(xi, k, p) for xi, k in zip(x, m) if k), start=1) % p for m in mons]
+                mv = (
+                    _mono_values(x, par, p)
+                    if par is not None
+                    else [math.prod((pow(xi, k, p) for xi, k in zip(x, m) if k), start=1) % p for m in mons]
+                )
                 rows.append(mv + [v[e] * sc % p for e in todo])
             rows = np.array(rows, dtype=np.int64)
             work.tick(rows.shape)
             rr = rref_modp(rows, p)
-            piv = [int(c) for c in rr["piv"][:rr["rank"]]]
+            piv = [int(c) for c in rr["piv"][: rr["rank"]]]
             if piv[:U] != list(range(U)):
                 break
             for k, e in enumerate(todo):
@@ -862,8 +888,10 @@ def _line_degrees(S, width, p, stop, top=24):
         for tot in range(0, top + 1):
             for dd in range(0, tot + 1):
                 dn = tot - dd
-                rows = [[pow(t, i, p) for i in range(dn + 1)] + [(-v[e] * pow(t, i, p)) % p for i in range(dd + 1)]
-                        for t, v in pts]
+                rows = [
+                    [pow(t, i, p) for i in range(dn + 1)] + [(-v[e] * pow(t, i, p)) % p for i in range(dd + 1)]
+                    for t, v in pts
+                ]
                 if _kernel_canonical(rows, p)[2]:
                     got = (dn, dd)
                     break
@@ -916,8 +944,9 @@ def _rational_one(S, e, dn, dd, primes, stop):
         pts = S.get(p, U + 8, stop)
         if pts is None:
             return None
-        rows = [[v[e] * t % p for t in _mono_values(x, pd, p)] + [(-t) % p for t in _mono_values(x, pn, p)]
-                for x, v in pts]
+        rows = [
+            [v[e] * t % p for t in _mono_values(x, pd, p)] + [(-t) % p for t in _mono_values(x, pn, p)] for x, v in pts
+        ]
         piv, free, basis = _kernel_canonical(rows, p)
         if len(basis) != 1:
             return None
@@ -927,7 +956,7 @@ def _rational_one(S, e, dn, dd, primes, stop):
     coef = [_crt_rational({p: vecs[p][2][i] for p in primes}) for i in range(U)]
     if any(c_ is None for c_ in coef):
         return None
-    return (mn, coef[len(md):]), (md, coef[:len(md)])
+    return (mn, coef[len(md) :]), (md, coef[: len(md)])
 
 
 def _interpolate(values, n, rng, stop):
@@ -944,8 +973,7 @@ def _interpolate(values, n, rng, stop):
     if degs is None or any(g is None for g in degs):
         return None
     zero = [Fraction(0)]
-    out = {e: ([(0,) * n], zero, [Fraction(1)]) for e, g in enumerate(degs) if g == (0, 0) and
-           not first[0][1][e]}
+    out = {e: ([(0,) * n], zero, [Fraction(1)]) for e, g in enumerate(degs) if g == (0, 0) and not first[0][1][e]}
     polys = [e for e, g in enumerate(degs) if e not in out and g[1] == 0]
     if polys:
         top = max(degs[e][0] for e in polys)
@@ -969,6 +997,7 @@ def _interpolate(values, n, rng, stop):
 
     def scale(x, p):
         return _eval_terms(dterms, x, p)
+
     top = max(degs[e][0] - degs[e][1] for e in rest) + degs[e0][1]
     nums = _polys_at_once(S, rest, scale, primes, stop, range(max(0, top), top + 3))
     if len(nums) < len(rest):
@@ -985,8 +1014,9 @@ def _interpolate(values, n, rng, stop):
 def _base(rel, ms):
     """The derivatives of the observables, up to ms[r] for observable r, and the input states, as ioproj.Quo."""
     J = ioproj.jets_of(rel)
-    return [q for r, m in enumerate(ms) if m >= 0 for q in J.observable(r, m)] + \
-        [J.state(i) for i in rel.inputs(max(ms))]
+    return [q for r, m in enumerate(ms) if m >= 0 for q in J.observable(r, m)] + [
+        J.state(i) for i in rel.inputs(max(ms))
+    ]
 
 
 def _configs(ny, ni, cap, floor=0):
@@ -997,8 +1027,9 @@ def _configs(ny, ni, cap, floor=0):
     if ny <= 3:
         vectors = itertools.product(range(-1, 6), repeat=ny)
     else:
-        vectors = [tuple(m if r == q else -1 for r in range(ny)) for q in range(ny) for m in range(6)] + \
-            [(m,) * ny for m in range(6)]
+        vectors = [tuple(m if r == q else -1 for r in range(ny)) for q in range(ny) for m in range(6)] + [
+            (m,) * ny for m in range(6)
+        ]
     for ms in vectors:
         if max(ms) < 0:
             continue
@@ -1038,10 +1069,22 @@ def _rebuild(inter, tsy):
     """The interpolated entries as expressions in the symbols `tsy`, None where a denominator is zero."""
     out = []
     for mons_, nn, dd in inter:
-        N = sum((spy.Rational(q.numerator, q.denominator) * spy.prod([s_ ** e for s_, e in zip(tsy, mm)])
-                 for mm, q in zip(mons_, nn) if q), spy.Integer(0))
-        Dn = sum((spy.Rational(q.numerator, q.denominator) * spy.prod([s_ ** e for s_, e in zip(tsy, mm)])
-                  for mm, q in zip(mons_, dd) if q), spy.Integer(0))
+        N = sum(
+            (
+                spy.Rational(q.numerator, q.denominator) * spy.prod([s_**e for s_, e in zip(tsy, mm)])
+                for mm, q in zip(mons_, nn)
+                if q
+            ),
+            spy.Integer(0),
+        )
+        Dn = sum(
+            (
+                spy.Rational(q.numerator, q.denominator) * spy.prod([s_**e for s_, e in zip(tsy, mm)])
+                for mm, q in zip(mons_, dd)
+                if q
+            ),
+            spy.Integer(0),
+        )
         if Dn == 0:
             return None
         out.append(spy.cancel(N / Dn))
@@ -1072,7 +1115,7 @@ def _phis(rel, ms, degree, extra=()):
     J = ioproj.jets_of(rel)
     base = _base(rel, ms)
     phis = ioproj.products(J, base, _monomials(len(base), degree))
-    low = phis[:math.comb(len(base) + degree - 1, degree - 1)]
+    low = phis[: math.comb(len(base) + degree - 1, degree - 1)]
     return phis + [ioproj.Quo(q.numer * J.X[e], q.exps) for e in extra for q in low]
 
 
@@ -1117,8 +1160,9 @@ def state_relation(series, syms, coord, rng, stop, cap=None):
         nmon = len(jets[1])
         nlow = math.comb(len(_base(rel, ms)) + degree - 1, degree - 1)
         ext = (xi, nlow)
-        piv, free, basis = _kernel_at(rel, jets, [rng.randrange(1, p0) for _ in idx], p0, pos, rng,
-                                      nmon + nlow + 7, ext)
+        piv, free, basis = _kernel_at(
+            rel, jets, [rng.randrange(1, p0) for _ in idx], p0, pos, rng, nmon + nlow + 7, ext
+        )
         # a free column x_i psi_k: the basis vector of that column has the state at a nonzero coefficient
         cols = [c for c in free if c >= nmon]
         if not cols:
@@ -1130,6 +1174,7 @@ def state_relation(series, syms, coord, rng, stop, cap=None):
             if (pv, fr) != (piv, free):
                 return None
             return [b[col][j] for j in piv]
+
         inter = _interpolate(values, len(idx), rng, stop)
         if inter is None:
             continue
@@ -1142,17 +1187,25 @@ def state_relation(series, syms, coord, rng, stop, cap=None):
         phis = _phis(rel, ms, degree, [i])
         # the denominator sum_k mu_k psi_k of x_i is not zero, over the common denominators
         mu = _ring_coeffs(rel, syms, {j: v for j, v in lam.items() if j >= nmon})
-        den, T = ioproj.combine(J, list(mu.values()), [ioproj.Quo(phis[j].numer.exquo(J.X[i]), phis[j].exps)
-                                                       for j in mu])
+        den, T = ioproj.combine(
+            J, list(mu.values()), [ioproj.Quo(phis[j].numer.exquo(J.X[i]), phis[j].exps) for j in mu]
+        )
         if den == 0 or not _identity(rel, syms, lam, phis):
             continue
         # and not zero at the start of the trajectory, with the factors of the denominator
-        start = {spy.Symbol(str(x)): (v[0] if v[0] is not None else spy.Symbol(str(x)))
-                 for x, v in zip(rel.X, seg["x0"]) if x is not None}
+        start = {
+            spy.Symbol(str(x)): (v[0] if v[0] is not None else spy.Symbol(str(x)))
+            for x, v in zip(rel.X, seg["x0"])
+            if x is not None
+        }
         if any(spy.cancel(P.as_expr().xreplace(start)) == 0 for P in [den] + [J.fac[k] for k in T]):
             continue
-        return {"reads": set().union(*[v.free_symbols for v in lam.values()]), "orders": ms, "degree": degree,
-                "state": i}
+        return {
+            "reads": set().union(*[v.free_symbols for v in lam.values()]),
+            "orders": ms,
+            "degree": degree,
+            "state": i,
+        }
     return None
 
 
@@ -1194,6 +1247,7 @@ def io_functions(series, syms, rng, stop, log, cap=_RELATION, floor=0, found=Non
             if (pv, fr) != (piv, free):
                 return None
             return [v[j] for v in b for j in piv]
+
         inter = _interpolate(values, len(idx), rng, stop)
         if inter is None:
             log.append(f"relations at orders {ms}, degree {degree}: not interpolated")
@@ -1299,6 +1353,7 @@ def projection_functions(series, syms, rng, stop, log, found=None):
 def _elim_child():
     """elim.eliminate_relations() on the pickled input of stdin, the relations pickled to stdout as dictionaries."""
     from . import elim
+
     series, syms, seed, terms = pickle.loads(sys.stdin.buffer.read())
     rel = _relations(series, syms)
     try:
@@ -1306,10 +1361,19 @@ def _elim_child():
     except ValueError as exc:
         sys.stdout.buffer.write(pickle.dumps({"why": str(exc)}))
         return
-    sys.stdout.buffer.write(pickle.dumps({"order": got["ring"].order, "orders": got["orders"], "steps": got["steps"],
-                                          "relations": {r: P.to_dict() for r, P in got["relations"].items()},
-                                          "states": {j: None if ab is None else tuple(P.to_dict() for P in ab)
-                                                     for j, ab in got["states"].items()}}))
+    sys.stdout.buffer.write(
+        pickle.dumps(
+            {
+                "order": got["ring"].order,
+                "orders": got["orders"],
+                "steps": got["steps"],
+                "relations": {r: P.to_dict() for r, P in got["relations"].items()},
+                "states": {
+                    j: None if ab is None else tuple(P.to_dict() for P in ab) for j, ab in got["states"].items()
+                },
+            }
+        )
+    )
 
 
 def elimination_functions(series, syms, rng, stop, log, found=None):
@@ -1333,8 +1397,10 @@ def elimination_functions(series, syms, rng, stop, log, found=None):
         return
     payload = pickle.dumps((series, list(syms), rng.getrandbits(64), work.CAPS["elimination_terms"]))
     try:
-        r = work.run([sys.executable, "-c", "from symident.detection.fieldproof import _elim_child; _elim_child()"],
-                     input=payload)
+        r = work.run(
+            [sys.executable, "-c", "from symident.detection.fieldproof import _elim_child; _elim_child()"],
+            input=payload,
+        )
         got = pickle.loads(r.stdout) if r.returncode == 0 and r.stdout else None
     except (pickle.UnpicklingError, EOFError):
         got = None
@@ -1347,8 +1413,8 @@ def elimination_functions(series, syms, rng, stop, log, found=None):
     gens = [spy.Symbol(n) for n in R.params]
 
     def expr(co):
-        return sum((spy.Integer(c) * spy.prod([g ** k for g, k in zip(gens, m)]) for m, c in co.items()),
-                   spy.Integer(0))
+        return sum((spy.Integer(c) * spy.prod([g**k for g, k in zip(gens, m)]) for m, c in co.items()), spy.Integer(0))
+
     for obs, d in got["relations"].items():
         P = R.ctx.from_dict(d)
         built = elim.relation_projection(rel, R, P)
@@ -1366,8 +1432,10 @@ def elimination_functions(series, syms, rng, stop, log, found=None):
         den = expr(coefs[ref])
         exprs = [spy.cancel(expr(coefs[j]) / den) for j in pins]
         rel.__dict__.setdefault("_eliminated", set()).add(obs)
-        log.append(f"{where}: relation of {len(support)} terms ({len(P)} with the coordinates), rank {rk} along "
-                   f"the trajectory, {len(pins)} coefficients proven")
+        log.append(
+            f"{where}: relation of {len(support)} terms ({len(P)} with the coordinates), rank {rk} along "
+            f"the trajectory, {len(pins)} coefficients proven"
+        )
         yield _new(exprs, found)
 
 
@@ -1422,8 +1490,7 @@ def state_projection(series, syms, coord, rng, stop):
         # the projection, where the start is algebraic of higher degree over those below; small supports first,
         # since a search without a relation runs up to the cap
         lifts = ((r, d) for r in range(len(h)) for d in [_top_degree(rel, h, r, pos, rng, stop)] if d and d > 1)
-        tries = itertools.chain([(None, ioproj.CAP // 4)], ((lift, ioproj.CAP) for lift in lifts),
-                                [(None, ioproj.CAP)])
+        tries = itertools.chain([(None, ioproj.CAP // 4)], ((lift, ioproj.CAP) for lift in lifts), [(None, ioproj.CAP)])
         for lift, cap in tries:
             if work.ticks() > stop:
                 return None
@@ -1538,11 +1605,26 @@ def exact_fiber(series, orders, grp, syms, inputs=(), known=(), pre=()):
         return out
     seed = session.current().rng("exact fiber", tuple(series.coords)).getrandbits(64)
     from ..sym import msolve
-    payload = pickle.dumps((series, list(orders), grp, list(syms), list(inputs), seed, list(known),
-                            list(pre), msolve._MSOLVE_THREADS, work.MSOLVE_MEMORY, dict(work.CAPS)))
+
+    payload = pickle.dumps(
+        (
+            series,
+            list(orders),
+            grp,
+            list(syms),
+            list(inputs),
+            seed,
+            list(known),
+            list(pre),
+            msolve._MSOLVE_THREADS,
+            work.MSOLVE_MEMORY,
+            dict(work.CAPS),
+        )
+    )
     try:
-        r = work.run([sys.executable, "-c", "from symident.detection.fieldproof import _child; _child()"],
-                     input=payload)
+        r = work.run(
+            [sys.executable, "-c", "from symident.detection.fieldproof import _child; _child()"], input=payload
+        )
         got = pickle.loads(r.stdout) if r.returncode == 0 and r.stdout else None
     except (pickle.UnpicklingError, EOFError):
         got = None
@@ -1556,8 +1638,7 @@ def exact_fiber(series, orders, grp, syms, inputs=(), known=(), pre=()):
 
 def _child():
     """The search of exact_fiber() on the pickled input of stdin, the result pickled to stdout."""
-    series, orders, grp, syms, inputs, seed, known, pre, threads, memory, caps = \
-        pickle.loads(sys.stdin.buffer.read())
+    series, orders, grp, syms, inputs, seed, known, pre, threads, memory, caps = pickle.loads(sys.stdin.buffer.read())
     ioproj.THREADS[0] = threads
     work.MSOLVE_MEMORY = memory
     work.CAPS.update(caps)
@@ -1580,8 +1661,11 @@ def large_projections(series, syms):
         return []
     rel = _REL[key][1]
     done = rel.__dict__.get("_eliminated", set())
-    return [{"profile": list(h), "observable": i, "support": [tuple(int(x) for x in m) for m in S]}
-            for (h, i), S in _supports(rel).items() if S and len(S) > ioproj.TERMS and i not in done]
+    return [
+        {"profile": list(h), "observable": i, "support": [tuple(int(x) for x in m) for m in S]}
+        for (h, i), S in _supports(rel).items()
+        if S and len(S) > ioproj.TERMS and i not in done
+    ]
 
 
 def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
@@ -1602,8 +1686,7 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
     pool = _Pool(outs, len(syms), rng)
     a, b = pool.get(all_primes()[0], 2)
     # the coefficients that are numbers add nothing to the field
-    W = [_Var(f"c{j}", c=j) for j in sorted(range(len(a[1])), key=lambda j: outs.index[j][1])
-         if a[1][j] != b[1][j]]
+    W = [_Var(f"c{j}", c=j) for j in sorted(range(len(a[1])), key=lambda j: outs.index[j][1]) if a[1][j] != b[1][j]]
     # the known constants of the model: in the base field Q(kappa), with the output coefficients
     kappa = {spy.Symbol(k) for k in known}
     W += [_Var(str(k), expr=k, syms=syms) for k in sorted(kappa, key=str)]
@@ -1619,11 +1702,13 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
     def relations(end):
         # the small dense configurations, the projections, the relations by elimination, the large dense
         # configurations
-        return itertools.chain(io_functions(series, syms, rng, min(end, work.ticks() + _DENSE * cap), log,
-                                            cap=_FIRST, found=found),
-                               projection_functions(series, syms, rng, end, log, found),
-                               elimination_functions(series, syms, rng, end, log, found),
-                               io_functions(series, syms, rng, end, log, floor=_FIRST, found=found))
+        return itertools.chain(
+            io_functions(series, syms, rng, min(end, work.ticks() + _DENSE * cap), log, cap=_FIRST, found=found),
+            projection_functions(series, syms, rng, end, log, found),
+            elimination_functions(series, syms, rng, end, log, found),
+            io_functions(series, syms, rng, end, log, floor=_FIRST, found=found),
+        )
+
     io = relations(t0 + _SHARE * cap)
     tried = set()
     scaled = {}
@@ -1668,8 +1753,9 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
 
     def products(nv, nP, cap):
         # monomials of degree dv in the functions times degree dp in the proven coordinates, fewest first
-        pairs = sorted((2 * math.comb(nv + dv, dv) * math.comb(nP + dp, dp), dv, dp)
-                        for dv in range(1, 4) for dp in range(0, 9))
+        pairs = sorted(
+            (2 * math.comb(nv + dv, dv) * math.comb(nP + dp, dp), dv, dp) for dv in range(1, 4) for dp in range(0, 9)
+        )
         for U, dv, dp in pairs:
             if U > cap:
                 break
@@ -1701,8 +1787,9 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
                             w, m = scaled[id(v)]
                             W.append(v)
                             out["proven"].append(str(v.expr))
-                            out["generators"].append({"function": str(v.expr), "numerator": f"(1)*{w.name}",
-                                                      "denominator": str(m)})
+                            out["generators"].append(
+                                {"function": str(v.expr), "numerator": f"(1)*{w.name}", "denominator": str(m)}
+                            )
                     return got
         sets = [near, [w for w in W if w.c is None]] + low + ([W] if coefficients and cap == _UNKNOWNS else [])
         for V in sets:
@@ -1738,6 +1825,7 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
             pending.remove(done[0])
             add(*done)
         return done is not None
+
     states = {}
     io_restart = [False]
     starts = {v[0] for part in series.parts for v in part["segs"][0].get("x0", []) if v[0] is not None}
@@ -1772,6 +1860,7 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
                     io_restart[0] = True
                 return True
         return False
+
     while pending and work.ticks() < stop:
         # small searches in the output coefficients before the next relations, the large ones after them
         if step(False) or from_state(_SMALL) or step(True, 300):
@@ -1794,8 +1883,10 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
             # without input-output relations only the search in the output coefficients remains
             if work.ticks() + _WITHOUT_RELATIONS * cap < stop:
                 stop = work.ticks() + _WITHOUT_RELATIONS * cap
-                ended[0] = (f"without input-output relations the search ends {int(_WITHOUT_RELATIONS * cap):,} "
-                            "entries of the matrices reduced later")
+                ended[0] = (
+                    f"without input-output relations the search ends {int(_WITHOUT_RELATIONS * cap):,} "
+                    "entries of the matrices reduced later"
+                )
         if step(True):
             continue
         for h in extra:
@@ -1815,8 +1906,9 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
                 add(t, got)
     if pending:
         out["entries"] = work.ticks() - t0
-        out["why"] = (f"{pending[0]} was not found as a rational function of the output coefficients" +
-                      (f" before the end of the search: {ended[0]}" if work.ticks() >= stop else ""))
+        out["why"] = f"{pending[0]} was not found as a rational function of the output coefficients" + (
+            f" before the end of the search: {ended[0]}" if work.ticks() >= stop else ""
+        )
         return out
     # the other coordinates in F(alpha): alpha joins the proven functions as a variable of these searches only
     if others:
@@ -1843,21 +1935,22 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
                     if got is not None:
                         return got
             return None
+
         proven_syms = set()
         for th in sorted(others, key=lambda e: sum(spy.count_ops(g.get(e, e)) for g in grp)):
             got = in_f_alpha(th)
             if got is None:
                 # the start of a state: x_i(0) from a relation whose coefficients read coordinates in F(alpha)
-                sr = state_relation(series, syms, th, rng, stop) or \
-                    state_projection(series, syms, th, rng, stop)
+                sr = state_relation(series, syms, th, rng, stop) or state_projection(series, syms, th, rng, stop)
                 inF = {w.expr for w in W if w.c is None and w.expr.is_Symbol} | proven_syms
                 if sr is not None and sr["reads"] <= inF:
                     got = ("state relation", f"coefficients in {sorted(map(str, sr['reads']))}")
             # more of F: the trace of th, then the next relations
             while got is None and work.ticks() < stop:
                 tr = sum((spy.sympify(g.get(th, th)) for g in grp), spy.Integer(0))
-                gt = prove(tr, True) if not any(w.expr is not None and spy.cancel(w.expr - tr) == 0
-                                                for w in W) else None
+                gt = (
+                    prove(tr, True) if not any(w.expr is not None and spy.cancel(w.expr - tr) == 0 for w in W) else None
+                )
                 if gt is not None:
                     add(tr, gt)
                 else:
@@ -1870,8 +1963,9 @@ def _search(series, orders, grp, syms, cap, inputs, rng, known=(), pre=()):
                 out["entries"] = work.ticks() - t0
                 out["why"] = f"{th} was not found as a rational function of the proven functions and {alpha}"
                 return out
-            out["generators"].append({"function": str(th), "numerator": got[0], "denominator": got[1],
-                                      "over": f"F({alpha})"})
+            out["generators"].append(
+                {"function": str(th), "numerator": got[0], "denominator": got[1], "over": f"F({alpha})"}
+            )
             Fa.append(_Var(f"a{len(Fa)}", expr=th, syms=syms))
             proven_syms.add(th)
     out["alpha"] = str(alpha)

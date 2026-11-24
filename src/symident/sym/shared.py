@@ -14,8 +14,26 @@ _NUM = re.compile(r"^\(?\s*(-?\d+)\s*(?:/\s*(\d+))?\s*\)?$")
 _SYM = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # the arrays the kernel reads of a single-segment tape
-_KERNEL_KEYS = ("op", "a", "b", "cnum", "cden", "state_slots", "f_out", "g_out", "ic_leaf", "ic_num", "ic_den",
-                "ic_op", "ic_a", "ic_b", "ic_cnum", "ic_cden", "ic_out", "ic_seed")
+_KERNEL_KEYS = (
+    "op",
+    "a",
+    "b",
+    "cnum",
+    "cden",
+    "state_slots",
+    "f_out",
+    "g_out",
+    "ic_leaf",
+    "ic_num",
+    "ic_den",
+    "ic_op",
+    "ic_a",
+    "ic_b",
+    "ic_cnum",
+    "ic_cden",
+    "ic_out",
+    "ic_seed",
+)
 _LINE_KEYS = ("model_lines", "obs_lines", "ver_ic", "jet_f", "jet_g", "jet_ic")
 
 
@@ -53,6 +71,7 @@ class _Zeroed:
 
     def symbols(self, val):
         """The symbols with `val`: placeholder -> Fraction or symbol name; None for an expression that vanishes."""
+
         def go(n):
             k = n[0]
             if k == "s":
@@ -67,8 +86,11 @@ class _Zeroed:
             if k == "c":
                 return set()
             if k == "f":
-                return {val[x] if x in val and isinstance(val[x], str) else x for x in n[1]
-                        if not (x in val and not isinstance(val[x], str))}
+                return {
+                    val[x] if x in val and isinstance(val[x], str) else x
+                    for x in n[1]
+                    if not (x in val and not isinstance(val[x], str))
+                }
             parts = [go(x) for x in n[1]]
             if k == "*":
                 if any(p is None for p in parts):
@@ -76,6 +98,7 @@ class _Zeroed:
                 return set().union(*parts)
             live = [p for p in parts if p is not None]
             return set().union(*live) if live else None
+
         return go(self.tree)
 
 
@@ -151,14 +174,24 @@ def shared_tape_compile(compile_fn, kw):
         if any(isinstance(v, str) and v in vals and vals[v][c] != v for v in pval[c].values()):
             return None
     t_subs = {k: (ph[k] if k in ph else _text(vals[k][0])) for k in keys}
-    t_obs = [_IDENT.sub(lambda m: ph.get(m.group(0), m.group(0)) if m.group(0) in obs_ids else m.group(0), line)
-             for line in obs[0]]
-    kw1 = dict(kw, condition_subs=[t_subs], condition_ic0=[dict(kw["condition_ic0"][0])],
-               condition_obs=[t_obs], observation=t_obs,
-               fixed=list(kw.get("fixed") or []) + sorted(ph.values()),
-               keep_coords=list(kw.get("keep_coords") or []) + value_syms,
-               seg_equilibrate=[False], condition_events=[[]], condition_t0_events=[[]],
-               condition_rest_subs=[{}], condition_times=None)
+    t_obs = [
+        _IDENT.sub(lambda m: ph.get(m.group(0), m.group(0)) if m.group(0) in obs_ids else m.group(0), line)
+        for line in obs[0]
+    ]
+    kw1 = dict(
+        kw,
+        condition_subs=[t_subs],
+        condition_ic0=[dict(kw["condition_ic0"][0])],
+        condition_obs=[t_obs],
+        observation=t_obs,
+        fixed=list(kw.get("fixed") or []) + sorted(ph.values()),
+        keep_coords=list(kw.get("keep_coords") or []) + value_syms,
+        seg_equilibrate=[False],
+        condition_events=[[]],
+        condition_t0_events=[[]],
+        condition_rest_subs=[{}],
+        condition_times=None,
+    )
     out = compile_fn(**kw1)
     if not out.get("ok") or len(out.get("tapes") or []) != 1:
         return None
@@ -197,6 +230,7 @@ def shared_tape_compile(compile_fn, kw):
 
             def sub(lines):
                 return [pat.sub(lambda m: txt[m.group(0)], str(x)) for x in lines]
+
             for key in _LINE_KEYS:
                 if tpl.get(key) is not None:
                     t[key] = sub(tpl[key])
@@ -277,8 +311,9 @@ def _scaling_groups(tpl, pval):
                 continue
             if not all(b.is_Symbol and e.is_Integer for b, e in pw.items()):
                 return None
-            terms.append((ei, Fraction(int(c.p), int(c.q)) if c.is_Rational else None,
-                          {str(b): int(e) for b, e in pw.items()}))
+            terms.append(
+                (ei, Fraction(int(c.p), int(c.q)) if c.is_Rational else None, {str(b): int(e) for b, e in pw.items()})
+            )
     if any(c is None for _, c, _ in terms):
         return None
     # the terms of every expression without placeholders, which a renamed term may meet
@@ -292,6 +327,7 @@ def _scaling_groups(tpl, pval):
 
     def pattern(val):
         return tuple((nm, ("Z" if v == 0 else "N") if isinstance(v, Fraction) else v) for nm, v in sorted(val.items()))
+
     meets = {}
     out, canon = {}, {}
     for c, val in enumerate(pval):
@@ -323,14 +359,17 @@ def _scaling_groups(tpl, pval):
                 for b, e in terms[ti][2].items():
                     v = val.get(b)
                     if isinstance(v, Fraction):
-                        x *= v ** e
+                        x *= v**e
                 tot += x
             if tot == 0:
                 vanish.append((gi, ()))
         key = (pat, tuple(vanish))
         if key not in out:
-            canon[key] = val if meets[pat] else \
-                {nm: (Fraction(1) if isinstance(v, Fraction) and v != 0 else v) for nm, v in val.items()}
+            canon[key] = (
+                val
+                if meets[pat]
+                else {nm: (Fraction(1) if isinstance(v, Fraction) and v != 0 else v) for nm, v in val.items()}
+            )
         out.setdefault(key, []).append(c)
     return list(out.values()), [canon[k] for k in out]
 
@@ -366,12 +405,14 @@ def _reciprocals_free_of(tpl, base, nl, slots):
 def _template_exprs(tpl):
     """The right-hand sides, observables and initial values of the template as SymPy expressions, None where they do
     not parse."""
+
     def rhs(lines):
         out = {}
         for line in lines or []:
             x, e = str(line).split("=", 1)
             out[x.strip()] = spy.sympify(e)
         return out
+
     try:
         f = rhs(tpl.get("jet_f") or tpl.get("model_lines"))
         g = [spy.sympify(str(x)) for x in tpl.get("jet_g") or []]
@@ -410,7 +451,7 @@ def _reach(f_tr, g_tr, ic_tr, val):
         syms |= s
         if x in dist:
             for y in s:
-                if dist[x] < out.get(y, 10 ** 9):
+                if dist[x] < out.get(y, 10**9):
                     out[y] = dist[x]
     return out, syms
 
@@ -432,6 +473,13 @@ def kernel_tapes(tapes):
             first[key] = i
             out.append(t)
             continue
-        out.append({"base": j, "leaf_slot": t["leaf_slot"], "leaf_src": t["leaf_src"], "leaf_num": t["leaf_num"],
-                    "leaf_den": t["leaf_den"]})
+        out.append(
+            {
+                "base": j,
+                "leaf_slot": t["leaf_slot"],
+                "leaf_src": t["leaf_src"],
+                "leaf_num": t["leaf_num"],
+                "leaf_den": t["leaf_den"],
+            }
+        )
     return out

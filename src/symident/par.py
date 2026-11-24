@@ -20,7 +20,7 @@ def thread_map(fn, xs, n):
         return list(ex.map(fn, xs))
 
 
-_JOBS = {}
+_JOBS: dict = {}
 _TOKENS = itertools.count()
 
 

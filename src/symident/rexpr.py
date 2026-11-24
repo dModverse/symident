@@ -6,16 +6,18 @@ import re
 
 from .errors import SYMPY_FAILS, InapplicableError
 
-_TOKEN = re.compile(r"""
+_TOKEN = re.compile(
+    r"""
     (?P<ws>\s+)
   | (?P<num>0[xX][0-9a-fA-F]+L?|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?L?)
   | (?P<name>[A-Za-z.][A-Za-z0-9._]*|`[^`]*`)
   | (?P<str>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')
   | (?P<op>\*\*|<=|>=|==|!=|&&|\|\||<-|->|%[^%]*%|[-+*/^(),<>!&|=\[\]{}:;~?$@])
-""", re.VERBOSE)
+""",
+    re.VERBOSE,
+)
 
-_CONSTS = {"TRUE", "FALSE", "NULL", "NA", "Inf", "NaN", "NA_integer_", "NA_real_",
-           "NA_character_", "pi"}
+_CONSTS = {"TRUE", "FALSE", "NULL", "NA", "Inf", "NaN", "NA_integer_", "NA_real_", "NA_character_", "pi"}
 _KEYWORDS = {"function", "if", "else", "for", "while", "repeat", "in", "next", "break"}
 
 
@@ -110,8 +112,7 @@ def _replace_one(expr, table, bare):
     toks = tokens(expr)
     # a replacement that is the whole expression needs no parentheses
     sym = bare if len(toks) == 1 else table
-    return "".join((bare if k == "fun" else sym).get(t, t) if k in ("sym", "fun", "num") else t
-                   for k, t in toks)
+    return "".join((bare if k == "fun" else sym).get(t, t) if k in ("sym", "fun", "num") else t for k, t in toks)
 
 
 def replace_symbols(what, by, x):
@@ -142,6 +143,7 @@ def subst(keys, vals):
         if isinstance(e, (dict, list, str)) and len(e) == 0:
             return e
         return replace_symbols(keys, vals, e)
+
     return apply
 
 
@@ -171,11 +173,23 @@ def free_exponent_bases(exprs, states):
 
 
 _FUNS = {
-    "exp": math.exp, "log": lambda x, b=None: math.log(x) if b is None else math.log(x, b),
-    "log10": math.log10, "log2": math.log2, "sqrt": math.sqrt, "abs": abs,
-    "sin": math.sin, "cos": math.cos, "tan": math.tan, "sinh": math.sinh,
-    "cosh": math.cosh, "tanh": math.tanh, "exp10": lambda x: 10.0 ** x,
-    "max": max, "min": min, "pmax": max, "pmin": min,
+    "exp": math.exp,
+    "log": lambda x, b=None: math.log(x) if b is None else math.log(x, b),
+    "log10": math.log10,
+    "log2": math.log2,
+    "sqrt": math.sqrt,
+    "abs": abs,
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "sinh": math.sinh,
+    "cosh": math.cosh,
+    "tanh": math.tanh,
+    "exp10": lambda x: 10.0**x,
+    "max": max,
+    "min": min,
+    "pmax": max,
+    "pmin": min,
     "ifelse": lambda c, a, b: a if c else b,
 }
 
@@ -188,8 +202,9 @@ def to_python(expr):
             parts.append("**")
         elif kind == "num":
             t = text.rstrip("L") if text[-1:] == "L" and not text.startswith("0x") else text
-            parts.append({"TRUE": "True", "FALSE": "False", "Inf": "inf", "NaN": "nan",
-                          "NA": "nan", "NULL": "None"}.get(t, t))
+            parts.append(
+                {"TRUE": "True", "FALSE": "False", "Inf": "inf", "NaN": "nan", "NA": "nan", "NULL": "None"}.get(t, t)
+            )
         elif kind == "op" and text in ("&&", "&"):
             parts.append(" and ")
         elif kind == "op" and text in ("||", "|"):

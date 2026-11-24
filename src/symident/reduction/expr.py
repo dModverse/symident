@@ -18,7 +18,7 @@ def red_locals(strings):
     return {x: spy.Symbol(x) for s in strings for x in _ID.findall(str(s)) if x}
 
 
-_SYMP = {}
+_SYMP: dict = {}
 
 
 def red_sympify(x, locals_):
@@ -43,8 +43,7 @@ def gen_prep(d, pins=None):
     """A curved generator with denominators cleared, as polynomial components."""
     out = {"ok": False, "comps": None, "support": None, "vars": None, "degree": None}
     comp0 = {k: str(v).replace("^", "**") for k, v in d["generator"].items()}
-    pins = {k: v for k, v in (pins or {}).items()
-            if not (k in comp0 and comp0[k] != "0")}
+    pins = {k: v for k, v in (pins or {}).items() if not (k in comp0 and comp0[k] != "0")}
     loc = red_locals(list(comp0.values()) + list(pins.values()))
     try:
         exprs = {k: red_sympify(x, loc) for k, x in comp0.items()}
@@ -102,6 +101,7 @@ def group_by(sets):
         while parent[i] != i:
             i = parent[i]
         return i
+
     for i in range(k - 1):
         for j in range(i + 1, k):
             if set(sets[i]) & set(sets[j]):
@@ -153,8 +153,7 @@ def eval_batch(exprs, pt, p):
     if not exprs:
         return []
     try:
-        v = eval_rational_mod_batch([str(e) for e in exprs], list(pt.keys()),
-                                    [[int(x) for x in pt.values()]], int(p))
+        v = eval_rational_mod_batch([str(e) for e in exprs], list(pt.keys()), [[int(x) for x in pt.values()]], int(p))
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return [None] * len(exprs)
@@ -185,8 +184,9 @@ def module_reduce(preps, labels):
                 off += 1
         scheds.append(reduce_schedule(V, p))
     sched = min(scheds, key=lambda s: s["fill"])["sched"]
-    rr = module_reduce_replay([dict(pr["comps"]) for pr in preps], list(cols),
-                               [[int(r) + 1, int(c) + 1] for r, c in sched])
+    rr = module_reduce_replay(
+        [dict(pr["comps"]) for pr in preps], list(cols), [[int(r) + 1, int(c) + 1] for r, c in sched]
+    )
     cand = [{"pr": preps[j], "src_idx": [j], "combo": None} for j in range(k)]
     for j in range(k):
         comps = {kk: v for kk, v in (rr["rows"][j] or {}).items()}
@@ -213,6 +213,7 @@ def module_reduce(preps, labels):
             for j, x in zip(hs, v):
                 out[j] = 0 if x is None else x
         return out
+
     order = sorted(range(len(cand)), key=lambda j: len(cand[j]["pr"]["support"]))
     acc = np.zeros((0, len(cols)), dtype=np.int64)
     out_preps, labels_of, combos = [], [], []
@@ -346,6 +347,7 @@ def tri_solve(sys_, vars_, info=None):
 
     Stops, with the branches incomplete, once the work cap of the section search is spent."""
     from .sign import budget_spent
+
     if not vars_:
         return [{}]
     if budget_spent():

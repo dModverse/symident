@@ -34,15 +34,19 @@ def entry_class(e):
 def outside_bounds(entries, real=()):
     """Whether the coordinate values `entries` break a declared bound at a random point; a preference, not a proof."""
     import random
+
     if not DOMAIN.get("bounds"):
         return False
     from ..sym.parse import model_sympify
+
     vals = {k: model_sympify(str(v)) for k, v in entries.items()}
     syms = sorted({x for v in vals.values() for x in v.free_symbols}, key=str)
     rng = random.Random(len(syms))
     for _ in range(5):
-        pt = {x: spy.Rational(rng.randint(1, 50), rng.randint(1, 50)) * (rng.choice((1, -1)) if str(x) in real else 1)
-              for x in syms}
+        pt = {
+            x: spy.Rational(rng.randint(1, 50), rng.randint(1, 50)) * (rng.choice((1, -1)) if str(x) in real else 1)
+            for x in syms
+        }
         at = {spy.Symbol(k): v.xreplace(pt) for k, v in vals.items()}
         for h in DOMAIN["bounds"]:
             try:
@@ -60,6 +64,7 @@ def inside_bounds(entries, invariants, names, support, tries=40):
     import random
 
     from ..sym.parse import model_sympify
+
     bounds = [model_sympify(str(h)) for h in DOMAIN.get("bounds") or []]
     vals = {k: model_sympify(str(v)) for k, v in entries.items()}
     rng = random.Random(len(support))
@@ -90,6 +95,7 @@ def _numeric(Is, vals, names):
     def fn(e):
         xs = sorted(e.free_symbols, key=str)
         return spy.lambdify(xs, e, "math"), [str(x) for x in xs]
+
     try:
         fI, fE = [fn(I) for I in Is], {k: fn(e) for k, e in vals.items()}
     except (SyntaxError, TypeError, NameError, *SYMPY_FAILS):
@@ -108,6 +114,7 @@ def _numeric(Is, vals, names):
             return True
         except (ArithmeticError, ValueError, TypeError, KeyError):
             return False
+
     return run
 
 
@@ -116,6 +123,7 @@ def positive_somewhere(entries, invariants, names, support, tries=40):
     import random
 
     from ..sym.parse import model_sympify
+
     vals = {k: model_sympify(str(v)) for k, v in entries.items()}
     rng = random.Random(len(support) + len(entries))
     pos = positive_set()
@@ -126,6 +134,7 @@ def positive_somewhere(entries, invariants, names, support, tries=40):
     def at(e, values):
         # by name: the symbols of the invariants and of the entries differ in their assumptions
         return e.xreplace({x: values[str(x)] for x in e.free_symbols if str(x) in values})
+
     # the orbit through a positive point of the coordinates the invariants read
     free = sorted(set(support) | {str(x) for e in Is for x in e.free_symbols})
     for _ in range(tries):
@@ -135,8 +144,10 @@ def positive_somewhere(entries, invariants, names, support, tries=40):
             continue
         try:
             sol = {k: at(v, {**pt, **{n: at(I, pt) for n, I in zip(names, Is)}}) for k, v in vals.items()}
-            ok = all(x.is_number and x.is_finite and x.is_real and (x > 0 or (pos is not None and k not in set(pos)))
-                     for k, x in sol.items())
+            ok = all(
+                x.is_number and x.is_finite and x.is_real and (x > 0 or (pos is not None and k not in set(pos)))
+                for k, x in sol.items()
+            )
         except (ZeroDivisionError, TypeError, *SYMPY_FAILS):
             continue
         if ok:
@@ -159,13 +170,11 @@ def positive_set_of(positive, coords):
     positive = [p for p in positive if p not in DOMAIN["bounds"]]
     unknown = [p for p in positive if p not in set(coords)]
     if unknown:
-        warnings.warn(f"no effect: {', '.join(unknown)}: not a coordinate of the analysis.",
-                      stacklevel=2)
+        warnings.warn(f"no effect: {', '.join(unknown)}: not a coordinate of the analysis.", stacklevel=2)
     return [p for p in positive if p in set(coords)]
 
 
-DOMAIN = {"positive": None, "real_carriers": [], "no_roots": False, "sgn_cache": None,
-          "bounds": []}
+DOMAIN: dict = {"positive": None, "real_carriers": [], "no_roots": False, "sgn_cache": None, "bounds": []}
 
 
 @contextlib.contextmanager
@@ -283,6 +292,7 @@ def sgn_poly(pp, depth=0):
     def anchored(c):
         # a real coordinate with even powers only vanishes somewhere: a positive term free of it keeps the sign strict
         return any(c[i] > 0 and not (fcols and np.any(expts[i, fcols])) for i in range(len(c)))
+
     if np.all(cf > 0):
         return 1 if anchored(cf) else 0
     if np.all(cf < 0):
@@ -307,7 +317,7 @@ def _sqrt_below(x):
     """A rational at most sqrt(x) for a nonnegative Fraction x, within a part in 10^12."""
     if x <= 0:
         return Fraction(0)
-    k = 10 ** 12
+    k = 10**12
     return Fraction(math.isqrt(x.numerator * x.denominator * k * k), x.denominator * k)
 
 
@@ -328,7 +338,7 @@ def _absorb_exact(expts, cf):
                 if take <= 0:
                     continue
                 lo, hi = take / (2 * bv), 2 * bu / take
-                t = min(hi, max(lo, Fraction(math.sqrt(bu / bv)).limit_denominator(10 ** 6)))
+                t = min(hi, max(lo, Fraction(math.sqrt(bu / bv)).limit_denominator(10**6)))
                 bud[u], bud[v] = bu - take * t / 2, bv - take / (2 * t)
                 need -= take
             if need == 0:
@@ -397,8 +407,7 @@ def sgn_raw(pp, depth=0):
             s *= sa
         return s
     try:
-        rads = [w for w in ex.atoms(spy.Pow) if w.exp.is_Rational and not w.exp.is_Integer
-                and not w.base.is_number]
+        rads = [w for w in ex.atoms(spy.Pow) if w.exp.is_Rational and not w.exp.is_Integer and not w.base.is_number]
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         rads = []
@@ -435,7 +444,7 @@ def sgn_raw(pp, depth=0):
             continue
         if sa == 0:
             try:
-                d2 = spy.expand(cc ** 2 * s.base - a ** 2)
+                d2 = spy.expand(cc**2 * s.base - a**2)
             except SYMPY_FAILS as exc:
                 sympy_fail(exc)
                 d2 = None
@@ -445,7 +454,7 @@ def sgn_raw(pp, depth=0):
         if sa == sc:
             return sa
         try:
-            d = spy.expand(a ** 2 - cc ** 2 * s.base)
+            d = spy.expand(a**2 - cc**2 * s.base)
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             continue
@@ -615,6 +624,7 @@ def shift_fix(es, tmp_n, Ies):
             if k not in seen:
                 seen.add(k)
                 out.append(f)
+
         form_seen = set()
         for e in [e0] + _forms(e0)[1:]:
             if e is None:
@@ -694,6 +704,7 @@ def shift_fix(es, tmp_n, Ies):
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             return e
+
     es = [norm(e) for e in es]
     for _ in tmp_n:
         hit = find_one()
@@ -743,7 +754,7 @@ def sgn_real(pp, real_syms):
         if a.is_zero:
             return sc
         try:
-            d2 = spy.expand(cc ** 2 * w.base - a ** 2)
+            d2 = spy.expand(cc**2 * w.base - a**2)
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             d2 = None
@@ -761,7 +772,7 @@ def sgn_real(pp, real_syms):
             A = spy.expand(rest.coeff(ts, 2))
             B = spy.expand(rest.coeff(ts, 1))
             C = spy.expand(rest.coeff(ts, 0))
-            chk = str(spy.expand(rest - (A * ts ** 2 + B * ts + C)))
+            chk = str(spy.expand(rest - (A * ts**2 + B * ts + C)))
         except SYMPY_FAILS as exc:
             sympy_fail(exc)
             return 0
@@ -771,7 +782,7 @@ def sgn_real(pp, real_syms):
             return 0
         if sgn(A) != 1:
             return 0
-        corr = corr + B ** 2 / (4 * A)
+        corr = corr + B**2 / (4 * A)
         rest = C
     try:
         red = spy.cancel(spy.together(rest - corr))
@@ -831,8 +842,11 @@ def translation_gauge(b, gauge):
 def translates(b, v, pinned):
     """Whether a direction of block `b` on real coordinates, free of `pinned` but `v`, translates `v`."""
     for pr in b["preps"]:
-        if v not in pr["comps"] or not all(is_real(s) for s in pr["support"]) or \
-                (set(pinned) - {v}) & set(pr["support"]):
+        if (
+            v not in pr["comps"]
+            or not all(is_real(s) for s in pr["support"])
+            or (set(pinned) - {v}) & set(pr["support"])
+        ):
             continue
         loc = red_locals(list(pr["comps"].values()))
         try:

@@ -24,6 +24,7 @@ class Atoms:
 class Deg:
     """A rational function of the coordinates by degree bounds only: the degree of the numerator and the
     denominator as a product of factors of Atoms; a number is kept exactly, zero only where exactly zero."""
+
     __slots__ = ("A", "dn", "den", "c")
 
     def __init__(self, A, dn=0, den=None, c=None):
@@ -96,7 +97,7 @@ class Deg:
             return self.c == 0
         return NotImplemented
 
-    __hash__ = None
+    __hash__ = None  # type: ignore[assignment]
 
 
 def common(values):
@@ -106,5 +107,4 @@ def common(values):
     for v in values:
         for a, e in v.den.items():
             L[a] = max(L.get(a, 0), e)
-    return A.of(L), [None if v.c == 0 else v.dn + A.of({a: e - v.den.get(a, 0) for a, e in L.items()})
-                     for v in values]
+    return A.of(L), [None if v.c == 0 else v.dn + A.of({a: e - v.den.get(a, 0) for a, e in L.items()}) for v in values]

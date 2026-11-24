@@ -22,6 +22,7 @@ def supports(res):
 
 # ---- an independent evaluation: truncated series in t with gradients, by Picard steps ----
 
+
 class _Ser:
     """Series sum_j c[j] t^(lo + j) mod P; every c[j] holds the value and the gradient."""
 
@@ -214,11 +215,14 @@ def test_ratio_matches_shifted_start():
 F_POW = {"x": "p - m*x"}
 
 
-@pytest.mark.parametrize("obs, rank, dim, sup", [
-    ("x^a", 3, 3, []),
-    ("q*x^a + x", 4, 4, []),
-    ("x^a/(g^a + x^a)", 3, 4, [("g", "p")]),
-])
+@pytest.mark.parametrize(
+    "obs, rank, dim, sup",
+    [
+        ("x^a", 3, 3, []),
+        ("q*x^a + x", 4, 4, []),
+        ("x^a/(g^a + x^a)", 3, 4, [("g", "p")]),
+    ],
+)
 def test_power_of_state_at_zero(obs, rank, dim, sup):
     res = det(F_POW, {"y": obs}, trafo={"x": "0"})
     assert (res.rank, res.dim) == (rank, dim)
@@ -238,10 +242,13 @@ def test_power_with_a_second_state():
     assert supports(res) == [("g", "p")]
 
 
-@pytest.mark.parametrize("f, g", [
-    (F_POW, {"y": "x^a/(g^a + x^a)"}),
-    ({"x": "p - m*x", "z": "n*x^a/(g^a + x^a) - k*z"}, {"y": "z"}),
-])
+@pytest.mark.parametrize(
+    "f, g",
+    [
+        (F_POW, {"y": "x^a/(g^a + x^a)"}),
+        ({"x": "p - m*x", "z": "n*x^a/(g^a + x^a) - k*z"}, {"y": "z"}),
+    ],
+)
 def test_power_scaling_exact(f, g):
     # the scaling of the base moves the power by the weight times the exponent; it bounds the rank
     res = det(f, g, trafo={x: "0" for x in f})

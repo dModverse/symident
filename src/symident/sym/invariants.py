@@ -9,9 +9,9 @@ from .parse import _as_list, _make_local_parse
 def _parse_generators(gens, extra_lines):
     """Shared symbol table + parsed xi dicts for a list of generator dicts."""
     gens = _as_list(gens)
-    all_lines = list(extra_lines) + \
-        [str(v) for g in gens for v in g.values()] + \
-        [str(kk) for g in gens for kk in g.keys()]
+    all_lines = (
+        list(extra_lines) + [str(v) for g in gens for v in g.values()] + [str(kk) for g in gens for kk in g.keys()]
+    )
     _, parse = _make_local_parse(all_lines)
     xis = [{str(kk): parse(str(v)) for kk, v in g.items()} for g in gens]
     return xis, parse
@@ -24,8 +24,7 @@ def module_reduce_replay(rows, cols, schedule):
     k = len(rows)
     all_lines = [str(v) for r in rows for v in r.values()] + cols
     _, parse = _make_local_parse(all_lines)
-    E = [{c: (parse(str(r[c])) if c in r and str(r[c]) != "0"
-              else spy.Integer(0)) for c in cols} for r in rows]
+    E = [{c: (parse(str(r[c])) if c in r and str(r[c]) != "0" else spy.Integer(0)) for c in cols} for r in rows]
     C = [[spy.Integer(1 if i == j else 0) for j in range(k)] for i in range(k)]
     for st in _as_list(schedule):
         r = int(st[0]) - 1
@@ -41,9 +40,10 @@ def module_reduce_replay(rows, cols, schedule):
                 E[j][c2] = spy.cancel(E[j][c2] - m * E[r][c2])
             for l in range(k):
                 C[j][l] = spy.cancel(C[j][l] - m * C[r][l])
-    return {'rows': [{c: str(E[j][c]) for c in cols if E[j][c] != 0}
-                     for j in range(k)],
-            'combo': [[str(x) for x in row] for row in C]}
+    return {
+        "rows": [{c: str(E[j][c]) for c in cols if E[j][c] != 0} for j in range(k)],
+        "combo": [[str(x) for x in row] for row in C],
+    }
 
 
 def darboux_cofactors(candidates, generators):
@@ -77,7 +77,7 @@ def darboux_cofactors(candidates, generators):
         kept.append(P)
         Ps.append(str(P))
         lams.append(lam)
-    return {'Ps': Ps, 'lams': lams}
+    return {"Ps": Ps, "lams": lams}
 
 
 def verify_invariants(invariants, generators):
@@ -85,6 +85,7 @@ def verify_invariants(invariants, generators):
     invs = [str(i) for i in _as_list(invariants)]
     xis, parse = _parse_generators(generators, invs)
     out = []
+
     def _real(e):
         return e.subs({t: spy.Symbol(t.name, real=True) for t in e.free_symbols})
 
@@ -113,16 +114,14 @@ def verify_invariants(invariants, generators):
 
 def integrating_factor_integral(Mstr, xi1, xi2, z1, z2):
     """First integral by quadrature from a 2D integrating factor, or None if unevaluated or X(I) != 0."""
-    _, parse = _make_local_parse([str(Mstr), str(xi1), str(xi2),
-                                      str(z1), str(z2)])
+    _, parse = _make_local_parse([str(Mstr), str(xi1), str(xi2), str(z1), str(z2)])
     try:
         M = parse(str(Mstr))
         f1 = parse(str(xi1))
         f2 = parse(str(xi2))
         # real symbols throughout: ratint then prefers real atan/log forms, and
         # a leftover complex-logarithm pair can be realified by re()
-        real = {s: spy.Symbol(s.name, real=True)
-                for s in (M.free_symbols | f1.free_symbols | f2.free_symbols)}
+        real = {s: spy.Symbol(s.name, real=True) for s in (M.free_symbols | f1.free_symbols | f2.free_symbols)}
         M = M.subs(real)
         f1 = f1.subs(real)
         f2 = f2.subs(real)

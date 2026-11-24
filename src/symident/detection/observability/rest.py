@@ -43,18 +43,26 @@ class RestingStates:
 
     def joint_pv(self, point, p):
         """Parameter, log and held-pivot values of a point for the steady-state solve."""
+
         def val(nm):
             s = self.run.slot(nm)
             return 0 if s is None else int(point[s]) % p
-        return {"param_vals": {nm: val(nm) for nm in self.solve_param_names},
-                "l_vals": {nm: val(nm) for nm in self.l_names} if self.l_names else None,
-                "held_vals": {nm: val(self.held_param_of[nm]) for nm in self.held_names}
-                if self.held_names else None}
+
+        return {
+            "param_vals": {nm: val(nm) for nm in self.solve_param_names},
+            "l_vals": {nm: val(nm) for nm in self.l_names} if self.l_names else None,
+            "held_vals": {nm: val(self.held_param_of[nm]) for nm in self.held_names} if self.held_names else None,
+        }
 
     def solve_key(self, p, pv, ci):
         """Cache key of the steady state solve of condition `ci` at the values `pv` mod `p`."""
-        return (self.model_key[ci], p, tuple(pv["param_vals"][n] for n in self.model_params[ci]),
-                tuple((pv["l_vals"] or {}).values()), tuple((pv["held_vals"] or {}).values()))
+        return (
+            self.model_key[ci],
+            p,
+            tuple(pv["param_vals"][n] for n in self.model_params[ci]),
+            tuple((pv["l_vals"] or {}).values()),
+            tuple((pv["held_vals"] or {}).values()),
+        )
 
     def solve_raw(self, p, pv, ci):
         """The modular steady state of condition `ci` at the values `pv`, or None on failure."""
@@ -63,11 +71,18 @@ class RestingStates:
         t0 = time.monotonic()
         try:
             out = solve_steady_state_modular(
-                model=self.models[ci], state_names=list(self.real_state_names),
-                param_names=list(self.solve_param_names), param_vals=pv["param_vals"], prime=p,
-                forcings=self.held_of(ci) or None, t0events=ev_c, recast=self.recast or None,
-                l_vals=pv["l_vals"], joint_mode=True,
-                held_states=pv["held_vals"] if self.held_names else None)
+                model=self.models[ci],
+                state_names=list(self.real_state_names),
+                param_names=list(self.solve_param_names),
+                param_vals=pv["param_vals"],
+                prime=p,
+                forcings=self.held_of(ci) or None,
+                t0events=ev_c,
+                recast=self.recast or None,
+                l_vals=pv["l_vals"],
+                joint_mode=True,
+                held_states=pv["held_vals"] if self.held_names else None,
+            )
         except MsolveMissingError:
             raise
         except SYMPY_FAILS as exc:
@@ -108,9 +123,15 @@ class RestingStates:
 
     def rest_kind(self, p, pv, ci):
         """resting_kind() of condition `ci` at the values `pv`."""
-        return resting_kind(self.models[ci], list(self.real_state_names), list(self.solve_param_names),
-                            pv["param_vals"], p, forcings=self.held_of(ci) or None,
-                            held_states=pv["held_vals"] if self.held_names else None)
+        return resting_kind(
+            self.models[ci],
+            list(self.real_state_names),
+            list(self.solve_param_names),
+            pv["param_vals"],
+            p,
+            forcings=self.held_of(ci) or None,
+            held_states=pv["held_vals"] if self.held_names else None,
+        )
 
     def warm_solves(self, pts, primes, conds=None):
         """The solve cache for a batch of points, in forked workers."""
@@ -136,11 +157,14 @@ class RestingStates:
         if len(jobs) < 2:
             return
         t0 = time.monotonic()
-        res = process_map(lambda j: self.solve_raw(j["p"], j["pv"], j["ci"]), jobs,
-                          min(run.cores, len(jobs)), on_error=lambda j: None)
+        res = process_map(
+            lambda j: self.solve_raw(j["p"], j["pv"], j["ci"]), jobs, min(run.cores, len(jobs)), on_error=lambda j: None
+        )
         if run.timing:
-            print(f"[sym] warm fill: {len(jobs)} solve(s), fork x{min(run.cores, len(jobs))}, "
-                  f"{time.monotonic() - t0:.1f}s")
+            print(
+                f"[sym] warm fill: {len(jobs)} solve(s), fork x{min(run.cores, len(jobs))}, "
+                f"{time.monotonic() - t0:.1f}s"
+            )
         for j, r in zip(jobs, res):
             if r is not None:
                 self.solve_cache[j["key"]] = r if r.get("ok") else {"ok": False}
@@ -148,7 +172,7 @@ class RestingStates:
     def _seed(self, point, p, sol, ci, rates=None):
         """The point with the solved resting states (and rates) in the leaves."""
         run = self.run
-        ptc = np.array(point[:run.n_leaves], dtype=np.int64)
+        ptc = np.array(point[: run.n_leaves], dtype=np.int64)
         for r, v in (rates or {}).items():
             s = run.slot(r)
             if s is not None:
@@ -219,8 +243,13 @@ class RestingStates:
         """(balances, states, parameters, linear) of the resting solve of condition `ci`: held pivots as parameters,
         with `pinned` each split balance replaced by the factor the session pinned."""
         held = tuple(sorted(self.held_names))
-        c = _ss_compile(list(self.models[ci]), list(self.real_state_names), list(self.solve_param_names),
-                        set(self.held_of(ci)), held)
+        c = _ss_compile(
+            list(self.models[ci]),
+            list(self.real_state_names),
+            list(self.solve_param_names),
+            set(self.held_of(ci)),
+            held,
+        )
         params, states, polys, linear, plan = list(c[0]), list(c[1]), list(c[2]), c[9], c[11]
         if plan is not None:
             keep = [(s, P) for s, P in zip(states, polys) if str(s) not in set(held)]
@@ -245,9 +274,14 @@ class RestingStates:
             vals = dict(pv["param_vals"], **(pv["held_vals"] or {}))
             conj = _conjugate(tuple(polys), tuple(states), {s: int(vals.get(str(s), 0)) for s in params})
             if conj is not True:
-                return {"why": f"the resting states of condition {k} have " +
-                               ("several branches over Q(theta)" if conj is False else
-                                "branches that are not decided over Q(theta)")}
+                return {
+                    "why": f"the resting states of condition {k} have "
+                    + (
+                        "several branches over Q(theta)"
+                        if conj is False
+                        else "branches that are not decided over Q(theta)"
+                    )
+                }
         return {"bezout": bd[0], "jac": bd[1]}
 
     def solve_cond_fwd(self, point, p, ci, solve_rates):
@@ -257,20 +291,32 @@ class RestingStates:
         def rd(nm):
             s = run.slot(nm)
             return 0 if s is None else int(point[s]) % p
+
         sv = {nm: rd(nm) for nm in self.real_state_names}
         pv = {nm: rd(nm) for nm in self.solve_param_names}
-        key = (self.model_key[ci], p, tuple(sv.values()), tuple(pv.values()),
-               solve_rates.key() if hasattr(solve_rates, "key") else tuple(solve_rates),
-               tuple(self.held_of(ci)))
+        key = (
+            self.model_key[ci],
+            p,
+            tuple(sv.values()),
+            tuple(pv.values()),
+            solve_rates.key() if hasattr(solve_rates, "key") else tuple(solve_rates),
+            tuple(self.held_of(ci)),
+        )
         sol = self.fwd_solve_cache.get(key)
         if sol is None:
             try:
-                sol = solve_forward_modular(self.models[ci], list(self.real_state_names),
-                                             list(self.solve_param_names), sv, pv, p,
-                                             forcings=self.held_of(ci) or None,
-                                             solve_rates=list(solve_rates),
-                                             state_solve=list(getattr(solve_rates, "state_solve", [])),
-                                             held=self.held_names or None)
+                sol = solve_forward_modular(
+                    self.models[ci],
+                    list(self.real_state_names),
+                    list(self.solve_param_names),
+                    sv,
+                    pv,
+                    p,
+                    forcings=self.held_of(ci) or None,
+                    solve_rates=list(solve_rates),
+                    state_solve=list(getattr(solve_rates, "state_solve", [])),
+                    held=self.held_names or None,
+                )
             except SYMPY_FAILS as exc:
                 sympy_fail(exc)
                 sol = None
@@ -288,15 +334,13 @@ class RestingStates:
         """Key of the diagonal base of a point: the values of the point off Z."""
         jp = self.joint_pv(point, p)
         z = set(self.diag.Z)
-        return (p, tuple(v for n, v in jp["param_vals"].items() if n not in z),
-                tuple((jp["held_vals"] or {}).values()))
+        return (p, tuple(v for n, v in jp["param_vals"].items() if n not in z), tuple((jp["held_vals"] or {}).values()))
 
     def fwd_seed(self, point, p):
         """The first condition solved forward, at Z = 0 under the diagonal start; rates written into the point."""
         run = self.run
         diag = self.diag
-        sv = {nm: (0 if run.slot(nm) is None else int(point[run.slot(nm)]) % p)
-              for nm in self.real_state_names}
+        sv = {nm: (0 if run.slot(nm) is None else int(point[run.slot(nm)]) % p) for nm in self.real_state_names}
         pv = self.joint_pv(point, p)["param_vals"]
         forc = list(self.held_of(self.fwd_cond))
         keep = list(self.fwd_banned)
@@ -310,17 +354,25 @@ class RestingStates:
             fr = self.fwd_rates
             try:
                 return solve_forward_modular(
-                    self.models[self.fwd_cond], list(self.real_state_names),
-                    list(self.solve_param_names), sv, pv, p, forcings=forc or None,
+                    self.models[self.fwd_cond],
+                    list(self.real_state_names),
+                    list(self.solve_param_names),
+                    sv,
+                    pv,
+                    p,
+                    forcings=forc or None,
                     solve_rates=list(fr) if fr is not None else None,
                     state_solve=list(fr.state_solve) if fr is not None else None,
-                    keep_free=keep or None, held=self.held_names or None)
+                    keep_free=keep or None,
+                    held=self.held_names or None,
+                )
             except SYMPY_FAILS as exc:
                 sympy_fail(exc)
                 return None
             except Exception as exc:
                 swallow(exc, "forward seed")
                 return None
+
         sol = solve()
         if self.fwd_rates is None:
             for _ in range(5):
@@ -351,11 +403,21 @@ class RestingStates:
             return None
         free = sorted(str(x) for x in self.real_state_names if x not in set(diag.S if diag is not None else ()))
         # the backward solves at other points take roots on the branch of the seed
-        pin_branch(self.models[self.fwd_cond], list(self.real_state_names), list(self.solve_param_names), forc,
-                   self.held_names or None, {**pv, **sol["rates"], **sol["val_by"]}, p)
-        session.note("branches", f"forward seed: the resting states {', '.join(free) or '-'} drawn, the rates "
-                                 f"{', '.join(map(str, self.fwd_rates))} solved from the balances; the result holds "
-                                 "on the component of the resting set these values parametrize")
+        pin_branch(
+            self.models[self.fwd_cond],
+            list(self.real_state_names),
+            list(self.solve_param_names),
+            forc,
+            self.held_names or None,
+            {**pv, **sol["rates"], **sol["val_by"]},
+            p,
+        )
+        session.note(
+            "branches",
+            f"forward seed: the resting states {', '.join(free) or '-'} drawn, the rates "
+            f"{', '.join(map(str, self.fwd_rates))} solved from the balances; the result holds "
+            "on the component of the resting set these values parametrize",
+        )
         point = np.array(point, dtype=np.int64)
         for r, v in zip(self.fwd_rates, rv):
             point[run.slot(r)] = v
@@ -376,9 +438,13 @@ class RestingStates:
             return False
         if self.diag is not None:
             return self.fwd_on and ci in self.equil_conds
-        return (self.fwd_on and self.run.has_gaps and ci != self.fwd_cond
-                and self.model_key[ci] != self.model_key[self.fwd_cond]
-                and not self.held_names)
+        return (
+            self.fwd_on
+            and self.run.has_gaps
+            and ci != self.fwd_cond
+            and self.model_key[ci] != self.model_key[self.fwd_cond]
+            and not self.held_names
+        )
 
     def cont_active(self, ci):
         """Whether condition `ci` is eligible for continuation and the continuation is not switched off."""
@@ -389,8 +455,7 @@ class RestingStates:
         if self.cont_seen[ci] or not self.run.timing:
             return
         self.cont_seen[ci] = True
-        print(f"[sym] condition {ci + 1}: " +
-              ("continued" if success else "continuation failed, solved directly"))
+        print(f"[sym] condition {ci + 1}: " + ("continued" if success else "continuation failed, solved directly"))
 
     def cont_params(self, ci):
         """The parameters condition `ci` is continued along."""
@@ -418,12 +483,18 @@ class RestingStates:
             for n in priv:
                 pv0[n] = 0
             try:
-                sol = continue_resting_state(self.models[ci], list(self.real_state_names),
-                                              list(self.solve_param_names), pv0,
-                                              {n: pv["param_vals"][n] for n in priv},
-                                              rest, p, self.cont_t,
-                                              forcings=self.held_of(ci) or None,
-                                              held={n: 0 for n in self.held_names} or None)
+                sol = continue_resting_state(
+                    self.models[ci],
+                    list(self.real_state_names),
+                    list(self.solve_param_names),
+                    pv0,
+                    {n: pv["param_vals"][n] for n in priv},
+                    rest,
+                    p,
+                    self.cont_t,
+                    forcings=self.held_of(ci) or None,
+                    held={n: 0 for n in self.held_names} or None,
+                )
             except SYMPY_FAILS as exc:
                 sympy_fail(exc)
                 sol = None
@@ -436,7 +507,7 @@ class RestingStates:
                 return None
         elif not sol.get("ok"):
             return None
-        ptc = np.array(point[:run.n_leaves], dtype=np.int64)
+        ptc = np.array(point[: run.n_leaves], dtype=np.int64)
         ser = np.zeros((run.n_leaves, self.cont_t), dtype=np.int64)
         for nm, vals in sol["val_by"].items():
             sl = run.slot(nm)
@@ -444,7 +515,7 @@ class RestingStates:
                 continue
             v = [int(x) % p for x in vals]
             ptc[sl] = v[0]
-            ser[sl, :] = v[1:1 + self.cont_t]
+            ser[sl, :] = v[1 : 1 + self.cont_t]
         for nm in self.cont_params(ci):
             sl = run.slot(nm)
             if sl is None:
@@ -462,15 +533,21 @@ class RestingStates:
         """Whether a continued rest leaves the zero set of the diagonal start."""
         if self.diag is None:
             return True
-        return all(any(int(v) for v in sol["val_by"][s])
-                   for s in self.diag.S if s in sol["val_by"] and s not in self.held_of(ci))
+        return all(
+            any(int(v) for v in sol["val_by"][s])
+            for s in self.diag.S
+            if s in sol["val_by"] and s not in self.held_of(ci)
+        )
 
     @staticmethod
     def sol_at(sol, k):
         """The df payload of a continued solve at eps^k."""
-        return {"df_jx": [[int(x[k]) for x in r] for r in sol["df_jx"]],
-                "df_jt": {th: [int(x[k]) for x in col] for th, col in sol["df_jt"].items()},
-                "df_state_cols": sol["df_state_cols"], "df_param_cols": sol["df_param_cols"]}
+        return {
+            "df_jx": [[int(x[k]) for x in r] for r in sol["df_jx"]],
+            "df_jt": {th: [int(x[k]) for x in col] for th, col in sol["df_jt"].items()},
+            "df_state_cols": sol["df_state_cols"],
+            "df_param_cols": sol["df_param_cols"],
+        }
 
     def rest_chart(self, point, p):
         """InputError where the resting values of the states inside non-rational terms do not vary independently of
@@ -497,12 +574,17 @@ class RestingStates:
             e_z = np.zeros((len(zc), self.nz_local), dtype=np.int64)
             for i, c in enumerate(zc):
                 e_z[i, c] = 1
-            M = np.vstack([self.df_rows(sc0["sol"], p), e_z,
-                           np.asarray(e_m, dtype=np.int64).reshape(-1, self.nz_local)]) % p
+            M = (
+                np.vstack(
+                    [self.df_rows(sc0["sol"], p), e_z, np.asarray(e_m, dtype=np.int64).reshape(-1, self.nz_local)]
+                )
+                % p
+            )
             rest = [c for c in range(self.nz_local) if c not in set(cols)]
 
             def rank(X):
                 return int(_core.sym_rref_mod(X.astype(np.float64), p)["rank"]) if X.size else 0
+
             # the tangent space of the resting set projects onto the columns `cols` exactly when deleting them keeps
             # the rank of the rows
             if rank(M[:, rest]) < rank(M):
@@ -512,7 +594,8 @@ class RestingStates:
                     f"non-rational terms, do not vary independently of the parameters inside these terms "
                     f"({', '.join(sorted(z for z in A if z in set(self.param_names) and not z.startswith('_')))}); "
                     f"no parameter outside these terms can be solved for them from the resting balances. "
-                    f"Give the steady state through `trafo` or start from free initial values")
+                    f"Give the steady state through `trafo` or start from free initial values"
+                )
 
     def sat_prep(self, point, P1=None, rounds=8):
         """A point with every resting state solved at P1; failed conditions redraw their private parameters."""
@@ -531,8 +614,7 @@ class RestingStates:
                 if not failed:
                     self.rest_chart(point, P1)
                     return point
-            run.ss_why = ("joint solve failed for condition " +
-                          ", ".join(str(c + 1) for c in dict.fromkeys(failed)))
+            run.ss_why = "joint solve failed for condition " + ", ".join(str(c + 1) for c in dict.fromkeys(failed))
             redraw = list(dict.fromkeys(n for ci in failed for n in self.private_of[ci]))
             if any(len(self.private_of[ci]) == 0 for ci in failed):
                 return None
@@ -540,8 +622,10 @@ class RestingStates:
             for k, nm in enumerate(redraw):
                 point[run.slot(nm)] = vals[k]
             if run.timing:
-                print(f"[sym] redraw {','.join(redraw)} for condition(s) "
-                      f"{','.join(str(c + 1) for c in dict.fromkeys(failed))}")
+                print(
+                    f"[sym] redraw {','.join(redraw)} for condition(s) "
+                    f"{','.join(str(c + 1) for c in dict.fromkeys(failed))}"
+                )
         return None
 
 

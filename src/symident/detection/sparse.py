@@ -32,6 +32,7 @@ def bot_reconcile(per_prime):
 
     def key(m):
         return [",".join(str(int(x)) for x in row) for row in np.asarray(m).reshape(len(m), -1)]
+
     k1 = key(per_prime[0]["exps"])
     t = len(k1)
     coef = np.zeros((t, np_), dtype=np.int64)
@@ -45,8 +46,7 @@ def bot_reconcile(per_prime):
     rec = rat_recon(coef, list(PRIMES[:np_]))
     if any(d == "0" for d in rec["den"]):
         return None
-    return {"exps": np.asarray(per_prime[0]["exps"], dtype=np.int64), "num": rec["num"],
-            "den": rec["den"]}
+    return {"exps": np.asarray(per_prime[0]["exps"], dtype=np.int64), "num": rec["num"], "den": rec["den"]}
 
 
 def laurent_assemble(per_prime, reli, leaf_names, nvar):
@@ -65,11 +65,24 @@ def laurent_assemble(per_prime, reli, leaf_names, nvar):
 def _default_kbatch(kcall):
     def kb(pl, pv, Nt):
         return [kcall(pp, pr, Nt) for pp, pr in zip(pl, pv)]
+
     return kb
 
 
-def sparse_entry(reli, support_col, f, point0, leaf_names, nt_used, kcall, pivots, residue_fn=None,
-                 ctrl=None, z_slots=None, kbatch=None):
+def sparse_entry(
+    reli,
+    support_col,
+    f,
+    point0,
+    leaf_names,
+    nt_used,
+    kcall,
+    pivots,
+    residue_fn=None,
+    ctrl=None,
+    z_slots=None,
+    kbatch=None,
+):
     """One wide entry by sparse Laurent interpolation; None if not a bounded Laurent polynomial."""
     if kbatch is None:
         kbatch = _default_kbatch(kcall)
@@ -132,8 +145,20 @@ def sparse_entry(reli, support_col, f, point0, leaf_names, nt_used, kcall, pivot
     return None
 
 
-def general_rational_entry(reli, support_col, f, point0, leaf_names, nt_used, kcall, pivots,
-                           residue_fn=None, ctrl=None, z_slots=None, kbatch=None):
+def general_rational_entry(
+    reli,
+    support_col,
+    f,
+    point0,
+    leaf_names,
+    nt_used,
+    kcall,
+    pivots,
+    residue_fn=None,
+    ctrl=None,
+    z_slots=None,
+    kbatch=None,
+):
     """One wide entry with a general denominator by Cauchy fits along rays and Ben-Or/Tiwari."""
     if kbatch is None:
         kbatch = _default_kbatch(kcall)
@@ -168,17 +193,18 @@ def general_rational_entry(reli, support_col, f, point0, leaf_names, nt_used, kc
                 rv.append((s + tj * v) % p_vec[i])
                 pv.append(p_vec[i])
         out = sample_many(rv, pv)
-        return [out[i * (nt + 1):(i + 1) * (nt + 1)] for i in range(len(u_list))]
+        return [out[i * (nt + 1) : (i + 1) * (nt + 1)] for i in range(len(u_list))]
 
     def from_ray(rv, p, d_n, d_d):
         tn = list(range(d_n + d_d + 5))
-        rv = rv[:len(tn)]
+        rv = rv[: len(tn)]
         if any(x is None for x in rv):
             return None
         res = _core.sym_cauchy_eval(tn, rv, d_n, d_d, p)
         if res.get("status") != "ok":
             return None
         return (int(res["N"]), int(res["D"]))
+
     P1 = PRIMES[0]
     u0 = [(b * b + 3) % P1 for b in bases]
     deg = None
@@ -240,6 +266,7 @@ def general_rational_entry(reli, support_col, f, point0, leaf_names, nt_used, kc
                 return None
             per_prime.append(r)
         return bot_reconcile(per_prime)
+
     Nrc = fit_poly(Nseq, cand_n)
     if Nrc is None:
         return None

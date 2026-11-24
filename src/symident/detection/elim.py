@@ -27,8 +27,13 @@ class _Ring:
         state_names = {str(rel.X[j]) for j in states}
         self.params = [n for n in rel.names if n not in state_names]
         self.order = order
-        self.names = list(self.params) + [f"si_x{j}" for j in self.unknown] + [f"si_d{j}" for j in self.unknown] + \
-            [f"si_u{j}" for j in self.known] + [f"si_y{r}_{k}" for r in range(len(rel.y)) for k in range(order + 1)]
+        self.names = (
+            list(self.params)
+            + [f"si_x{j}" for j in self.unknown]
+            + [f"si_d{j}" for j in self.unknown]
+            + [f"si_u{j}" for j in self.known]
+            + [f"si_y{r}_{k}" for r in range(len(rel.y)) for k in range(order + 1)]
+        )
         self.at = {n: i for i, n in enumerate(self.names)}
         self.ctx = flint.fmpz_mpoly_ctx.get(tuple(self.names), "lex")
         self.gens = self.ctx.gens()
@@ -258,8 +263,11 @@ class Eliminator:
             for r2, eq in self.y_eqs.items():
                 if r2 != r:
                     nxt = self.eliminate(nxt, eq, R.at[f"si_y{r2}_{y_orders[r2]}"])
-            cand = sorted((_deg(self.y_eqs[r], R.at[f"si_x{j}"]), _deg(nxt, R.at[f"si_x{j}"]), j) for j in self.x_eqs
-                          if _deg(self.y_eqs[r], R.at[f"si_x{j}"]) > 0)
+            cand = sorted(
+                (_deg(self.y_eqs[r], R.at[f"si_x{j}"]), _deg(nxt, R.at[f"si_x{j}"]), j)
+                for j in self.x_eqs
+                if _deg(self.y_eqs[r], R.at[f"si_x{j}"]) > 0
+            )
             v = cand[0][2]
             vi = R.at[f"si_x{v}"]
             del self.x_eqs[v]
@@ -323,8 +331,13 @@ def _resultant(f, g, v):
     if df > 1:
         n = dg
         cf += [zero] * (n + 1 - len(cf))
-        M = [[sum((cf[j + k + 1] * cg[i - k] - cg[j + k + 1] * cf[i - k] for k in range(min(i, n - 1 - j) + 1)), zero)
-              for j in range(n)] for i in range(n)]
+        M = [
+            [
+                sum((cf[j + k + 1] * cg[i - k] - cg[j + k + 1] * cf[i - k] for k in range(min(i, n - 1 - j) + 1)), zero)
+                for j in range(n)
+            ]
+            for i in range(n)
+        ]
     else:
         n = df + dg
         M = [[zero] * n for _ in range(n)]
@@ -362,6 +375,7 @@ def _subresultant1(f, g, v):
         k, c = row
         d = power - k
         return c[d] if 0 <= d < len(c) else zero
+
     out = []
     for last in (1, 0):
         powers = list(range(size, 1, -1)) + [last]
@@ -393,6 +407,7 @@ def _det(M):
         out = out if out is not None else one - one
         cache[key] = out
         return out
+
     return minor(0, 0)
 
 
@@ -432,7 +447,7 @@ def relation_projection(rel, R, P):
         for r in range(ny):
             if ms[r] >= 0:
                 e += [m[off_known + len(R.known) + r * (R.order + 1) + k] for k in range(ms[r] + 1)]
-        known = dict(zip(R.known, m[off_known:off_known + len(R.known)]))
+        known = dict(zip(R.known, m[off_known : off_known + len(R.known)]))
         if any(k and j not in inputs for j, k in known.items()):
             return None
         e += [known.get(j, 0) for j in inputs]
@@ -446,8 +461,9 @@ def normalized(coefs):
     """The index of the reference coefficient, a monomial if one is, else one of fewest terms, and the order of the
     others by terms and degree."""
     ref = min(range(len(coefs)), key=lambda j: (len(coefs[j]), max(sum(m) for m in coefs[j]), j))
-    order = sorted((j for j in range(len(coefs)) if j != ref),
-                   key=lambda j: (len(coefs[j]), max(sum(m) for m in coefs[j]), j))
+    order = sorted(
+        (j for j in range(len(coefs)) if j != ref), key=lambda j: (len(coefs[j]), max(sum(m) for m in coefs[j]), j)
+    )
     return ref, order
 
 
@@ -477,6 +493,7 @@ def gradient_select(coefs, ref, order, nparams, p, rng):
                     d[tuple(mm)] = d.get(tuple(mm), 0) + c * m[v]
             out.append(val(d, theta) if d else 0)
         return out
+
     r0, dr = val(coefs[ref], theta), grad(coefs[ref])
     if not r0:
         return [], []
@@ -499,7 +516,7 @@ def gradient_select(coefs, ref, order, nparams, p, rng):
             first.append(j)
         else:
             rest.append(j)
-    return first, first + rest[:len(first)]
+    return first, first + rest[: len(first)]
 
 
 def eliminate_relations(rel, rng, terms=math.inf):

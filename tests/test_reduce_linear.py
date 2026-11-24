@@ -16,15 +16,22 @@ def red(obj, **kw):
 
 
 def mkobj(gens, coords, positive, rhs=None, unknown=None):
-    dirs = [{"type": "general", "generator": g, "weights": None, "support": list(g), "explicit": True,
-             "level": "exact"} for g in gens]
+    dirs = [
+        {"type": "general", "generator": g, "weights": None, "support": list(g), "explicit": True, "level": "exact"}
+        for g in gens
+    ]
     info = {"engine": "modular", "settings": {"positive": positive}, "coordinates": list(coords)}
     if rhs is not None:
         info["model_rhs"] = rhs
     if unknown is not None:
         info["unknown_inputs"] = {"names": list(unknown), "jets": {w: [w, f"{w}_d1"] for w in unknown}}
-    return {"identifiable": False, "rank": len(coords) - len(gens), "dim": len(coords), "symmetries": dirs,
-            "info": info}
+    return {
+        "identifiable": False,
+        "rank": len(coords) - len(gens),
+        "dim": len(coords),
+        "symmetries": dirs,
+        "info": info,
+    }
 
 
 def offset_model(off="c", rev="E"):
@@ -66,7 +73,7 @@ def test_two_directions_one_block():
     assert len(bs) == 1 and bs[0]["stage"] == "linear flow"
     b = bs[0]
     assert len(b["pins"]) == 2 and b["injective"] and b["reach"]
-    (q, inv), = b["new_parameters"].items()
+    ((q, inv),) = b["new_parameters"].items()
     p_, q_, r_, u_ = spy.symbols("p q r u")
     e = spy.sympify(inv)
     for g in ({p_: 1, q_: 1}, {q_: u_, r_: 1}):
@@ -88,6 +95,7 @@ def test_not_a_linear_flow():
     from symident.reduction.expr import gen_prep
     from symident.reduction.linear import linear_flow
     from symident.reduction.sign import set_positive
+
     old = set_positive(None)
     try:
         pr = gen_prep({"generator": {"p": "1", "q": "-1"}})
@@ -105,9 +113,13 @@ def test_not_a_linear_flow():
 
 def test_unknown_input_directions_named():
     # a direction whose components depend on states and unknown inputs has no chart in the parameters
-    obj = mkobj([{"k1": "k1*n*x2^n", "w1": "-(w1 + 1)*(x2^n + (w1 + 1)^n)"}],
-                ["w1", "x1", "x2", "k1", "n"], True,
-                rhs={"x1": "k1/(1 + (x2/(1 + w1))^n) - x1", "x2": "1 - x2", "w1": "w1_d1"}, unknown=["w1"])
+    obj = mkobj(
+        [{"k1": "k1*n*x2^n", "w1": "-(w1 + 1)*(x2^n + (w1 + 1)^n)"}],
+        ["w1", "x1", "x2", "k1", "n"],
+        True,
+        rhs={"x1": "k1/(1 + (x2/(1 + w1))^n) - x1", "x2": "1 - x2", "w1": "w1_d1"},
+        unknown=["w1"],
+    )
     x = red(obj)
     b = x.to_dict()["blocks"][0]
     assert b["status"] == "unresolved" and b.get("absorbed_by_inputs")
@@ -119,7 +131,9 @@ def test_interval_minor_exact_coefficients():
     # dependent invariants with rational coefficients are not certified independent by rounding
     assert independent_set(["exp(a/3)*b", "exp(a)*b^3"], ["a", "b"], 2) == ["exp(a/3)*b"]
     assert independent_set(["exp(a/7)*b^(1/3)", "exp(3*a/7)*b"], ["a", "b"], 2) == ["exp(a/7)*b^(1/3)"]
-    assert independent_set(["exp(a/7)*b^(1/3)", "exp(3*a/7)*b^2"], ["a", "b"], 2) == \
-        ["exp(a/7)*b^(1/3)", "exp(3*a/7)*b^2"]
+    assert independent_set(["exp(a/7)*b^(1/3)", "exp(3*a/7)*b^2"], ["a", "b"], 2) == [
+        "exp(a/7)*b^(1/3)",
+        "exp(3*a/7)*b^2",
+    ]
     # a function without interval version is evaluated exactly
     assert independent_set(["atan(a)*exp(b/3)", "exp(b)*atan(a)^3"], ["a", "b"], 2) == ["atan(a)*exp(b/3)"]

@@ -11,17 +11,21 @@ def core(two=False, mode="equilibrate", basal=True):
     """A receptor inhibited by S (and T), each made from a transcript and, with `basal`,
     from a basal source; L is dosed at 0 and again at 24."""
     inh = "(1 + kinh*S)" + ("*(1 + kinh3*T)" if two else "")
-    odes = {"L": f"-Bind*L*Rec/{inh}",
-            "Rec": f"prodRec - degRec*Rec - degRecS*Rec*S - Bind*L*Rec/{inh}",
-            "A": f"Bind*L*Rec/{inh} - degA*A - degAS*A*S",
-            "M": "synthM*A - hlM*M",
-            "S": "synthS*M + bS - dS*S" if basal else "synthS*M - dS*S"}
+    odes = {
+        "L": f"-Bind*L*Rec/{inh}",
+        "Rec": f"prodRec - degRec*Rec - degRecS*Rec*S - Bind*L*Rec/{inh}",
+        "A": f"Bind*L*Rec/{inh} - degA*A - degAS*A*S",
+        "M": "synthM*A - hlM*M",
+        "S": "synthS*M + bS - dS*S" if basal else "synthS*M - dS*S",
+    }
     obs = {"y1": "s1*A", "y2": "M"}
     if two:
         odes.update(N="synthN*A - hlN*N", T="synthT*N + bT - dT*T")
         obs["y3"] = "N"
-    ev = [{"var": "L", "time": 0, "value": "d0", "method": "add"},
-          {"var": "L", "time": 24, "value": "d1", "method": "add"}]
+    ev = [
+        {"var": "L", "time": 0, "value": "d0", "method": "add"},
+        {"var": "L", "time": 24, "value": "d1", "method": "add"},
+    ]
     cond = {"rows": ["a", "b", "c"], "cols": {"d0": [1, 2, 1], "d1": [0, 1, 2]}}
     if mode == "equilibrate":
         return si.Model(odes, obs, events=ev, conditions=cond), {"equilibrate": True}
@@ -71,20 +75,26 @@ def test_inhibitor_without_basal_source_is_a_scaling(mode):
 
 def test_an_entry_past_degree_cap_is_fitted_at_the_degree_found():
     # the entries of these directions have a degree above the default degree_cap
-    m = si.Model({"x1": "v1 - k*x1/(K + x1)", "x2": "v2 - k*x2/(K + x2)"}, {"y": "s*(x1 + x2)"},
-                 conditions={"rows": ["c1", "c2"], "cols": {"k": ["k1", "k2"]}})
+    m = si.Model(
+        {"x1": "v1 - k*x1/(K + x1)", "x2": "v2 - k*x2/(K + x2)"},
+        {"y": "s*(x1 + x2)"},
+        conditions={"rows": ["c1", "c2"], "cols": {"k": ["k1", "k2"]}},
+    )
     r = si.detect(m, reconstruct=True, equilibrate=True, cores=2)
     assert all(s.explicit for s in r.symmetries) and len(r.symmetries) == r.dim - r.rank == 4
-    low = si.detect(m, reconstruct=True, equilibrate=True, cores=2,
-                    control=si.reconst_control(degree_cap_max=4, homotopy=False))
+    low = si.detect(
+        m, reconstruct=True, equilibrate=True, cores=2, control=si.reconst_control(degree_cap_max=4, homotopy=False)
+    )
     assert not all(s.explicit for s in low.symmetries)
 
 
 @pytest.mark.parametrize("reconstruct", [False, True])
 def test_every_direction_is_reported_once(reconstruct):
-    models = [({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"y": "s*A"}),
-              ({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"}),
-              ({"x": "v*u^n/(K^n + u^n) - d*x", "u": "-e*u"}, {"y": "x"})]
+    models = [
+        ({"A": "-k1*A + k2*B", "B": "k1*A - k2*B"}, {"y": "s*A"}),
+        ({"x1": "kb + kin*u - (k1 + kl)*x1", "x2": "k1*x1 - k2*x2", "u": "0"}, {"y": "s*x2"}),
+        ({"x": "v*u^n/(K^n + u^n) - d*x", "u": "-e*u"}, {"y": "x"}),
+    ]
     for f, g in models:
         r = si.detect(si.Model(f, g), reconstruct=reconstruct)
         assert len(r.symmetries) == r.dim - r.rank
@@ -95,13 +105,30 @@ def test_every_direction_is_reported_once(reconstruct):
 def test_a_constant_entry_lifts_from_the_primes_where_the_base_point_has_a_kernel():
     from symident.detection.interp import interpolate_direction
     from symident.gfp import PRIMES
+
     point0 = [3, 5]
+
     # a resting state without a root modulo a prime leaves no kernel at that prime
     def kcall(pt, p, nt):
         if p == PRIMES[2] and list(pt) == point0:
             return {"ok": False}
         return {"ok": True, "R": [1, 1], "pivots": [0], "rank": 1, "dim": 2}
+
     ref = kcall(point0, PRIMES[0], 1)
-    d = interpolate_direction(1, ref, [0], ["a", "b"], [0, 1], ["a", "b"], 2, point0, None, 0, 1, kcall,
-                              rel_probe=[{"rp": ref, "zvals": None}] * 2, ctrl={})
+    d = interpolate_direction(
+        1,
+        ref,
+        [0],
+        ["a", "b"],
+        [0, 1],
+        ["a", "b"],
+        2,
+        point0,
+        None,
+        0,
+        1,
+        kcall,
+        rel_probe=[{"rp": ref, "zvals": None}] * 2,
+        ctrl={},
+    )
     assert d["entry"].get("closed_form") and d["entry"]["vector"] == {"a": "-1", "b": "1"}

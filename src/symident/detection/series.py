@@ -12,6 +12,7 @@ def series_null(S, nz, N, p):
 
     def Mk(k):
         return S[:, np.arange(nz) * N + k]
+
     M0 = Mk(0)
     rr = _core.sym_rref_mod(M0.astype(np.float64), p)
     piv = [int(x) for x in np.atleast_1d(rr["piv"])]
@@ -73,6 +74,7 @@ def pade_mod(s, dn, dd, p):
             if i - j >= 0:
                 acc = (acc + q[j] * s[i - j]) % p
         return acc
+
     P = [conv(i) for i in range(dn + 1)]
     for i in range(dn + 1, N):
         if conv(i) != 0:
@@ -82,11 +84,13 @@ def pade_mod(s, dn, dd, p):
 
 def pade_at(pq, t, p):
     """The Pade approximant `pq` at `t` mod `p`, or None at a pole."""
+
     def ev(cf):
         acc = 0
         for c in reversed(cf):
             acc = (acc * t + c) % p
         return acc
+
     qv = ev(pq["Q"])
     if qv == 0:
         return None

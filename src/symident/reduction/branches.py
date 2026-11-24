@@ -34,8 +34,10 @@ def branch_charts(discrete, trafo, coords, positive):
     if not maps:
         return {"branches": []}
     if len(maps) > 1:
-        return {"why": "branch charts cover one discrete symmetry; the fiber has "
-                       f"{len(maps) + 1} points with the output of a generic one"}
+        return {
+            "why": "branch charts cover one discrete symmetry; the fiber has "
+            f"{len(maps) + 1} points with the output of a generic one"
+        }
     sig = maps[0]
     dcoords = list(discrete.get("coordinates") or coords)
     syms = {c: spy.Symbol(c) for c in dcoords}
@@ -88,9 +90,19 @@ def branch_charts(discrete, trafo, coords, positive):
             unproven.append(f"injective: the coefficient {a} of {x} in {q} has one sign")
         if not reach:
             unproven.append(f"reach: {x} = {xe} is positive for positive {delta}")
-        out.append({"branch": _side_text(s * q), "trafo": chart, "new_parameters": {str(delta): str(s * q)},
-                    "solved": {str(x): str(xe).replace("**", "^")}, "boundary": [f"{q} = 0"],
-                    "injective": bool(inj), "reach": bool(reach), "unproven": unproven, "map": sig["map"]})
+        out.append(
+            {
+                "branch": _side_text(s * q),
+                "trafo": chart,
+                "new_parameters": {str(delta): str(s * q)},
+                "solved": {str(x): str(xe).replace("**", "^")},
+                "boundary": [f"{q} = 0"],
+                "injective": bool(inj),
+                "reach": bool(reach),
+                "unproven": unproven,
+                "map": sig["map"],
+            }
+        )
     return {"branches": out}
 
 

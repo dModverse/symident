@@ -15,8 +15,13 @@ def _bases(e, states):
     """Positive rational bases b != 1 of the powers b^x of `e` whose exponent x holds no state."""
     out = set()
     for pw in e.atoms(spy.Pow):
-        if pw.base.is_Rational and pw.base > 0 and pw.base != 1 and not pw.exp.is_number \
-                and not (pw.exp.free_symbols & states):
+        if (
+            pw.base.is_Rational
+            and pw.base > 0
+            and pw.base != 1
+            and not pw.exp.is_number
+            and not (pw.exp.free_symbols & states)
+        ):
             out.add(pw.base)
     return out
 
@@ -27,9 +32,10 @@ def _parsed(x):
     try:
         e = model_sympify(x)
         # (2*K)^n as 2^n*K^n
-        return e.replace(lambda p: p.is_Pow and p.base.is_Mul and not p.exp.is_number
-                         and p.base.as_coeff_Mul()[0] not in (1, -1),
-                         lambda p: spy.expand_power_base(p, force=True))
+        return e.replace(
+            lambda p: p.is_Pow and p.base.is_Mul and not p.exp.is_number and p.base.as_coeff_Mul()[0] not in (1, -1),
+            lambda p: spy.expand_power_base(p, force=True),
+        )
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
@@ -59,8 +65,7 @@ def _symbol_bases(e, states):
     """{exponent: symbols K} of the powers K^x of `e` whose base is a symbol and whose exponent holds no state."""
     out = {}
     for pw in e.atoms(spy.Pow):
-        if pw.base.is_Symbol and pw.base not in states and not pw.exp.is_number \
-                and not (pw.exp.free_symbols & states):
+        if pw.base.is_Symbol and pw.base not in states and not pw.exp.is_number and not (pw.exp.free_symbols & states):
             out.setdefault(pw.exp, set()).add(pw.base)
     return out
 
@@ -68,8 +73,13 @@ def _symbol_bases(e, states):
 def _numeric_exps(e, states):
     out = {}
     for pw in e.atoms(spy.Pow):
-        if pw.base.is_Rational and pw.base > 0 and pw.base != 1 and not pw.exp.is_number \
-                and not (pw.exp.free_symbols & states):
+        if (
+            pw.base.is_Rational
+            and pw.base > 0
+            and pw.base != 1
+            and not pw.exp.is_number
+            and not (pw.exp.free_symbols & states)
+        ):
             out.setdefault(pw.exp, set()).add(pw.base)
     return out
 
@@ -81,16 +91,25 @@ def _copy(kw):
             kw2[key] = dict(kw[key])
     for key in ("g", "trafo"):
         v = kw.get(key)
-        kw2[key] = dict(v) if isinstance(v, dict) else [dict(d) if isinstance(d, dict) else d for d in v] \
-            if isinstance(v, (list, tuple)) else v
+        kw2[key] = (
+            dict(v)
+            if isinstance(v, dict)
+            else [dict(d) if isinstance(d, dict) else d for d in v]
+            if isinstance(v, (list, tuple))
+            else v
+        )
     kw2["events"] = [dict(ev) if isinstance(ev, dict) else ev for ev in kw.get("events") or []] or kw.get("events")
     return kw2
 
 
 def _pinned(kw, name):
     """True if `name` is set outside the model expressions: a `trafo` key or a condition column."""
-    keys = {str(k) for d in ([kw["trafo"]] if isinstance(kw.get("trafo"), dict) else kw.get("trafo") or [])
-            if isinstance(d, dict) for k in d}
+    keys = {
+        str(k)
+        for d in ([kw["trafo"]] if isinstance(kw.get("trafo"), dict) else kw.get("trafo") or [])
+        if isinstance(d, dict)
+        for k in d
+    }
     cond = kw.get("conditions")
     cols = set(getattr(cond, "columns", None) or (cond if isinstance(cond, dict) else {}) or [])
     return name in keys or name in {str(c) for c in cols}
@@ -106,8 +125,9 @@ def _absorb(kw, states):
             if e is None:
                 continue
             for x, bs in sorted(_numeric_exps(e, states).items(), key=lambda t: str(t[0])):
-                ks = sorted((k for _, _, e2 in places if e2 is not None
-                             for k in _symbol_bases(e2, states).get(x, ())), key=str)
+                ks = sorted(
+                    (k for _, _, e2 in places if e2 is not None for k in _symbol_bases(e2, states).get(x, ())), key=str
+                )
                 ks = [k for k in ks if not _pinned(kw2, str(k))]
                 if ks:
                     pair = (min(bs), ks[0])
@@ -154,8 +174,10 @@ def numeric_bases(kw):
         e = _parsed(d[k])
         if e is None or not _bases(e, states):
             continue
-        e2 = e.replace(lambda x: x.is_Pow and x.base in sym and not x.exp.is_number
-                       and not (x.exp.free_symbols & states), lambda x: sym[x.base] ** x.exp)
+        e2 = e.replace(
+            lambda x: x.is_Pow and x.base in sym and not x.exp.is_number and not (x.exp.free_symbols & states),
+            lambda x: sym[x.base] ** x.exp,
+        )
         d[k] = str(e2).replace("**", "^")
     kw2["fixed"] = list(kw.get("fixed") or []) + list(names.values())
     return kw2, {n: b for b, n in names.items()}, scaled
@@ -210,4 +232,5 @@ def restore(obj, fixed, scaled=None):
         if isinstance(o, tuple):
             return tuple(walk(v) for v in o if not (isinstance(v, str) and v in fixed))
         return o
+
     return walk(obj)

@@ -40,11 +40,16 @@ def eligible(multi, n_gaps, implicit_steady_state):
         return False
     if multi.get("equilibrate") and not resting(multi, implicit_steady_state):
         return False
-    if resting(multi, implicit_steady_state) and (multi.get("held_state_params") or multi.get("rest_aux") or
-                                                  multi.get("rest_inverted")):
+    if resting(multi, implicit_steady_state) and (
+        multi.get("held_state_params") or multi.get("rest_aux") or multi.get("rest_inverted")
+    ):
         return False
-    if multi.get("nuisance") or multi.get("nuisance_order") is not None or multi.get("power_recast") or \
-            multi.get("exp_atoms"):
+    if (
+        multi.get("nuisance")
+        or multi.get("nuisance_order") is not None
+        or multi.get("power_recast")
+        or multi.get("exp_atoms")
+    ):
         return False
     nz = len(multi.get("z_slots") or [])
     return all(t.get("ic_seed") is None and len(t.get("lie_reach") or []) == nz for t in tapes)
@@ -88,12 +93,27 @@ def choose(multi, cores, nt=None, kept=()):
     nt = lie_reach_max(tapes) + 2 if nt is None else int(nt)
     for k in range(4):
         pt = random_point(int(multi["n_leaves"]), seed=session.current().seed("condition selection", k) % (1 << 31))
-        r = _core.sym_obs_cover(kt, int(multi["n_leaves"]), int(multi["n_states"]),
-                                np.asarray(multi["z_slots"], dtype=np.int64), pt, PRIMES[0], nt, nz, cores,
-                                np.asarray(order, dtype=np.int64), first)
+        r = _core.sym_obs_cover(
+            kt,
+            int(multi["n_leaves"]),
+            int(multi["n_states"]),
+            np.asarray(multi["z_slots"], dtype=np.int64),
+            pt,
+            PRIMES[0],
+            nt,
+            nz,
+            cores,
+            np.asarray(order, dtype=np.int64),
+            first,
+        )
         if ok(r):
-            return {"kept": sorted(ints(r["conditions"])), "rank": int(r["rank"]), "lie_order": nt,
-                    "structures": n_struct, "taken": int(r["taken"])}
+            return {
+                "kept": sorted(ints(r["conditions"])),
+                "rank": int(r["rank"]),
+                "lie_order": nt,
+                "structures": n_struct,
+                "taken": int(r["taken"]),
+            }
     return None
 
 
@@ -215,8 +235,17 @@ def _annihilated(multi, conds, fields, nt, cores):
     memo, out = {}, []
     for c in conds:
         t = kernel_tapes([tape_fields(multi["tapes"][c], memo)])
-        o = _core.sym_obs_annihilates(t, int(multi["n_leaves"]), int(multi["n_states"]),
-                                      np.asarray(multi["z_slots"], dtype=np.int64), pt, P, int(nt), V, cores)
+        o = _core.sym_obs_annihilates(
+            t,
+            int(multi["n_leaves"]),
+            int(multi["n_states"]),
+            np.asarray(multi["z_slots"], dtype=np.int64),
+            pt,
+            P,
+            int(nt),
+            V,
+            cores,
+        )
         out.append(None if not ok(o) else [bool(x) for x in np.atleast_1d(o["zero"])])
     return out
 
@@ -319,7 +348,7 @@ def _bisect(conds, proven, cap=_SINGLE):
         if len(todo) + len(bad) >= cap:
             bad += part
             continue
-        todo += [part[:len(part) // 2], part[len(part) // 2:]]
+        todo += [part[: len(part) // 2], part[len(part) // 2 :]]
     return bad
 
 
@@ -327,6 +356,7 @@ def _lifted(multi, pending, dirs, cores, at_rest=False):
     """The directions of `pending` ({direction: conditions}) whose lift of the closed form is proven on all of their
     conditions at once, `at_rest` where the conditions start at rest."""
     from .proof import representatives
+
     out = set()
     conds = sorted({c for cs in pending.values() for c in cs})
     if not conds:
@@ -348,8 +378,9 @@ def _lifted(multi, pending, dirs, cores, at_rest=False):
         d = dirs[j]
         chains = [[pos[c]] for c in pending[j]]
         # the lift proven on the kept conditions first
-        proven = [dict(d["lift_form"], **d["state_components"])] if d.get("lift_form") and \
-            d.get("state_components") else []
+        proven = (
+            [dict(d["lift_form"], **d["state_components"])] if d.get("lift_form") and d.get("state_components") else []
+        )
         for vec in proven + representatives(d):
             try:
                 ex = exact_direction(light, vec, chains, at_rest, known=known)

@@ -102,8 +102,11 @@ def _ansatz(S, reads, readers, level):
             ms += [((j, 1),) for j in near]
         if level >= 2:
             nb = [i] + near
-            ms += [((a, 2),) if a == b else tuple(sorted(((a, 1), (b, 1)), key=lambda t: str(t[0])))
-                   for k, a in enumerate(nb) for b in nb[k:]]
+            ms += [
+                ((a, 2),) if a == b else tuple(sorted(((a, 1), (b, 1)), key=lambda t: str(t[0])))
+                for k, a in enumerate(nb)
+                for b in nb[k:]
+            ]
         out[i] = list(dict.fromkeys(ms))
     return out
 
@@ -175,6 +178,7 @@ class _Problem:
             for j, e in m:
                 r = (r + e * V(self.F[j]) % p * mono(m) % p * _inverse(V(j), p)) % p
             return r
+
         out = []
         for ident in self.identities(S):
             kind, l, f, ins = ident
@@ -207,8 +211,13 @@ class _Problem:
         unknowns = [(i, m) for i in sorted(S, key=str) for m in mons[i]]
         cols = {u: k for k, u in enumerate(unknowns)}
         U = len(unknowns)
-        width = max((sum(len(mons[i]) for i in ins) + (len(mons[l]) if kind == "F" and l in S else 0)
-                     for kind, l, _, ins in self.identities(S)), default=0)
+        width = max(
+            (
+                sum(len(mons[i]) for i in ins) + (len(mons[l]) if kind == "F" and l in S else 0)
+                for kind, l, _, ins in self.identities(S)
+            ),
+            default=0,
+        )
         V = _Residues(set(self.F), width + _EXTRA_POINTS, p, seed)
         blocks = []
         for ident, block, b in self.rows(S, mons, cols, V):
@@ -222,13 +231,13 @@ class _Problem:
             if not rr["rank"]:
                 continue
             G = np.zeros((rr["rank"], U + 1), dtype=np.int64)
-            G[:, ks] = rr["R"][:rr["rank"], :-1]
-            G[:, U] = rr["R"][:rr["rank"], -1]
+            G[:, ks] = rr["R"][: rr["rank"], :-1]
+            G[:, U] = rr["R"][: rr["rank"], -1]
             blocks.append(G)
         if not blocks:
             return {}, V
         rr = rref_modp(np.concatenate(blocks, axis=0), p)
-        piv = [int(c) for c in rr["piv"][:rr["rank"]]]
+        piv = [int(c) for c in rr["piv"][: rr["rank"]]]
         if U in piv:
             return None, V
         return {unknowns[c]: int(rr["R"][r, U]) % p for r, c in enumerate(piv) if int(rr["R"][r, U]) % p}, V
@@ -264,8 +273,7 @@ class _Problem:
                 out = {}
                 for u in keys:
                     k3 = second[u] * pow(a3, -1, p2) % p2
-                    q = _rational_reconstruct((k1[u] + p1 * ((k3 - k1[u]) * pow(p1, -1, p2) % p2)) % (p1 * p2),
-                                              p1 * p2)
+                    q = _rational_reconstruct((k1[u] + p1 * ((k3 - k1[u]) * pow(p1, -1, p2) % p2)) % (p1 * p2), p1 * p2)
                     if q is None:
                         break
                     out[u] = q * c
@@ -312,7 +320,7 @@ class _Problem:
         i, m = u
         if kind == "x0":
             return self._at_x0(m) if l == i else spy.Integer(0)
-        mono = spy.Mul(*[j ** e for j, e in m])
+        mono = spy.Mul(*[j**e for j, e in m])
         e = self.d(f, i) * mono if i in f.free_symbols else spy.Integer(0)
         if kind == "F" and l == i and m:
             e -= sum((self.F[j] * spy.diff(mono, j) for j, _ in m), spy.Integer(0))
@@ -341,8 +349,13 @@ def support_lift(field, regime, ic_lines, states):
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
         return None
-    if not F or not theta or set(theta) & set(F) or any(v.free_symbols & set(F) for v in theta.values()) \
-            or any(e.free_symbols & set(F) for e in x0.values()):
+    if (
+        not F
+        or not theta
+        or set(theta) & set(F)
+        or any(v.free_symbols & set(F) for v in theta.values())
+        or any(e.free_symbols & set(F) for e in x0.values())
+    ):
         return None
     pb = _Problem(theta, F, obs, x0)
     S = {x for x in F if pb.reads[x] & pb.moved or (x in x0 and x0[x].free_symbols & pb.moved)}
@@ -373,7 +386,7 @@ def _lifted(field, vals):
     """`field` with the state components sum c m of the solution {(state, monomial): c}."""
     comp = {}
     for (i, m), c in vals.items():
-        comp[i] = comp.get(i, spy.Integer(0)) + c * spy.Mul(*[j ** e for j, e in m])
+        comp[i] = comp.get(i, spy.Integer(0)) + c * spy.Mul(*[j**e for j, e in m])
     out = dict(field)
     for i, e in comp.items():
         if e != 0:

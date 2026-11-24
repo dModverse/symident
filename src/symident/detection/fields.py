@@ -41,10 +41,10 @@ def series_embed(S, N, col_map, nz_out, p, scale=None):
     S = np.asarray(S, dtype=np.int64)
     out = np.zeros((S.shape[0], nz_out * N), dtype=np.int64)
     for c, cm in enumerate(col_map):
-        v = S[:, c * N:(c + 1) * N]
+        v = S[:, c * N : (c + 1) * N]
         if scale is not None:
             v = mulmod(v, scale[c], p)
-        out[:, cm * N:(cm + 1) * N] = v
+        out[:, cm * N : (cm + 1) * N] = v
     return out
 
 
@@ -85,8 +85,7 @@ def series_const(M, N):
 def series_stack(res, sblocks, nz, N, p, cores=1):
     """Series rank of the stacked series blocks attached to a reduced kernel result."""
     S = np.vstack(sblocks).astype(np.int64)
-    sr = _core.sym_series_rank(S, int(nz), int(N), p, [], at_one_below=int(res["rank"]),
-                               cores=int(cores))
+    sr = _core.sym_series_rank(S, int(nz), int(N), p, [], at_one_below=int(res["rank"]), cores=int(cores))
     res = dict(res)
     res["rank_s"] = sr["rank"]
     res["S"] = sr["S"]
@@ -111,8 +110,7 @@ def rank_score(r):
 
 def lie_reach_max(tapes):
     """The largest first Lie order at which a coordinate enters some tape; 0 when the tapes do not tell."""
-    R = [np.atleast_1d(np.asarray(t.get("lie_reach"), dtype=np.int64)) for t in tapes
-         if t.get("lie_reach") is not None]
+    R = [np.atleast_1d(np.asarray(t.get("lie_reach"), dtype=np.int64)) for t in tapes if t.get("lie_reach") is not None]
     R = [r for r in R if r.size]
     if not R or len({r.size for r in R}) != 1:
         return 0
@@ -175,6 +173,7 @@ def exact_scaling_set(multi, fixed):
             if (e["method"] != "multiply") == add:
                 out.append(f"{e['var']} = {e['value']}" if add else f"_ = {e['value']}")
         return out
+
     # a recast E = base^e scales with weight e times that of the base, L = log(base) is translated
     recast = [r for r in multi.get("power_recast") or [] if not r.get("inverted")]
     try:
@@ -182,11 +181,12 @@ def exact_scaling_set(multi, fixed):
             per_cond_model=[_lines(t.get("model_lines")) for t in ver_tapes],
             per_cond_obs=[_lines(t.get("obs_lines")) for t in ver_tapes],
             inputs=inputs or None,
-            fixed=list(fixed) if fixed else None, recast=recast or None, powers=True,
-            extra_model=[_lines(t.get("ver_ic")) + ev_lines(t, True) + _lines(t.get("ver_rest"))
-                         for t in ver_tapes],
-            extra_obs=[ev_lines(t, False) + ([f"_ = {t['ver_time']}"]
-                                           if t.get("ver_time") else []) for t in ver_tapes])
+            fixed=list(fixed) if fixed else None,
+            recast=recast or None,
+            powers=True,
+            extra_model=[_lines(t.get("ver_ic")) + ev_lines(t, True) + _lines(t.get("ver_rest")) for t in ver_tapes],
+            extra_obs=[ev_lines(t, False) + ([f"_ = {t['ver_time']}"] if t.get("ver_time") else []) for t in ver_tapes],
+        )
     except Exception as exc:
         swallow(exc, "exact scalings")
         full = None
@@ -209,8 +209,7 @@ def exact_scaling_set(multi, fixed):
 
 def regime_keys(tapes):
     """Key per tape from the model and observation lines of the tape; equal keys share one regime."""
-    return ["\n".join(_lines(t.get("model_lines")) + ["\x1f"] + _lines(t.get("obs_lines")))
-            for t in tapes]
+    return ["\n".join(_lines(t.get("model_lines")) + ["\x1f"] + _lines(t.get("obs_lines"))) for t in tapes]
 
 
 def _as_eqn(lines):
@@ -224,6 +223,7 @@ def _as_eqn(lines):
 def field_setup(multi, chains, cores, fixed=None, fields=None):
     """Generators of each regime with a closed form, and the joins of every chain."""
     from .core import symmetry_detection
+
     tapes = multi["tapes"]
     key_of = regime_keys(tapes)
     rkeys = list(dict.fromkeys(key_of))
@@ -232,7 +232,7 @@ def field_setup(multi, chains, cores, fixed=None, fields=None):
     for k in rkeys:
         t = tapes[key_of.index(k)]
         regimes.append({"f": _lines(t.get("model_lines")), "g": _lines(t.get("obs_lines"))})
-    par = (fields is None and len(regimes) >= max(2, cores // 2) and cores > 1)
+    par = fields is None and len(regimes) >= max(2, cores // 2) and cores > 1
     cores_r = 1 if par else cores
 
     def one(rg):
@@ -242,8 +242,15 @@ def field_setup(multi, chains, cores, fixed=None, fields=None):
         fx = [s for s in (fixed or []) if s in syms and s not in fe]
         try:
             with state.options(inner=True, order_hint=None):
-                r = symmetry_detection(fe, ge, reconstruct=True, verify=False, cores=cores_r,
-                                       fixed=fx if fx else None, control=session.current().control)
+                r = symmetry_detection(
+                    fe,
+                    ge,
+                    reconstruct=True,
+                    verify=False,
+                    cores=cores_r,
+                    fixed=fx if fx else None,
+                    control=session.current().control,
+                )
         except Exception as e:
             swallow(e, "regime detection")
             if state.env("LIEDIAG"):
@@ -266,8 +273,7 @@ def field_setup(multi, chains, cores, fixed=None, fields=None):
             if a != b or _evs(ev):
                 joins.append({"from": a - 1, "to": b - 1, "ev": _evs(ev), "chain": ci})
     states = list(dict.fromkeys(l.split("=", 1)[0].strip() for rg in regimes for l in rg["f"]))
-    return {"regimes": regimes, "gens": gens, "regime_of": regime_of, "joins": joins,
-            "states": states, "tapes": tapes}
+    return {"regimes": regimes, "gens": gens, "regime_of": regime_of, "joins": joins, "states": states, "tapes": tapes}
 
 
 def own_fields(dirs):
@@ -330,8 +336,7 @@ def field_check(setup, V, znames, leaf_names, point, chains, joint):
         lf0 = lift_start(_lines(t1.get("ver_ic")), t0, base, {}, P, joint=joint is not None)
         times = [t["ver_time"] for t in (setup["tapes"][i] for i in ch) if t.get("ver_time")]
         lift_of[ci] = len(lifts)
-        lifts.append({"regime": setup["regime_of"][ch[0]] - 1, "point": lf0["point"],
-                      "vectors": vecs, "times": times})
+        lifts.append({"regime": setup["regime_of"][ch[0]] - 1, "point": lf0["point"], "vectors": vecs, "times": times})
     joins = []
     for e in setup["joins"]:
         e = dict(e)
@@ -363,8 +368,7 @@ def extended_fields(setup, chains):
     return extend_fields(setup["gens"][reg1 - 1], _lines(t1.get("ver_ic")), groups, setup["states"])
 
 
-def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chains, joint,
-                     partial=False):
+def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chains, joint, partial=False):
     """Closed forms of the residual kernel from the first regime's fields; RouteError where they do not close it."""
     P = PRIMES[0]
     stset = set(setup["states"])
@@ -407,6 +411,7 @@ def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chai
         if M.shape[0] == 0:
             return 0
         return int(_core.sym_rref_mod(M.astype(np.float64), P)["rank"])
+
     basis = Sp
     chosen = []
     r_np = matrix_rank(Np.T)
@@ -419,8 +424,10 @@ def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chai
         if len(chosen) == n_res:
             break
     if state.env("LIEDIAG"):
-        print(f"[liediag] global symmetries: {len(ext)} field(s), {len(cand)} candidate(s), "
-              f"{len(chosen)} chosen of {n_res}")
+        print(
+            f"[liediag] global symmetries: {len(ext)} field(s), {len(cand)} candidate(s), "
+            f"{len(chosen)} chosen of {n_res}"
+        )
     if not chosen or (len(chosen) < n_res and not partial):
         raise RouteError(f"the regime fields give {len(chosen)} of {n_res} directions")
     Vw = np.zeros((N.shape[0], len(chosen)), dtype=np.int64)
@@ -447,10 +454,19 @@ def field_directions(setup, N, n_res, scal_rows, znames, leaf_names, point, chai
     out = []
     for c0 in chosen:
         ex = exact_direction(setup, c0["field"], chains, joint is not None)
-        out.append({"support": sym_sort(list(c0["expr"])), "vector": c0["expr"], "type": "general",
-                    "closed_form": True, "route": "global symmetry", "certified": True,
-                    "exact": ex["ok"] is True, "state_components": ex.get("states"),
-                    "lift_form": dict(c0["expr"])})
+        out.append(
+            {
+                "support": sym_sort(list(c0["expr"])),
+                "vector": c0["expr"],
+                "type": "general",
+                "closed_form": True,
+                "route": "global symmetry",
+                "certified": True,
+                "exact": ex["ok"] is True,
+                "state_components": ex.get("states"),
+                "lift_form": dict(c0["expr"]),
+            }
+        )
     if len(chosen) < n_res:
         return {"partial": True, "dirs": out, "vectors": Vw}
     return out
@@ -487,22 +503,27 @@ def restricted_setup(setup, chains, joint):
     regimes, tapes = setup["regimes"], setup["tapes"]
     states = list(setup["states"])
     stset = set(states)
-    eqs = [{l.split("=", 1)[0].strip(): model_sympify(l.split("=", 1)[1]) for l in rg["f"]}
-           for rg in regimes]
+    eqs = [{l.split("=", 1)[0].strip(): model_sympify(l.split("=", 1)[1]) for l in rg["f"]} for rg in regimes]
     events = [_evs(t.get("ver_t0")) + _evs(t.get("ver_ev")) for t in tapes]
     targets = {str(e["var"]) for ch in chains for i in ch for e in events[i]}
     zero = set()
     if not joint:
         zero = set(states) - targets
         for i in dict.fromkeys(ch[0] for ch in chains):
-            zero &= {l.split("=", 1)[0].strip() for l in _lines(tapes[i].get("ver_ic"))
-                     if l.split("=", 1)[1].strip() in ("0", "0.0")}
+            zero &= {
+                l.split("=", 1)[0].strip()
+                for l in _lines(tapes[i].get("ver_ic"))
+                if l.split("=", 1)[1].strip() in ("0", "0.0")
+            }
         visited = sorted({setup["regime_of"][i] - 1 for ch in chains for i in ch})
         while True:
             sub = {spy.Symbol(x): spy.Integer(0) for x in zero}
             # the regimes of many conditions repeat an equation: each distinct one is checked once
-            drop = {x for x in zero if any(spy.cancel(e.xreplace(sub)) != 0
-                                           for e in {eqs[r][x] for r in visited if x in eqs[r]})}
+            drop = {
+                x
+                for x in zero
+                if any(spy.cancel(e.xreplace(sub)) != 0 for e in {eqs[r][x] for r in visited if x in eqs[r]})
+            }
             if not drop:
                 break
             zero -= drop
@@ -513,10 +534,12 @@ def restricted_setup(setup, chains, joint):
         if names & zero:
             names = {str(y) for y in e.xreplace(sub).free_symbols}
         return names & stset
+
     # the states each equation, observable and event value holds, once per regime and tape
     dep = [{x: syms(f) for x, f in eq.items()} for eq in eqs]
-    obs_dep = [set().union(*[syms(model_sympify(l.split("=", 1)[1] if "=" in l else l)) for l in rg["g"]])
-               for rg in regimes]
+    obs_dep = [
+        set().union(*[syms(model_sympify(l.split("=", 1)[1] if "=" in l else l)) for l in rg["g"]]) for rg in regimes
+    ]
     ev_dep = [set().union(*[syms(model_sympify(str(e["value"]))) for e in evs]) for evs in events]
     # regimes that differ in values only have the same dependencies, and the same closure from the same start
     kinds = {}
@@ -553,24 +576,30 @@ def restricted_setup(setup, chains, joint):
             if lhs in keep or lhs not in stset:
                 if rhs not in zeroed:
                     # a value that holds no state at zero stays as written
-                    zeroed[rhs] = str(model_sympify(rhs).xreplace(sub)) \
-                        if set(_NAMES.findall(rhs)) & zero else rhs
+                    zeroed[rhs] = str(model_sympify(rhs).xreplace(sub)) if set(_NAMES.findall(rhs)) & zero else rhs
                 out.append(f"{lhs} = {zeroed[rhs]}")
         return out
-    new_regimes = [{"f": cut(rg["f"], keep_r.get(r, stset)),
-                    "g": [f"{l.split('=', 1)[0].strip()} = {model_sympify(l.split('=', 1)[1]).xreplace(sub)}"
-                          for l in rg["g"]]} for r, rg in enumerate(regimes)]
+
+    new_regimes = [
+        {
+            "f": cut(rg["f"], keep_r.get(r, stset)),
+            "g": [f"{l.split('=', 1)[0].strip()} = {model_sympify(l.split('=', 1)[1]).xreplace(sub)}" for l in rg["g"]],
+        }
+        for r, rg in enumerate(regimes)
+    ]
     new_tapes = []
     for i, t in enumerate(tapes):
         keep = keep_of.get(i, stset)
-        t = dict(t, ver_ic=cut(t.get("ver_ic"), keep),
-                 ver_t0=[e for e in _evs(t.get("ver_t0")) if str(e["var"]) in keep],
-                 ver_ev=[e for e in _evs(t.get("ver_ev")) if str(e["var"]) in keep])
+        t = dict(
+            t,
+            ver_ic=cut(t.get("ver_ic"), keep),
+            ver_t0=[e for e in _evs(t.get("ver_t0")) if str(e["var"]) in keep],
+            ver_ev=[e for e in _evs(t.get("ver_ev")) if str(e["var"]) in keep],
+        )
         new_tapes.append(t)
     union = set().union(*keep_r.values()) if keep_r else set()
     joins = [dict(e, ev=[v for v in e["ev"] if str(v["var"]) in union]) for e in setup["joins"]]
-    return dict(setup, regimes=new_regimes, tapes=new_tapes, joins=joins,
-                states=[x for x in states if x in union])
+    return dict(setup, regimes=new_regimes, tapes=new_tapes, joins=joins, states=[x for x in states if x in union])
 
 
 def exact_direction(setup, field, chains, joint, init=(), known=()):
@@ -585,14 +614,17 @@ def exact_direction(setup, field, chains, joint, init=(), known=()):
     # a jet of an unknown input has no identity: the jet component prolongs the input component; the last
     # jet has no derivative in the chain
     jets, tops = setup.get("jets") or (), set(setup.get("jet_tops") or ())
+
     def names(v):
         return set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", str(v)))
+
     if tops and any(tops & names(v) for v in dict(field).values()):
         return {"ok": None, "why": "a component holds the last jet of an unknown input"}
     # a parameter component is constant in time, which no identity checks once it holds an input; the
     # lines below allow it, since they show only that the field annihilates every Lie derivative
-    param_input = bool(jets) and any(set(jets) & names(v) for k, v in theta.items()
-                                     if k in set(setup.get("params") or ()))
+    param_input = bool(jets) and any(
+        set(jets) & names(v) for k, v in theta.items() if k in set(setup.get("params") or ())
+    )
     # a field whose lines the flow keeps is a symmetry as well, unless a switch moves the joins
     lines_ok = not joint and all(e["ev"] for e in setup["joins"])
     if param_input and not lines_ok:
@@ -613,8 +645,10 @@ def exact_direction(setup, field, chains, joint, init=(), known=()):
         own = [ch for ch in chains if setup["regime_of"][ch[0]] - 1 == r]
         ics = None
         if own and not joint:
-            ics = [f"{x.strip()} = {_rename_init(e.strip(), init)}" for x, e in
-                   (line.split("=", 1) for line in _lines(setup["tapes"][own[0][0]].get("ver_ic")))]
+            ics = [
+                f"{x.strip()} = {_rename_init(e.strip(), init)}"
+                for x, e in (line.split("=", 1) for line in _lines(setup["tapes"][own[0][0]].get("ver_ic")))
+            ]
             # the lift of a regime with the same initial values first: the regimes of many conditions share it
             if tuple(ics) in found and holds(r, found[tuple(ics)]):
                 of[r] = found[tuple(ics)]
@@ -624,16 +658,17 @@ def exact_direction(setup, field, chains, joint, init=(), known=()):
             continue
         # initial values set by other parameters: the state components from their identities
         if ics is not None:
-            lifts = (lambda: initial_lift(field, ics, states, regimes[r]["f"]),
-                     lambda: linear_lift(field, regimes[r], ics, states),
-                     lambda: None if jets else support_lift(field, regimes[r], ics, states))
+            lifts = (
+                lambda: initial_lift(field, ics, states, regimes[r]["f"]),
+                lambda: linear_lift(field, regimes[r], ics, states),
+                lambda: None if jets else support_lift(field, regimes[r], ics, states),
+            )
             lift = next((x for x in (make() for make in lifts) if x is not None and holds(r, x)), None)
             if lift is not None:
                 of[r] = found[tuple(ics)] = lift
                 continue
         # in another regime the direction may need other state components
-        alt = None if jets else \
-            combined_field(extended_fields(setup, own) if own else setup["gens"][r], theta, states)
+        alt = None if jets else combined_field(extended_fields(setup, own) if own else setup["gens"][r], theta, states)
         res = certify(regime_identities(regimes[r], alt if alt is not None else field, jets))
         if res["ok"] is not True:
             return res
@@ -642,8 +677,9 @@ def exact_direction(setup, field, chains, joint, init=(), known=()):
     for e in setup["joins"]:
         if e["from"] in of and e["to"] in of:
             if e["from"] in by_line or e["to"] in by_line:
-                part = line_event_identities(e["ev"], of[e["from"]], of[e["to"]], states,
-                                             [k[e["to"]] for k in known if e["to"] in k], jets)
+                part = line_event_identities(
+                    e["ev"], of[e["from"]], of[e["to"]], states, [k[e["to"]] for k in known if e["to"] in k], jets
+                )
                 if part is None:
                     at = e["ev"][0].get("time")
                     return {"ok": None, "why": f"no factor maps the field through the event at {at}"}
@@ -687,6 +723,7 @@ _COMBINE_CAP = 24
 def _in_span_at_a_point(A, b):
     """False when b is outside the column span of A at a random rational point."""
     import random
+
     rng = random.Random(len(A))
     syms = sorted(A.free_symbols | b.free_symbols, key=str)
     pt = {x: spy.Rational(rng.randint(2, 997), rng.randint(2, 997)) for x in syms}
@@ -709,6 +746,7 @@ def _square_solve(A, b):
     import random
 
     from sympy.polys.matrices import DomainMatrix
+
     if sum(spy.count_ops(x) for x in list(A) + list(b)) > _SOLVE_OPS:
         session.note("limits", "combined lift: the system is past the size of a symbolic solve")
         return None
@@ -766,18 +804,27 @@ def combined_field(gens, vec, states):
         return None
 
 
-def static_fields(multi, models, conds, chains, p_names, leaf_names, point, forcings=None,
-                  zeros=None):
+def static_fields(multi, models, conds, chains, p_names, leaf_names, point, forcings=None, zeros=None):
     """Fields of the static subsystems of the resting conditions with values at point."""
     tp = multi["tapes"]
     cl = []
     for i, ci in enumerate(conds):
         idx = chains[i]
-        cl.append({"rest": _lines(models[ci]),
-                   "zero": [str(z) for z in zeros[i]] if zeros is not None and len(zeros) > i and zeros[i] else [],
-                   "segs": [{"f": _lines(tp[t].get("model_lines")), "g": _lines(tp[t].get("obs_lines")),
-                             "ev": _evs(tp[t].get("ver_ev"))} for t in idx],
-                   "t0": _evs(tp[idx[0]].get("ver_t0"))})
+        cl.append(
+            {
+                "rest": _lines(models[ci]),
+                "zero": [str(z) for z in zeros[i]] if zeros is not None and len(zeros) > i and zeros[i] else [],
+                "segs": [
+                    {
+                        "f": _lines(tp[t].get("model_lines")),
+                        "g": _lines(tp[t].get("obs_lines")),
+                        "ev": _evs(tp[t].get("ver_ev")),
+                    }
+                    for t in idx
+                ],
+                "t0": _evs(tp[idx[0]].get("ver_t0")),
+            }
+        )
     try:
         sf = static_fields_symbolic(cl, list(p_names), list(forcings) if forcings else None)
     except Exception as exc:
@@ -803,11 +850,19 @@ def static_fields(multi, models, conds, chains, p_names, leaf_names, point, forc
         x = np.zeros(len(p_names), dtype=np.int64)
         for k, e in zip(f.keys(), ev):
             x[list(p_names).index(k)] = e
-        lx = np.array([0 if x[i] == 0 else int(x[i]) * invmod(vals[i], P) % P
-                       for i in range(len(x))], dtype=np.int64)
-        out.append({"support": sym_sort(list(f)), "vector": dict(f), "val": x, "lval": lx,
-                    "type": "general", "closed_form": True, "route": "static subsystem",
-                    "certified": True})
+        lx = np.array([0 if x[i] == 0 else int(x[i]) * invmod(vals[i], P) % P for i in range(len(x))], dtype=np.int64)
+        out.append(
+            {
+                "support": sym_sort(list(f)),
+                "vector": dict(f),
+                "val": x,
+                "lval": lx,
+                "type": "general",
+                "closed_form": True,
+                "route": "static subsystem",
+                "certified": True,
+            }
+        )
     return out or None
 
 
@@ -828,9 +883,29 @@ def _rate_order(r, top):
 
 def _segment_key(sg):
     """What the ranks of a segment from a given start read of the tape of the segment."""
-    return tuple(tuple(np.atleast_1d(np.asarray(sg[k])).tolist()) if sg.get(k) is not None else None
-                 for k in ("op", "a", "b", "cnum", "cden", "state_slots", "f_out", "g_out", "tm_op", "tm_a",
-                           "tm_b", "tm_cnum", "tm_cden", "tm_out", "leaf_slot", "leaf_src", "leaf_num", "leaf_den"))
+    return tuple(
+        tuple(np.atleast_1d(np.asarray(sg[k])).tolist()) if sg.get(k) is not None else None
+        for k in (
+            "op",
+            "a",
+            "b",
+            "cnum",
+            "cden",
+            "state_slots",
+            "f_out",
+            "g_out",
+            "tm_op",
+            "tm_a",
+            "tm_b",
+            "tm_cnum",
+            "tm_cden",
+            "tm_out",
+            "leaf_slot",
+            "leaf_src",
+            "leaf_num",
+            "leaf_den",
+        )
+    )
 
 
 def _jet_key(key):
@@ -879,14 +954,33 @@ def _sz_term(deg, n_cols, K, draws=None, rest=1):
     out = 0
     for md, d0, ns in zip(mds, d0s, stops):
         n_obs = max(1, len(md[2]))
-        out += int(d0) * (int(ns) * md[0] + gen * sum(min((k + 1) * n_obs, n_cols) * lie_row_degree(md, k + 1)
-                                                      for k in range(K + 1)))
+        out += int(d0) * (
+            int(ns) * md[0] + gen * sum(min((k + 1) * n_obs, n_cols) * lie_row_degree(md, k + 1) for k in range(K + 1))
+        )
     return int(rest) * (int(deg.get("bezout", 1)) * out + int(deg.get("extra", 0)))
 
 
-def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=None, threads=1,
-                    start=None, degs=None, terms=None, at_rest=False, start_seeds=None, start_p=None,
-                    rest_draws=1, draws=None, drop_states=(), cores=None):
+def lie_certificate(
+    segs,
+    seeds,
+    n_leaves,
+    n_states,
+    z_slots,
+    p,
+    cap,
+    map_fn=None,
+    threads=1,
+    start=None,
+    degs=None,
+    terms=None,
+    at_rest=False,
+    start_seeds=None,
+    start_p=None,
+    rest_draws=1,
+    draws=None,
+    drop_states=(),
+    cores=None,
+):
     """Certified Lie order per block, None where the start does not reach the generic rank; `terms` receives the error
     bounds and `draws` per block the most points drawn for one random point, `rest_draws` those of the resting point.
 
@@ -971,16 +1065,22 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             sg = sb[j]
             if j > 0 and sg.get("ev_var_idx") is not None and len(np.atleast_1d(sg["ev_var_idx"])):
                 evi = np.atleast_1d(sg["ev_var_idx"]).astype(np.int64)
-                V = event_space(V, evi, np.atleast_1d(sg["ev_method"]).astype(np.int64),
-                                sg.get("ev_leaf_only", np.ones(len(evi), dtype=bool)), n_states, p)
+                V = event_space(
+                    V,
+                    evi,
+                    np.atleast_1d(sg["ev_method"]).astype(np.int64),
+                    sg.get("ev_leaf_only", np.ones(len(evi), dtype=bool)),
+                    n_states,
+                    p,
+                )
             while True:
                 lv, Qt, n_drawn = values()
                 if lv is None:
                     return None
                 y = rand_in(Qt[j], V)
-                Y = Qt[:j + 1].copy()
+                Y = Qt[: j + 1].copy()
                 Y[j] = y
-                fz = _core.sym_segment_ranks(sb[:j + 1], n_leaves, n_states, z_b, lv, p, 0, Y)
+                fz = _core.sym_segment_ranks(sb[: j + 1], n_leaves, n_states, z_b, lv, p, 0, Y)
                 if not fz.get("ok"):
                     return None
                 field = np.asarray(fz["field"], dtype=np.int64).reshape(j + 1, n_states)[j]
@@ -1020,17 +1120,44 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
                 seg_keys[id(sb[s])] = _segment_key(sb[s])
             if kind == "g":
                 # the jets of a call continue those of the call before at a lower order
-                jets = _jet_key((seg_keys[id(sb[s])], st_g[s].tobytes(), np.asarray(lv_g).tobytes(), int(p),
-                                 z_b.tobytes(), drop.tobytes()))
-                return _core.sym_segment_ranks([sb[s]], n_leaves, n_states, z_b, lv_g, p, Nc, st_g[s:s + 1],
-                                               threads, drop, True, jets)
-            key = (seg_keys[id(sb[s])], q_start[s].tobytes(), (s_seed % s_p).tobytes(), int(s_p), z_b.tobytes(),
-                   drop.tobytes())
+                jets = _jet_key(
+                    (
+                        seg_keys[id(sb[s])],
+                        st_g[s].tobytes(),
+                        np.asarray(lv_g).tobytes(),
+                        int(p),
+                        z_b.tobytes(),
+                        drop.tobytes(),
+                    )
+                )
+                return _core.sym_segment_ranks(
+                    [sb[s]], n_leaves, n_states, z_b, lv_g, p, Nc, st_g[s : s + 1], threads, drop, True, jets
+                )
+            key = (
+                seg_keys[id(sb[s])],
+                q_start[s].tobytes(),
+                (s_seed % s_p).tobytes(),
+                int(s_p),
+                z_b.tobytes(),
+                drop.tobytes(),
+            )
             kept = shared.get(key)
             if kept is not None and len(kept) > Nc:
-                return {"ok": True, "ranks": kept[:Nc + 1]}
-            r = _core.sym_segment_ranks([sb[s]], n_leaves, n_states, z_b, s_seed % s_p, s_p, Nc,
-                                        q_start[s:s + 1], threads, drop, True, _jet_key(key))
+                return {"ok": True, "ranks": kept[: Nc + 1]}
+            r = _core.sym_segment_ranks(
+                [sb[s]],
+                n_leaves,
+                n_states,
+                z_b,
+                s_seed % s_p,
+                s_p,
+                Nc,
+                q_start[s : s + 1],
+                threads,
+                drop,
+                True,
+                _jet_key(key),
+            )
             if r.get("ok"):
                 shared[key] = np.asarray(r["ranks"]).ravel()
             return r
@@ -1046,7 +1173,7 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             for (kind, sj, Nc), r in zip(jobs, got):
                 if not r.get("ok"):
                     return False
-                (G if kind == "g" else Q)[sj] = np.asarray(r["ranks"]).ravel()[:Nc + 1]
+                (G if kind == "g" else Q)[sj] = np.asarray(r["ranks"]).ravel()[: Nc + 1]
             return True
 
         def known(Nt):
@@ -1054,11 +1181,11 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
             the rank after it, up to Nt; the jobs that the ranks up to Nt need."""
             g_n, ordv, jobs = [], [], []
             for sj in range(n_seg):
-                gn = _flat_at(G[sj][:Nt + 1])
+                gn = _flat_at(G[sj][: Nt + 1])
                 if gn is None and len(G[sj]) <= Nt:
                     jobs.append(("g", sj))
                 g_n.append(gn)
-                ra = None if gn is None else _reach_at(Q[sj][:Nt + 1], G[sj][gn + 1])
+                ra = None if gn is None else _reach_at(Q[sj][: Nt + 1], G[sj][gn + 1])
                 if gn is not None and ra is None and len(Q[sj]) <= Nt:
                     jobs.append(("q", sj))
                 ordv.append(ra)
@@ -1109,8 +1236,10 @@ def lie_certificate(segs, seeds, n_leaves, n_states, z_slots, p, cap, map_fn=Non
         def lanes(b):
             cols = read_columns(segs[b], n_leaves, z_slots)
             return len(segs[b]) * ((len(z_slots) if cols is None else len(cols)) + n_states)
-        order = sorted(idx, key=lambda b: (-lanes(b), -(start[b] or 0) if start is not None and len(start) == len(idx)
-                                           else 0))
+
+        order = sorted(
+            idx, key=lambda b: (-lanes(b), -(start[b] or 0) if start is not None and len(start) == len(idx) else 0)
+        )
         got = dict(zip(order, map_fn(one, order)))
         res = [got[b] for b in idx]
     else:

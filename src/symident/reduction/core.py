@@ -54,8 +54,10 @@ def assemble_trafo(blocks, coords):
 
 def log_chart(obj, coords):
     """The result in the coordinates X = b^theta, with the name maps."""
-    gens = [None if d.get("generator") is None else
-            {k: str(v).replace("^", "**") for k, v in d["generator"].items()} for d in obj["symmetries"]]
+    gens = [
+        None if d.get("generator") is None else {k: str(v).replace("^", "**") for k, v in d["generator"].items()}
+        for d in obj["symmetries"]
+    ]
     if not gens or all(g is None for g in gens):
         return None
     try:
@@ -74,6 +76,7 @@ def log_chart(obj, coords):
         if v is None:
             return v
         return [X[th.index(x)] if x in th else x for x in v]
+
     o = dict(obj, symmetries=[dict(d) for d in obj["symmetries"]], info=dict(obj["info"]))
     for i, d in enumerate(o["symmetries"]):
         g = ch["gens"][i]
@@ -87,9 +90,14 @@ def log_chart(obj, coords):
         if w and d.get("type") != "scaling" and set(w) <= moved:
             # translations of the log coordinates: a scaling in X, with integer weights after a common factor
             q = math.lcm(*[spy.Rational(v).q for v in w.values()])
-            d.update(type="scaling", weights={k: str(spy.Rational(v) * q) for k, v in w.items()},
-                     generator={k: str(spy.cancel(spy.sympify(str(v).replace("^", "**")) * q)).replace("**", "^")
-                                for k, v in d["generator"].items()})
+            d.update(
+                type="scaling",
+                weights={k: str(spy.Rational(v) * q) for k, v in w.items()},
+                generator={
+                    k: str(spy.cancel(spy.sympify(str(v).replace("^", "**")) * q)).replace("**", "^")
+                    for k, v in d["generator"].items()
+                },
+            )
     o["info"]["coordinates"] = ren(list(coords))
     o["info"]["recast_coordinates"] = True
     o["info"]["chart_names"] = dict((o["info"].get("chart_names") or {}), **dict(zip(X, th)))
@@ -98,8 +106,10 @@ def log_chart(obj, coords):
 
 def exp_chart(obj, coords, positive):
     """The detection result in the coordinates L = log(v) with the name maps, or None without them."""
-    gens = [None if d.get("generator") is None else
-            {k: str(v).replace("^", "**") for k, v in d["generator"].items()} for d in obj["symmetries"]]
+    gens = [
+        None if d.get("generator") is None else {k: str(v).replace("^", "**") for k, v in d["generator"].items()}
+        for d in obj["symmetries"]
+    ]
     if not gens or all(g is None for g in gens):
         return None
     pos = True if positive is True else ([] if positive is False else list(positive))
@@ -117,6 +127,7 @@ def exp_chart(obj, coords, positive):
         if x is None or isinstance(x, bool):
             return x
         return [L[v.index(y)] if y in v else y for y in x]
+
     o = dict(obj, symmetries=[dict(d) for d in obj["symmetries"]], info=dict(obj["info"]))
     for i, d in enumerate(o["symmetries"]):
         g = ch["gens"][i]
@@ -143,6 +154,7 @@ def _chart_back(res, names_from, names_to, back, domain_to=None):
         if not x:
             return x
         return {unren([k])[0]: back(v, k if k in names_from else None) for k, v in x.items()}
+
     res = dict(res)
     res["coordinates"] = unren(res.get("coordinates"))
     res["fixed"] = unren(res.get("fixed"))
@@ -158,11 +170,14 @@ def _chart_back(res, names_from, names_to, back, domain_to=None):
         if b.get("invariants"):
             b["invariants"] = [back(x) for x in b["invariants"]]
         if b.get("new_parameters"):
-            b["new_parameters"] = {unren([k])[0]: back(v, k if k in names_from else None)
-                                    for k, v in b["new_parameters"].items()}
+            b["new_parameters"] = {
+                unren([k])[0]: back(v, k if k in names_from else None) for k, v in b["new_parameters"].items()
+            }
         if b.get("solved_domain"):
-            b["solved_domain"] = {unren([k])[0]: (domain_to if domain_to and k in names_from else v)
-                                  for k, v in b["solved_domain"].items()}
+            b["solved_domain"] = {
+                unren([k])[0]: (domain_to if domain_to and k in names_from else v)
+                for k, v in b["solved_domain"].items()
+            }
         blocks.append(b)
     res["blocks"] = blocks
     return res
@@ -170,16 +185,21 @@ def _chart_back(res, names_from, names_to, back, domain_to=None):
 
 def exp_back(res, ec):
     """The reduction result `res` mapped back from the exp coordinates `ec`."""
+
     def back(x, solve_for=None):
         return str(exp_chart_back(str(x).replace("^", "**"), ec["v"], ec["L"], solve_for)).replace("**", "^")
+
     return _chart_back(res, ec["L"], ec["v"], back, "positive")
 
 
 def log_back(res, lc):
     """The reduction result `res` mapped back from the log coordinates `lc`."""
+
     def back(x, solve_for=None):
-        return str(log_chart_back(str(x).replace("^", "**"), lc["X"], lc["theta"], lc["base"],
-                                   solve_for)).replace("**", "^")
+        return str(log_chart_back(str(x).replace("^", "**"), lc["X"], lc["theta"], lc["base"], solve_for)).replace(
+            "**", "^"
+        )
+
     return _chart_back(res, lc["X"], lc["theta"], back)
 
 
@@ -196,6 +216,7 @@ def model_structure(obj, coords):
     """The structure of the model behind `obj` that the choice of pins uses: the coordinates that enter only the
     observables, the states, and the unknown inputs with their jets."""
     from .scaling import _ID
+
     info = obj.get("info") or {}
     unknown = (info.get("unknown_inputs") or {}).get("jets") or {}
     jets = {j for js in unknown.values() for j in js}
@@ -205,13 +226,18 @@ def model_structure(obj, coords):
     obs = [c for c in coords if orig.get(c, c) not in dyn] if rhs else []
     states = [c for c in coords if orig.get(c, c) in rhs]
     reconstructed = bool((info.get("settings") or {}).get("reconstruct"))
-    return {"observation_only": obs, "states": list(dict.fromkeys(list(rhs) + states)), "unknown_inputs": unknown,
-            "reconstructed": reconstructed}
+    return {
+        "observation_only": obs,
+        "states": list(dict.fromkeys(list(rhs) + states)),
+        "unknown_inputs": unknown,
+        "reconstructed": reconstructed,
+    }
 
 
 def ordered(obj):
     """Directions grouped by orbit geometry with labels X1, X2, ..., as in the report of the detection."""
     from ..detection.classify import direction_order
+
     syms = obj.get("symmetries") or []
     if not syms:
         return {"syms": [], "labels": []}
@@ -225,13 +251,19 @@ def red_result(obj, blocks, trafo, coords, fixed, settings):
     status = [b["status"] for b in blocks]
     van = []
     for b in blocks:
-        for r in (b.get("zero_compatibility") or []):
+        for r in b.get("zero_compatibility") or []:
             van.append(dict(r, block=", ".join(b["labels"])))
-    family = [{"labels": b["labels"], "choices": b.get("choices"), "matroid": b.get("matroid"),
-               "gauge_note": b.get("gauge_note")}
-              for b in blocks if b["status"] == "reduced" and
-              (b.get("choices") is not None or b.get("matroid") is not None or
-               b.get("gauge_note") is not None)]
+    family = [
+        {
+            "labels": b["labels"],
+            "choices": b.get("choices"),
+            "matroid": b.get("matroid"),
+            "gauge_note": b.get("gauge_note"),
+        }
+        for b in blocks
+        if b["status"] == "reduced"
+        and (b.get("choices") is not None or b.get("matroid") is not None or b.get("gauge_note") is not None)
+    ]
     removed = [l for b, s in zip(blocks, status) if s in ("fixed", "reduced") for l in b["labels"]]
     remaining = [l for b, s in zip(blocks, status) if s not in ("fixed", "reduced") for l in b["labels"]]
     # a listed direction that no block contains depends on the others
@@ -241,13 +273,26 @@ def red_result(obj, blocks, trafo, coords, fixed, settings):
     for b in blocks:
         b["unproven"] = unproven_of(b)
         b["generator_level"] = lowest_level(of.get(l, "exact") for l in b["labels"])
-        b["level"] = lowest_level([b["generator_level"]] + (["open"] if b["unproven"] else []) +
-                                  (["checked"] if b.get("face") and b.get("face_level") == "checked" else []))
+        b["level"] = lowest_level(
+            [b["generator_level"]]
+            + (["open"] if b["unproven"] else [])
+            + (["checked"] if b.get("face") and b.get("face_level") == "checked" else [])
+        )
     done = [b for b in blocks if b["status"] in ("reduced", "fixed")]
-    return {"method": obj.get("method"), "coordinates": coords, "fixed": fixed, "blocks": blocks,
-            "trafo": trafo, "family": family, "removed": removed, "remaining": remaining,
-            "dependent": dependent, "zero_compatibility": van or None, "settings": settings,
-            "level": lowest_level(b["level"] for b in done)}
+    return {
+        "method": obj.get("method"),
+        "coordinates": coords,
+        "fixed": fixed,
+        "blocks": blocks,
+        "trafo": trafo,
+        "family": family,
+        "removed": removed,
+        "remaining": remaining,
+        "dependent": dependent,
+        "zero_compatibility": van or None,
+        "settings": settings,
+        "level": lowest_level(b["level"] for b in done),
+    }
 
 
 LEVELS = ("exact", "verified", "checked", "open")
@@ -258,15 +303,20 @@ def unproven_of(b):
     if b.get("status") != "reduced":
         return []
     if b.get("type") == "scaling":
-        return [] if b.get("reach", True) else [f"each orbit along {k} meets {k} = {v}"
-                                                  for k, v in (b.get("pins") or {}).items()]
+        return (
+            []
+            if b.get("reach", True)
+            else [f"each orbit along {k} meets {k} = {v}" for k, v in (b.get("pins") or {}).items()]
+        )
     out = [] if b.get("reach") else ["every level set of the invariants is one orbit"]
     sec = b.get("section") or []
     pins = b.get("pins") or {}
     if b.get("face"):
         if b.get("face_why") is not None or not b.get("reach"):
-            out.append(f"the section {', '.join(sec)} lies on a face and gives the output of every orbit "
-                       f"in the limit" + (f" ({b['face_why']})" if b.get("face_why") else ""))
+            out.append(
+                f"the section {', '.join(sec)} lies on a face and gives the output of every orbit "
+                f"in the limit" + (f" ({b['face_why']})" if b.get("face_why") else "")
+            )
     elif b.get("injective"):
         pass
     elif sec:
@@ -281,6 +331,7 @@ def unproven_of(b):
         out.append("the number of invariants, an upper bound")
     out += [f"{e} positive inside the declared bounds" for e in b.get("unproven_entries") or []]
     return out
+
 
 def detection_positive(obj):
     """The coordinates the detection `obj` declared positive; states and fixed names of the declaration drop out."""
@@ -302,8 +353,7 @@ def finish_reduction(obj, red):
     ax.setdefault("error_bound", None)
     red["assumptions"] = ax
     if any(b.get("unproven") and b.get("status") in ("reduced", "fixed") for b in red.get("blocks") or []):
-        warnings.warn("a claim of a section is not proven; Reduction.blocks names it under 'unproven'",
-                      stacklevel=3)
+        warnings.warn("a claim of a section is not proven; Reduction.blocks names it under 'unproven'", stacklevel=3)
 
 
 def check_levels(obj, allow_open=True, allow_checked=True):
@@ -312,14 +362,20 @@ def check_levels(obj, allow_open=True, allow_checked=True):
     levels = [d.get("level") for d in obj.get("symmetries") or []]
     if "open" in levels:
         if not allow_open:
-            raise ValueError("a direction has no closed form (level 'open'); detect with reconstruct=True, "
-                             "or pass allow_open=True to reduce the others")
-        warnings.warn("a direction has no closed form (level 'open') and stays in the reduced model "
-                      "(Reduction.remaining)", stacklevel=3)
+            raise ValueError(
+                "a direction has no closed form (level 'open'); detect with reconstruct=True, "
+                "or pass allow_open=True to reduce the others"
+            )
+        warnings.warn(
+            "a direction has no closed form (level 'open') and stays in the reduced model (Reduction.remaining)",
+            stacklevel=3,
+        )
     ver = (obj.get("info") or {}).get("verification") or {}
     if ver.get("ok") is False:
-        why = ("the rank still grows past the Lie order used, so the directions may be over-reported "
-               f"({ver.get('reason')})")
+        why = (
+            "the rank still grows past the Lie order used, so the directions may be over-reported "
+            f"({ver.get('reason')})"
+        )
         if not allow_checked:
             raise ValueError(why + "; pass allow_checked=True to reduce them anyway")
         warnings.warn(why + "; the reduction rests on them (Reduction.level)", stacklevel=3)
@@ -328,19 +384,29 @@ def check_levels(obj, allow_open=True, allow_checked=True):
         b = info.get("bound")
         # a direction verified on every entry is checked where the error bound does not apply
         verified = [p.get("support") for p in info.get("proof") or []]
-        if isinstance(b, dict) and b.get("probability") is None and all(
-                d.get("support") in verified for d in obj.get("symmetries") or [] if d.get("level") == "checked"):
+        if (
+            isinstance(b, dict)
+            and b.get("probability") is None
+            and all(d.get("support") in verified for d in obj.get("symmetries") or [] if d.get("level") == "checked")
+        ):
             why = f"only, since {b.get('why') or 'no error bound applies'}"
         else:
             why = "on part of the entries only"
         if not allow_checked:
-            raise ValueError(f"a direction is checked at random points {why} (level 'checked'); "
-                             "pass allow_checked=True to reduce on the closed form anyway")
-        warnings.warn(f"a direction is checked at random points {why}, without an error bound; the "
-                      "reduction rests on the closed form (Reduction.level)", stacklevel=3)
+            raise ValueError(
+                f"a direction is checked at random points {why} (level 'checked'); "
+                "pass allow_checked=True to reduce on the closed form anyway"
+            )
+        warnings.warn(
+            f"a direction is checked at random points {why}, without an error bound; the "
+            "reduction rests on the closed form (Reduction.level)",
+            stacklevel=3,
+        )
     elif "verified" in levels:
-        warnings.warn("a direction is verified, not proven; the reduction rests on the closed form "
-                      "(Reduction.level)", stacklevel=3)
+        warnings.warn(
+            "a direction is verified, not proven; the reduction rests on the closed form (Reduction.level)",
+            stacklevel=3,
+        )
 
 
 def monotone_pins(b, gens):
@@ -349,6 +415,7 @@ def monotone_pins(b, gens):
         return []
     from .expr import red_locals, red_sympify
     from .sign import sgn
+
     gen = gens[0].get("generator") or {}
     out = []
     for k, v in (b.get("pins") or {}).items():
@@ -370,8 +437,9 @@ def _face_proof(obj, b, pins, sol, gen_of, coords, degrees):
     if info.get("recast_coordinates"):
         return False, "the model is not checked at the face in log or exponential coordinates", None
     gens = block_generators(b["labels"], gen_of)
-    reach = gens is not None and not set(pins) & set(b["support"]) and \
-        face_reach(b, pins, sol["gauge"], gens) is not None
+    reach = (
+        gens is not None and not set(pins) & set(b["support"]) and face_reach(b, pins, sol["gauge"], gens) is not None
+    )
     if not info.get("model_exprs"):
         return reach, "the model expressions are not known", None
     eq = (info.get("settings") or {}).get("equilibrate")
@@ -383,8 +451,16 @@ def _face_proof(obj, b, pins, sol, gen_of, coords, degrees):
         if lifted is not None:
             rest = face_state_limit(b, pins, sol["gauge"], lifted[0], list(rhs), degrees)
             lift_level = lifted[1]
-    why, level = face_regular(sol["gauge"], info["model_exprs"], rhs, eq, coords, b["support"], rest=rest,
-                              inputs=info.get("model_inputs") or ())
+    why, level = face_regular(
+        sol["gauge"],
+        info["model_exprs"],
+        rhs,
+        eq,
+        coords,
+        b["support"],
+        rest=rest,
+        inputs=info.get("model_inputs") or (),
+    )
     if why is None and rest and lift_level == "checked":
         if not rest_checked(rhs, (), info.get("model_inputs") or ()):
             return reach, "the Jacobian of the resting state is not found regular at random points", None
@@ -404,10 +480,14 @@ def lifted_generators(labels, gen_of, rhs, inputs=()):
 
     from .expr import red_locals, red_sympify
     from .sign import sgn
+
     states = [x for x, f in rhs.items() if str(f).strip() not in ("0", "0.0")]
-    loc = red_locals(list(rhs) + [str(v) for v in rhs.values()] +
-                     [str(v) for l in labels for v in ((gen_of.get(l) or {}).get("generator") or {}).values()] +
-                     [str(v) for l in labels for v in ((gen_of.get(l) or {}).get("state_components") or {}).values()])
+    loc = red_locals(
+        list(rhs)
+        + [str(v) for v in rhs.values()]
+        + [str(v) for l in labels for v in ((gen_of.get(l) or {}).get("generator") or {}).values()]
+        + [str(v) for l in labels for v in ((gen_of.get(l) or {}).get("state_components") or {}).values()]
+    )
     X = [spy.Symbol(x) for x in states]
     level, J = "exact", None
     rest = {spy.Symbol(str(u)): spy.Integer(0) for u in inputs}
@@ -420,8 +500,12 @@ def lifted_generators(labels, gen_of, rhs, inputs=()):
                 return None
             xi = {spy.Symbol(k): red_sympify(str(v).replace("^", "**"), loc) for k, v in d["generator"].items()}
             if d.get("state_components") is not None:
-                xi.update({spy.Symbol(k): red_sympify(str(v).replace("^", "**"), loc)
-                           for k, v in d["state_components"].items()})
+                xi.update(
+                    {
+                        spy.Symbol(k): red_sympify(str(v).replace("^", "**"), loc)
+                        for k, v in d["state_components"].items()
+                    }
+                )
                 for x in rhs:
                     lhs = sum(c * spy.diff(F[x], k) for k, c in xi.items())
                     rhs_ = sum(F[y] * spy.diff(xi.get(spy.Symbol(x), 0), spy.Symbol(y)) for y in rhs)
@@ -488,14 +572,20 @@ def composed_check(res):
     import sympy as spy
 
     from ..sym.parse import _make_local_parse
+
     tr = res.get("trafo") or {}
     out = {"pins": True, "invariants": True, "failed": []}
     pos_names = _positive_symbols(res)
 
     def zero(e):
-        e = e.xreplace({x: spy.Symbol(str(x), positive=True) if str(x) in pos_names else
-                        spy.Symbol(str(x), real=True) for x in e.free_symbols})
+        e = e.xreplace(
+            {
+                x: spy.Symbol(str(x), positive=True) if str(x) in pos_names else spy.Symbol(str(x), real=True)
+                for x in e.free_symbols
+            }
+        )
         return spy.simplify(spy.expand_log(e)) == 0
+
     try:
         _, parse = _make_local_parse([str(v) for v in tr.values()] + list(tr))
         for b in res.get("blocks") or []:
@@ -525,13 +615,14 @@ def _tidy_root(x, positive=None):
     import sympy as spy
 
     from ..sym.parse import _make_local_parse
+
     try:
         _, parse = _make_local_parse([str(x)])
         e = parse(str(x).replace("^", "**"))
-        pos = {s: spy.Symbol(str(s), positive=True) for s in e.free_symbols
-               if positive is None or str(s) in positive}
-        y = e.xreplace(pos).replace(lambda a: a.is_Pow and a.exp == spy.Rational(1, 2),
-                                    lambda a: spy.sqrt(spy.factor(a.base)))
+        pos = {s: spy.Symbol(str(s), positive=True) for s in e.free_symbols if positive is None or str(s) in positive}
+        y = e.xreplace(pos).replace(
+            lambda a: a.is_Pow and a.exp == spy.Rational(1, 2), lambda a: spy.sqrt(spy.factor(a.base))
+        )
         y = y.xreplace({v: k for k, v in pos.items()})
     except SYMPY_FAILS as exc:
         sympy_fail(exc)
@@ -567,8 +658,13 @@ def _chart_rank(res):
     """Sort key of a reduction: level, directions removed, no sign conditions, total coverage, rational trafo; ties
     keep build order."""
     lv = res.get("level")
-    return (LEVELS.index(lv) if lv in LEVELS else len(LEVELS), -len(res.get("removed") or []),
-            _signed(res), _partial(res), not _rational_chart(res))
+    return (
+        LEVELS.index(lv) if lv in LEVELS else len(LEVELS),
+        -len(res.get("removed") or []),
+        _signed(res),
+        _partial(res),
+        not _rational_chart(res),
+    )
 
 
 def _outside_coordinates(sol, b, coords, states):
@@ -592,6 +688,7 @@ def symmetry_reduction(obj, *args, alternatives=False, **kw):
 
 def _reduction_charts(obj, *args, alternatives=False, **kw):
     """Reparametrization removing the non-identifiable directions, the best trafo first when `alternatives` asks."""
+
     def run(**opts):
         with state.options(**opts):
             res = _symmetry_reduction(obj, *args, **kw)
@@ -600,13 +697,16 @@ def _reduction_charts(obj, *args, alternatives=False, **kw):
             res["trafo"] = {k: _tidy_root(v, pos) for k, v in res["trafo"].items()}
             res["checks"] = composed_check(res)
         return res
+
     res = run()
     if not isinstance(res, dict) or not res.get("blocks"):
         return res
     # a root only in a section under sign conditions asks for no alternative: none replaces such a section
     weak = {k for b in res["blocks"] if b.get("sign_conditions") for k in (b.get("pins") or {})}
-    if _rational_chart(dict(res, trafo={k: v for k, v in (res.get("trafo") or {}).items() if k not in weak})) \
-            and not alternatives:
+    if (
+        _rational_chart(dict(res, trafo={k: v for k, v in (res.get("trafo") or {}).items() if k not in weak}))
+        and not alternatives
+    ):
         res["alternatives"] = []
         return res
     found = [res]
@@ -619,15 +719,25 @@ def _reduction_charts(obj, *args, alternatives=False, **kw):
             except Exception as exc:
                 swallow(exc, "alternative chart")
                 alt = None
-            if isinstance(alt, dict) and alt.get("trafo") and _chart_valid(alt, obj.get("dim")) and \
-                    all(alt["trafo"] != f.get("trafo") for f in found):
+            if (
+                isinstance(alt, dict)
+                and alt.get("trafo")
+                and _chart_valid(alt, obj.get("dim"))
+                and all(alt["trafo"] != f.get("trafo") for f in found)
+            ):
                 found.append(alt)
     found.sort(key=_chart_rank)
     best = found[0]
-    best["alternatives"] = [{"trafo": f["trafo"], "removed": f["removed"], "remaining": f["remaining"],
-                             "rational": _rational_chart(f),
-                             "pins": {k: v for b in f["blocks"] for k, v in (b.get("pins") or {}).items()}}
-                            for f in found[1:]]
+    best["alternatives"] = [
+        {
+            "trafo": f["trafo"],
+            "removed": f["removed"],
+            "remaining": f["remaining"],
+            "rational": _rational_chart(f),
+            "pins": {k: v for b in f["blocks"] for k, v in (b.get("pins") or {}).items()},
+        }
+        for f in found[1:]
+    ]
     return best
 
 
@@ -637,6 +747,7 @@ def _rebased(syms, idx, blocks):
     The combination spans the same distribution where the scalings move the pins; a common polynomial factor of
     the components is divided out, so the direction vanishes nowhere it did not before."""
     from .expr import red_locals, red_sympify
+
     out = list(syms)
     scal = [b for b in blocks if b["type"] == "scaling" and b.get("pins") and b.get("Wres") is not None]
     for i in idx:
@@ -679,27 +790,43 @@ def _rebased(syms, idx, blocks):
     return out
 
 
-def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d_exp=2, separable_=True,
-                        zero_compatibility=False, work_cap=WORK_CAP):
-    settings = {"d_poly": int(d_poly), "d_darboux": int(d_darboux), "d_exp": int(d_exp),
-                "separable": bool(separable_), "primes": list(PRIMES)}
+def _symmetry_reduction(
+    obj,
+    fixed=None,
+    positive=True,
+    d_poly=3,
+    d_darboux=2,
+    d_exp=2,
+    separable_=True,
+    zero_compatibility=False,
+    work_cap=WORK_CAP,
+):
+    settings = {
+        "d_poly": int(d_poly),
+        "d_darboux": int(d_darboux),
+        "d_exp": int(d_exp),
+        "separable": bool(separable_),
+        "primes": list(PRIMES),
+    }
     coords = red_coordinates(obj)
     if fixed is None:
         fixed = obj.get("gauge") or []
     fixed = list(dict.fromkeys(str(f) for f in fixed))
     unknown = [f for f in fixed if f not in set(coords)]
     if unknown:
-        warnings.warn(f"no effect: {', '.join(unknown)}: not a coordinate of the analysis.",
-                      stacklevel=2)
+        warnings.warn(f"no effect: {', '.join(unknown)}: not a coordinate of the analysis.", stacklevel=2)
     pos_set = positive_set_of(positive, coords)
     settings["positive"] = True if pos_set is None else (False if not pos_set else pos_set)
     old_pos = set_positive(pos_set)
     old_work = DOMAIN.get("work"), DOMAIN.get("work_cap")
     try:
         if pos_set is not None and zero_compatibility:
-            warnings.warn("zero limits are the faces of the positive orthant; "
-                          "for a coordinate that is not declared positive, zero is an interior point "
-                          "and the verdict does not apply.", stacklevel=2)
+            warnings.warn(
+                "zero limits are the faces of the positive orthant; "
+                "for a coordinate that is not declared positive, zero is an interior point "
+                "and the verdict does not apply.",
+                stacklevel=2,
+            )
         if obj.get("identifiable") or not obj.get("symmetries"):
             return red_result(obj, [], None, coords, fixed, settings)
         lc = log_chart(obj, coords)
@@ -713,11 +840,17 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
             old_nr = DOMAIN["no_roots"]
             DOMAIN["no_roots"] = True
             try:
-                res = symmetry_reduction(lc["object"], fixed=lc["ren"](fixed), positive=pos2,
-                                         d_poly=d_poly, d_darboux=d_darboux, d_exp=d_exp,
-                                         separable_=separable_,
-                                         zero_compatibility=zero_compatibility,
-                                         work_cap=work_cap)
+                res = symmetry_reduction(
+                    lc["object"],
+                    fixed=lc["ren"](fixed),
+                    positive=pos2,
+                    d_poly=d_poly,
+                    d_darboux=d_darboux,
+                    d_exp=d_exp,
+                    separable_=separable_,
+                    zero_compatibility=zero_compatibility,
+                    work_cap=work_cap,
+                )
             finally:
                 DOMAIN["no_roots"] = old_nr
             return log_back(res, lc)
@@ -731,11 +864,17 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
             old_nr = DOMAIN["no_roots"]
             DOMAIN["no_roots"] = True
             try:
-                res = symmetry_reduction(ec["object"], fixed=ec["ren"](fixed),
-                                         positive=pos2 if pos2 else False, d_poly=d_poly,
-                                         d_darboux=d_darboux, d_exp=d_exp, separable_=separable_,
-                                         zero_compatibility=zero_compatibility,
-                                         work_cap=work_cap)
+                res = symmetry_reduction(
+                    ec["object"],
+                    fixed=ec["ren"](fixed),
+                    positive=pos2 if pos2 else False,
+                    d_poly=d_poly,
+                    d_darboux=d_darboux,
+                    d_exp=d_exp,
+                    separable_=separable_,
+                    zero_compatibility=zero_compatibility,
+                    work_cap=work_cap,
+                )
             finally:
                 DOMAIN["no_roots"] = old_nr
             return exp_back(res, ec)
@@ -781,8 +920,13 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                     curved_supp = list(dict.fromkeys(curved_supp + [Wc[j] for r in down for j in np.nonzero(W[r])[0]]))
                     scal_rows = [r for r in scal_rows if r not in down]
             allowed = [c for c in Wc if c not in set(curved_supp)] if curved_supp else None
-            return {"scal_rows": scal_rows, "demoted": demoted, "curved_supp": curved_supp,
-                    "allowed": allowed, "kept": kept}
+            return {
+                "scal_rows": scal_rows,
+                "demoted": demoted,
+                "curved_supp": curved_supp,
+                "allowed": allowed,
+                "kept": kept,
+            }
 
         def scaling_blocks(dm):
             blocks = []
@@ -792,14 +936,22 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                     rows = [dm["scal_rows"][c] for c in cp]
                     nzc = [j for j in range(W.shape[1]) if np.any(W[rows][:, j] != 0)]
                     Wb = W[rows][:, nzc]
-                    blocks.append(scaling_block(Wb, [Wc[j] for j in nzc],
-                                                [o["labels"][wr["rows"][r]] for r in rows], fixed,
-                                                dm["allowed"]))
+                    blocks.append(
+                        scaling_block(
+                            Wb, [Wc[j] for j in nzc], [o["labels"][wr["rows"][r]] for r in rows], fixed, dm["allowed"]
+                        )
+                    )
             return blocks
+
         if state.get("reduce_pin_inside"):
             # an alternative trafo: the scalings may pin coordinates of the curved directions
-            dm = {"scal_rows": list(range(W.shape[0])), "demoted": [], "curved_supp": curved_supp0,
-                  "allowed": None, "kept": []}
+            dm = {
+                "scal_rows": list(range(W.shape[0])),
+                "demoted": [],
+                "curved_supp": curved_supp0,
+                "allowed": None,
+                "kept": [],
+            }
             blocks = scaling_blocks(dm)
         else:
             dm = demote(True)
@@ -811,8 +963,13 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
         if not state.get("reduce_pin_inside") and any(b.get("coverage") == "partial" for b in blocks):
             # a pin on a signed coordinate misses orbits: a positive pin inside the curved support instead,
             # the curved directions combined with the scalings to leave it unmoved
-            dm_in = {"scal_rows": list(range(W.shape[0])), "demoted": [], "curved_supp": curved_supp0,
-                     "allowed": None, "kept": []}
+            dm_in = {
+                "scal_rows": list(range(W.shape[0])),
+                "demoted": [],
+                "curved_supp": curved_supp0,
+                "allowed": None,
+                "kept": [],
+            }
             best = None
             for skip in range(REBASE_CHOICES):
                 with state.options(transversal_skip=skip or None):
@@ -838,14 +995,31 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
             if b["type"] == "scaling" and b.get("pins"):
                 scal_pins.update(b["pins"])
         if curved_idx:
-            blocks += curved(syms, curved_idx, o["labels"], fixed, d_poly, d_darboux, d_exp,
-                             separable_, scal_pins, model_structure(obj, coords))
+            blocks += curved(
+                syms,
+                curved_idx,
+                o["labels"],
+                fixed,
+                d_poly,
+                d_darboux,
+                d_exp,
+                separable_,
+                scal_pins,
+                model_structure(obj, coords),
+            )
         blocks = verify_blocks(blocks)
         for b in blocks:
             # a linear-flow section requires every invariant to pass the exact check
             if b.get("stage") == "linear flow" and any("DROPPED" in c for c in b.get("certificates") or []):
-                b.update(status="invariant_only", pins=None, transversal=None, new_parameters=None,
-                         injective=None, reach=None, reason="an invariant of the linear flow failed the exact check")
+                b.update(
+                    status="invariant_only",
+                    pins=None,
+                    transversal=None,
+                    new_parameters=None,
+                    injective=None,
+                    reach=None,
+                    reason="an invariant of the linear flow failed the exact check",
+                )
         for b in blocks:
             short = b.get("target") is not None and len(b.get("invariants") or []) < b["target"]
             for c in (b.get("certificates") or []) if b["type"] == "curved" and short else []:
@@ -871,8 +1045,9 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                 swallow(exc, "face section")
                 sol = {"solved": False}
             if work_cap is not None and DOMAIN["work"] > work_cap and not sol.get("solved"):
-                session.note("limits", f"face section search of {', '.join(b['labels'])}: "
-                                       f"reduce(work_cap={work_cap}) reached")
+                session.note(
+                    "limits", f"face section search of {', '.join(b['labels'])}: reduce(work_cap={work_cap}) reached"
+                )
             # the gauge section search has a separate budget
             DOMAIN["work"] = 0
             if sol.get("solved"):
@@ -882,32 +1057,49 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
             if split is not None:
                 split_pair = [re.sub(r" = 0$", "", x) for x in split["positive"] + split["negative"]]
             if not sol.get("solved"):
-                sol = solve_invariants(b, scal_pins, coords, inv_start, split_pair=split_pair,
-                                       gens=block_generators(b["labels"], gen_of))
+                sol = solve_invariants(
+                    b, scal_pins, coords, inv_start, split_pair=split_pair, gens=block_generators(b["labels"], gen_of)
+                )
             if not sol.get("solved") and split is not None:
-                sol["reason"] = (f"the orbits leave the {domain_name()} through "
-                                 f"{', '.join(split['positive'])} where {split['invariant']} > 0 and through "
-                                 f"{', '.join(split['negative'])} where it is < 0; no face covers both, and "
-                                 f"no section was certified. An assumption on the sign of {split['invariant']} "
-                                 "selects the face")
+                sol["reason"] = (
+                    f"the orbits leave the {domain_name()} through "
+                    f"{', '.join(split['positive'])} where {split['invariant']} > 0 and through "
+                    f"{', '.join(split['negative'])} where it is < 0; no face covers both, and "
+                    f"no section was certified. An assumption on the sign of {split['invariant']} "
+                    "selects the face"
+                )
             rooted = sol.get("solved") and sol.get("root_note") is not None
             pos = positive_set()
             weak = sol.get("solved") and bool(sol.get("sign_conditions"))
             if (not sol.get("solved") or rooted or weak) and pos is not None and set(b["support"]) - set(pos):
-                sol_r = solve_invariants(b, scal_pins, coords, inv_start, prefer_real=True, split_pair=split_pair,
-                                         gens=block_generators(b["labels"], gen_of))
+                sol_r = solve_invariants(
+                    b,
+                    scal_pins,
+                    coords,
+                    inv_start,
+                    prefer_real=True,
+                    split_pair=split_pair,
+                    gens=block_generators(b["labels"], gen_of),
+                )
                 # a section under sign conditions, on part of the orbits only, replaces no solved one
-                if sol_r.get("solved") and (not rooted or sol_r.get("root_note") is None) and \
-                        not (sol.get("solved") and sol_r.get("sign_conditions")):
+                if (
+                    sol_r.get("solved")
+                    and (not rooted or sol_r.get("root_note") is None)
+                    and not (sol.get("solved") and sol_r.get("sign_conditions"))
+                ):
                     sol = sol_r
             if work_cap is not None and DOMAIN["work"] > work_cap:
-                session.note("limits", f"section search of {', '.join(b['labels'])}: reduce(work_cap={work_cap}) "
-                                       "reached")
+                session.note(
+                    "limits", f"section search of {', '.join(b['labels'])}: reduce(work_cap={work_cap}) reached"
+                )
             if sol.get("solved"):
                 foreign = _outside_coordinates(sol, b, coords, (obj.get("info") or {}).get("model_rhs") or {})
                 if foreign:
-                    sol = {"solved": False, "reason": f"the invariants involve {', '.join(foreign)}, a resting "
-                                                     "state that no parameter expression gives"}
+                    sol = {
+                        "solved": False,
+                        "reason": f"the invariants involve {', '.join(foreign)}, a resting "
+                        "state that no parameter expression gives",
+                    }
             if sol.get("solved"):
                 nums = []
                 for q in sol.get("inv_names") or []:
@@ -924,67 +1116,99 @@ def _symmetry_reduction(obj, fixed=None, positive=True, d_poly=3, d_darboux=2, d
                 b["section_monotone"] = bool(sol.get("monotone")) and not b["face"]
                 b["reach"] = bool(sol.get("reach")) and not b["face"]
                 if b["face"]:
-                    b["reach"], b["face_why"], b["face_level"] = _face_proof(obj, b, scal_pins, sol, gen_of,
-                                                                             coords, (d_poly, d_darboux, d_exp))
+                    b["reach"], b["face_why"], b["face_level"] = _face_proof(
+                        obj, b, scal_pins, sol, gen_of, coords, (d_poly, d_darboux, d_exp)
+                    )
                 gauge_val = list(dict.fromkeys(sol["pins"][g] for g in sol.get("gauge") or []))
                 b["coverage"] = sol.get("coverage")
                 b["unproven_entries"] = list(sol.get("unproven_entries") or [])
                 b["sign_conditions"] = list(sol.get("sign_conditions") or [])
                 b["solved_domain"] = sol.get("solved_domain")
-                notes = [(", ".join(sol["section"])) if sol.get("section") is not None
-                         else f"{', '.join(sol.get('gauge') or [])} = {', '.join(gauge_val)}"]
+                notes = [
+                    (", ".join(sol["section"]))
+                    if sol.get("section") is not None
+                    else f"{', '.join(sol.get('gauge') or [])} = {', '.join(gauge_val)}"
+                ]
                 witness = ", ".join(f"{k} = {v}" for k, v in (sol.get("sign_witness") or {}).items())
-                notes.append(f"entries {', '.join(b['unproven_entries'])} without a positivity certificate, kept "
-                             "inside the declared bounds" if b["unproven_entries"] else
-                             f"entries without a positivity certificate: the trafo covers the orbits where "
-                             f"{', '.join(b['sign_conditions'])}, a sampled orbit among them ({witness})"
-                             if b["sign_conditions"] else
-                             f"entries certified positive for positive values of the new parameters only; one that "
-                             f"takes both signs leaves part of the {domain_name()} outside the trafo"
-                             if sol.get("coverage") == "partial" else
-                             "entries certified positive for every value of the invariants")
+                notes.append(
+                    f"entries {', '.join(b['unproven_entries'])} without a positivity certificate, kept "
+                    "inside the declared bounds"
+                    if b["unproven_entries"]
+                    else f"entries without a positivity certificate: the trafo covers the orbits where "
+                    f"{', '.join(b['sign_conditions'])}, a sampled orbit among them ({witness})"
+                    if b["sign_conditions"]
+                    else f"entries certified positive for positive values of the new parameters only; one that "
+                    f"takes both signs leaves part of the {domain_name()} outside the trafo"
+                    if sol.get("coverage") == "partial"
+                    else "entries certified positive for every value of the invariants"
+                )
                 if sol.get("root_note"):
                     notes.append(sol["root_note"])
                 b["gauge_note"] = "; ".join(notes)
                 b["new_parameters"] = sol.get("meaning")
                 b["status"] = "reduced"
-                certs = ["solved exactly: each invariant becomes a fresh q_<k> parameter"] if not sol.get(
-                    "section_chart") else ["section chart: the balances solve rationally on the section; the new "
-                                           "parameters are the free coordinates of the point where the orbit meets "
-                                           "it, met once by every orbit"]
+                certs = (
+                    ["solved exactly: each invariant becomes a fresh q_<k> parameter"]
+                    if not sol.get("section_chart")
+                    else [
+                        "section chart: the balances solve rationally on the section; the new "
+                        "parameters are the free coordinates of the point where the orbit meets "
+                        "it, met once by every orbit"
+                    ]
+                )
                 if sol.get("face"):
-                    certs.append(f"face section certified: every orbit reaches {', '.join(sol['section'])} "
-                                 f"with each other coordinate positive (the face point, solved from the "
-                                 f"invariants, is positive on the whole {domain_name()})")
+                    certs.append(
+                        f"face section certified: every orbit reaches {', '.join(sol['section'])} "
+                        f"with each other coordinate positive (the face point, solved from the "
+                        f"invariants, is positive on the whole {domain_name()})"
+                    )
                 elif b["section_monotone"]:
                     certs.append("section: each balance ratio has a derivative of one sign along each generator")
                 elif sol.get("jacobian"):
                     certs.append("section: the Jacobian of the balance ratios along the generators has one sign")
                 if b["injective"]:
-                    certs.append("section met at most once: the solved entries give back every point of "
-                                 "the section from the invariants, so two points of one orbit on it coincide")
+                    certs.append(
+                        "section met at most once: the solved entries give back every point of "
+                        "the section from the invariants, so two points of one orbit on it coincide"
+                    )
                 if b["face"] and b["reach"] and b.get("face_why") is None:
-                    certs.append("face reached in the limit: every orbit closes on the face point, where "
-                                 "the model is continuous, so the face point gives the output of the orbit" +
-                                 ("; the resting state there is checked at random points of the face, without "
-                                  "an error bound" if b.get("face_level") == "checked" else ""))
+                    certs.append(
+                        "face reached in the limit: every orbit closes on the face point, where "
+                        "the model is continuous, so the face point gives the output of the orbit"
+                        + (
+                            "; the resting state there is checked at random points of the face, without an error bound"
+                            if b.get("face_level") == "checked"
+                            else ""
+                        )
+                    )
                 if b["reach"]:
-                    certs.append("every level set of the invariants is one orbit: it is the graph of the "
-                                 "solved coordinates over a connected set of gauge values, and the generators are "
-                                 "independent on the gauge everywhere")
+                    certs.append(
+                        "every level set of the invariants is one orbit: it is the graph of the "
+                        "solved coordinates over a connected set of gauge values, and the generators are "
+                        "independent on the gauge everywhere"
+                    )
                 if b["sign_conditions"]:
-                    certs.append(f"trafo certified where {', '.join(b['sign_conditions'])}, the other entries "
-                                 f"positive for positive values of the new parameters; the orbits outside are not "
-                                 f"covered")
+                    certs.append(
+                        f"trafo certified where {', '.join(b['sign_conditions'])}, the other entries "
+                        f"positive for positive values of the new parameters; the orbits outside are not "
+                        f"covered"
+                    )
                 elif sol.get("coverage") == "partial":
-                    certs.append(f"trafo certified for positive values of the new parameters only: one that takes "
-                                 f"both signs leaves part of the {domain_name()} uncovered")
+                    certs.append(
+                        f"trafo certified for positive values of the new parameters only: one that takes "
+                        f"both signs leaves part of the {domain_name()} uncovered"
+                    )
                 else:
-                    certs.append("trafo certified: every solved entry positive on the domains of the new parameters (" +
-                                 ", ".join(f"{k} {v}" for k, v in (sol.get("solved_domain") or {}).items()) + ")")
+                    certs.append(
+                        "trafo certified: every solved entry positive on the domains of the new parameters ("
+                        + ", ".join(f"{k} {v}" for k, v in (sol.get("solved_domain") or {}).items())
+                        + ")"
+                    )
                 if sol.get("shifted"):
-                    certs.append(f"offsets of the new parameters certified for {', '.join(sol['shifted'])}: the "
-                                 f"shifted invariant exceeds the offset on the whole {domain_name()}")
+                    certs.append(
+                        f"offsets of the new parameters certified for {', '.join(sol['shifted'])}: the "
+                        f"shifted invariant exceeds the offset on the whole {domain_name()}"
+                    )
                 b["certificates"] = b["certificates"] + certs
             else:
                 b["reason"] = sol.get("reason") or b.get("reason")

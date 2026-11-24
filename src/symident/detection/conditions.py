@@ -40,8 +40,9 @@ class Grid:
         self.cols = {str(k): list(v) for k, v in cols.items()}
         bad = [k for k, v in self.cols.items() if len(v) != len(self.rows)]
         if bad:
-            raise InputError(f"conditions: the column {bad[0]} has {len(self.cols[bad[0]])} entries "
-                             f"for {len(self.rows)} rows")
+            raise InputError(
+                f"conditions: the column {bad[0]} has {len(self.cols[bad[0]])} entries for {len(self.rows)} rows"
+            )
 
     @classmethod
     def from_any(cls, x):
@@ -86,9 +87,13 @@ def as_events(events):
         return []
     out = []
     for e in events:
-        d = {"var": str(e["var"]), "time": num_str(e.get("time", "NA")),
-             "value": num_str(e["value"]), "method": str(e.get("method", "replace")),
-             "root": e.get("root")}
+        d = {
+            "var": str(e["var"]),
+            "time": num_str(e.get("time", "NA")),
+            "value": num_str(e["value"]),
+            "method": str(e.get("method", "replace")),
+            "root": e.get("root"),
+        }
         if e.get("cond") is not None:
             d["cond"] = [int(c) for c in e["cond"]]
         out.append(d)
@@ -117,6 +122,7 @@ def _resolver(conditions, cond_subs):
             sub = cond_subs[ci]
             v = replace_symbols(list(sub), list(sub.values()), v)
         return v
+
     return resolve
 
 
@@ -145,14 +151,27 @@ def at_time(value, t):
     return replace_symbols(["time"], [str(t)], value) if "time" in get_symbols([str(value)]) else value
 
 
-def resolve_conditions(conditions, events, initial, symbols, states, const_states=(), forcings=(),
-                       equilibrate=False, cond_subs=None, cond_initial=None, n_cond_obs=0, renamed=()):
+def resolve_conditions(
+    conditions,
+    events,
+    initial,
+    symbols,
+    states,
+    const_states=(),
+    forcings=(),
+    equilibrate=False,
+    cond_subs=None,
+    cond_initial=None,
+    n_cond_obs=0,
+    renamed=(),
+):
     """Per-segment substitutions, initial values and events per condition; `renamed` columns substitute the state."""
     n_grid = 0 if conditions is None else conditions.nrow
     Kcond = max(1, len(cond_subs or []), len(cond_initial or []), n_grid, n_cond_obs)
     if n_grid and cond_subs and len(cond_subs) != n_grid:
-        raise ValueError(f"the per-condition `trafo` list length "
-                         f"({len(cond_subs)}) must match the condition grid rows ({n_grid}).")
+        raise ValueError(
+            f"the per-condition `trafo` list length ({len(cond_subs)}) must match the condition grid rows ({n_grid})."
+        )
     if conditions is None:
         conditions = Grid([str(i + 1) for i in range(Kcond)], {})
     conds = conditions.rows or [str(i + 1) for i in range(max(1, conditions.nrow))]
@@ -178,9 +197,11 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
             kn = [as_number(k) for k in post_keys]
             kn = [k for k in kn if k is not None]
             if any(kn[i] >= kn[i + 1] for i in range(len(kn) - 1)):
-                raise ValueError("with an event time given in parameters, the "
-                                 "list of events sets the order of the events and must list the numeric "
-                                 "times ascending.")
+                raise ValueError(
+                    "with an event time given in parameters, the "
+                    "list of events sets the order of the events and must list the numeric "
+                    "times ascending."
+                )
         seg_of = [1 if is_t0[i] else 2 + post_keys.index(key[i]) for i in range(len(ev))]
         return is_t0, seg_of, [num_str(t0)] + post_keys
 
@@ -201,6 +222,7 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
         def value(i, k=k, ev=ev, ev_time=ev_time):
             # an event value reads the clock at the event time
             return at_time(resolve(ev[i]["value"], k), ev_time[i])
+
         n_seg = len(seg_times)
         n_gaps = max(n_gaps, n_seg - 1)
         ev_var = [e["var"] for e in ev]
@@ -257,6 +279,7 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
 
                 def before(v):
                     return replace_symbols(at_pre, [f"({pre[x]})" for x in at_pre], v) if at_pre else v
+
                 for X in dyn_states:
                     ops = [i for i in le_idx if ev_var[i] == X]
                     if pre[X] == X and not ops and X not in forcings:
@@ -268,8 +291,11 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
             else:
                 ev0 = []
                 ic0 = dummy_ic0
-                seg_ev = [{"var": ev_var[i], "method": ev_method[i], "value": value(i)}
-                          for i in range(len(ev)) if not is_switch[i] and seg_of[i] == j]
+                seg_ev = [
+                    {"var": ev_var[i], "method": ev_method[i], "value": value(i)}
+                    for i in range(len(ev))
+                    if not is_switch[i] and seg_of[i] == j
+                ]
             subs_list.append(subs)
             rest_list.append(rest)
             ic0_list.append(ic0)
@@ -279,10 +305,20 @@ def resolve_conditions(conditions, events, initial, symbols, states, const_state
             equil_list.append(bool(equilibrate))
             chain_of.append(k + 1)
             pos_in_chain.append(j)
-    return {"subs": subs_list, "rest_subs": rest_list, "ic0": ic0_list, "seg_equil": equil_list,
-            "events0": ev0_list, "seg_events": seg_ev_list, "chain_of": chain_of,
-            "pos_in_chain": pos_in_chain, "conditions": conds, "n_conditions": len(conds),
-            "n_gaps": n_gaps, "times": time_list}
+    return {
+        "subs": subs_list,
+        "rest_subs": rest_list,
+        "ic0": ic0_list,
+        "seg_equil": equil_list,
+        "events0": ev0_list,
+        "seg_events": seg_ev_list,
+        "chain_of": chain_of,
+        "pos_in_chain": pos_in_chain,
+        "conditions": conds,
+        "n_conditions": len(conds),
+        "n_gaps": n_gaps,
+        "times": time_list,
+    }
 
 
 def scaling_component(w, var):
@@ -307,6 +343,7 @@ def log_param_back(res, lp):
 
     def ren(v):
         return [th[X.index(x)] if x in X else x for x in v]
+
     res = dict(res)
     res["coordinates"] = ren(res.get("coordinates") or [])
     out = []
@@ -323,8 +360,7 @@ def log_param_back(res, lp):
                 continue
             vec = {k: scaling_component(v, k) for k, v in vec.items()}
             d["type"] = "general"
-        d["vector"] = {ren([k])[0]: str(log_param_backsub(str(v), k, X, th, b))
-                       for k, v in vec.items()}
+        d["vector"] = {ren([k])[0]: str(log_param_backsub(str(v), k, X, th, b)) for k, v in vec.items()}
         out.append(d)
     res["non_identifiable"] = out
     return res
@@ -352,6 +388,7 @@ def event_pinned_states(events, conditions):
     def is_known(v):
         vals = [num_str(x) for x in conditions.cols[v]] if v in cols else [v]
         return bool(vals) and all(is_number(x) for x in vals)
+
     pinned = []
     for e in events:
         if e["method"] in ("replace", "add") and is_known(e["value"]):
@@ -375,8 +412,14 @@ def initial_value_split(trafos, states, taken=()):
     conflict = [s for s in states if s in conflict and s != "time"]
     if not conflict:
         return none
-    taken = list(dict.fromkeys(list(taken) + list(states) + [k for tr in trafos for k in tr] +
-                               [s for tr in trafos for s in get_symbols(list(tr.values()))]))
+    taken = list(
+        dict.fromkeys(
+            list(taken)
+            + list(states)
+            + [k for tr in trafos for k in tr]
+            + [s for tr in trafos for s in get_symbols(list(tr.values()))]
+        )
+    )
     to = []
     for X in conflict:
         cand = f"{X}_init"
@@ -415,12 +458,14 @@ def rename_result(raw, frm, to):
         if d.get("support") is not None:
             d["support"] = ren(d["support"])
         return d
+
     raw = dict(raw)
     if raw.get("coordinates") is not None:
         raw["coordinates"] = ren(raw["coordinates"])
     if isinstance(raw.get("kernel"), dict) and raw["kernel"].get("coords") is not None:
-        raw["kernel"] = dict(raw["kernel"], coords=[frm[to.index(z)] if z in to else z
-                                                    for z in raw["kernel"]["coords"]])
+        raw["kernel"] = dict(
+            raw["kernel"], coords=[frm[to.index(z)] if z in to else z for z in raw["kernel"]["coords"]]
+        )
     if raw.get("non_identifiable") is not None:
         raw["non_identifiable"] = [fix_dir(d) for d in raw["non_identifiable"]]
     return raw

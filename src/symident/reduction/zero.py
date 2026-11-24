@@ -24,8 +24,11 @@ def ineq_str(e):
     neg = [t.startswith("-") for t in tm]
     if all(neg) or not any(neg):
         return None
-    return (" + ".join(t for t, n in zip(tm, neg) if not n) + " > " +
-            " + ".join(re.sub(r"^-", "", t) for t, n in zip(tm, neg) if n))
+    return (
+        " + ".join(t for t, n in zip(tm, neg) if not n)
+        + " > "
+        + " + ".join(re.sub(r"^-", "", t) for t, n in zip(tm, neg) if n)
+    )
 
 
 def condition(e):
@@ -174,6 +177,7 @@ def zero_compat(b, fixed=()):
                 except SYMPY_FAILS as exc:
                     sympy_fail(exc)
                     return False
+
             if not all(vanishes(e) for e in f["eqs"]):
                 continue
             cnd, dead, opn = [], [], False
@@ -198,9 +202,10 @@ def zero_compat(b, fixed=()):
             if opn:
                 unclear = True
                 continue
-            parts = [f"{z} = 0" for z in Z] + \
-                [f"{o} = " + ("(free)" if fr_ else str(vals[u]).replace("**", "^"))
-                 for o, u, fr_ in zip(f["other"], f["unk"], free)]
+            parts = [f"{z} = 0" for z in Z] + [
+                f"{o} = " + ("(free)" if fr_ else str(vals[u]).replace("**", "^"))
+                for o, u, fr_ in zip(f["other"], f["unk"], free)
+            ]
             at = ", ".join(parts)
             for u, p in pv.items():
                 at = re.sub(r"\b" + p + r"\b", f"{u}'", at)
@@ -208,6 +213,7 @@ def zero_compat(b, fixed=()):
         if grow:
             return {"verdict": "grow", "grow": grow}
         return {"verdict": "no" if info["complete"] and not unclear else "unknown"}
+
     rows, seen = [], set()
     for v0 in supp:
         Z = [v0]
@@ -226,15 +232,29 @@ def zero_compat(b, fixed=()):
         seen.add(key)
         if b.get("face") and key == ", ".join(sym_sort(b.get("transversal") or [])):
             continue
-        rows.append({"coordinates": key, "verdict": a["verdict"],
-                     "limit": _any3(darboux_(z) for z in Z) if a["verdict"] in ("yes", "if") else None,
-                     "certain": certain or a["verdict"] == "no",
-                     "condition": a.get("condition") or "", "at": a.get("at") or ""})
+        rows.append(
+            {
+                "coordinates": key,
+                "verdict": a["verdict"],
+                "limit": _any3(darboux_(z) for z in Z) if a["verdict"] in ("yes", "if") else None,
+                "certain": certain or a["verdict"] == "no",
+                "condition": a.get("condition") or "",
+                "at": a.get("at") or "",
+            }
+        )
     if b.get("face") and b.get("transversal"):
         Z = sym_sort(b["transversal"])
         sm = b.get("new_parameters") or {}
         pins_inv = {v: k for k, v in (b.get("pins") or {}).items()}
         parts = [f"{z} = 0" for z in Z] + [f"{pins_inv.get(cn, cn)} = {m}" for cn, m in sm.items()]
-        rows = [{"coordinates": ", ".join(Z), "verdict": "yes", "limit": False, "certain": True,
-                 "condition": "", "at": ", ".join(parts)}] + rows
+        rows = [
+            {
+                "coordinates": ", ".join(Z),
+                "verdict": "yes",
+                "limit": False,
+                "certain": True,
+                "condition": "",
+                "at": ", ".join(parts),
+            }
+        ] + rows
     return rows or None

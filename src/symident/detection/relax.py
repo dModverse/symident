@@ -65,7 +65,7 @@ def _same_leaf(leaves, value):
         if isinstance(v, spy.exp) and isinstance(value, spy.exp):
             k = spy.cancel(value.args[0] / v.args[0])
             if k.is_Integer:
-                return W ** k
+                return W**k
         elif v == value:
             return W
     return None
@@ -82,10 +82,13 @@ def _log_states(f, g, pos):
         R = spy.cancel(e / x).replace(lambda a: isinstance(a, spy.log) and a.args[0] == x, lambda a: L)
         if R.has(x):
             continue
-        rest = [v.replace(lambda a: isinstance(a, spy.log) and a.args[0] == x, lambda a: L)
-                for z, v in f.items() if z != x] + \
-               [v.replace(lambda a: isinstance(a, spy.log) and a.args[0] == x, lambda a: L)
-                for v in g.values() if not (v.is_Pow and v.base == x and v.exp.is_Integer) and v != x]
+        rest = [
+            v.replace(lambda a: isinstance(a, spy.log) and a.args[0] == x, lambda a: L) for z, v in f.items() if z != x
+        ] + [
+            v.replace(lambda a: isinstance(a, spy.log) and a.args[0] == x, lambda a: L)
+            for v in g.values()
+            if not (v.is_Pow and v.base == x and v.exp.is_Integer) and v != x
+        ]
         if any(v.has(x) for v in rest):
             continue
         out[x] = R
@@ -115,8 +118,7 @@ def _start_power(x, al, B, f, g, tr, starts, states, ins, leaves, rewrites, take
     if c.free_symbols & jsyms:
         raise ValueError(f"the leading coefficient {_str(c)} of {x} reads a known input")
     if positive is None or not is_positive(c, positive):
-        raise ValueError(f"the leading coefficient {_str(c)} of {x}, which starts at 0, is not positive on the "
-                         "domain")
+        raise ValueError(f"the leading coefficient {_str(c)} of {x}, which starts at 0, is not positive on the domain")
     Zs, Nn, lam = spy.Dummy("Z"), spy.Dummy("N"), spy.Dummy("lam", positive=True)
 
     def power_of(lf):
@@ -126,13 +128,17 @@ def _start_power(x, al, B, f, g, tr, starts, states, ins, leaves, rewrites, take
             return None
         q = spy.cancel(v.exp / al)
         return (v.base, int(q)) if q.is_Integer and q != 0 else None
+
     sub = {B: Zs * Nn}
     for lf in leaves:
         bq = power_of(lf)
         if bq is not None and (spy.cancel(bq[0] - c) == 0 or spy.cancel(bq[0] * c - 1) == 0):
             sub[spy.Symbol(lf["name"])] = Zs ** (bq[1] if spy.cancel(bq[0] - c) == 0 else -bq[1])
-    exprs = {**{("f", s): v for s, v in f.items()}, **{("g", y): v for y, v in g.items()},
-             **{("t", s): v for s, v in tr.items() if s in states}}
+    exprs = {
+        **{("f", s): v for s, v in f.items()},
+        **{("g", y): v for y, v in g.items()},
+        **{("t", s): v for s, v in tr.items() if s in states},
+    }
 
     vals = {k_: v.xreplace(sub) for k_, v in exprs.items()}
     # Z cancels in an expression where the cancelled form is free of it
@@ -154,7 +160,7 @@ def _start_power(x, al, B, f, g, tr, starts, states, ins, leaves, rewrites, take
             W = str(_fresh("si_W", taken))
             leaves.append({"name": W, "kind": "power", "value": spy.Pow(c, al), "state": None})
             vals = {k_: v.xreplace({Zs: spy.Symbol(W)}) for k_, v in vals.items()}
-    N = x ** al * spy.Pow(c, -al)
+    N = x**al * spy.Pow(c, -al)
     vals = {k_: v.xreplace({Nn: N}) for k_, v in vals.items()}
     # leaves that are powers of c_x or have the value 1 are gone
     gone = {P for P in sub if P != B}
@@ -166,10 +172,20 @@ def _start_power(x, al, B, f, g, tr, starts, states, ins, leaves, rewrites, take
     f = {s: vals[("f", s)] for s in f}
     g = {y: vals[("g", y)] for y in g}
     tr = {s: vals.get(("t", s), v) for s, v in tr.items()}
-    if moved or any(lf["kind"] == "power" and lf.get("state") is None and lf["value"] == spy.Pow(c, al)
-                    for lf in leaves):
-        rewrites.append({"from": _str(x ** al), "to": _str(N), "state": None, "rate": None, "start": "0",
-                         "order": k, "leading": _str(c)})
+    if moved or any(
+        lf["kind"] == "power" and lf.get("state") is None and lf["value"] == spy.Pow(c, al) for lf in leaves
+    ):
+        rewrites.append(
+            {
+                "from": _str(x**al),
+                "to": _str(N),
+                "state": None,
+                "rate": None,
+                "start": "0",
+                "order": k,
+                "leading": _str(c),
+            }
+        )
     return f, g, tr
 
 
@@ -212,17 +228,28 @@ def relax(odes, observables, trafo, coords, inputs=(), positive=True):
         for x, L in Ls.items():
             P = _fresh("si_P", taken)
             leaves.append({"name": str(P), "kind": "constant", "value": spy.log(starts[x].xreplace(params))})
-            rewrites.append({"from": _str(x), "to": f"exp({L})", "state": str(L), "rate": _str(logx[x].xreplace(
-                {d: Ls[x] for d in logx[x].atoms(spy.Dummy)})), "start": str(P)})
+            rewrites.append(
+                {
+                    "from": _str(x),
+                    "to": f"exp({L})",
+                    "state": str(L),
+                    "rate": _str(logx[x].xreplace({d: Ls[x] for d in logx[x].atoms(spy.Dummy)})),
+                    "start": str(P),
+                }
+            )
             tr[L] = starts[L] = P
             tr.pop(x, None)
             starts.pop(x)
-        f = {Ls.get(x, x): (logx[x].xreplace({d: Ls[x] for d in logx[x].atoms(spy.Dummy)}) if x in logx else v)
-             for x, v in f.items()}
+        f = {
+            Ls.get(x, x): (logx[x].xreplace({d: Ls[x] for d in logx[x].atoms(spy.Dummy)}) if x in logx else v)
+            for x, v in f.items()
+        }
         f = {x: v.xreplace(to_L) for x, v in f.items()}
         # an observable x^k is k*log(x), injective on the positive reals
-        g = {y: (v.exp * Ls[v.base] if v.is_Pow and v.base in Ls else Ls[v] if v in Ls else v.xreplace(to_L))
-             for y, v in g.items()}
+        g = {
+            y: (v.exp * Ls[v.base] if v.is_Pow and v.base in Ls else Ls[v] if v in Ls else v.xreplace(to_L))
+            for y, v in g.items()
+        }
         states = set(f)
     while True:
         exprs = list(f.values()) + list(g.values())
@@ -247,8 +274,10 @@ def relax(odes, observables, trafo, coords, inputs=(), positive=True):
             g = {y: v.xreplace({a: new}) for y, v in g.items()}
             continue
         if a.is_Pow and a.exp.is_Rational:
-            raise ValueError(f"a root or rational power, {_str(a)}, has an algebraic start: the relaxation needs a "
-                             "transcendental term")
+            raise ValueError(
+                f"a root or rational power, {_str(a)}, has an algebraic start: the relaxation needs a "
+                "transcendental term"
+            )
         reads = a.free_symbols
         for u in sorted(reads & ins, key=str):
             # a known input u inside a term is a state with a known start and the known input du as rate
@@ -293,8 +322,9 @@ def relax(odes, observables, trafo, coords, inputs=(), positive=True):
                 new = new.xreplace({W: same})
             else:
                 leaves.append({"name": str(W), "kind": kind, "value": w0, "state": str(nu)})
-            rewrites.append({"from": _str(a), "to": _str(new), "state": str(nu), "rate": _str(f[nu]),
-                             "start": _str(tr[nu])})
+            rewrites.append(
+                {"from": _str(a), "to": _str(new), "state": str(nu), "rate": _str(f[nu]), "start": _str(tr[nu])}
+            )
         f = {x: v.xreplace({a: new}) for x, v in f.items()}
         g = {y: v.xreplace({a: new}) for y, v in g.items()}
     for (x, al), B in zpow.items():
@@ -331,29 +361,44 @@ def relax(odes, observables, trafo, coords, inputs=(), positive=True):
         if c in used:
             continue
         cs = spy.Symbol(c)
-        hit = [lf for lf in leaves if lf["kind"] != "log" and cs in lf["value"].free_symbols
-               and lf["name"] not in dropped.values() and _monotone_in(lf["value"], cs)]
+        hit = [
+            lf
+            for lf in leaves
+            if lf["kind"] != "log"
+            and cs in lf["value"].free_symbols
+            and lf["name"] not in dropped.values()
+            and _monotone_in(lf["value"], cs)
+        ]
         if not hit:
-            raise ValueError(f"{c} enters only through non-rational terms of the coordinates that do not determine "
-                             "it")
+            raise ValueError(f"{c} enters only through non-rational terms of the coordinates that do not determine it")
         dropped[c] = hit[0]["name"]
     for lf in leaves:
         lf["absorbs"] = next((c for c, P in dropped.items() if P == lf["name"]), None)
     if zpow and not leaves and not rewrites:
-        raise ValueError("the free powers of states at 0 enter as (x/c_x)^alpha, which the count takes without "
-                         "relaxation")
+        raise ValueError(
+            "the free powers of states at 0 enter as (x/c_x)^alpha, which the count takes without relaxation"
+        )
     pos = None
     if positive is not None:
         dec = set(coords) if positive is True else {str(p) for p in positive}
         # a logarithm of the coordinates is signed
-        pos = sorted((dec - set(dropped)) | {lf["name"] for lf in leaves if lf["kind"] != "log"
-                                             and not isinstance(lf["value"], spy.log)}
-                     | {str(x) for x in f if str(x).startswith("si_nu") and tr.get(x) == 1})
+        pos = sorted(
+            (dec - set(dropped))
+            | {lf["name"] for lf in leaves if lf["kind"] != "log" and not isinstance(lf["value"], spy.log)}
+            | {str(x) for x in f if str(x).startswith("si_nu") and tr.get(x) == 1}
+        )
         pos = [p for p in pos if p in used or p in {str(x) for x in f}]
-    return {"odes": {str(x): _str(v) for x, v in f.items()}, "observables": {y: _str(v) for y, v in g.items()},
-            "trafo": {str(k): _str(v) for k, v in tr.items()}, "leaves": leaves, "dropped": dropped,
-            "positive": pos, "rewrites": rewrites, "inputs": [u for u in inputs if spy.Symbol(u) in ins] + new_inputs,
-            "known": known}
+    return {
+        "odes": {str(x): _str(v) for x, v in f.items()},
+        "observables": {y: _str(v) for y, v in g.items()},
+        "trafo": {str(k): _str(v) for k, v in tr.items()},
+        "leaves": leaves,
+        "dropped": dropped,
+        "positive": pos,
+        "rewrites": rewrites,
+        "inputs": [u for u in inputs if spy.Symbol(u) in ins] + new_inputs,
+        "known": known,
+    }
 
 
 def scalings_keep_leaves(symmetries, leaves, dropped):
@@ -361,12 +406,14 @@ def scalings_keep_leaves(symmetries, leaves, dropped):
     connected set, else the reason: every direction that moves a leaf W is exact, a scaling or a constant shift of the
     leaves it moves, and moves no coordinate the starts read, the weights or shifts on these leaves form an
     invertible matrix, and no direction moves a coordinate read by the start of a leaf that none of them moves."""
+
     def reads(lfs):
         out = set()
         for lf in lfs:
             out |= {str(s) for s in lf["value"].free_symbols}
         # a coordinate replaced by a constant term P is a coordinate of the relaxed model
         return out - set(dropped)
+
     names = {lf["name"] for lf in leaves if lf["absorbs"] is None}
     every = reads(leaves)
     rows, moved = [], set()
@@ -388,8 +435,10 @@ def scalings_keep_leaves(symmetries, leaves, dropped):
             return f"a direction moves {', '.join(sorted(sup & every))}, read by the starts of the new states"
         moved |= sup & names
     cols = sorted(moved)
-    if rows and (len(rows) != len(cols) or
-                 spy.Matrix([[model_sympify(str(w.get(n, 0))) for n in cols] for w in rows]).rank() < len(cols)):
+    if rows and (
+        len(rows) != len(cols)
+        or spy.Matrix([[model_sympify(str(w.get(n, 0))) for n in cols] for w in rows]).rank() < len(cols)
+    ):
         return "the weights or shifts on the new coordinates they move are no invertible matrix"
     still = reads([lf for lf in leaves if lf["absorbs"] is None and lf["name"] not in moved])
     for s in symmetries:
@@ -449,8 +498,18 @@ def independent_leaves(leaves, coords, seed=0):
         for b, L in lam.items():
             out += spy.diff(u, L) * spy.diff(b, c) / b
         return out
-    pt = {c: spy.Rational(rng.randint(2, 10 ** 6), rng.randint(2, 10 ** 6)) for c in cs}
-    pt.update({L: spy.Rational(rng.randint(2, 10 ** 6), rng.randint(2, 10 ** 6)) for L in lam.values()})
-    J = spy.Matrix([[d(u, c).xreplace(pt) if not isinstance(u, spy.log) else (spy.diff(u.args[0], c) /
-                    u.args[0]).xreplace(pt) for c in cs] for u in rows])
+
+    pt = {c: spy.Rational(rng.randint(2, 10**6), rng.randint(2, 10**6)) for c in cs}
+    pt.update({L: spy.Rational(rng.randint(2, 10**6), rng.randint(2, 10**6)) for L in lam.values()})
+    J = spy.Matrix(
+        [
+            [
+                d(u, c).xreplace(pt)
+                if not isinstance(u, spy.log)
+                else (spy.diff(u.args[0], c) / u.args[0]).xreplace(pt)
+                for c in cs
+            ]
+            for u in rows
+        ]
+    )
     return J.rank() == len(rows)

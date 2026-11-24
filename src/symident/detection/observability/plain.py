@@ -20,19 +20,26 @@ class PlainSystem:
         self.run = run
         multi = run.multi
         self.transient = bool(multi.get("power_recast") or multi.get("exp_atoms"))
-        self.recast = [dict(r, inverted=False) for r in (multi.get("power_recast") or [])] \
-            if self.transient else []
-        self.atom_names = (strs(multi.get("recast_atom_names")) + strs(multi.get("exp_atoms"))) \
-            if self.transient else []
+        self.recast = [dict(r, inverted=False) for r in (multi.get("power_recast") or [])] if self.transient else []
+        self.atom_names = (
+            (strs(multi.get("recast_atom_names")) + strs(multi.get("exp_atoms"))) if self.transient else []
+        )
         self.exp_rel = multi.get("exp_relation")
         self.exp_rel_fn = tape_fn(self.exp_rel, run.n_leaves) if self.transient and multi.get("exp_atoms") else None
         zi = {z: i for i, z in enumerate(run.znames)}
-        self.recast_rel = [{
-            "Ecol": zi.get(str(rc["E"])), "base_col": zi.get(str(rc["base"])),
-            "exp_col": zi.get(str(rc["exp"])), "Lcol": zi.get(str(rc["L"])),
-            "Eslot": run.slot(str(rc["E"])), "base_slot": run.slot(str(rc["base"])),
-            "exp_slot": run.slot(str(rc["exp"])), "Lslot": run.slot(str(rc["L"]))}
-            for rc in self.recast]
+        self.recast_rel = [
+            {
+                "Ecol": zi.get(str(rc["E"])),
+                "base_col": zi.get(str(rc["base"])),
+                "exp_col": zi.get(str(rc["exp"])),
+                "Lcol": zi.get(str(rc["L"])),
+                "Eslot": run.slot(str(rc["E"])),
+                "base_slot": run.slot(str(rc["base"])),
+                "exp_slot": run.slot(str(rc["exp"])),
+                "Lslot": run.slot(str(rc["L"])),
+            }
+            for rc in self.recast
+        ]
 
     def relation_rows(self, point, p):
         """The linearized recast relations at the point; None where a base vanishes."""
@@ -67,8 +74,7 @@ class PlainSystem:
                     r2[rc["base_col"]] = (p - invb) % p
                 rel.append(r2)
         if self.exp_rel_fn is not None:
-            e_m = exp_rows(self.exp_rel, self.exp_rel_fn, run.znames,
-                           np.asarray(point, dtype=np.int64), p)
+            e_m = exp_rows(self.exp_rel, self.exp_rel_fn, run.znames, np.asarray(point, dtype=np.int64), p)
             if e_m is None:
                 return None
             rel.extend(list(e_m))
@@ -85,12 +91,23 @@ class PlainSystem:
         if rel_m is None:
             return {"ok": False}
         rr = _core.sym_rref_mod(np.vstack([o_r, rel_m]).astype(np.float64), p)
-        res = {"ok": True, "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), nz),
-               "pivots": np.atleast_1d(rr["piv"]).astype(np.int64), "rank": int(rr["rank"]), "dim": nz}
+        res = {
+            "ok": True,
+            "R": np.asarray(rr["R"], dtype=np.int64).reshape(int(rr["rank"]), nz),
+            "pivots": np.atleast_1d(rr["piv"]).astype(np.int64),
+            "rank": int(rr["rank"]),
+            "dim": nz,
+        }
         if run.has_gaps:
             Nn = int(o["N"])
-            res = series_stack(res, [np.asarray(o["S"], dtype=np.int64).reshape(-1, nz * Nn),
-                                     series_const(rel_m, Nn)], nz, Nn, p, run.cores_call)
+            res = series_stack(
+                res,
+                [np.asarray(o["S"], dtype=np.int64).reshape(-1, nz * Nn), series_const(rel_m, Nn)],
+                nz,
+                Nn,
+                p,
+                run.cores_call,
+            )
         return res
 
     def kcall(self, point, p, Nt, Mtot=0, solve_fn=None, rank_only=False):
@@ -103,12 +120,22 @@ class PlainSystem:
             caps = list(run.nt_cap)
             o = run.stacked_chain_kernel(pt, p, run.exact_nt(Nt, Mtot), int(Mtot), caps)
             if o is None:
-                o = _core.sym_obs_null_chain([run.chain_tapes(idx) for idx in run.chain_groups], run.n_leaves,
-                                             run.n_states, run.z_slots, pt, p, run.exact_nt(Nt, Mtot), int(Mtot),
-                                             run.cores_call, caps)
+                o = _core.sym_obs_null_chain(
+                    [run.chain_tapes(idx) for idx in run.chain_groups],
+                    run.n_leaves,
+                    run.n_states,
+                    run.z_slots,
+                    pt,
+                    p,
+                    run.exact_nt(Nt, Mtot),
+                    int(Mtot),
+                    run.cores_call,
+                    caps,
+                )
         else:
-            o = _core.sym_obs_null_multi(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots, pt, p,
-                                         run.exact_nt(Nt), run.cores_call)
+            o = _core.sym_obs_null_multi(
+                run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots, pt, p, run.exact_nt(Nt), run.cores_call
+            )
         return run.modulo_nuisance(self.with_relations(o, point, p) if self.transient else o, p)
 
     # ---- homotopy along parameter lines ---------------------------------------------------
@@ -169,15 +196,26 @@ class PlainSystem:
             v = int(d.get(nm, 0)) % p
             ser[i, 0] = v
             line[spy.Symbol(nm)] = [int(point[i]) % p, v]
-        ptc = np.asarray(point[:run.n_leaves], dtype=np.int64) % p
+        ptc = np.asarray(point[: run.n_leaves], dtype=np.int64) % p
         blocks = []
         chains = [run.chain_tapes(idx) for idx in run.chain_groups] if run.has_gaps else [[tp] for tp in run.tapes]
         caps = list(run.nt_cap) if run.has_gaps and len(run.nt_cap) == len(chains) else [None] * len(chains)
         for chain, cap in zip(chains, caps):
             try:
-                o = _core.sym_obs_null_chain([chain], run.n_leaves, run.n_states, run.z_slots, ptc, p, int(Nt),
-                                             int(run.mtot) if run.has_gaps else 0, 1, [] if cap is None else [cap],
-                                             ser, int(T))
+                o = _core.sym_obs_null_chain(
+                    [chain],
+                    run.n_leaves,
+                    run.n_states,
+                    run.z_slots,
+                    ptc,
+                    p,
+                    int(Nt),
+                    int(run.mtot) if run.has_gaps else 0,
+                    1,
+                    [] if cap is None else [cap],
+                    ser,
+                    int(T),
+                )
             except Exception as exc:
                 swallow(exc, "homotopy series")
                 return None
@@ -185,8 +223,9 @@ class PlainSystem:
                 return None
             blocks.append(np.asarray(o["S"], dtype=np.int64).reshape(int(o["rank_s"]), -1))
         try:
-            self.hom_states = [{x: series_of(e, line, T + 1, p) for x, e in self.ic_expr[ci].items()}
-                               for ci in self.equil_conds]
+            self.hom_states = [
+                {x: series_of(e, line, T + 1, p) for x, e in self.ic_expr[ci].items()} for ci in self.equil_conds
+            ]
         except NoSeriesError:
             return None
         return np.vstack(blocks)
@@ -223,6 +262,15 @@ class PlainSystem:
             return None
 
         def f(point, p, Nt):
-            return _core.sym_obs_rank_profile(run.kernel_tapes(), run.n_leaves, run.n_states, run.z_slots,
-                                              np.asarray(point, dtype=np.int64), p, int(Nt), run.cores_call)
+            return _core.sym_obs_rank_profile(
+                run.kernel_tapes(),
+                run.n_leaves,
+                run.n_states,
+                run.z_slots,
+                np.asarray(point, dtype=np.int64),
+                p,
+                int(Nt),
+                run.cores_call,
+            )
+
         return f

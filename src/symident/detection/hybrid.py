@@ -27,6 +27,7 @@ def _sym(x):
 def _parse(text):
     """A model string (R syntax) as a sympy expression."""
     from ..sym.switching import _plain
+
     return _plain(str(text)).xreplace(CONSTS)
 
 
@@ -136,8 +137,9 @@ class _Setup:
         if self.unknown:
             self._check_unknown()
         # the clock where a condition's model reads time
-        self.clock = any(TIME in cd.apply(e).free_symbols for cd in self.conds for e in self.f.values()) or \
-            any(TIME in e.free_symbols for cd in self.conds for e in cd.obs.values())
+        self.clock = any(TIME in cd.apply(e).free_symbols for cd in self.conds for e in self.f.values()) or any(
+            TIME in e.free_symbols for cd in self.conds for e in cd.obs.values()
+        )
         exprs = list(self.f.values()) + [e for x in hy.g for e in x.values()] + list(self.sw.funcs)
         for cd in self.conds:
             exprs += [e for e in cd.ic.values() if e is not None] + list(cd.obs.values())
@@ -160,8 +162,7 @@ class _Setup:
             if hit:
                 raise HybridError(f"a switch on the unknown input {hit[0]} ({self.hy.surface(j)}) is not supported")
         if self.root_events or any(not e["t0"] for cd in self.conds for e in cd.events):
-            raise HybridError("unknown inputs together with switches and events after the start are not "
-                              "supported yet")
+            raise HybridError("unknown inputs together with switches and events after the start are not supported yet")
         seen = {}
         for cd in self.conds:
             vals = [v for v in cd.ic.values() if v is not None] + [e["value"] for e in cd.events]
@@ -173,16 +174,17 @@ class _Setup:
                 seen.setdefault(str(u), []).append(cd.name)
         shared = sorted(u for u, c in seen.items() if len(c) > 1)
         if shared:
-            raise HybridError(f"the unknown input {shared[0]} enters several conditions; with switches each "
-                              "condition needs an input of its own, renamed in `conditions`")
+            raise HybridError(
+                f"the unknown input {shared[0]} enters several conditions; with switches each "
+                "condition needs an input of its own, renamed in `conditions`"
+            )
 
     def _conditions(self):
         kw, hy = self.kw, self.hy
         grid = Grid.from_any(kw.get("conditions"))
         trafo = kw.get("trafo")
         tlist = isinstance(trafo, (list, tuple))
-        K = max(1, grid.nrow if grid is not None else 0, len(trafo) if tlist else 0,
-                len(hy.g) if hy.g_list else 0)
+        K = max(1, grid.nrow if grid is not None else 0, len(trafo) if tlist else 0, len(hy.g) if hy.g_list else 0)
         names = list(grid.rows) if grid is not None else [str(i + 1) for i in range(K)]
         self.grid = grid
         states = set(self.f)
@@ -203,6 +205,7 @@ class _Setup:
 
             def app(e, t_sub=t_sub, gp=gp):
                 return spy.sympify(e).xreplace(t_sub).xreplace(gp)
+
             cd.apply = app
             ic = {}
             for x in self.dyn:
@@ -227,15 +230,23 @@ class _Setup:
                     vv = grid.cell(c, vv)
                 T = app(_parse(tv))
                 # an event value reads the clock at the event time
-                cd.events.append({"var": e["var"], "time": T, "value": app(_parse(vv)).xreplace({TIME: T}),
-                                  "method": e["method"], "index": i})
+                cd.events.append(
+                    {
+                        "var": e["var"],
+                        "time": T,
+                        "value": app(_parse(vv)).xreplace({TIME: T}),
+                        "method": e["method"],
+                        "index": i,
+                    }
+                )
             cd.equil = self.equilibrate
             cd.roots = [r for r in hy.roots if _applies(r["event"], c)]
             cd.root_events = [r["event"] for r in cd.roots]
             conds.append(cd)
         # the start: 0, or the earliest event time that is a number in a condition
-        self.t0e = min([_rational(e["time"]) for cd in conds for e in cd.events if e["time"].is_number] +
-                       [spy.Integer(0)])
+        self.t0e = min(
+            [_rational(e["time"]) for cd in conds for e in cd.events if e["time"].is_number] + [spy.Integer(0)]
+        )
         self.t0 = float(self.t0e)
         for cd in conds:
             for e in cd.events:
@@ -259,8 +270,8 @@ class _Setup:
     def _regimes(self):
         """(kept, dropped) sign patterns of the switches; dropped ones contradict a declared sign in every condition."""
         m = len(self.sw.funcs)
-        if 2 ** m > _MAX_REGIMES:
-            raise HybridError(f"the switches give {2 ** m} sign patterns, more than {_MAX_REGIMES}")
+        if 2**m > _MAX_REGIMES:
+            raise HybridError(f"the switches give {2**m} sign patterns, more than {_MAX_REGIMES}")
         per = []
         for cd in self.conds:
             rules = set()
@@ -299,7 +310,7 @@ class _Setup:
     def _sides_of(self, entry):
         """{surface: side} of one entry of `regimes`."""
         out = {}
-        for txt in ([entry] if isinstance(entry, str) else list(entry)):
+        for txt in [entry] if isinstance(entry, str) else list(entry):
             d, side = comparison(txt)
             hit = self.sw.match(d)
             if hit is None:
@@ -326,19 +337,26 @@ class _Setup:
             for pick in picks:
                 hit = [r for r in self.regimes if all(r[j] == v for j, v in pick.items())]
                 if not hit:
-                    raise HybridError(f"condition {cd.name}: `regimes` names no feasible regime "
-                                      f"with {', '.join(self.hy.text(j, v) for j, v in pick.items())}")
+                    raise HybridError(
+                        f"condition {cd.name}: `regimes` names no feasible regime "
+                        f"with {', '.join(self.hy.text(j, v) for j, v in pick.items())}"
+                    )
                 cd.regimes += [r for r in hit if r not in cd.regimes]
             self._check_start(cd, picks[0])
-        cd.surfaces = [j for j in range(len(self.sw.funcs))
-                       if {r[j] for r in cd.regimes} == {1, -1} or j in {r["surface"] for r in cd.roots}]
+        cd.surfaces = [
+            j
+            for j in range(len(self.sw.funcs))
+            if {r[j] for r in cd.regimes} == {1, -1} or j in {r["surface"] for r in cd.roots}
+        ]
         # no trajectory crosses a surface in the parameters alone
         moving = {_sym(x) for x in self.f} | {TIME}
         for j in cd.surfaces:
             if not self.gfun(cd, j).free_symbols & moving:
-                raise HybridError(f"condition {cd.name}: the switch on {self.hy.surface(j)} depends on "
-                                  f"parameters only, so no trajectory crosses it; name the side with "
-                                  f"`regimes`, for instance regimes=[{self.hy.text(j, 1)!r}]")
+                raise HybridError(
+                    f"condition {cd.name}: the switch on {self.hy.surface(j)} depends on "
+                    f"parameters only, so no trajectory crosses it; name the side with "
+                    f"`regimes`, for instance regimes=[{self.hy.text(j, 1)!r}]"
+                )
 
     def _check_start(self, cd, pick):
         """Check the declared start against the initial values and record the sides they leave undecided."""
@@ -356,9 +374,11 @@ class _Setup:
             g = self.gfun(cd, j).xreplace(x0)
             d = None if g.free_symbols & dyn else self.sw.sign_of(g)
             if d is not None and d != side:
-                raise HybridError(f"condition {cd.name}: `regimes` starts in "
-                                  f"{self.hy.text(j, side)}, but the initial values give "
-                                  f"{self.hy.text(j, d) if d else self.hy.surface(j)}")
+                raise HybridError(
+                    f"condition {cd.name}: `regimes` starts in "
+                    f"{self.hy.text(j, side)}, but the initial values give "
+                    f"{self.hy.text(j, d) if d else self.hy.surface(j)}"
+                )
             if d is None:
                 cd.declared.append(f"{self.hy.text(j, side)} at the start")
 
@@ -394,8 +414,7 @@ class _Setup:
             fa, ha = self.model(cd, a)
             fb, hb = self.model(cd, b)
             reach = self._reach(cd, (a, b))
-            if all(is_zero(ha[y] - hb[y]) for y in ha) and \
-                    all(is_zero(fa[x] - fb[x]) for x in reach):
+            if all(is_zero(ha[y] - hb[y]) for y in ha) and all(is_zero(fa[x] - fb[x]) for x in reach):
                 verdicts.append(_INVISIBLE)
                 continue
             seen = sol is not None and self._jets_differ(fa, fb, ha, hb, sol)
@@ -408,8 +427,9 @@ class _Setup:
         """Whether the observable jets differ between the regimes at a seeded point of the surface, modulo a prime."""
         syms = set().union(*[e.free_symbols for m in (fa, fb, ha, hb) for e in m.values()])
         # a surface symbol that no expression contains does not enter the key
-        key = tuple(tuple(sorted((str(k), str(v)) for k, v in m.items())) for m in (fa, fb, ha, hb)) + \
-            ((str(sol[0]), str(sol[1])) if sol[0] in syms else ())
+        key = tuple(tuple(sorted((str(k), str(v)) for k, v in m.items())) for m in (fa, fb, ha, hb)) + (
+            (str(sol[0]), str(sol[1])) if sol[0] in syms else ()
+        )
         memo = self.__dict__.setdefault("_jet_memo", {})
         if key in memo:
             return memo[key]
@@ -431,8 +451,11 @@ class _Setup:
                 while True:
                     va = output_series({_sym(k): v for k, v in fa.items()}, [ha[y] for y in ys], pt, n, p)
                     vb = output_series({_sym(k): v for k, v in fb.items()}, [hb[y] for y in ys], pt, n, p)
-                    seen = any(x != y for A, B, c in zip(va, vb, caps)
-                               for x, y in list(zip(A, B))[:None if c is None else c + 1])
+                    seen = any(
+                        x != y
+                        for A, B, c in zip(va, vb, caps)
+                        for x, y in list(zip(A, B))[: None if c is None else c + 1]
+                    )
                     if seen or n >= order:
                         break
                     n = min(order, 2 * n)
@@ -461,8 +484,11 @@ class _Setup:
     def on_surface(self, cd, j):
         """Surface j solved for a symbol in which it is linear, states first: (symbol, value)."""
         g = self.gfun(cd, j)
-        prefer = [_sym(x) for x in self.dyn] + ([TIME] if TIME in g.free_symbols else []) + \
-            sorted(g.free_symbols - {_sym(x) for x in self.f} - {TIME}, key=str)
+        prefer = (
+            [_sym(x) for x in self.dyn]
+            + ([TIME] if TIME in g.free_symbols else [])
+            + sorted(g.free_symbols - {_sym(x) for x in self.f} - {TIME}, key=str)
+        )
         return solve_linear(g, prefer)
 
 
@@ -516,11 +542,13 @@ def _copies(st, names=None):
         first = len(copies)
         for sides in cd.regimes:
             # a resting start is each closed-form resting state of the regime
-            starts = [dict(cd.ic)] if not cd.equil else \
-                [{x: s[_sym(x)] for x in st.dyn} for s in _steady_states(st, cd, sides)]
+            starts = (
+                [dict(cd.ic)]
+                if not cd.equil
+                else [{x: s[_sym(x)] for x in st.dyn} for s in _steady_states(st, cd, sides)]
+            )
             for ic in starts:
-                copies += _switched({"cd": cd, "sides": sides, "ic": ic, "events": True,
-                                     "obs": {}, "time": st.t0e}, st)
+                copies += _switched({"cd": cd, "sides": sides, "ic": ic, "events": True, "obs": {}, "time": st.t0e}, st)
         points = []
         for j in cd.surfaces:
             g = st.gfun(cd, j)
@@ -565,18 +593,27 @@ def _copies(st, names=None):
                 pt[v] = _compose(pt[v], ev.get("method", "replace"), cd.apply(_parse(ev["value"])).xreplace(pt))
             ic = {x: pt[_sym(x)] for x in st.dyn}
             for sides in cd.regimes:
-                copies += _switched({"cd": cd, "sides": sides, "ic": ic, "events": False, "obs": {},
-                                     "time": tsym if tsym is not None else st.t0e,
-                                     "inputs": {u: pt[_sym(u)] for u in st.inputs}, "surface": on,
-                                     "block": tuple(mine)}, st)
+                copies += _switched(
+                    {
+                        "cd": cd,
+                        "sides": sides,
+                        "ic": ic,
+                        "events": False,
+                        "obs": {},
+                        "time": tsym if tsym is not None else st.t0e,
+                        "inputs": {u: pt[_sym(u)] for u in st.inputs},
+                        "surface": on,
+                        "block": tuple(mine),
+                    },
+                    st,
+                )
     return copies, fresh
 
 
 def _jet_chains(st, order, names):
     """{input: [input, jets of the input]} of the unknown inputs the model reads, `order` names each."""
     # in a condition that renames an input the chain stands for the new name
-    read = set().union(*[e.free_symbols for e in st.f.values()],
-                       *[e.free_symbols for g in st.hy.g for e in g.values()])
+    read = set().union(*[e.free_symbols for e in st.f.values()], *[e.free_symbols for g in st.hy.g for e in g.values()])
     return {w: [w] + [names(f"{w}_d{k}") for k in range(1, order)] for w in st.unknown if _sym(w) in read}
 
 
@@ -588,6 +625,7 @@ def _jet_values(copies, jets, names):
         nm = names(f"{x}_si")
         fresh[nm] = x
         return _sym(nm)
+
     for cp in copies:
         own = (id(cp["ic"]), tuple(cp["sides"]))
         if own not in starts:
@@ -619,8 +657,9 @@ def _uncovered(st, copies):
     for cd in st.conds:
         own = [c for c in copies if c["cd"] is cd]
         starts = [c["sides"] for c in own if c.get("switch") is None and c.get("events", True)]
-        into = [c["switch"][1] for c in own if c.get("switch") is not None] + \
-            [c["sides"] for c in own if st.unknown and not c.get("events", True)]
+        into = [c["switch"][1] for c in own if c.get("switch") is not None] + [
+            c["sides"] for c in own if st.unknown and not c.get("events", True)
+        ]
         for r in cd.regimes:
             if r not in starts:
                 out.append((cd.name, list(r), "start"))
@@ -697,8 +736,9 @@ def _rows_model(st, copies, fresh, jets=None, jet_fresh=None, order=0):
         tr.update({x: _core_text(v) for x, v in (cp.get("jets") or {}).items()})
         for u, v in (cp.get("inputs") or {}).items():
             # an input starts at zero; an event at the start sets it
-            events.append({"var": u, "time": _core_text(st.t0e), "value": _core_text(v), "method": "replace",
-                           "cond": [i]})
+            events.append(
+                {"var": u, "time": _core_text(st.t0e), "value": _core_text(v), "method": "replace", "cond": [i]}
+            )
         if st.clock:
             tr["time"] = _core_text(cp["time"])
         trafos.append(tr)
@@ -706,29 +746,67 @@ def _rows_model(st, copies, fresh, jets=None, jet_fresh=None, order=0):
         o.update({k: _core_text(v) for k, v in cp["obs"].items()})
         obs.append(o)
         for e in evs:
-            events.append({"var": e["var"], "time": _core_text(e["time"]), "value": _core_text(e["value"]),
-                           "method": e["method"], "cond": [i]})
+            events.append(
+                {
+                    "var": e["var"],
+                    "time": _core_text(e["time"]),
+                    "value": _core_text(e["value"]),
+                    "method": e["method"],
+                    "cond": [i],
+                }
+            )
         if cp.get("switch") is not None:
             ts, other = cp["switch"]
             # an event at the start keeps the clock origin at t0 for the switch time
-            events.append({"var": st.hy.names[0], "time": _core_text(st.t0e),
-                           "value": "1" if cp["sides"][0] > 0 else "0", "method": "replace",
-                           "cond": [i]})
+            events.append(
+                {
+                    "var": st.hy.names[0],
+                    "time": _core_text(st.t0e),
+                    "value": "1" if cp["sides"][0] > 0 else "0",
+                    "method": "replace",
+                    "cond": [i],
+                }
+            )
             for j, h in enumerate(st.hy.names):
                 if other[j] != cp["sides"][j]:
-                    events.append({"var": h, "time": _core_text(ts),
-                                   "value": "1" if other[j] > 0 else "0", "method": "replace",
-                                   "cond": [i]})
-    kw.update(f=f, g=obs, trafo=trafos, conditions={"rows": rows, "cols": cols},
-              events=events or None, reconstruct=True, reactions=None, totals=None,
-              equilibrate=False, unknown_inputs=None)
+                    events.append(
+                        {
+                            "var": h,
+                            "time": _core_text(ts),
+                            "value": "1" if other[j] > 0 else "0",
+                            "method": "replace",
+                            "cond": [i],
+                        }
+                    )
+    kw.update(
+        f=f,
+        g=obs,
+        trafo=trafos,
+        conditions={"rows": rows, "cols": cols},
+        events=events or None,
+        reconstruct=True,
+        reactions=None,
+        totals=None,
+        equilibrate=False,
+        unknown_inputs=None,
+    )
     if jets:
-        kw["nuisance"] = {"states": list(jet_fresh), "kept": [], "tops": [], "exact_order": int(order) - 1,
-                          "prolonged": False, "jet_states": [], "starts": dict(jet_fresh)}
+        kw["nuisance"] = {
+            "states": list(jet_fresh),
+            "kept": [],
+            "tops": [],
+            "exact_order": int(order) - 1,
+            "prolonged": False,
+            "jet_states": [],
+            "starts": dict(jet_fresh),
+        }
     pos = st.positive
     if pos not in (True, False):
-        pos = list(pos or []) + [n for n in fresh if n.startswith("si_time") or
-                                 any(n.startswith(f"{x}_si") and x in set(pos or []) for x in st.f)]
+        pos = list(pos or []) + [
+            n
+            for n in fresh
+            if n.startswith("si_time") or any(n.startswith(f"{x}_si") and x in set(pos or []) for x in st.f)
+        ]
         kw["positive"] = pos
     return kw
 
@@ -748,8 +826,10 @@ def _steady_states(st, cd, sides):
         sol = []
     sol = [s for s in sol if set(s) == {_sym(x) for x in st.dyn}]
     if not sol:
-        raise HybridError(f"condition {cd.name}: a resting state of a regime has no closed form, "
-                          "so a symmetry cannot be certified on it")
+        raise HybridError(
+            f"condition {cd.name}: a resting state of a regime has no closed form, "
+            "so a symmetry cannot be certified on it"
+        )
     return sol
 
 
@@ -797,20 +877,37 @@ def _zero_set(st, cd, memo=None):
         if r is None:
             r = memo[key] = _regular_zero(e, sub)
         return r
+
     zs = {x for x, v in _start_values(st, cd).items() if v is not None and is_zero(v)}
     fields = [st.model(cd, r)[0] for r in cd.regimes]
-    later = [(e["var"], e["method"], e["value"]) for e in cd.events if not e["t0"]] + \
-        [(str(e["var"]), e.get("method", "replace"), cd.apply(_parse(e["value"]))) for e in cd.root_events]
+    later = [(e["var"], e["method"], e["value"]) for e in cd.events if not e["t0"]] + [
+        (str(e["var"]), e.get("method", "replace"), cd.apply(_parse(e["value"]))) for e in cd.root_events
+    ]
     # a state is checked again only when a state named in the right-hand sides or later events
     # of the checked state has left the set
-    uses = {x: {str(s) for e in [f[x] for f in fields] + [v for var, _, v in later if var == x]
-                for s in spy.sympify(e).free_symbols} for x in zs}
+    uses = {
+        x: {
+            str(s)
+            for e in [f[x] for f in fields] + [v for var, _, v in later if var == x]
+            for s in spy.sympify(e).free_symbols
+        }
+        for x in zs
+    }
     check = set(zs)
     while check:
         sub = {_sym(x): spy.Integer(0) for x in zs}
-        drop = {x for x in check if not (all(regular(f[x], sub) for f in fields) and
-                all(is_zero(_compose(spy.Integer(0), m, spy.sympify(v).xreplace(sub))) for var, m, v in later
-                    if var == x))}
+        drop = {
+            x
+            for x in check
+            if not (
+                all(regular(f[x], sub) for f in fields)
+                and all(
+                    is_zero(_compose(spy.Integer(0), m, spy.sympify(v).xreplace(sub)))
+                    for var, m, v in later
+                    if var == x
+                )
+            )
+        }
         zs -= drop
         check = {x for x in zs if uses[x] & drop}
     return zs
@@ -828,11 +925,15 @@ def zero_restriction(hy, kw, regimes=None):
     def why(z):
         if regimes is not None:
             return "`regimes` is declared"
-        return "the reactions, totals or conditions keep them in the model" if z & shared else \
-            "not in every condition"
-    notes = [f"condition {n}: {', '.join(sorted(z - common))} start at zero and stay at zero there, but "
-             + why(z) + "; the switched copies of that condition start at any point of the surface"
-             for n, z in per.items() if z - common]
+        return "the reactions, totals or conditions keep them in the model" if z & shared else "not in every condition"
+
+    notes = [
+        f"condition {n}: {', '.join(sorted(z - common))} start at zero and stay at zero there, but "
+        + why(z)
+        + "; the switched copies of that condition start at any point of the surface"
+        for n, z in per.items()
+        if z - common
+    ]
     return kw2, sorted(common), notes, st
 
 
@@ -859,14 +960,23 @@ def _without_states(kw, names):
 
     def m(d):
         return None if d is None else {str(k): z(v) for k, v in dict(d).items() if str(k) not in drop}
+
     g, tr = kw.get("g"), kw.get("trafo")
-    events = [{k: z(v) if k in ("time", "value", "root") else v for k, v in e.items()}
-              for e in as_events(kw.get("events")) or [] if str(e["var"]) not in drop]
+    events = [
+        {k: z(v) if k in ("time", "value", "root") else v for k, v in e.items()}
+        for e in as_events(kw.get("events")) or []
+        if str(e["var"]) not in drop
+    ]
     pos = kw.get("positive", True)
-    return dict(kw, f=m(kw["f"]), g=[m(x) for x in g] if isinstance(g, (list, tuple)) else m(g),
-                trafo=[m(x) for x in tr] if isinstance(tr, (list, tuple)) else m(tr), conditions=cond,
-                events=events or None,
-                positive=pos if pos in (True, False) else [x for x in pos or [] if str(x) not in drop])
+    return dict(
+        kw,
+        f=m(kw["f"]),
+        g=[m(x) for x in g] if isinstance(g, (list, tuple)) else m(g),
+        trafo=[m(x) for x in tr] if isinstance(tr, (list, tuple)) else m(tr),
+        conditions=cond,
+        events=events or None,
+        positive=pos if pos in (True, False) else [x for x in pos or [] if str(x) not in drop],
+    )
 
 
 def _coords(st):
@@ -946,15 +1056,15 @@ def _bracket(st, X, f):
             out[k] = -sum((spy.diff(comp, s) * f[str(s)] for s in sx), spy.Integer(0))
     for x in st.f:
         comp = X.get(_sym(x), spy.Integer(0))
-        out[_sym(x)] = _apply(X, f[x]) - sum((spy.diff(comp, s) * f[str(s)] for s in sx),
-                                             spy.Integer(0))
+        out[_sym(x)] = _apply(X, f[x]) - sum((spy.diff(comp, s) * f[str(s)] for s in sx), spy.Integer(0))
     return out
 
 
 def _events_of(st, cd):
-    return [e for e in cd.events if not e["t0"]] + \
-        [{"var": e["var"], "time": None, "value": cd.apply(_parse(e["value"])),
-          "method": e.get("method", "replace")} for e in cd.root_events]
+    return [e for e in cd.events if not e["t0"]] + [
+        {"var": e["var"], "time": None, "value": cd.apply(_parse(e["value"])), "method": e.get("method", "replace")}
+        for e in cd.root_events
+    ]
 
 
 def _starts(st, cd):
@@ -998,8 +1108,7 @@ def certify_fields(st, cands, why=None):
 
 
 def _family(st, cd, cands, alive, why):
-    keys = sorted({_sym(z) for i in alive for z in cands[i].theta} |
-                  {_sym(x) for x in st.f}, key=str)
+    keys = sorted({_sym(z) for i in alive for z in cands[i].theta} | {_sym(x) for x in st.f}, key=str)
     fam = []
     for i in alive:
         # an input change follows from the brackets below
@@ -1029,6 +1138,7 @@ def _family(st, cd, cands, alive, why):
             if e["time"] is not None and not is_zero(_apply(X, e["time"])):
                 return "it moves an event time"
         return None
+
     while True:
         kept = []
         for i, X in fam:
@@ -1048,7 +1158,7 @@ def _family(st, cd, cands, alive, why):
                 if sol is None:
                     drop = (k, "the regimes do not leave the span invariant")
                     break
-                changes[k, r] = dict(zip(drives[r], sol[len(vecs):]))
+                changes[k, r] = dict(zip(drives[r], sol[len(vecs) :]))
             if drop is None:
                 for e in evs:
                     post = _post(e)
@@ -1079,8 +1189,9 @@ def _family(st, cd, cands, alive, why):
             at = [{k: spy.sympify(v).xreplace(x0) for k, v in Y.items()} for Y in vecs]
             v0 = {k: spy.sympify(v).xreplace(x0) for k, v in X.items() if str(k) not in st.f}
             for x in st.dyn:
-                v0[_sym(x)] = _apply(X, x0[_sym(x)]) if x0[_sym(x)] != _sym(x) else \
-                    spy.sympify(X.get(_sym(x), 0)).xreplace(x0)
+                v0[_sym(x)] = (
+                    _apply(X, x0[_sym(x)]) if x0[_sym(x)] != _sym(x) else spy.sympify(X.get(_sym(x), 0)).xreplace(x0)
+                )
             if _span(at, v0, keys) is None:
                 ok = False
                 break
@@ -1160,8 +1271,9 @@ def _hidden_jumps(st, cd, fam, keys, surf):
         if cd.vis[j] == _VISIBLE:
             continue
         g, sol = surf[j]
-        moving = [k for k, (_, X) in enumerate(fam)
-                  if sol is None or not is_zero(_apply(X, g).xreplace({sol[0]: sol[1]}))]
+        moving = [
+            k for k, (_, X) in enumerate(fam) if sol is None or not is_zero(_apply(X, g).xreplace({sol[0]: sol[1]}))
+        ]
         if not moving:
             continue
         rep = {} if sol is None else {sol[0]: sol[1]}
@@ -1174,8 +1286,7 @@ def _hidden_jumps(st, cd, fam, keys, surf):
             fb, hb = st.model(cd, b)
             jump = {_sym(x): (fa[x] - fb[x]).xreplace(rep) for x in st.f}
             at = [{k: spy.sympify(v).xreplace(rep) for k, v in Y.items()} for Y in vecs]
-            if any(not is_zero((ha[y] - hb[y]).xreplace(rep)) for y in ha) or \
-                    _span(at, jump, keys) is None:
+            if any(not is_zero((ha[y] - hb[y]).xreplace(rep)) for y in ha) or _span(at, jump, keys) is None:
                 cand = [k for k in moving if fam[k][0] is not None]
                 k = cand[0] if cand else moving[0]
                 return k, f"it moves the surface {st.hy.surface(j)}, whose switch it would see"
@@ -1213,8 +1324,6 @@ def _rank_at_point(rows):
     return None
 
 
-
-
 def _scaling_candidates(st):
     """Scalings the integer kernel proposes over every regime, constrained by surfaces, initial values, events."""
     models, obs, xm, xo = [], [], [], []
@@ -1224,8 +1333,10 @@ def _scaling_candidates(st):
             v = cd.ic.get(x)
             if v is not None and not cd.equil:
                 cons_m.append(f"{x} = {to_str(v)}")
-        resets = [{"var": r["var"], "time": None, "method": r.get("method", "replace"),
-                   "value": cd.apply(_parse(r["value"]))} for r in cd.root_events]
+        resets = [
+            {"var": r["var"], "time": None, "method": r.get("method", "replace"), "value": cd.apply(_parse(r["value"]))}
+            for r in cd.root_events
+        ]
         for e in list(cd.events) + resets:
             if e["var"] in st.inputs or e["method"] == "multiply":
                 cons_o.append(f"_ = {to_str(e['value'])}")
@@ -1233,17 +1344,22 @@ def _scaling_candidates(st):
                 cons_m.append(f"{e['var']} = {to_str(e['value'])}")
             if e["time"] is not None and e["time"].free_symbols:
                 cons_o.append(f"_ = {to_str(e['time'])}")
-        cons_o += [f"_ = {r}" for r in surface_ratios([st.gfun(cd, j) for j in cd.surfaces
-                                                        if cd.vis[j] == _VISIBLE])]
+        cons_o += [f"_ = {r}" for r in surface_ratios([st.gfun(cd, j) for j in cd.surfaces if cd.vis[j] == _VISIBLE])]
         for sides in cd.regimes:
             f, h = st.model(cd, sides)
             models.append([f"{x} = {to_str(v)}" for x, v in f.items()])
             obs.append([f"{y} = {to_str(v)}" for y, v in h.items()])
             xm.append(cons_m)
             xo.append(cons_o)
-    r = scaling_symmetries_multi(per_cond_model=models, per_cond_obs=obs, inputs=st.inputs or None,
-                                 fixed=list(st.fixed) + ["time"], logs=True, extra_model=xm,
-                                 extra_obs=xo)
+    r = scaling_symmetries_multi(
+        per_cond_model=models,
+        per_cond_obs=obs,
+        inputs=st.inputs or None,
+        fixed=list(st.fixed) + ["time"],
+        logs=True,
+        extra_model=xm,
+        extra_obs=xo,
+    )
     out = []
     for d in r["non_identifiable"]:
         # the weight of an unknown input is the input change
@@ -1262,9 +1378,10 @@ def _kernel_candidates(st, res, fresh):
         if not gen:
             continue
         try:
-            comp = {k: spy.sympify(str(v).replace("^", "**"),
-                                   locals={n: spy.Symbol(n) for n in _names_in(v)})
-                    for k, v in gen.items()}
+            comp = {
+                k: spy.sympify(str(v).replace("^", "**"), locals={n: spy.Symbol(n) for n in _names_in(v)})
+                for k, v in gen.items()
+            }
         except (spy.SympifyError, TypeError):
             continue
         syms = set(comp) | {str(s) for v in comp.values() for s in v.free_symbols}
@@ -1291,8 +1408,10 @@ def _kernel_candidates(st, res, fresh):
 def _parsed(comp):
     """String components as SymPy expressions; empty where one does not parse."""
     try:
-        return {k: spy.sympify(str(v).replace("^", "**"), locals={n: spy.Symbol(n) for n in _names_in(v)})
-                for k, v in comp.items()}
+        return {
+            k: spy.sympify(str(v).replace("^", "**"), locals={n: spy.Symbol(n) for n in _names_in(v)})
+            for k, v in comp.items()
+        }
     except (spy.SympifyError, TypeError):
         return {}
 
@@ -1341,38 +1460,72 @@ def _entry(F, comps, coords, reconstruct):
     support = sym_sort([z for z, c in zip(coords, comps) if not is_zero(c)])
     if F.kind == "scaling" and F.weights is not None:
         w = {z: str(F.weights.get(z, 0)) for z in support}
-        return {"support": support, "vector": w, "type": "scaling", "closed_form": True,
-                "certified": True, "exact": True, "route": "hybrid symmetry"}
+        return {
+            "support": support,
+            "vector": w,
+            "type": "scaling",
+            "closed_form": True,
+            "certified": True,
+            "exact": True,
+            "route": "hybrid symmetry",
+        }
     w = {z: spy.cancel(c / _sym(z)) for z, c in zip(coords, comps) if z in support}
     if w and all(r.is_Integer for r in w.values()):
-        return {"support": support, "vector": {z: str(r) for z, r in w.items()}, "type": "scaling",
-                "closed_form": True, "certified": True, "exact": True, "route": "hybrid symmetry"}
+        return {
+            "support": support,
+            "vector": {z: str(r) for z, r in w.items()},
+            "type": "scaling",
+            "closed_form": True,
+            "certified": True,
+            "exact": True,
+            "route": "hybrid symmetry",
+        }
     vec = {z: to_str(spy.factor(c).xreplace(BACK)) for z, c in zip(coords, comps) if z in support}
     if not reconstruct:
         return {"support": support, "type": "general", "closed_form": False, "certified": True}
-    return {"support": support, "vector": vec, "type": "general", "closed_form": True,
-            "certified": True, "exact": True, "route": "hybrid symmetry"}
-
-
+    return {
+        "support": support,
+        "vector": vec,
+        "type": "general",
+        "closed_form": True,
+        "certified": True,
+        "exact": True,
+        "route": "hybrid symmetry",
+    }
 
 
 def _info(st, extra=None):
-    out = {"surfaces": [st.hy.surface(j) for j in range(len(st.sw.funcs))],
-           "kinds": list(st.hy.kind),
-           "regimes": [st.text(r) for r in st.regimes],
-           "excluded": [st.text(r) for r in st.excluded],
-           "conditions": [{"name": cd.name, "regimes": [st.text(r) for r in cd.regimes],
-                           "visibility": {st.hy.surface(j): cd.vis[j] for j in cd.surfaces},
-                           "declared": list(cd.declared)} for cd in st.conds]}
+    out = {
+        "surfaces": [st.hy.surface(j) for j in range(len(st.sw.funcs))],
+        "kinds": list(st.hy.kind),
+        "regimes": [st.text(r) for r in st.regimes],
+        "excluded": [st.text(r) for r in st.excluded],
+        "conditions": [
+            {
+                "name": cd.name,
+                "regimes": [st.text(r) for r in cd.regimes],
+                "visibility": {st.hy.surface(j): cd.vis[j] for j in cd.surfaces},
+                "declared": list(cd.declared),
+            }
+            for cd in st.conds
+        ],
+    }
     out.update(extra or {})
     return out
 
 
 def _settings(st):
     kw = st.kw
-    return {"positive": st.positive, "reduce_cq": False, "equilibrate": st.equilibrate,
-            "reconstruct": bool(kw.get("reconstruct")), "verify": bool(kw.get("verify", True)),
-            "sym_engine": "modular", "degree_cap": None, "scalings_only": bool(kw.get("scalings_only"))}
+    return {
+        "positive": st.positive,
+        "reduce_cq": False,
+        "equilibrate": st.equilibrate,
+        "reconstruct": bool(kw.get("reconstruct")),
+        "verify": bool(kw.get("verify", True)),
+        "sym_engine": "modular",
+        "degree_cap": None,
+        "scalings_only": bool(kw.get("scalings_only")),
+    }
 
 
 def _entering(st, copies, fresh):
@@ -1397,8 +1550,9 @@ def _reach_held(st, cp, pair, fr):
     start value."""
     cd, ic = cp["cd"], cp["ic"]
     # a copy with the events of the condition, or without fresh start values, takes the plain reach
-    if cp.get("events", True) or \
-            not any({str(a) for a in spy.sympify(v).free_symbols} & fr for v in ic.values() if v is not None):
+    if cp.get("events", True) or not any(
+        {str(a) for a in spy.sympify(v).free_symbols} & fr for v in ic.values() if v is not None
+    ):
         return st._reach(cd, pair)
     models = [st.model(cd, r) for r in pair]
     # a set of states whose right-hand sides vanish identically at their start values keeps them in every regime
@@ -1468,6 +1622,7 @@ def _dropping_blocks(res, coords, copies, entering):
 def _on_copies(st, kept, fresh, coords):
     """(dimension of the projection or None where not proven, result, rows) of the stacked rows of `kept` alone."""
     from .core import detection_with_primes
+
     held = {z for cp in kept for z in cp.get("block") or ()}
     fresh = [z for z in fresh if z in held]
     # the kernel at the sample point bounds the rank; closed forms and the saturation guard are not needed
@@ -1496,14 +1651,17 @@ def _at_random(rows, res, coords, fresh, entering, need):
     rk = ker.get("random")
     if rk is None:
         return {"status": "unchecked", "of": _OF_FRESH}, need
-    at = {"info": {"kernel": {"coords": ker["coords"], "N": rk["N"], "p": rk["p"]},
-                   "coordinates": res["info"]["coordinates"]}}
+    at = {
+        "info": {
+            "kernel": {"coords": ker["coords"], "N": rk["N"], "p": rk["p"]},
+            "coordinates": res["info"]["coordinates"],
+        }
+    }
     need_r, proven = _relaxed_dim(at, coords, fresh, entering)
     if proven:
         return {"status": "proven"}, need_r
     if need_r != need:
-        return {"status": "differs", "of": _OF_FRESH, "base": len(coords) - need,
-                "random": len(coords) - need_r}, need
+        return {"status": "differs", "of": _OF_FRESH, "base": len(coords) - need, "random": len(coords) - need_r}, need
     cols = len(ker["coords"]) + len([z for z in ker["coords"] if z in set(fresh)])
     return {"status": "verified", "of": _OF_FRESH, "probability": _minor_bound(rows, res, cols)}, need
 
@@ -1511,6 +1669,7 @@ def _at_random(rows, res, coords, fresh, entering, need):
 def _minor_bound(rows, res, cols):
     """Schwartz-Zippel bound on a maximal minor of the stacked rows or their fresh columns vanishing, or None."""
     from .core import _model_bound
+
     order = int(res["info"].get("lie_order_used") or 0)
     evs = list(rows.get("events") or [])
     deg, q = 0, None
@@ -1531,14 +1690,19 @@ def _projected(res, coords):
     if ker is None:
         raise HybridError("internal: the stacked analysis returned no kernel")
     kc = list(ker["coords"])
-    N = np.asarray(ker["N"], dtype=np.int64).reshape(len(kc), -1) if np.size(ker["N"]) else \
-        np.zeros((len(kc), 0), dtype=np.int64)
+    N = (
+        np.asarray(ker["N"], dtype=np.int64).reshape(len(kc), -1)
+        if np.size(ker["N"])
+        else np.zeros((len(kc), 0), dtype=np.int64)
+    )
     missing = [z for z in coords if z not in kc]
     pub = [z for z in res["info"]["coordinates"] if not re.search(r"\|c[0-9]+$", z)]
     unknown = [z for z in missing if z in pub]
     if unknown:
-        raise HybridError("internal: the kernel of the stacked analysis is in other coordinates "
-                          f"({', '.join(kc)}) than the model ({', '.join(coords)})")
+        raise HybridError(
+            "internal: the kernel of the stacked analysis is in other coordinates "
+            f"({', '.join(kc)}) than the model ({', '.join(coords)})"
+        )
     rows = [kc.index(z) for z in coords if z in kc]
     if not rows or N.shape[1] == 0:
         return len(missing), None
@@ -1555,6 +1719,7 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
     if kw.get("scalings_only"):
         return _scalings_only(st, coords, t_start)
     from .core import _jet_order, detection_with_primes
+
     given = int(dict(kw.get("control") or {}).get("input_jet_order") or 0)
     order = given or (_jet_order(kw) if st.unknown else 0)
     start = None
@@ -1564,8 +1729,10 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
         copies, fresh = _copies(st, names)
         miss = _uncovered(st, copies)
         if miss:
-            raise HybridError("internal: a regime enters no copy of the condition: " +
-                              "; ".join(f"{c}: {', '.join(st.text(r))} ({k})" for c, r, k in miss))
+            raise HybridError(
+                "internal: a regime enters no copy of the condition: "
+                + "; ".join(f"{c}: {', '.join(st.text(r))} ({k})" for c, r, k in miss)
+            )
         jet_fresh = _jet_values(copies, jets, names)
         if fresh and not jets and start is None:
             # full rank on the copies without fresh coordinates is full rank of the rule, with nothing to project
@@ -1597,44 +1764,59 @@ def hybrid_detection(hy, kw, regimes=None, setup=None):
     chosen, why = [], []
     off = fresh + list(jet_fresh) + [x for chain in jets.values() for x in chain]
     if need > 0:
-        cands = _scaling_candidates(st) + _kernel_candidates(st, res, off) + \
-            _unit_candidates(st, coords)
+        cands = _scaling_candidates(st) + _kernel_candidates(st, res, off) + _unit_candidates(st, coords)
         chosen, why = _certify(st, cands, coords, need)
     uncertified, candidates = None, None
     syms = [_entry(F, c, coords, bool(kw.get("reconstruct"))) for F, c in chosen]
     if len(chosen) < need:
-        uncertified = (f"the stacked regimes leave {need} direction(s) open, and {len(chosen)} were proven "
-                       "directions of the rule" + ("; rejected candidates: " + "; ".join(dict.fromkeys(why))
-                                                    if why else ""))
+        uncertified = (
+            f"the stacked regimes leave {need} direction(s) open, and {len(chosen)} were proven "
+            "directions of the rule" + ("; rejected candidates: " + "; ".join(dict.fromkeys(why)) if why else "")
+        )
         candidates = [_candidate(e) for e in _stacked_entries(res, off, syms, need - len(chosen))]
     dim = len(coords)
     info = res["info"]
     proven = need if need and uncertified is None else None
-    raw = {"rank": dim - need, "dim": dim, "coordinates": coords, "non_identifiable": syms,
-           "rank_proven": proven,
-           "rank_proof": "stacked regimes and exact symmetries of every regime" if proven else None,
-           "lie_order_used": info.get("lie_order_used"), "lie_certified": info.get("lie_certified"),
-           "lie_block_orders": info.get("lie_block_orders"),
-           "gap_order_used": info.get("gap_order_used"), "gap_certified": info.get("gap_certified"),
-           "gap_certificate": info.get("gap_certificate"), "gap_bound": info.get("gap_bound"),
-           "order_bound": info.get("order_bound"), "order_bound_why": info.get("order_bound_why"),
-           "order_draws": info.get("order_draws"),
-           "conditions": len(st.conds),
-           "segments": info.get("segments"),
-           "projection": projection}
-    out = finalize(raw, "observability", _settings(st), elapsed=time.monotonic() - t_start,
-                   coordinates=coords)
+    raw = {
+        "rank": dim - need,
+        "dim": dim,
+        "coordinates": coords,
+        "non_identifiable": syms,
+        "rank_proven": proven,
+        "rank_proof": "stacked regimes and exact symmetries of every regime" if proven else None,
+        "lie_order_used": info.get("lie_order_used"),
+        "lie_certified": info.get("lie_certified"),
+        "lie_block_orders": info.get("lie_block_orders"),
+        "gap_order_used": info.get("gap_order_used"),
+        "gap_certified": info.get("gap_certified"),
+        "gap_certificate": info.get("gap_certificate"),
+        "gap_bound": info.get("gap_bound"),
+        "order_bound": info.get("order_bound"),
+        "order_bound_why": info.get("order_bound_why"),
+        "order_draws": info.get("order_draws"),
+        "conditions": len(st.conds),
+        "segments": info.get("segments"),
+        "projection": projection,
+    }
+    out = finalize(raw, "observability", _settings(st), elapsed=time.monotonic() - t_start, coordinates=coords)
     out["info"]["model_exprs"] = info.get("model_exprs")
     out["info"]["model_rhs"] = info.get("model_rhs")
     out["info"]["model_inputs"] = info.get("model_inputs")
-    out["info"]["switching"] = _info(st, {"copies": len(copies), "uncertified": uncertified,
-                                          "candidates": candidates})
+    out["info"]["switching"] = _info(st, {"copies": len(copies), "uncertified": uncertified, "candidates": candidates})
     if jets:
-        out["info"]["unknown_inputs"] = {"names": list(jets), "jets": jets, "jet_order": int(order),
-                                         "exact_order": int(order) - 1, "short": short}
+        out["info"]["unknown_inputs"] = {
+            "names": list(jets),
+            "jets": jets,
+            "jet_order": int(order),
+            "exact_order": int(order) - 1,
+            "short": short,
+        }
         if short:
-            session.note("limits", f"unknown inputs: the {order} jets of each input are exact up to Lie order "
-                                   f"{order - 1}, below the orders the analysis took")
+            session.note(
+                "limits",
+                f"unknown inputs: the {order} jets of each input are exact up to Lie order "
+                f"{order - 1}, below the orders the analysis took",
+            )
     return out
 
 
@@ -1653,8 +1835,11 @@ def _with_inputs_projection(rows, res, projection):
         return projection
     if nu["status"] != "verified":
         return nu
-    both = None if None in (projection.get("probability"), nu.get("probability")) else \
-        float(min(1.0, projection["probability"] + nu["probability"]))
+    both = (
+        None
+        if None in (projection.get("probability"), nu.get("probability"))
+        else float(min(1.0, projection["probability"] + nu["probability"]))
+    )
     return {"status": "verified", "of": f"{projection['of']} and the unknown inputs", "probability": both}
 
 
@@ -1690,14 +1875,21 @@ def _scalings_only(st, coords, t_start):
     why = []
     alive = certify_fields(st, cands, why)
     if len(alive) < len(cands):
-        raise HybridError("the scaling kernel proposes a scaling that is not proven a direction "
-                          f"of the rule ({why[0] if why else ''})")
+        raise HybridError(
+            "the scaling kernel proposes a scaling that is not proven a direction "
+            f"of the rule ({why[0] if why else ''})"
+        )
     for F in cands:
-        out_syms.append({"support": sym_sort([k for k, v in F.weights.items() if v]),
-                         "vector": {k: str(v) for k, v in F.weights.items() if v},
-                         "type": "scaling", "certified": True, "exact": True})
+        out_syms.append(
+            {
+                "support": sym_sort([k for k, v in F.weights.items() if v]),
+                "vector": {k: str(v) for k, v in F.weights.items() if v},
+                "type": "scaling",
+                "certified": True,
+                "exact": True,
+            }
+        )
     raw = {"non_identifiable": out_syms, "coordinates": coords}
-    out = finalize(raw, "scaling", _settings(st), elapsed=time.monotonic() - t_start,
-                   coordinates=coords)
+    out = finalize(raw, "scaling", _settings(st), elapsed=time.monotonic() - t_start, coordinates=coords)
     out["info"]["switching"] = _info(st)
     return out

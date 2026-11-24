@@ -16,8 +16,13 @@ def _model(model, settings):
     proofs do not apply: the right-hand sides and observables over symbols positive where declared, the unknown and
     known inputs, per state the initial value (None for a free one), the symbols and the parser onto them."""
     obs = model.observables
-    if isinstance(obs, (list, tuple)) or isinstance(model.trafo, (list, tuple)) or model.conditions or \
-            model.events or settings.get("equilibrate"):
+    if (
+        isinstance(obs, (list, tuple))
+        or isinstance(model.trafo, (list, tuple))
+        or model.conditions
+        or model.events
+        or settings.get("equilibrate")
+    ):
         return None
     pos = settings.get("positive", True)
     texts = [str(v) for v in model.odes.values()] + [str(v) for v in dict(obs).values()]
@@ -29,6 +34,7 @@ def _model(model, settings):
 
     def parse(t):
         return model_sympify(str(t)).xreplace({spy.Symbol(n): s for n, s in sym.items()})
+
     f = {sym[x]: parse(v) for x, v in model.odes.items()}
     h = {k: parse(v) for k, v in dict(obs).items()}
     inputs = [sym.get(w, spy.Symbol(w)) for w in model.unknown_inputs]
@@ -64,8 +70,12 @@ def inversion(m):
     observables as inputs, none reading an input, and the matrix of the derivatives of their time derivatives in
     the inputs of a determinant that is not zero."""
     w, h = m["inputs"], list(m["h"].values())
-    if len(h) != len(w) or any(e.has(*w) for e in h) or any("time" in {str(s) for s in e.free_symbols} for e in h) \
-            or any(e.has(*m["known"]) for e in h):
+    if (
+        len(h) != len(w)
+        or any(e.has(*w) for e in h)
+        or any("time" in {str(s) for s in e.free_symbols} for e in h)
+        or any(e.has(*m["known"]) for e in h)
+    ):
         return None
     try:
         M = spy.Matrix([[spy.diff(_total(e, m), wj) for wj in w] for e in h])
@@ -125,6 +135,7 @@ def lift(gen, m, coords):
 
     def act(e):
         return sum((spy.diff(e, s) * c for s, c in V.items() if c != 0), spy.Integer(0))
+
     try:
         eqs = [_total(xi_x[x], m) - act(m["f"][x]) for x in X] + [act(e) for e in m["h"].values()]
         eqs = [spy.together(e) for e in eqs]
@@ -151,9 +162,12 @@ def lift(gen, m, coords):
 
     def txt(e):
         return str(spy.cancel(e)).replace("**", "^")
-    return {"params": {str(p): txt(v) for p, v in xi_p.items() if v != 0},
-            "states": {str(x): txt(v) for x, v in xi_x.items() if v != 0},
-            "inputs": {str(w): txt(sub.get(d, 0)) for w, d in zip(m["inputs"], Xi)}}
+
+    return {
+        "params": {str(p): txt(v) for p, v in xi_p.items() if v != 0},
+        "states": {str(x): txt(v) for x, v in xi_x.items() if v != 0},
+        "inputs": {str(w): txt(sub.get(d, 0)) for w, d in zip(m["inputs"], Xi)},
+    }
 
 
 def _reads(gen, names):
@@ -174,6 +188,7 @@ def prepare(raw, model):
     parameters; a direction without either proof is marked with the reason. `notes` maps the index of a
     direction to the proof."""
     from ..detection.classify import orbit_kind
+
     info = raw.get("info") or {}
     ui = info.get("unknown_inputs") or {}
     if not ui.get("names") or not raw.get("symmetries"):
@@ -222,8 +237,14 @@ def prepare(raw, model):
             d["support"] = sym_sort(list(lf["params"]))
             if d.get("type") == "scaling":
                 w = {k: v for k, v in (d.get("weights") or {}).items() if k in lf["params"]}
-                if w and all(spy.cancel(model_sympify(lf["params"][k]) - model_sympify(f"({v})*{k}")) == 0
-                             for k, v in w.items()) and set(w) == set(lf["params"]):
+                if (
+                    w
+                    and all(
+                        spy.cancel(model_sympify(lf["params"][k]) - model_sympify(f"({v})*{k}")) == 0
+                        for k, v in w.items()
+                    )
+                    and set(w) == set(lf["params"])
+                ):
                     d["weights"] = w
                 else:
                     d["type"], d["weights"] = "general", None
@@ -239,22 +260,29 @@ def condition(note, inputs, positive):
     else:
         dom = ", ".join(f"{w} positive" for w in inputs if w in set(positive or [])) or "real values"
     if note["proof"] == "inversion":
-        return (f"every point with the output at the start gives the output of the data with the inputs solved from "
-                f"the first derivatives of the observables, where these inputs stay in their domain ({dom}) and the "
-                f"states exist on the time interval of the data; near every point they do")
-    return (f"the flow of the parameters gives the output of the data with the inputs changed along the lift, where "
-            f"the changed inputs stay in their domain ({dom}) on the time interval of the data; near every point "
-            f"they do")
+        return (
+            f"every point with the output at the start gives the output of the data with the inputs solved from "
+            f"the first derivatives of the observables, where these inputs stay in their domain ({dom}) and the "
+            f"states exist on the time interval of the data; near every point they do"
+        )
+    return (
+        f"the flow of the parameters gives the output of the data with the inputs changed along the lift, where "
+        f"the changed inputs stay in their domain ({dom}) on the time interval of the data; near every point "
+        f"they do"
+    )
 
 
 def annotate(red, raw, notes):
     """The proofs `notes` of the directions of `raw` on the blocks of the reduction `red`."""
     from ..detection.classify import direction_order
+
     if not isinstance(red, dict) or not notes:
         return
     sub = "₀₁₂₃₄₅₆₇₈₉"
-    labels = {i: "X" + "".join(sub[int(c)] for c in str(k + 1))
-              for k, i in enumerate(direction_order(raw.get("symmetries") or []))}
+    labels = {
+        i: "X" + "".join(sub[int(c)] for c in str(k + 1))
+        for k, i in enumerate(direction_order(raw.get("symmetries") or []))
+    }
     info = raw.get("info") or {}
     inputs = list((info.get("unknown_inputs") or {}).get("names") or [])
     pos = (info.get("settings") or {}).get("positive", True)
@@ -264,18 +292,25 @@ def annotate(red, raw, notes):
         if not mine:
             continue
         proofs = sorted({n["proof"] for n in mine})
-        b["inputs"] = {"absorb": inputs, "proof": proofs[0] if len(proofs) == 1 else proofs,
-                       "condition": "; ".join(dict.fromkeys(condition(n, inputs, pos) for n in mine)),
-                       "lift": {l: of[l]["lift"] for l in b["labels"] if l in of and of[l]["proof"] == "lift"},
-                       "determinant": next((n["determinant"] for n in mine if n["proof"] == "inversion"), None)}
+        b["inputs"] = {
+            "absorb": inputs,
+            "proof": proofs[0] if len(proofs) == 1 else proofs,
+            "condition": "; ".join(dict.fromkeys(condition(n, inputs, pos) for n in mine)),
+            "lift": {l: of[l]["lift"] for l in b["labels"] if l in of and of[l]["proof"] == "lift"},
+            "determinant": next((n["determinant"] for n in mine if n["proof"] == "inversion"), None),
+        }
         if b.get("status") == "reduced":
             certs = []
             if "inversion" in proofs:
                 inv = next(n for n in mine if n["proof"] == "inversion")
-                certs.append(f"inputs solved from the derivatives of the observables: the matrix of these derivatives "
-                             f"in the inputs has the determinant {inv['determinant']}, "
-                             + ("of one sign on the domain" if inv["signed"] else "not identically zero"))
+                certs.append(
+                    f"inputs solved from the derivatives of the observables: the matrix of these derivatives "
+                    f"in the inputs has the determinant {inv['determinant']}, "
+                    + ("of one sign on the domain" if inv["signed"] else "not identically zero")
+                )
             if "lift" in proofs:
-                certs.append("pointwise lift: the parameter field with state and input components that keeps the "
-                             "right-hand sides and the observables, as identities over Q")
+                certs.append(
+                    "pointwise lift: the parameter field with state and input components that keeps the "
+                    "right-hand sides and the observables, as identities over Q"
+                )
             b["certificates"] = list(b.get("certificates") or []) + certs

@@ -23,8 +23,7 @@ def _need(module):
     try:
         return __import__(module)
     except ImportError as exc:
-        raise ImportError("reading PEtab needs python-libsbml and PyYAML: "
-                          "pip install 'symident[petab]'") from exc
+        raise ImportError("reading PEtab needs python-libsbml and PyYAML: pip install 'symident[petab]'") from exc
 
 
 def _near_zero(text, rel=1e-12):
@@ -32,6 +31,7 @@ def _near_zero(text, rel=1e-12):
     from tokenize import TokenError
 
     import sympy as spy
+
     try:
         e = spy.parse_expr(str(text).replace("^", "**"), evaluate=False)
     except (spy.SympifyError, TypeError, SyntaxError, TokenError):
@@ -77,8 +77,9 @@ def _table_ids(tabs):
     ids = [r.get("parameterId", "") for r in tabs.get("parameters") or []]
     ids += [r.get("petabEntityId", "") for r in tabs.get("mapping") or []]
     for r in tabs.get("conditions") or []:
-        ids += [r.get("targetId", "")] + [k for k in r if k not in ("conditionId", "conditionName", "targetId",
-                                                                     "targetValue")]
+        ids += [r.get("targetId", "")] + [
+            k for k in r if k not in ("conditionId", "conditionName", "targetId", "targetValue")
+        ]
     return [i for i in ids if i]
 
 
@@ -119,8 +120,11 @@ def _formula(libsbml, ast):
         return "0"
     ast = ast.deepCopy()
     stack = [ast]
-    consts = {libsbml.AST_CONSTANT_PI: "pi", libsbml.AST_CONSTANT_E: "exp(1)",
-              libsbml.AST_NAME_AVOGADRO: "602214076000000000000000"}
+    consts = {
+        libsbml.AST_CONSTANT_PI: "pi",
+        libsbml.AST_CONSTANT_E: "exp(1)",
+        libsbml.AST_NAME_AVOGADRO: "602214076000000000000000",
+    }
     named = []
     while stack:
         node = stack.pop()
@@ -158,8 +162,11 @@ def read_sbml(path, names=()):
     """The odes, initial values, values, events and rules of an SBML model; unreadable ids, also of `names`, renamed."""
     libsbml = _need("libsbml")
     doc = libsbml.SBMLReader().readSBML(str(path))
-    fatal = [doc.getError(i).getMessage() for i in range(doc.getNumErrors())
-             if doc.getError(i).getSeverity() >= libsbml.LIBSBML_SEV_ERROR]
+    fatal = [
+        doc.getError(i).getMessage()
+        for i in range(doc.getNumErrors())
+        if doc.getError(i).getSeverity() >= libsbml.LIBSBML_SEV_ERROR
+    ]
     if fatal:
         raise PEtabError("SBML parse failed: " + "; ".join(fatal))
     for prop in ("expandFunctionDefinitions", "promoteLocalParameters"):
@@ -174,6 +181,7 @@ def read_sbml(path, names=()):
 
     def fm(ast):
         return _formula(libsbml, ast)
+
     init = {a.getSymbol(): fm(a.getMath()) for a in m.getListOfInitialAssignments()}
     assign, rate = {}, {}
     for r in m.getListOfRules():
@@ -268,12 +276,24 @@ def read_sbml(path, names=()):
         if bad:
             raise PEtabError(f"event {e.getId()} assigns {', '.join(bad)}, which is not a state")
         events += [dict(when, var=x, value=v, method="replace") for x, v in rescaled(new, conc)]
-    moving = [s.getId() for s in species if s.getId() in odes and s.getId() not in rate
-              and not (s.getBoundaryCondition() or s.getConstant())]
-    return {"odes": odes, "initial": initial, "values": values, "events": events, "assignments": assign,
-            "variable": sorted(dvol), "conc": conc, "renamed": renames,
-            "network": network, "moving": moving, "volume": {x: (None if x in amount else c)
-                                                             for x, c in volume.items()}}
+    moving = [
+        s.getId()
+        for s in species
+        if s.getId() in odes and s.getId() not in rate and not (s.getBoundaryCondition() or s.getConstant())
+    ]
+    return {
+        "odes": odes,
+        "initial": initial,
+        "values": values,
+        "events": events,
+        "assignments": assign,
+        "variable": sorted(dvol),
+        "conc": conc,
+        "renamed": renames,
+        "network": network,
+        "moving": moving,
+        "volume": {x: (None if x in amount else c) for x, c in volume.items()},
+    }
 
 
 def rescaled(new, conc):
@@ -290,6 +310,7 @@ def _time_derivative(expr):
     import sympy as spy
 
     from .sym.parse import model_sympify
+
     e = model_sympify(expr)
     return str(spy.diff(e, spy.Symbol("time"))).replace("**", "^")
 
@@ -297,6 +318,7 @@ def _time_derivative(expr):
 def _network(sb, rates, value):
     """Species, stoichiometry, rates and volumes of the moving species, or None for a non-numeric volume ratio."""
     import sympy as spy
+
     sp = sb["moving"]
     if not sp:
         return None
@@ -308,6 +330,7 @@ def _network(sb, rates, value):
             c = sb["volume"][x]
             vols[x] = spy.Integer(1) if c is None else 1 / spy.sympify(value.get(c, c))
         return vols[x]
+
     rows, out = [], []
     for (_, net), v in zip(sb["network"], rates):
         hit = sorted((x for x in net if net[x] and x in at), key=at.get)
@@ -348,6 +371,7 @@ def _calls(text, name):
 def _piecewise_value(args, table):
     """The value of piecewise(v1, c1, ..., otherwise) at the numbers `table`, or None."""
     from .sym.parse import model_sympify
+
     pairs = list(zip(args[0::2], args[1::2]))
     for v, c in pairs + ([(args[-1], "1 > 0")] if len(args) % 2 else []):
         try:
@@ -367,8 +391,11 @@ def _parameter_switches(exprs, states, trafos):
     found, found_vals, out = {}, {}, dict(exprs)
     for k in list(out):
         while True:
-            calls = [c for c in _calls(out[k], "piecewise")
-                     if not set(get_symbols([" ".join(c[2])])) & (set(states) | {"time"})]
+            calls = [
+                c
+                for c in _calls(out[k], "piecewise")
+                if not set(get_symbols([" ".join(c[2])])) & (set(states) | {"time"})
+            ]
             vals = []
             for a, b, args in calls:
                 v = [_piecewise_value(args, {s: f"({t})" for s, t in tr.items()}) for tr in trafos]
@@ -388,6 +415,7 @@ def _time_switches(odes, states, values):
     import sympy as spy
 
     from .sym.parse import model_sympify
+
     steps, out, seen, texts = {}, dict(odes), {}, {}
     for k in list(out):
         for a, b, args in sorted(_calls(out[k], "piecewise"), reverse=True):
@@ -401,8 +429,7 @@ def _time_switches(odes, states, values):
                 slope, rest = g.coeff(t), g.subs(t, 0)
                 at = []
                 for tr in values:
-                    num = {spy.Symbol(x): model_sympify(v) for x, v in tr.items()
-                           if spy.Symbol(x) in g.free_symbols}
+                    num = {spy.Symbol(x): model_sympify(v) for x, v in tr.items() if spy.Symbol(x) in g.free_symbols}
                     sl, T = slope.xreplace(num), (-rest / slope).xreplace(num)
                     if not (sl.is_number and sl != 0 and T.is_Rational):
                         raise ValueError
@@ -427,6 +454,7 @@ def _zero(expr):
     if expr.strip("() ") == "0":
         return True
     from .sym.parse import model_sympify
+
     try:
         return model_sympify(expr) == 0
     except SYMPY_FAILS as exc:
@@ -455,18 +483,28 @@ def _problem(path):
         if len(y.get("problems") or []) != 1:
             raise PEtabError("a PEtab v1 problem with more than one subproblem is not supported")
         p = y["problems"][0]
-        files = {"model": (p.get("sbml_files") or [None])[0], "conditions": p.get("condition_files"),
-                 "measurements": p.get("measurement_files"), "observables": p.get("observable_files"),
-                 "parameters": [y["parameter_file"]] if isinstance(y.get("parameter_file"), str)
-                 else y.get("parameter_file")}
+        files = {
+            "model": (p.get("sbml_files") or [None])[0],
+            "conditions": p.get("condition_files"),
+            "measurements": p.get("measurement_files"),
+            "observables": p.get("observable_files"),
+            "parameters": [y["parameter_file"]]
+            if isinstance(y.get("parameter_file"), str)
+            else y.get("parameter_file"),
+        }
     elif version == "2":
         models = list((y.get("model_files") or {}).values())
         if len(models) != 1 or str(models[0].get("language", "sbml")).lower() != "sbml":
             raise PEtabError("a PEtab v2 problem needs exactly one SBML model")
-        files = {"model": models[0]["location"], "conditions": y.get("condition_files"),
-                 "experiments": y.get("experiment_files"), "measurements": y.get("measurement_files"),
-                 "observables": y.get("observable_files"), "parameters": y.get("parameter_files"),
-                 "mapping": y.get("mapping_files")}
+        files = {
+            "model": models[0]["location"],
+            "conditions": y.get("condition_files"),
+            "experiments": y.get("experiment_files"),
+            "measurements": y.get("measurement_files"),
+            "observables": y.get("observable_files"),
+            "parameters": y.get("parameter_files"),
+            "mapping": y.get("mapping_files"),
+        }
     else:
         raise PEtabError(f"PEtab format version {y.get('format_version')} is not supported")
     if not files["model"]:
@@ -477,8 +515,10 @@ def _problem(path):
 
 def _periods_v1(tabs):
     """Experiments as {name: [(start, {target: value}), ...]} from the v1 condition table."""
-    cond = {r["conditionId"]: {k: v for k, v in r.items() if k not in ("conditionId", "conditionName")}
-            for r in tabs["conditions"]}
+    cond = {
+        r["conditionId"]: {k: v for k, v in r.items() if k not in ("conditionId", "conditionName")}
+        for r in tabs["conditions"]
+    }
     exps, of_row = {}, []
     for r in tabs["measurements"]:
         pre, sim = r.get("preequilibrationConditionId", ""), r["simulationConditionId"]
@@ -506,15 +546,21 @@ def _resting(exps, of_row, rows, is_state):
     times = {}
     for r, e in zip(rows, of_row):
         times.setdefault(e, []).append(r.get("time", ""))
-    rest = [e for e, per in exps.items() if len(per) == 1 and _start(per[0][0]) > -math.inf
-            and all(_at_inf(t) for t in times.get(e, ["0"]))]
+    rest = [
+        e
+        for e, per in exps.items()
+        if len(per) == 1 and _start(per[0][0]) > -math.inf and all(_at_inf(t) for t in times.get(e, ["0"]))
+    ]
     if not rest:
         return exps, []
     other = [e for e, per in exps.items() if e not in set(rest) and _start(per[0][0]) > -math.inf]
     if other:
-        warnings.warn(f"{len(rest)} experiment(s) measured only at t = inf are read as a trajectory, since "
-                      f"{len(other)} other(s) start without a preequilibration and symident starts all conditions "
-                      "alike", stacklevel=3)
+        warnings.warn(
+            f"{len(rest)} experiment(s) measured only at t = inf are read as a trajectory, since "
+            f"{len(other)} other(s) start without a preequilibration and symident starts all conditions "
+            "alike",
+            stacklevel=3,
+        )
         return exps, []
     out = dict(exps)
     for e in rest:
@@ -545,14 +591,18 @@ def _periods_v2(tabs):
 def _drop_species(net, values):
     """The network `net` without the species of `values`, their values substituted in the rates."""
     cols = [j for j, x in enumerate(net["species"]) if x not in values]
-    return dict(net, species=[net["species"][j] for j in cols],
-                stoichiometry=[[r[j] for j in cols] for r in net["stoichiometry"]],
-                rates=[_sub(r, values) for r in net["rates"]])
+    return dict(
+        net,
+        species=[net["species"][j] for j in cols],
+        stoichiometry=[[r[j] for j in cols] for r in net["stoichiometry"]],
+        rates=[_sub(r, values) for r in net["rates"]],
+    )
 
 
 def _retotal(net, trafos, starts):
     """The conserved totals of `net`, with the value of each total at the start entered in the trafos."""
     from .detection.cq import conserved_totals
+
     totals = conserved_totals(net["stoichiometry"], net["species"]) or None
     for tr, x0 in zip(trafos, starts):
         tr.update({k: _sub(t, x0) for k, t in (totals or {}).items()})
@@ -628,32 +678,46 @@ def read_petab(path):
     that no event sets and whose rates vanish where all of them are 0 leave the model.
     """
     from .api import Model
+
     version, sbml, tabs = _problem(path)
     sb = read_sbml(sbml, _table_ids(tabs))
-    tabs = {k: [{_renamed(a, sb["renamed"]): _renamed(b, sb["renamed"]) for a, b in r.items()} for r in rows]
-            for k, rows in tabs.items()}
-    alias = {r["petabEntityId"]: r["modelEntityId"] for r in tabs.get("mapping") or []
-             if r.get("petabEntityId") and r.get("modelEntityId") and r["petabEntityId"] != r["modelEntityId"]}
+    tabs = {
+        k: [{_renamed(a, sb["renamed"]): _renamed(b, sb["renamed"]) for a, b in r.items()} for r in rows]
+        for k, rows in tabs.items()
+    }
+    alias = {
+        r["petabEntityId"]: r["modelEntityId"]
+        for r in tabs.get("mapping") or []
+        if r.get("petabEntityId") and r.get("modelEntityId") and r["petabEntityId"] != r["modelEntityId"]
+    }
     par = {r["parameterId"]: r for r in tabs["parameters"]}
     estimated = [p for p, r in par.items() if _true(r.get("estimate", "1"))]
     value = dict(sb["values"])
-    value.update({p: _number(r.get("nominalValue", "")) or r.get("nominalValue", "")
-                  for p, r in par.items() if p not in estimated})
+    value.update(
+        {
+            p: _number(r.get("nominalValue", "")) or r.get("nominalValue", "")
+            for p, r in par.items()
+            if p not in estimated
+        }
+    )
     value.update({p: p for p in estimated})
     if any(v in ("", None) for v in value.values()):
-        raise PEtabError("a fixed parameter has no nominal value: "
-                         + ", ".join(k for k, v in value.items() if v in ("", None)))
+        raise PEtabError(
+            "a fixed parameter has no nominal value: " + ", ".join(k for k, v in value.items() if v in ("", None))
+        )
     states = list(sb["odes"])
     odes = _inline(sb["odes"], sb["assignments"])
     initial = _inline(sb["initial"], sb["assignments"])
     exps, of_row = (_periods_v1 if version == "1" else _periods_v2)(tabs)
-    exps = {e: [(t, {alias.get(k, k): v for k, v in c.items()}) for t, c in per] for e, per in exps.items()
-            if e in set(of_row)}
+    exps = {
+        e: [(t, {alias.get(k, k): v for k, v in c.items()}) for t, c in per]
+        for e, per in exps.items()
+        if e in set(of_row)
+    }
     names = list(exps)
     # a constant volume that a later period resets is a state at rest between the periods
     vols = set(sb["conc"].values())
-    resized = sorted({k for per in exps.values() for _, c in per[1:] for k in c
-                      if k in vols and k not in states})
+    resized = sorted({k for per in exps.values() for _, c in per[1:] for k in c if k in vols and k not in states})
     for k in resized:
         odes[k], initial[k] = "0", value.pop(k)
         states.append(k)
@@ -661,8 +725,9 @@ def read_petab(path):
     exps, at_rest = _resting(exps, of_row, tabs["measurements"], is_state)
     pre = [per[0][0].strip().lower() == "-inf" for per in exps.values()]
     if any(pre) and not all(pre):
-        raise PEtabError("some experiments start with a preequilibration and others do not; "
-                         "symident starts all conditions alike")
+        raise PEtabError(
+            "some experiments start with a preequilibration and others do not; symident starts all conditions alike"
+        )
     targets = {k for per in exps.values() for _, c in per for k in c}
     unknown = targets - is_state - set(value)
     if unknown:
@@ -671,12 +736,13 @@ def read_petab(path):
     def val(expr):
         # a condition or override value in the estimated parameters
         return _number(expr) or _sub(expr, {k: v for k, v in value.items() if k != v})
+
     main = [per[1] if p else per[0] for per, p in zip(exps.values(), pre)]
-    odes, steps, stepped = _time_switches(odes, states, [{k: val(c[k]) if k in c else value[k] for k in value}
-                                               for _, c in main])
+    odes, steps, stepped = _time_switches(
+        odes, states, [{k: val(c[k]) if k in c else value[k] for k in value} for _, c in main]
+    )
     in_odes = set(get_symbols(list(odes.values())))
-    changed = sorted({k for per in exps.values() for _, c in per[1:] for k in c
-                      if k not in is_state and k in in_odes})
+    changed = sorted({k for per in exps.values() for _, c in per[1:] for k in c if k not in is_state and k in in_odes})
     inputs = [f"{k}_si_input" for k in changed] + (list(steps) if all(pre) else [])
     shift = {k: f"{k} + {u}" for k, u in zip(changed, inputs)}
     rates = [_inline({"v": v}, sb["assignments"])["v"] for v, _ in sb["network"]]
@@ -715,25 +781,34 @@ def read_petab(path):
             on = Fraction(at[i]) <= Fraction(main[i][0])
             tr[h] = "1" if on and not pre[0] else "0"
             if not on or pre[0]:
-                events.append({"time": main[i][0] if on else at[i], "var": h, "value": "1",
-                               "method": "replace", "cond": [i]})
+                events.append(
+                    {"time": main[i][0] if on else at[i], "var": h, "value": "1", "method": "replace", "cond": [i]}
+                )
         trafos.append(tr)
         start = {k: tr[k] for k in changed}
         for t, c in per[1:]:
             ev = {"time": t, "method": "replace", "cond": [i]}
             new = {k: val(v) for k, v in c.items() if k in is_state}
             events += [dict(ev, var=k, value=v) for k, v in rescaled(new, sb["conc"])]
-            events += [dict(ev, var=inputs[changed.index(k)], value=f"({val(v)}) - ({start[k]})")
-                       for k, v in c.items() if k in changed]
+            events += [
+                dict(ev, var=inputs[changed.index(k)], value=f"({val(v)}) - ({start[k]})")
+                for k, v in c.items()
+                if k in changed
+            ]
         params = {k: v for k, v in tr.items() if k not in is_state}
         fixed = {k: v for k, v in params.items() if k != v}
-        events += [dict(ev, cond=[i], value=_sub(_inline({"v": ev["value"]}, sb["assignments"])["v"], params),
-                        **{k: _sub(ev[k], fixed if k == "time" else params) for k in ("time", "root") if k in ev})
-                   for ev in sb["events"]]
+        events += [
+            dict(
+                ev,
+                cond=[i],
+                value=_sub(_inline({"v": ev["value"]}, sb["assignments"])["v"], params),
+                **{k: _sub(ev[k], fixed if k == "time" else params) for k in ("time", "root") if k in ev},
+            )
+            for ev in sb["events"]
+        ]
     # a parameter that a later period sets to the value it already has in every experiment never changes: the
     # input of that parameter stays 0 and leaves the model with every term of it
-    still_in = [u for u, k in zip(inputs, changed)
-                if all(_zero(str(e["value"])) for e in events if e["var"] == u)]
+    still_in = [u for u, k in zip(inputs, changed) if all(_zero(str(e["value"])) for e in events if e["var"] == u)]
     if still_in:
         zero = {u: "0" for u in still_in}
         for u, k in zip(inputs, changed):
@@ -757,12 +832,15 @@ def read_petab(path):
         o = obs[r["observableId"]]
         holders = [h.strip() for h in (o.get("observablePlaceholders") or "").split(";") if h.strip()]
         if not holders:
-            holders = sorted(set(re.findall(rf"\bobservableParameter\d+_{re.escape(r['observableId'])}\b",
-                                            o["observableFormula"])), key=lambda h: int(re.findall(r"\d+", h)[0]))
+            holders = sorted(
+                set(re.findall(rf"\bobservableParameter\d+_{re.escape(r['observableId'])}\b", o["observableFormula"])),
+                key=lambda h: int(re.findall(r"\d+", h)[0]),
+            )
         over = [v.strip() for v in (r.get("observableParameters") or "").split(";") if v.strip()]
         if len(over) != len(holders):
-            raise PEtabError(f"observable {r['observableId']}: {len(holders)} placeholders, "
-                             f"{len(over)} overrides in a measurement")
+            raise PEtabError(
+                f"observable {r['observableId']}: {len(holders)} placeholders, {len(over)} overrides in a measurement"
+            )
         key = (r["observableId"], tuple(over))
         if key in seen[i]:
             continue
@@ -774,9 +852,12 @@ def read_petab(path):
         if i not in outer_of:
             outer_of[i] = {k: v for k, v in trafos[i].items() if k not in is_state and k != v}
         observables[i][name] = _sub(f, outer_of[i])
-    positive = [p for p in estimated if par[p].get("parameterScale", "lin") in ("log", "log10")
-                or (_number(par[p].get("lowerBound", "")) is not None
-                    and Fraction(par[p]["lowerBound"]) > 0)]
+    positive = [
+        p
+        for p in estimated
+        if par[p].get("parameterScale", "lin") in ("log", "log10")
+        or (_number(par[p].get("lowerBound", "")) is not None and Fraction(par[p]["lowerBound"]) > 0)
+    ]
     odes, switch, texts = _parameter_switches(odes, states, trafos)
     for i, tr in enumerate(trafos):
         tr.update({k: v[i] for k, v in switch.items()})
@@ -784,13 +865,23 @@ def read_petab(path):
         for t, k in texts.items():
             net["rates"] = [r.replace(t, k) for r in net["rates"]]
     # a number that every experiment shares enters the equations, so that a vanishing rate drops out
-    const = {k: v for k, v in trafos[0].items() if k not in odes and not get_symbols([v])
-             and all(tr.get(k) == v for tr in trafos)}
+    const = {
+        k: v
+        for k, v in trafos[0].items()
+        if k not in odes and not get_symbols([v]) and all(tr.get(k) == v for tr in trafos)
+    }
     odes = {x: "0" if _zero(_sub(f, const)) else _sub(f, const) for x, f in odes.items()}
     if net is not None:
         keep = [j for j, r in enumerate(net["rates"]) if not _zero(_sub(r, const))]
-        net = dict(net, rates=[_sub(net["rates"][j], const) for j in keep],
-                   stoichiometry=[net["stoichiometry"][j] for j in keep]) if keep else None
+        net = (
+            dict(
+                net,
+                rates=[_sub(net["rates"][j], const) for j in keep],
+                stoichiometry=[net["stoichiometry"][j] for j in keep],
+            )
+            if keep
+            else None
+        )
         if net is not None and all(pre):
             totals = _retotal(net, trafos, starts)
     # states that start at 0 in every experiment, that no event sets and whose rates vanish where all of them are 0
@@ -819,8 +910,11 @@ def read_petab(path):
         states = [x for x in states if x not in nil]
     # a species without dynamics, events or inputs that starts at one value everywhere is that value
     moved = {e["var"] for e in events} | set(inputs) | set(steps)
-    still = {x: starts[0][x] for x in states if odes.get(x) == "0" and x not in moved and x in starts[0]
-             and all(st.get(x) == starts[0][x] for st in starts)}
+    still = {
+        x: starts[0][x]
+        for x in states
+        if odes.get(x) == "0" and x not in moved and x in starts[0] and all(st.get(x) == starts[0][x] for st in starts)
+    }
     if still:
         odes = {x: _sub(f, still) for x, f in odes.items() if x not in still}
         observables = [{k: _sub(f, still) for k, f in o.items()} for o in observables]
@@ -840,25 +934,44 @@ def read_petab(path):
                 tr[k] = "0"
     used = set(get_symbols(list(odes.values()))) | set(odes) | set(totals or {})
     trafos = [{k: v for k, v in tr.items() if k in used} for tr in trafos]
-    outer = set(get_symbols([v for tr in trafos for v in tr.values()] +
-                            [f for o in observables for f in o.values()] + list(odes.values())))
+    outer = set(
+        get_symbols(
+            [v for tr in trafos for v in tr.values()]
+            + [f for o in observables for f in o.values()]
+            + list(odes.values())
+        )
+    )
     positive = [p for p in positive if p in outer]
     one = len(names) == 1
     if net is not None:
         net = dict(net, stoichiometry=[[float(c) for c in r] for r in net["stoichiometry"]])
     if totals:
         from .detection.cq import exact_totals
+
         totals = exact_totals(totals, odes)
-    m = Model(odes, observables[0] if one else observables, trafo=trafos[0] if one else trafos,
-              conditions=None if one else {"rows": names, "cols": {}}, events=events or None,
-              inputs=inputs, totals=totals, reactions=net, equilibrate=all(pre), positive=positive,
-              reduce_cq=bool(totals))
+    m = Model(
+        odes,
+        observables[0] if one else observables,
+        trafo=trafos[0] if one else trafos,
+        conditions=None if one else {"rows": names, "cols": {}},
+        events=events or None,
+        inputs=inputs,
+        totals=totals,
+        reactions=net,
+        equilibrate=all(pre),
+        positive=positive,
+        reduce_cq=bool(totals),
+    )
     # an estimated parameter that only terms vanishing in every experiment hold has no effect on the output; an
     # identity entry k = k of a trafo holds no term
-    texts = list(dict.fromkeys(
-        list(odes.values()) + [v for tr in trafos for k, v in tr.items() if k != v]
-        + [f for o in observables for f in o.values()]
-        + [str(e.get(k, "")) for e in events or [] for k in ("value", "time", "root")]))
+    texts = list(
+        dict.fromkeys(
+            list(odes.values())
+            + [v for tr in trafos for k, v in tr.items() if k != v]
+            + [f for o in observables for f in o.values()]
+            + [str(e.get(k, "")) for e in events or [] for k in ("value", "time", "root")]
+        )
+    )
     syms_of = [set(get_symbols([t])) for t in texts]
     est = set(estimated)
     # a parameter in an expression without a substituted 0 is held; one that appears only next to a substituted 0
@@ -869,6 +982,7 @@ def read_petab(path):
     unsure -= held
     if unsure:
         from .sym.parse import model_sympify
+
         for t, sy in zip(texts, syms_of):
             if sy & unsure:
                 try:
@@ -878,10 +992,18 @@ def read_petab(path):
                     held |= sy & unsure
     without = [p for p in estimated if p not in held]
     if without:
-        warnings.warn(f"estimated parameters without effect on the model as fitted: {', '.join(without)} (every term "
-                      "that holds them vanishes in every experiment); they are not identifiable and are not "
-                      "coordinates of the detection; m.petab['without_effect'] lists them", stacklevel=2)
-    m.petab = {"experiments": names, "estimated": estimated,
-               "fixed": {k: v for k, v in value.items() if k != v}, "renamed": sb["renamed"],
-               "without_effect": without, "at_rest": at_rest}
+        warnings.warn(
+            f"estimated parameters without effect on the model as fitted: {', '.join(without)} (every term "
+            "that holds them vanishes in every experiment); they are not identifiable and are not "
+            "coordinates of the detection; m.petab['without_effect'] lists them",
+            stacklevel=2,
+        )
+    m.petab = {
+        "experiments": names,
+        "estimated": estimated,
+        "fixed": {k: v for k, v in value.items() if k != v},
+        "renamed": sb["renamed"],
+        "without_effect": without,
+        "at_rest": at_rest,
+    }
     return m

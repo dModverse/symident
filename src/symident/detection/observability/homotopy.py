@@ -114,8 +114,7 @@ class Homotopy:
             ns[key] = W
             return W
         k, T = len(V), V[0].shape[1]
-        M = [np.array([[int(V[b][g, t]) for b in range(k)] for g in self.gauge], dtype=np.int64)
-             for t in range(T)]
+        M = [np.array([[int(V[b][g, t]) for b in range(k)] for g in self.gauge], dtype=np.int64) for t in range(T)]
         X0 = _inv_mod(M[0], p)
         if X0 is None:
             return None
@@ -170,7 +169,7 @@ class Homotopy:
     def _relevance(self):
         """The parameters each entry depends on, by groups of eight, then one by one."""
         self.rel = [[[] for _ in c] for c in self.cols]
-        groups = [self.pars[i:i + 8] for i in range(0, len(self.pars), 8)]
+        groups = [self.pars[i : i + 8] for i in range(0, len(self.pars), 8)]
         for gi, g in enumerate(groups, start=1):
             hit = self._derivative(g, 7919 * gi + 1)
             if hit is None:
@@ -293,8 +292,9 @@ class Homotopy:
                 e = {"expr": num if den == "1" else f"({num})/({den})", "reli": reli}
                 if self._verified(a, i, e):
                     return e
-                self.diag(f"entry {self.cols[a][i]} degree {dg}: the lift at {np_} prime(s) fails "
-                          "at the verification prime")
+                self.diag(
+                    f"entry {self.cols[a][i]} degree {dg}: the lift at {np_} prime(s) fails at the verification prime"
+                )
         return None
 
     # ---- directions -------------------------------------------------------------------
@@ -307,15 +307,16 @@ class Homotopy:
         if not self.fcs:
             return
         P1 = PRIMES[0]
-        B = np.array([[int(self.ns0["V"][free.index(fc)][c, 0]) % P1 for c in range(n_sh)] for fc in self.fcs],
-                     dtype=np.int64)
+        B = np.array(
+            [[int(self.ns0["V"][free.index(fc)][c, 0]) % P1 for c in range(n_sh)] for fc in self.fcs], dtype=np.int64
+        )
         rr = _core.sym_rref_mod(B.astype(np.float64), P1)
         piv = [int(x) for x in np.atleast_1d(rr["piv"])]
         if len(piv) < len(self.fcs):
             self.diag("the residual directions are dependent on the shared columns")
             self.fcs = []
             return
-        self.gauge = piv[:len(self.fcs)]
+        self.gauge = piv[: len(self.fcs)]
         if self.mode == "free":
             self.anchor = []
             for fc in self.fcs:
@@ -329,8 +330,9 @@ class Homotopy:
         if self.mode != "free":
             self.anchor = list(self.gauge)
         skip = [set(self.gauge) if self.mode != "free" else {self.anchor[a]} for a in range(len(self.fcs))]
-        self.cols = [[c for c in range(n_sh) if c not in skip[a] and int(W[a][c, 0]) % P1]
-                     for a in range(len(self.fcs))]
+        self.cols = [
+            [c for c in range(n_sh) if c not in skip[a] and int(W[a][c, 0]) % P1] for a in range(len(self.fcs))
+        ]
 
     def _verified(self, a, i, e):
         """The fitted entry against the Pade value at t = 1 on a fresh line at a prime outside the lift."""
@@ -379,10 +381,16 @@ class Homotopy:
             return None
         route = "homotopy fit"
         if used:
-            route += f" in the parameters and the {self.sys.hom_kind}" + \
-                (f" of condition {single[0] + 1}" if single and len(used) == 1 else "")
-        return {"support": sym_sort(list(entries)), "vector": entries, "type": "general",
-                "closed_form": True, "route": route}
+            route += f" in the parameters and the {self.sys.hom_kind}" + (
+                f" of condition {single[0] + 1}" if single and len(used) == 1 else ""
+            )
+        return {
+            "support": sym_sort(list(entries)),
+            "vector": entries,
+            "type": "general",
+            "closed_form": True,
+            "route": route,
+        }
 
     def _in_kernel(self, entries, mi_plain, tries=None, need=2):
         """Whether the shared kernel at `need` fresh uniform points holds `entries`, states at rest in `mi_plain`."""
@@ -422,8 +430,10 @@ class Homotopy:
         if self.ns0 is None:
             self.diag("no series kernel at the base")
             return None
-        self.diag(f"residual {','.join(map(str, fcs))}; base free {','.join(map(str, self.ns0['free']))}; "
-                  f"shared {self.sys.n_shared}")
+        self.diag(
+            f"residual {','.join(map(str, fcs))}; base free {','.join(map(str, self.ns0['free']))}; "
+            f"shared {self.sys.n_shared}"
+        )
         P2 = verify_prime()
         self.dv = {nm: int(x) % P2 for nm, x in zip(self.pars, random_point(len(self.pars), 424242))}
         self.nsv = self.line_null(self.dv, 2 * self.d_cap + 2, P2)

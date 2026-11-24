@@ -22,6 +22,7 @@ def _run_msolve(names, eqs):
     (work.quick_msolve())."""
     from ..detection import work
     from .msolve import MsolveMissingError, _msolve_binary
+
     try:
         exe = _msolve_binary()
     except MsolveMissingError:
@@ -41,6 +42,7 @@ def _run_msolve(names, eqs):
     if not txt:
         return None
     from ..detection.discrete import parse_rational
+
     try:
         return parse_rational(txt)
     except (SyntaxError, ValueError, TypeError, NameError):
@@ -104,6 +106,7 @@ def modular_decision(eqs, unknowns, pos, rng, draws=_POINTS):
     from ..detection import work
     from ..detection.discrete import _gb_count
     from ..gfp import PRIMES
+
     if not unknowns or not eqs:
         return {"exists": "open", "bound": None, "draws": []}
     xs = [spy.Symbol(x) for x in unknowns]
@@ -120,7 +123,7 @@ def modular_decision(eqs, unknowns, pos, rng, draws=_POINTS):
     names = [f"x{i}" for i in range(len(xs))]
     ren = dict(zip(xs, [spy.Symbol(n) for n in names]))
     square = len(nums) == len(xs)
-    M = 2 ** 64
+    M = 2**64
     Dt = math.prod(max(1, int(d)) for d in deg_theta)
     bound, verdicts = 1.0, []
     for _ in range(draws):
@@ -154,8 +157,14 @@ def modular_decision(eqs, unknowns, pos, rng, draws=_POINTS):
                 verdicts.append("no")
             else:
                 verdicts.append("open")
-        elif k and square and whole and dims and k == dims[0] and \
-                all(any(int(c) % p for c in q.coeffs()) for q in polys + [w]):
+        elif (
+            k
+            and square
+            and whole
+            and dims
+            and k == dims[0]
+            and all(any(int(c) % p for c in q.coeffs()) for q in polys + [w])
+        ):
             # as many distinct values as the dimension of the quotient, no equation zero modulo p: every point is simple
             verdicts.append("proven")
         else:
@@ -179,10 +188,16 @@ def rest_check(multi, zero_of, positive, points=_POINTS):
         return {"checked": False, "why": f"more than {_MAX_STATES} resting states"}
     pos = _positive_names(positive)
     rng = session.current().rng("rest check")
-    report = {"points": 0, "consistent": 0, "in_domain": 0, "undecided": 0, "checked": True,
-              "how": "msolve over Q at random rational parameter values, real roots isolated; a check at "
-                     "random points, not a proof. exists: a Groebner basis modulo a random prime at random "
-                     "integer points, proven by a simple point, or no with the error bound"}
+    report = {
+        "points": 0,
+        "consistent": 0,
+        "in_domain": 0,
+        "undecided": 0,
+        "checked": True,
+        "how": "msolve over Q at random rational parameter values, real roots isolated; a check at "
+        "random points, not a proof. exists: a Groebner basis modulo a random prime at random "
+        "integer points, proven by a simple point, or no with the error bound",
+    }
     constant = set()
     for _ in range(points):
         # per system: "none" (no complex solution), "out" (none in the domain), "unsure" or "in"
@@ -227,6 +242,7 @@ def rest_check(multi, zero_of, positive, points=_POINTS):
             data = _run_msolve(names, polys)
             if data is None:
                 from .msolve import MsolveMissingError, _msolve_binary
+
                 try:
                     _msolve_binary()
                 except MsolveMissingError:
@@ -242,7 +258,7 @@ def rest_check(multi, zero_of, positive, points=_POINTS):
             verdicts = []
             for sol in data[1][1]:
                 v = "in"
-                for x, (lo, hi) in zip(unknowns, sol[:len(unknowns)]):
+                for x, (lo, hi) in zip(unknowns, sol[: len(unknowns)]):
                     if pos is True or x in pos:
                         if hi <= 0:
                             v = "out"
@@ -266,18 +282,25 @@ def rest_check(multi, zero_of, positive, points=_POINTS):
     if decisions:
         verdict = [d["exists"] for d in decisions]
         report["exists"] = "no" if "no" in verdict else "proven" if all(v == "proven" for v in verdict) else "open"
-        report["bound"] = max((d["bound"] for d in decisions if d["exists"] == "no" and d["bound"] is not None),
-                              default=None) if report["exists"] == "no" else None
+        report["bound"] = (
+            max((d["bound"] for d in decisions if d["exists"] == "no" and d["bound"] is not None), default=None)
+            if report["exists"] == "no"
+            else None
+        )
         if report["exists"] == "no" and any(d["exists"] == "no" and d["bound"] is None for d in decisions):
             report["bound"] = None
     if report["points"] and not report["consistent"] and report.get("exists") != "proven":
         states = sorted(constant) or sorted({x for _, u in systems for x in u})
-        what = (f"the balance{'s' if len(states) > 1 else ''} of {', '.join(states)} at rest, with the inputs "
-                f"at zero, {'are nonzero constants' if len(states) > 1 else 'is a nonzero constant'}" if constant
-                else "the resting balances of " + ", ".join(states) + " have no common solution over the complex "
-                "numbers")
+        what = (
+            f"the balance{'s' if len(states) > 1 else ''} of {', '.join(states)} at rest, with the inputs "
+            f"at zero, {'are nonzero constants' if len(states) > 1 else 'is a nonzero constant'}"
+            if constant
+            else "the resting balances of " + ", ".join(states) + " have no common solution over the complex numbers"
+        )
         sure = f" (error bound {report['bound']:.3g})" if report.get("bound") is not None else ""
-        raise InputError(f"equilibrate: {what} at {report['points']} random parameter values, "
-                         f"so the model has no resting state for generic parameters{sure}; check the right-hand "
-                         "sides, the inputs at rest and the conserved totals")
+        raise InputError(
+            f"equilibrate: {what} at {report['points']} random parameter values, "
+            f"so the model has no resting state for generic parameters{sure}; check the right-hand "
+            "sides, the inputs at rest and the conserved totals"
+        )
     return report
