@@ -1,19 +1,11 @@
 # Wheels (manylinux x86_64/aarch64, macOS arm64, Windows) and the sdist, tested by cibuildwheel; the Linux wheel
 # also on Fedora and Debian Python, a source build with Fedora compilers, msolve on AlmaLinux 8 (glibc 2.28). Runs
-# on build changes, weekly, on demand, and per published release, which uploads the wheels and the sdist to PyPI.
+# on build changes, weekly, on demand, and per published release, which uploads the wheels and the sdist to PyPI:
+# those of the pull request run of the released commit where one passed, else those it builds itself.
 name: wheels
 
 on:
   pull_request:
-    paths:
-      - cpp/**
-      - CMakeLists.txt
-      - pyproject.toml
-      - src/symident/install.py
-      - src/symident/tools/**
-      - .github/workflows/cd.yml
-  push:
-    branches: [master]
     paths:
       - cpp/**
       - CMakeLists.txt
@@ -35,8 +27,39 @@ permissions:
   contents: read
 
 jobs:
+  # at a release, a run of this workflow in this repository on the released commit in which every build and test
+  # passed; master moves only by fast-forward, so the merge commit that run built has the tree of the release
+  find:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.find.outputs.run }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          need='["wheels ubuntu-latest","wheels ubuntu-24.04-arm","wheels macos-latest","wheels windows-latest","sdist","distro (fedora:latest)","distro (debian:stable)","msolve-glibc228","fedora"]'
+          runs=$(gh api "repos/$REPO/actions/workflows/cd.yml/runs?head_sha=$SHA&status=success&per_page=20" \
+            --jq ".workflow_runs[] | select(.head_repository.full_name == \"$REPO\" and .event != \"release\") | .id" || true)
+          for id in $runs; do
+            ok=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=50" \
+              --jq "[.jobs[] | select(.conclusion == \"success\") | .name] as \$done | $need - \$done | length == 0" || true)
+            if [ "$ok" = "true" ]; then
+              echo "run=$id" >> "$GITHUB_OUTPUT"
+              echo "wheels and sdist of run $id"
+              break
+            fi
+          done
+
   wheels:
     name: wheels ${{ matrix.os }}
+    needs: find
+    if: ${{ !cancelled() && needs.find.outputs.run == '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -53,6 +76,8 @@ jobs:
           path: wheelhouse/*.whl
 
   sdist:
+    needs: find
+    if: ${{ !cancelled() && needs.find.outputs.run == '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,9 +92,9 @@ jobs:
   # the manylinux wheel on the distributions' own Python; Fedora also builds msolve with
   # install_msolve() and runs the tests that need it
   distro:
-    needs: wheels
+    needs: [find, wheels]
     # runs when another platform's wheels failed; it needs only the ubuntu-latest wheel
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.find.outputs.run == '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -108,6 +133,8 @@ jobs:
 
   # the msolve build script alone on glibc 2.28, where pthread is not part of libc
   msolve-glibc228:
+    needs: find
+    if: ${{ !cancelled() && needs.find.outputs.run == '' }}
     runs-on: ubuntu-latest
     container: almalinux:8
     steps:
@@ -122,6 +149,8 @@ jobs:
   # a source install on Fedora's own Python and compilers, as dMod2's CI installs it
   fedora:
     name: fedora
+    needs: find
+    if: ${{ !cancelled() && needs.find.outputs.run == '' }}
     runs-on: ubuntu-latest
     container: fedora:latest # zizmor: ignore[unpinned-images]
     steps:
@@ -138,13 +167,18 @@ jobs:
       - name: Tests
         run: cd /tmp && /opt/venv/bin/python -m pytest -q -n auto "$GITHUB_WORKSPACE/tests"
 
-  # the artifacts of this run, uploaded only when every build and test above passed
+  # the artifacts of the run found, else of this run, uploaded only when every build and test passed
   publish:
-    needs: [wheels, sdist, distro, msolve-glibc228, fedora]
-    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: [find, wheels, sdist, distro, msolve-glibc228, fedora]
+    if: >-
+      ${{ !cancelled() && github.event_name == 'release' && github.event.action == 'published' && (
+        needs.find.outputs.run != '' || (
+          needs.wheels.result == 'success' && needs.sdist.result == 'success' && needs.distro.result == 'success'
+          && needs.msolve-glibc228.result == 'success' && needs.fedora.result == 'success')) }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      actions: read
       id-token: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -152,8 +186,12 @@ jobs:
           pattern: wheels-*
           path: dist
           merge-multiple: true
+          run-id: ${{ needs.find.outputs.run || github.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sdist
           path: dist
+          run-id: ${{ needs.find.outputs.run || github.run_id }}
+          github-token: ${{ github.token }}
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

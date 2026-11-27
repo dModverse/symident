@@ -2,10 +2,9 @@
 # macOS and Windows with the oldest and the newest supported Python.
 name: CI
 
+# master moves only by fast-forward to a commit its pull request has tested
 on:
   pull_request:
-  push:
-    branches: [master]
   workflow_dispatch:
 
 concurrency:
