@@ -1,7 +1,7 @@
 # symident
 
 [![CI](https://github.com/dModverse/symident/actions/workflows/ci.yml/badge.svg)](https://github.com/dModverse/symident/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/symident)](https://pypi.org/project/symident/)
+[![PyPI](https://img.shields.io/pypi/v/symident?cacheSeconds=3600)](https://pypi.org/project/symident/)
 [![docs](https://github.com/dModverse/symident/actions/workflows/docs.yml/badge.svg)](https://dmodverse.github.io/symident/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
