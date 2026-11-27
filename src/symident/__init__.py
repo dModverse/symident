@@ -19,4 +19,4 @@ __all__ = [
     "install_msolve",
     "switches",
 ]
-__version__ = "0.18.1"
+__version__ = "0.18.2"

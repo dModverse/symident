@@ -57,7 +57,8 @@ def reconst_control(
         Numerator and denominator degree of the general sparse rational fit.
     gap_order_cap : int
         Highest order of the power series in the time between events; reaching it is an
-        entry in ``info["limits"]``.
+        entry in ``info["limits"]``. Curve samples of resting conditions start at this
+        order and double it, up to four times, where a kernel at eps = 1 needs more.
     minsupport_cand_cap : int
         Column subsets searched for directions with small support.
     perprime_cap : int

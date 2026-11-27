@@ -14,6 +14,9 @@ from .context import ints, ok, strs
 from .rest import RestingStates
 from .start import DiagonalStart
 
+# the series order of the curve samples is doubled at most this often where a kernel at eps = 1 needs more coefficients
+_CURVE_RAISES = 2
+
 _IDENT = re.compile(r"[A-Za-z._][A-Za-z0-9._]*")
 
 
@@ -137,6 +140,7 @@ class JointSystem(RestingStates):
         self.fwd_banned = [n for n in strs(multi.get("exp_atoms")) if n in set(self.solve_param_names)]
         self.fwd_on = not any(r.get("inverted") for r in self.recast) and not state.env("NOFWDSEED")
         self.cont_t = max(1, int(run.ctrl["gap_order_cap"]))
+        self.cont_top = self.cont_t << _CURVE_RAISES
         n_eq = (max(self.equil_conds) + 1) if self.equil_conds else 0
         self.cont_off = [False] * n_eq
         self.cont_seen = [False] * n_eq
@@ -148,6 +152,9 @@ class JointSystem(RestingStates):
         self.fwd_sel = list(range(self.kc))
         self.warm_off = False
         self.diag = self.diagonal_start()
+        self.curve = None
+        self.curve_seeds = {}
+        self.curve_bases = {}
         self.diag_ref = {}
         self.chained = False
         if self.diag is not None and not run.has_gaps:
@@ -554,9 +561,17 @@ class JointSystem(RestingStates):
             return [self.cond_obs(self.equil_conds[mi], scs[mi]["ptc"], p, Nt, Mtot) for mi in range(self.kc)]
         return self.cond_obs_sel(scs, list(range(self.kc)), p, Nt, Mtot)
 
+    def curve_order(self, Mtot):
+        """The gap order of a kernel: in curve mode that of the continuation, the most coefficients for the Pade
+        form at eps = 1."""
+        return max(int(Mtot), self.cont_t) if self.curve and self.run.has_gaps else int(Mtot)
+
     def kcall(self, point, p, Nt, Mtot=0, solve_fn=None, rank_only=False):
         """The wide kernel at a point: every condition solved, rows stacked and reduced."""
         run = self.run
+        if not rank_only:
+            Mtot = self.curve_order(Mtot)
+        own = solve_fn is None
         if solve_fn is None:
             solve_fn = self.solve_cond
             if self.kc > 1 and self.solve_cond(point, p, self.equil_conds[0]) is not None:
@@ -584,6 +599,11 @@ class JointSystem(RestingStates):
                 return {"ok": False}
             sblocks.append(b["series"])
             blocks.append(b["W"])
+        if self.curve and run.has_gaps:
+            out = self.curve_kernel(sblocks, range(self.nz_wide), Mtot + 1, p)
+            if out.get("short") and own and self.raise_order():
+                return self.kcall(point, p, Nt, Mtot)
+            return run.modulo_nuisance(out, p)
         rr = _core.sym_rref_mod(np.vstack(blocks).astype(np.float64), p)
         res = {
             "ok": True,
@@ -595,6 +615,74 @@ class JointSystem(RestingStates):
         if run.has_gaps:
             res = series_stack(res, sblocks, self.nz_wide, Mtot + 1, p, run.cores_call)
         return run.modulo_nuisance(res, p)
+
+    def curve_kernel(self, sblocks, cols, N, p):
+        """The kernel in curve mode on the columns `cols` (wide indices): the state columns eliminated from the series
+        rows, the parameter part at eps = 1 by Pade, the state columns as unit rows. The parameter part determines a
+        kernel vector, the resting Jacobian being invertible on the curve."""
+        cols = list(cols)
+        st = [j for j, c in enumerate(cols) if c >= self.n_shared]
+        th = [j for j, c in enumerate(cols) if c < self.n_shared]
+        nth = len(th)
+        live = [np.asarray(b, dtype=np.int64) for b in sblocks if b is not None]
+        if not live:
+            return {"ok": False, "why": "no series rows"}
+        S = np.vstack(live).reshape(-1, len(cols) * int(N)) % p
+        R_th, piv_th = np.zeros((0, nth), dtype=np.int64), np.zeros(0, dtype=np.int64)
+        if nth:
+            sp = _core.sym_series_project(S, len(cols), int(N), p, st, int(self.run.cores_call))
+            QS = np.asarray(sp["Q"], dtype=np.int64).reshape(-1, nth * int(N))
+            if QS.shape[0]:
+                sr = _core.sym_series_rank(
+                    QS,
+                    nth,
+                    int(N),
+                    p,
+                    [],
+                    at_one_below=nth + 1,
+                    cores=int(self.run.cores_call),
+                    row_prec=ints(sp["prec"]),
+                )
+                if state.env("CURVEDIAG"):
+                    print(
+                        f"[curvediag] {int(N)} coefficients, rank {int(sr['rank'])} of {nth}, Pade "
+                        + ("found" if sr.get("R") is not None else "none"),
+                        flush=True,
+                    )
+                if sr.get("R") is None:
+                    return {"ok": False, "why": "no kernel at eps = 1", "short": True}
+                piv_th = np.atleast_1d(sr["pivots"]).astype(np.int64)
+                R_th = np.asarray(sr["R"], dtype=np.int64).reshape(len(piv_th), nth)
+        rows = [(j, np.eye(1, len(cols), j, dtype=np.int64)[0]) for j in st]
+        for i, pc in enumerate(piv_th):
+            r = np.zeros(len(cols), dtype=np.int64)
+            r[th] = R_th[i] % p
+            rows.append((th[int(pc)], r))
+        rows.sort(key=lambda x: x[0])
+        Rm = np.vstack([r for _, r in rows]) if rows else np.zeros((0, len(cols)), dtype=np.int64)
+        pv = np.array([c for c, _ in rows], dtype=np.int64)
+        return {
+            "ok": True,
+            "R": Rm,
+            "pivots": pv,
+            "rank": len(pv),
+            "rank_s": len(pv),
+            "dim": len(cols),
+            "at_one": True,
+        }
+
+    def raise_order(self):
+        """The series order of the curve samples doubled for the rest of the analysis; False at the top, with a
+        limit noted."""
+        if self.cont_t < self.cont_top:
+            self.cont_t *= 2
+            return True
+        session.note(
+            "limits",
+            f"curve samples: a kernel at eps = 1 needs more than {self.cont_top + 1} series coefficients; the point is "
+            "skipped, a larger gap_order_cap raises them",
+        )
+        return False
 
     def kcall_fwd(self, point, p, Nt, solve_rates):
         """The wide kernel with the forward solve for the turnover rates."""
@@ -687,7 +775,8 @@ class JointSystem(RestingStates):
         def mk(mi):
             def f(point, p, Nt):
                 sc0 = self.solve_cond(point, p, self.equil_conds[mi])
-                if sc0 is None:
+                # a continued condition rests at eps = 0 only; the orders are scanned on the series instead
+                if sc0 is None or sc0.get("cont"):
                     return {"ok": False}
                 return _core.sym_obs_chain_rank_profile(
                     run.chain_tapes(run.chain_groups[run.chain_idx[self.equil_conds[mi]]]),
@@ -731,6 +820,7 @@ class JointSystem(RestingStates):
             return o
 
         n_p = len(point_list)
+        mt = self.curve_order(run.mtot)
         per_cond = [None] * n_p
         seed_rows, ser_rows, ev_chain, ev_prime = [], [], [], []
         for i in range(n_p):
@@ -760,8 +850,8 @@ class JointSystem(RestingStates):
                 run.n_leaves,
                 run.n_states,
                 self.z_slots_local[loc_sel],
-                run.exact_nt(Nt, run.mtot),
-                int(run.mtot),
+                run.exact_nt(Nt, mt),
+                int(mt),
                 int(min(run.cores, len(ev_chain))),
                 [run.nt_cap[e] for e in ev_chain] if len(run.nt_cap) == self.kc else [],
                 ser_rows if any(s is not None for s in ser_rows) else None,
@@ -790,6 +880,16 @@ class JointSystem(RestingStates):
                 out[i] = {"ok": False}
             elif touch:
                 out[i] = {"ok": True, "touch": hit}
+            elif self.curve:
+                cl = list(range(self.nz_wide)) if cols is None else list(cols)
+                Nb = mt + 1
+                sk = [c * Nb + j for c in cl for j in range(Nb)]
+                out[i] = self.curve_kernel(
+                    [None if S is None else np.asarray(S)[:, sk] for S in sblocks],
+                    cl,
+                    Nb,
+                    prime_vec[i],
+                )
             elif cols is not None:
                 cl = list(cols)
                 rr = _core.sym_rref_mod(np.vstack(blocks)[:, cl].astype(np.float64), prime_vec[i])
@@ -825,6 +925,11 @@ class JointSystem(RestingStates):
                     prime_vec[i],
                     run.cores,
                 )
+        short = [i for i in range(n_p) if out[i].get("short")]
+        if short and self.raise_order():
+            again = self.chunk([point_list[i] for i in short], [prime_vec[i] for i in short], Nt, cols, conds, touch)
+            for i, o in zip(short, again):
+                out[i] = o
         return out
 
     hom_kind = "resting states"
@@ -839,6 +944,9 @@ class JointSystem(RestingStates):
         solves of the kernel there; None where a condition does not solve."""
         run = self.run
         env = {}
+        if self.curve:
+            # a curve sample has the resting states at eps = 0 only; the entries in them are not checked
+            return env
         for mi, ci in enumerate(self.equil_conds):
             sc0 = self.solve_cond(point, q, ci)
             if sc0 is None:

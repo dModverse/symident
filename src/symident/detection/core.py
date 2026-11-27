@@ -170,6 +170,37 @@ def _ode_zeros(fdyn, forcings, known=(), nonzero=()):
         zero.update({spy.Symbol(k): 0 for k in new})
 
 
+def _zero_face(fdyn, forcings, known=(), nonzero=()):
+    """The largest set of states whose right-hand sides all vanish with the set, the inputs and `known` at zero,
+    with a Jacobian on the set invertible at generic values: an invariant face that rests at zero. States a left
+    kernel vector of that Jacobian reads, such as those of a conserved total, are left out. None of `nonzero`."""
+    import random
+
+    import sympy as spy
+
+    from ..sym.parse import _make_local_parse
+
+    _, parse = _make_local_parse([f"{k} = {v}" for k, v in fdyn.items()])
+    rhs = {k: parse(str(v).replace("^", "**")) for k, v in fdyn.items()}
+    base = {spy.Symbol(u): 0 for u in list(forcings) + list(known)}
+    face = [k for k in rhs if k not in set(forcings) | set(known) | set(nonzero) and rhs[k] != 0]
+    rng = random.Random(1)
+    while face:
+        at = {**base, **{spy.Symbol(k): 0 for k in face}}
+        keep = [k for k in face if spy.cancel(spy.together(rhs[k].xreplace(at))) == 0]
+        if keep != face:
+            face = keep
+            continue
+        J = spy.Matrix([[spy.diff(rhs[k], spy.Symbol(j)).xreplace(at) for j in face] for k in face])
+        vals = {x: spy.Integer(rng.randrange(2, 10**6)) for x in J.free_symbols}
+        left = J.xreplace(vals).T.nullspace()
+        if not left:
+            return face
+        drop = {face[i] for v in left for i in range(len(face)) if v[i] != 0}
+        face = [k for k in face if k not in drop]
+    return []
+
+
 def _rest_zeros(fdyn, reactions, forcings, nonzero=()):
     """The states at zero at rest: those the network and the right-hand sides force, then one per branch, noted;
     none of `nonzero` (``free_initial``), whose resting value is free."""
@@ -184,7 +215,14 @@ def _rest_zeros(fdyn, reactions, forcings, nonzero=()):
         forced, open_ = _ode_zeros(fdyn, forcings, zero, nonzero)
         zero = list(dict.fromkeys(zero + forced))
         if not open_:
-            return zero
+            face = _zero_face(fdyn, forcings, zero, nonzero)
+            if face:
+                session.note(
+                    "branches",
+                    f"the resting states {', '.join(face)}: their right-hand sides vanish where all of them are "
+                    "zero; the result holds for them at zero, `free_initial` takes another branch",
+                )
+            return list(dict.fromkeys(zero + face))
         session.note(
             "branches",
             f"the resting states {', '.join(open_)}: the right-hand side of {open_[0]} "

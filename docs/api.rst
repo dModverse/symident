@@ -82,6 +82,8 @@ Diagnostic output:
    the reduction solve.
 ``JOINTDIAG``
    the joint resting-state rows.
+``CURVEDIAG``
+   the lines and kernels at eps = 1 of curve samples.
 
 Routes:
 
@@ -95,6 +97,10 @@ Routes:
    no forward seed of the resting states.
 ``NODIAG``
    no diagonal start: resting conditions continued from the forward one only.
+``RESTCURVE``
+   curve samples of the resting conditions also where a direct solve is cheap.
+``NORESTCURVE``
+   direct resting solves for reconstruction and checks, never curve samples.
 ``NOSHARED``
    a tape per condition also where the conditions differ only in the values of symbols.
 ``NOSELECT``

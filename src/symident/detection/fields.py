@@ -315,6 +315,8 @@ def field_check(setup, V, znames, leaf_names, point, chains, joint):
             if sol is None:
                 raise RouteError("no resting state at the evaluation point")
             xs = sol["sol"]["val_by"]
+            if sol.get("cont"):
+                raise RouteError("the resting states are a curve sample, not a point")
             base = dict(leaf_val)
             base.update({k: int(v) % P for k, v in xs.items()})
             state_col = {f"{k}|c{mi + 1}" for k in xs}

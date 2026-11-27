@@ -1,3 +1,33 @@
+# symident 0.18.2
+
+* Under `equilibrate` with a diagonal start, reconstruction and the kernel checks take curve
+  samples where a direct solve of the resting balances at a random point needs msolve past short
+  work limits: a point is reached on a line from a forward seed at Z = 0, each condition lifted as
+  a power series, and the kernel in the coordinates at eps = 1 is the Padé form of the series
+  kernel with the state columns eliminated. Every route, relevance probes, lines and checks
+  included, runs on them without a resting solve at the point or msolve. `SYMIDENT_RESTCURVE`
+  and `SYMIDENT_NORESTCURVE` force curve samples or direct solves.
+* The exact scalings are peeled also on curve samples: the state entries of a tangent are those of
+  the kernel vector with the same coordinate entries.
+* Where a kernel at eps = 1 needs more series coefficients, the curve samples double their order
+  for the rest of the analysis, at most twice from `gap_order_cap`; past that the point is skipped
+  and `info["limits"]` says so.
+* Under `equilibrate`, the Lie order certificate ranks a continued condition at a resting point drawn
+  forward on the component of the continuation, also on curve samples, without an error bound;
+  before, it ranked at the start of the continuation, where the conditions coincide, and could
+  certify too low a block order. The resting Jacobian is checked at the seed of a lift.
+* Under `equilibrate` with a diagonal start, the Lie orders of a continued condition are scanned on
+  the series instead of ranked at the start of the continuation, and the field proof refuses a
+  continued resting state with a reason instead of failing on it.
+* The forward seed takes a column basis of the rate coefficients where the direct pick of the
+  turnover rates is singular, as for a pool of a total that no picked rate drains.
+* The diagonal start leaves out the parameters the conditions coincide without, which could remove
+  the only rate of a state that rests at zero and make the resting Jacobian singular.
+* Under `equilibrate`, states whose right-hand sides vanish together where all of them are zero, with
+  a Jacobian on them invertible at generic values, rest at zero, as a single state with a linear
+  right-hand side does; `info["branches"]` names them and `free_initial` takes another branch.
+* The method chapter states the error bound of a check on curve samples.
+
 # symident 0.18.1
 
 * `discrete()` closes the output pipes of every msolve call and the output file of msolve in the

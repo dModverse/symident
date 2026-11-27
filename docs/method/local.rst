@@ -144,6 +144,13 @@ U\}`, with :math:`U` the smallest subspace for which :math:`F` stays in :math:`U
 :math:`S`. This covers a start at rest, states that stay at zero, fixed initial values, and linear
 relations the dynamics keeps. Under ``equilibrate`` :math:`S` is the resting variety of the
 condition (:ref:`steady-states`). In both cases the rank at the start is taken at the base point.
+A continued condition rests at the base point as a power series only and is ranked at a resting
+point drawn forward instead: random states and parameters, the turnover rates and the states of
+the plan solved from the balances. Such points are generic on one irreducible component of the
+resting variety, the closure of the points where the balances are regular in these unknowns. The
+continued condition lies on it where the balances are regular in them along the continuation, a
+rank over :math:`\mathbb{F}_p((\varepsilon))` that a truncated series can only lower; otherwise the
+order is not certified. The draw has no error bound, and ``info["order_bound_why"]`` says so.
 Where the start does not reach :math:`\rho_S`, e.g., on the level set of a nonlinear conserved
 quantity, the order stops after a *plateau* of three orders without change of rank
 (``SYMIDENT_LIEPLATEAU``), and the result says that the Lie order is not proven sufficient.

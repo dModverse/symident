@@ -79,7 +79,9 @@ as *conjugate* where the balances have an irreducible eliminant; conjugate roots
 and an eliminant irreducible at a point is irreducible over :math:`\mathbb{Q}(\theta)`. A
 state rests at zero when the right-hand side, with the inputs at zero, is linear in it with a
 coefficient nonzero at rest; a second branch with the state away from zero is named there and taken
-by ``free_initial``.
+by ``free_initial``. The same holds for a set of states whose right-hand sides all vanish where the
+set is zero, an invariant face, when the Jacobian on the set is invertible at generic values; states
+of a conserved total make it singular and stay off the face.
 
 **Conserved totals.** A linear combination :math:`T = \sum_i a_i x_i` of states that the right-hand
 sides conserve is a *total*; the coefficients may hold parameters, such as volumes, and the basis
@@ -112,6 +114,22 @@ the expansion of the unique component through :math:`\hat z` where :math:`J_c(\h
 invertible. The rank over the truncated series bounds the generic rank from below, and
 ``info["series_certified"]`` says whether the *series order* is proven sufficient.
 ``SYMIDENT_NODIAG`` turns the diagonal start off.
+
+**Curve samples.** Where a direct solve of the balances at a random point needs msolve past short
+work limits, reconstruction and checks take *curve samples* instead of resting points. A point
+:math:`\theta^\ast` is reached on the line :math:`\theta(\varepsilon) = \hat\theta + \varepsilon
+(\theta^\ast - \hat\theta)` from a forward seed :math:`\hat z = (\hat\theta, \hat x)` at
+:math:`Z = 0`: the seed of :math:`\theta^\ast` itself, whose turnover rates then move along the
+line, or an earlier seed that differs from :math:`\theta^\ast` in fewer coordinates. Each
+condition is lifted as above, the state columns are eliminated from the series rows, and the
+kernel in the coordinates at :math:`\varepsilon = 1`, the kernel at :math:`\theta^\ast`, is the
+Padé form of each entry, accepted where the known coefficients determine it with one to spare.
+Only :math:`\xi_\theta` is read off: the state components follow from :math:`J_x \xi_{x_N} =
+-J_\theta \xi_\theta`. Where an entry has no such form, the series order of the curve samples is
+doubled for the rest of the analysis, at most twice from ``gap_order_cap``; past that the point is
+skipped like a pole and ``info["limits"]`` says so. The Lie order of a continued condition is
+certified at a resting point drawn forward (:ref:`sufficient-lie-order`). ``SYMIDENT_RESTCURVE``
+and ``SYMIDENT_NORESTCURVE`` force curve samples or direct solves.
 
 **Existence of a resting state.** Before the analysis the balances are solved over :math:`\mathbb{Q}`
 at random rational parameter values. Balances without a complex solution raise an ``InputError``,

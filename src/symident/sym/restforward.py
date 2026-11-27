@@ -414,6 +414,23 @@ def solve_forward_modular(
     A = [[_eval_terms(c["coef_t"][i][j], rgv, p) for j in range(n_r)] for i in range(n_r)]
     b = [[(-_eval_terms(c["const_t"][i], rgv, p)) % p] for i in range(n_r)]
     X = _solve_mod(A, b, p)
+    if X is None and picked and not state_solve:
+        # a matching of the direct pick is singular where a sum of balances holds none of the picked rates;
+        # the plan takes a column basis of the coefficient matrix at a random point
+        plan = _forward_plan(rhs_by_name, ss_names, param_names, forcings, keep_free=keep_free)
+        if plan is not None and list(plan[1]) != list(solve_rates):
+            return solve_forward_modular(
+                model,
+                state_names,
+                param_names,
+                state_vals,
+                param_vals,
+                prime,
+                forcings=sorted(forcings),
+                solve_rates=plan[1],
+                state_solve=plan[0],
+                held=sorted(held),
+            )
     if X is None:
         return {"ok": False, "why": "singular forward system mod p"}
     rates_dict = {solve_rates[j]: int(X[j][0]) % p for j in range(len(solve_rates))}

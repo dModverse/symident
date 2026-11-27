@@ -610,16 +610,14 @@ class Analysis:
             "failed": f"no kernel past gap order {run.mtot}",
         }[stop]
 
-    def _cert_segments(self, sc, p=None, tries=24):
+    def _cert_segments(self, sc, bases=None, p=None, tries=24):
         """The certificate inputs: chains of tapes, a seed per chain, at rest a start per chain, and the points drawn
-        for the seeds. At rest and a prime `p` the seeds are resting states solved modulo `p` at the first of `tries`
-        points uniform modulo `p`, random points of the resting variety, and the starts are those of the base
-        point."""
+        for the seeds. At rest the starts are `bases`; with a prime `p` the seeds are resting states solved modulo `p`
+        at the first of `tries` points uniform modulo `p`, random points of the resting variety."""
         run, sys = self.run, self.sys
         if self.joint:
             segs = sys.chains if run.has_gaps else [[run.tapes[ci]] for ci in sys.equil_conds]
-            sols = [sys.solve_cond(sc["point0"], PRIMES[0], ci) for ci in sys.equil_conds]
-            base = [None if s0 is None else np.asarray(s0["ptc"], dtype=np.int64) % PRIMES[0] for s0 in sols]
+            base = list(bases)
             if p is None:
                 return segs, base, None, 1
             n = len(sc["point0"])
@@ -757,14 +755,24 @@ class Analysis:
         """The Lie order per block past which the rank provably stays."""
         run = self.run
         P1, q = PRIMES[0], verify_prime()
-        degs, why = self._cert_degrees(sc)
+        bases, drawn = None, False
+        if self.joint:
+            got = self.sys.cert_bases(sc["point0"], P1)
+            if isinstance(got, str):
+                sc["order_bound_why"] = got
+                session.note("limits", f"Lie order certificate: {got}; the order is not proven")
+                return
+            bases, drawn = got
+        degs, why = (None, None) if drawn else self._cert_degrees(sc)
         if degs is not None and any(d is None for d in degs):
             degs = None
         # at rest the generic ranks are taken at a random resting point modulo q, where the draws are uniform
-        segs, seeds, starts, rest_draws = self._cert_segments(sc, q if self.joint and degs is not None else None)
+        segs, seeds, starts, rest_draws = self._cert_segments(sc, bases, q if self.joint and degs is not None else None)
         if self.joint and degs is not None and any(s is None for s in seeds):
-            segs, seeds, starts, rest_draws = self._cert_segments(sc)
+            segs, seeds, starts, rest_draws = self._cert_segments(sc, bases)
             degs, why = None, "no resting state modulo the verification prime at the points tried"
+        if drawn:
+            why = "a continued condition is ranked at a resting point drawn forward, without an error bound"
         own_threads = not run.has_gaps and not self.joint
         threads = run.cores if own_threads else 1
         mapf = (lambda f, xs: thread_map(f, xs, run.cores)) if threads == 1 and run.cores > 1 else None
@@ -1128,8 +1136,19 @@ class Analysis:
         return chosen
 
     def _direct_kernel(self, ker_dim):
-        """The kernel at a point where all conditions solve without continuation."""
+        """The kernel at a point where all conditions solve without continuation, or in curve mode the series kernel
+        at eps = 1, the kernel at the parameters of the point."""
         sc, sys, nz = self.sc, self.sys, self.nz
+        if sys.curve_mode():
+            try:
+                rc = self.kcall4(sc["point0"], PRIMES[0], sc["nt_used"], sc.get("mtot_used") or 0)
+            except Exception as e:
+                swallow(e, "curve kernel")
+                rc = {"ok": False}
+            if not (ok(rc) and nz - rank_of(rc) == ker_dim):
+                return False
+            sc.update(ref=rc, rank=rc["rank"], rank_s=rank_of(rc), pivots=rc["pivots"])
+            return True
         chained = sys.chained
         if chained:
             sys.unchain()
@@ -1230,8 +1249,15 @@ class Analysis:
             self.N,
             modulo=(self.free_cols, self.run.nuis_cols) if self.run.nuis_cols else None,
             shifts={str(r["L"]) for r in self.recast or [] if not r.get("inverted")},
+            unknown=self._curve_states(),
         )
         return peel["scaling"], peel["Bmat"]
+
+    def _curve_states(self):
+        """The state columns in curve mode, whose resting values at the kernel point (eps = 1) are not known."""
+        if not self.joint or not self.sys.curve:
+            return ()
+        return [z for z in self.znames if z in self.zsn or "|c" in z]
 
     def _condition_scalings(self, model_lines, obs_lines, keys, keep, known):
         """Exact scalings whose state weights differ between the resting conditions, each checked on every tape with

@@ -144,9 +144,21 @@ def report_physical(result, znames, aux_names, sc, nz, P, aux_field, flag_joint=
     return result
 
 
-def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None, shifts=()):
+def _completed(t, N, cols, P):
+    """The vector of the column span of N that agrees with `t` off the columns `cols`, or None."""
+    if not N.shape[1]:
+        return None
+    known = [i for i in range(len(t)) if i not in set(cols)]
+    c = _core.sym_solve_mod(np.asarray(N, dtype=np.int64)[known, :] % P, np.asarray(t)[known] % P, P)
+    if c is None:
+        return None
+    return (np.asarray(N, dtype=object) @ np.asarray(c, dtype=object) % P).astype(np.int64)
+
+
+def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None, shifts=(), unknown=()):
     """Independent scalings of all conditions with tangent in the nullspace (modulo `modulo`), exact per entry; a
-    coordinate in `shifts` is translated by the weight."""
+    coordinate in `shifts` is translated by the weight. The tangent entries of the coordinates `unknown`, whose values
+    at the kernel point are not known, are those of the kernel vector that has the other entries."""
     scaling = []
     Bmat = np.zeros((nz, 0), dtype=np.int64)
     env = {z: int(v) for z, v in zip(znames, zval)}
@@ -180,6 +192,10 @@ def peel_scalings(scal_res, znames, nz, zval, P, N, modulo=None, shifts=()):
         scale = np.asarray(zval, dtype=np.int64) % P
         scale[[zi[k] for k in moved]] = 1
         tangent = (v * scale) % P
+        if unknown:
+            tangent = _completed(tangent, N, [zi[k] for k in unknown if k in zi], P)
+            if tangent is None:
+                continue
         if modulo is not None and N.shape[1]:
             free, nuis = modulo
             proj = (N.astype(object) @ tangent[free].astype(object)) % P

@@ -37,6 +37,7 @@ class DiagonalStart:
             S = self._closure(Z)
             diff = self._differences(Z, S)
             if not diff:
+                Z = self._pruned(Z, S)
                 # without Z the zero set would be a boundary rest of the actual point
                 self.Z, self.S, self.ok = sorted(Z), S, bool(Z) or not S
                 self.dead = self._dead(Z, S)
@@ -53,6 +54,15 @@ class DiagonalStart:
             if best is None or best[0] >= len(diff):
                 return
             Z = Z + [best[1]]
+
+    def _pruned(self, Z, S):
+        """Z without the parameters the conditions coincide without, at the same S; at zero such a parameter can
+        remove the only rate of a state in S and make the resting Jacobian singular."""
+        for z in sorted(Z):
+            rest = [x for x in Z if x != z]
+            if self._closure(rest) == S and not self._differences(rest, S):
+                Z = rest
+        return Z
 
     def _denominators(self):
         """The distinct denominators of every condition, as polynomials."""

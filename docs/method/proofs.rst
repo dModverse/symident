@@ -219,6 +219,29 @@ taken lies on one component over :math:`\mathbb{Q}(\theta)` (``info["branches"]`
 with a power or exponential in the balances, a direction that the proof leaves open is ``checked``,
 and ``info["bound"]`` gives the reason.
 
+**The bound on curves.** On a curve sample (:doc:`conditions`, *Curve samples*) the check point
+:math:`\theta^\ast` is still uniform modulo :math:`p`, and the resting states lie on the component
+through the seed. Where the Padé form of every kernel entry is the entry itself, the check is the
+check at a resting point and Equation :eq:`eq-rest-bound` applies unchanged. A Padé form from
+:math:`n` coefficients is unique up to total degree :math:`(n - 3)/2`, so a wrong value at
+:math:`\varepsilon = 1` needs an entry of higher degree whose coefficient at
+:math:`\varepsilon^{n-1}` agrees with the form. The coefficient at :math:`\varepsilon^k` of the
+lifted states is a polynomial in the seed and :math:`\zeta = \theta^\ast - \hat\theta` of degree
+at most :math:`1 + 2k (d - 1)`, :math:`d = \max_i \deg f_i`, since each Newton step multiplies
+by :math:`\operatorname{adj}(J_x)` over :math:`\det J_x` at the seed. For kernel entries of degree
+:math:`\delta` in the states and coordinates, the agreement is a nonzero polynomial of degree at
+most :math:`\delta (1 + 2 (n - 1)(d - 1))` in the drawn values, and
+
+.. math::
+   :label: eq-curve-bound
+
+   \Pr\big[\text{a wrong value at } \varepsilon = 1\big] \le
+   \frac{n_e\, \delta \big(1 + 2 (n - 1)(d - 1)\big)}{p}
+
+for :math:`n_e` entries read, per check point. ``info["bound"]`` holds no number for checks on
+curve samples and names the reason. Proofs over :math:`\mathbb{Q}` that need :math:`J_x`
+invertible on the component take the seed, where the lift requires it.
+
 **What the bounds exclude.** The bounds above are probabilities over the points modulo :math:`p`. They
 exclude the chance that :math:`p` divides the *content* of an integer identity, the greatest
 common divisor of the coefficients, which then vanishes modulo :math:`p`, or that :math:`p` is

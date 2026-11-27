@@ -598,12 +598,10 @@ def moved_setup(an, light):
             for y in Ssym
             if sol is not None and run.slot(str(y)) is not None
         }
+        # a curve sample rests at the seed of the curve: the parameters are those of the seed
+        at = sol["ptc"] if sol is not None and sol.get("cont") else an.sc["point0"]
         bc.update(
-            {
-                spy.Symbol(n): spy.Integer(int(an.sc["point0"][run.slot(n)]))
-                for n in map(str, params)
-                if run.slot(n) is not None
-            }
+            {spy.Symbol(n): spy.Integer(int(at[run.slot(n)])) for n in map(str, params) if run.slot(n) is not None}
         )
         A = spy.Matrix([[spy.diff(n, q) for q in par["params"]] for n in par["eqs"]])
         if len(bc) < len(Ssym) + len(params) or not _mod(A.det(), bc, PRIMES[0]):

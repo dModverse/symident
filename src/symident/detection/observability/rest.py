@@ -1,5 +1,6 @@
 """Resting states over GF(p): backward and forward solves, continuation and warm-up across worker processes."""
 
+import contextlib
 import copy
 import os
 import time
@@ -97,6 +98,41 @@ class RestingStates:
             print(f"[sym]   solve cond {ci + 1}, pid {os.getpid()}: {time.monotonic() - t0:.1f}s")
         return out
 
+    def curve_mode(self):
+        """Whether reconstruction and checks take curves of the resting variety (continued conditions, kernels at
+        eps = 1) instead of points where every condition is solved directly."""
+        if self.curve is None:
+            self.curve = self._curve_needed()
+        return self.curve
+
+    def direct_caps(self):
+        """The short caps of msolve for direct solves in curve mode: a point past them is skipped like a pole."""
+        from .. import work
+
+        return work.quick_msolve() if self.curve else contextlib.nullcontext()
+
+    def _curve_needed(self):
+        """Curves where every resting condition can be continued and a direct solve at a random point needs msolve
+        past the short caps of msolve; the switches RESTCURVE and NORESTCURVE decide first."""
+        if state.env("NORESTCURVE") or not self.equil_conds:
+            return False
+        if not all(self.cont_eligible(ci) for ci in self.equil_conds):
+            return False
+        if state.env("RESTCURVE"):
+            return True
+        from .. import work
+
+        p = PRIMES[0]
+        point = random_point(self.run.n_leaves, seed=session.current().seed("curve probe") % (1 << 31))
+        pv = self.joint_pv(point, p)
+        reps = {self.model_key[ci]: ci for ci in self.equil_conds}
+        with work.quick_msolve():
+            for ci in reps.values():
+                sol = self.solve_raw(p, pv, ci)
+                if sol is not None and not sol.get("ok") and "cap" in str(sol.get("why", "")):
+                    return True
+        return False
+
     _ROUTE = ("cont_off", "fwd_on", "fwd_rates", "fwd_banned", "fwd_sel")
 
     def route_state(self):
@@ -157,9 +193,7 @@ class RestingStates:
         if len(jobs) < 2:
             return
         t0 = time.monotonic()
-        res = process_map(
-            lambda j: self.solve_raw(j["p"], j["pv"], j["ci"]), jobs, min(run.cores, len(jobs)), on_error=lambda j: None
-        )
+        res = process_map(lambda j: self._warm_one(j), jobs, min(run.cores, len(jobs)), on_error=lambda j: None)
         if run.timing:
             print(
                 f"[sym] warm fill: {len(jobs)} solve(s), fork x{min(run.cores, len(jobs))}, "
@@ -168,6 +202,11 @@ class RestingStates:
         for j, r in zip(jobs, res):
             if r is not None:
                 self.solve_cache[j["key"]] = r if r.get("ok") else {"ok": False}
+
+    def _warm_one(self, job):
+        """One solve of warm_solves(), under the caps of a direct solve."""
+        with self.direct_caps():
+            return self.solve_raw(job["p"], job["pv"], job["ci"])
 
     def _seed(self, point, p, sol, ci, rates=None):
         """The point with the solved resting states (and rates) in the leaves."""
@@ -190,7 +229,7 @@ class RestingStates:
 
     def solve_cond(self, point, p, ci):
         """Condition ci solved at the point (continued where that applies), cached."""
-        if self.cont_active(ci) and (self.diag is None or self.base_key(point, p) in self.diag_ref):
+        if self.cont_active(ci) and (self.diag is None or self.curve or self.base_key(point, p) in self.diag_ref):
             cr = self.cont_cond(point, p, ci)
             self.cont_trace(ci, cr is not None)
             if cr is not None:
@@ -204,7 +243,7 @@ class RestingStates:
         key = self.solve_key(p, pv, ci)
         sol = self.solve_cache.get(key)
         if sol is None:
-            with msolve_threads(self.run.cores_call):
+            with msolve_threads(self.run.cores_call), self.direct_caps():
                 sol = self.solve_raw(p, pv, ci)
             self.solve_cache[key] = {"ok": False} if sol is None or not sol.get("ok") else sol
         if sol is None or not sol.get("ok"):
@@ -223,7 +262,12 @@ class RestingStates:
 
     def rest_jacobian_regular(self, ci, point, q, tries=8):
         """Whether the resting Jacobian of condition `ci` is invertible at a resting point: the base point modulo the
-        first engine prime, else the first of `tries` points uniform modulo `q` that solve."""
+        first engine prime, else the first of `tries` points uniform modulo `q` that solve; in curve mode the seed of
+        a lift, which the Newton steps need it invertible at."""
+        if self.curve:
+            sc0 = self.solve_cond(point, PRIMES[0], ci)
+            if sc0 is not None and sc0.get("cont"):
+                return True
         sol = self.solve_direct(point, PRIMES[0], ci)
         p = PRIMES[0]
         for k in range(tries + 1):
@@ -238,6 +282,99 @@ class RestingStates:
             return True
         M = np.array([[int(x) % p for x in row] for row in jx], dtype=np.int64)
         return M.shape[0] == M.shape[1] and int(_core.sym_rref_mod(M.astype(np.float64), p)["rank"]) == M.shape[0]
+
+    def forward_rest(self, point, p, ci):
+        """A resting point of condition `ci` drawn forward: states and parameters from `point`, the turnover rates and
+        the states of the plan solved from the balances; None where the solve is singular or does not apply."""
+        run = self.run
+        if self.recast or self.l_names:
+            return None
+
+        def rd(nm):
+            s = run.slot(nm)
+            return 0 if s is None else int(point[s]) % p
+
+        zero = set(self.zero_of(ci)) | set(run.equil_zero_states)
+        sv = {nm: 0 if nm in zero else rd(nm) for nm in self.real_state_names}
+        for h in self.held_names:
+            sv[h] = rd(self.held_param_of[h])
+        try:
+            sol = solve_forward_modular(
+                self.models[ci],
+                list(self.real_state_names),
+                list(self.solve_param_names),
+                sv,
+                {nm: rd(nm) for nm in self.solve_param_names},
+                p,
+                forcings=self.held_of(ci) or None,
+                held=self.held_names or None,
+            )
+        except SYMPY_FAILS as exc:
+            sympy_fail(exc)
+            return None
+        except Exception as exc:
+            swallow(exc, "forward resting point")
+            return None
+        if state.env("FWDDIAG") and (sol is None or not sol.get("ok")):
+            print("[fwddiag] forward resting point:", "error" if sol is None else sol.get("why"))
+        if sol is None or not sol.get("ok") or any(run.slot(r) is None for r in sol["rates"]):
+            return None
+        return self._seed(point, p, sol, ci, rates=sol["rates"])
+
+    def on_forward_component(self, point, p, ci, fwd):
+        """Whether condition `ci`, continued to `point`, rests on the component the forward solve of `fwd` parametrizes:
+        the balances are regular in the unknowns of that solve along the continuation, over GF(p)((eps))."""
+        sc0 = self.solve_cond(point, p, ci)
+        if sc0 is None or not sc0.get("cont"):
+            return False
+        sol, fs = sc0["sol"], fwd["sol"]
+        jx, jt, xcols = sol["df_jx"], sol["df_jt"], list(sol["df_state_cols"])
+        cols = []
+        for u in fs["state_solve"]:
+            if u not in xcols:
+                return False
+            cols.append([r[xcols.index(u)] for r in jx])
+        for r in fs["solve_rates"]:
+            if r not in jt:
+                return False
+            cols.append(jt[r])
+        n = len(jx)
+        if n == 0 or len(cols) != n:
+            return n == 0 and not cols
+        N = min(len(x) for col in cols for x in col)
+        S = np.zeros((n, n * N), dtype=np.int64)
+        for c, col in enumerate(cols):
+            for i in range(n):
+                S[i, c * N : (c + 1) * N] = [int(x) % p for x in col[i][:N]]
+        return int(_core.sym_series_rank(S, n, N, p, [])["rank"]) == n
+
+    def cert_bases(self, point, p, tries=8):
+        """(bases, drawn): per resting condition the start of the Lie order certificate, the resting point at `point`
+        where the condition is solved there, else a resting point drawn forward on the component of the continuation
+        to `point`; `drawn` whether any is drawn. A string says why there is none."""
+        out, drawn = [], False
+        for ci in self.equil_conds:
+            sc0 = self.solve_cond(point, p, ci)
+            if sc0 is None:
+                return "no resting state at the base point"
+            if sc0.get("cont") and not self.curve_mode():
+                sc0 = self.solve_direct(point, p, ci) or sc0
+            if not sc0.get("cont"):
+                out.append(np.asarray(sc0["ptc"], dtype=np.int64) % p)
+                continue
+            fwd = None
+            for k in range(tries):
+                pt = uniform_point(len(point), p, session.current().seed("forward certificate point", k))
+                fwd = self.forward_rest(pt, p, ci)
+                if fwd is not None:
+                    break
+            if fwd is None:
+                return "a continued condition has no resting point drawn forward"
+            if not self.on_forward_component(point, p, ci, fwd):
+                return "a continued condition is not shown to rest on the component of the forward draws"
+            out.append(np.asarray(fwd["ptc"], dtype=np.int64) % p)
+            drawn = True
+        return out, drawn
 
     def rest_system(self, ci, pinned=True):
         """(balances, states, parameters, linear) of the resting solve of condition `ci`: held pivots as parameters,
@@ -430,6 +567,7 @@ class RestingStates:
         if diag.pole({**self.joint_pv(point, p)["param_vals"], **{z: 0 for z in diag.Z}, **x0}, p):
             return None
         self.diag_ref[self.base_key(point, p)] = x0
+        self._register_base(point, p, x0)
         return point
 
     def cont_eligible(self, ci):
@@ -464,16 +602,66 @@ class RestingStates:
         base = set(self.model_params[self.fwd_cond])
         return [n for n in self.model_params[ci] if n not in base]
 
+    def curve_base(self, point, p):
+        """(moved, x0) in curve mode: a forward seed at Z = 0 with resting states x0 and the parameters off Z that the
+        line to `point` moves, from their values at the seed; the registered seed that moves the fewest, else the
+        seed of the point itself, whose rates move. None where no seed applies."""
+        key = (p, np.asarray(point[: self.run.n_leaves], dtype=np.int64).tobytes())
+        if key in self.curve_seeds:
+            return self.curve_seeds[key]
+        jp = self.joint_pv(point, p)
+        tv, th = jp["param_vals"], tuple((jp["held_vals"] or {}).values())
+        best = None
+        for bv, bh, x0 in self.curve_bases.get(p, ()):
+            if bh != th:
+                continue
+            mv = {n: v for n, v in bv.items() if tv.get(n) != v}
+            if best is None or len(mv) < len(best[0]):
+                best = (mv, x0)
+        if best is None or len(best[0]) > len(self.fwd_rates or ()):
+            seeded = self.fwd_seed(point, p)
+            if seeded is not None:
+                z = set(self.diag.Z)
+                sv = self.joint_pv(seeded, p)["param_vals"]
+                mv = {n: v for n, v in sv.items() if n not in z and tv.get(n) != v}
+                x0 = self.diag_ref.get(self.base_key(seeded, p))
+                if x0 is not None and (best is None or len(mv) < len(best[0])):
+                    best = (mv, x0)
+        if len(self.curve_seeds) > 4000:
+            self.curve_seeds.clear()
+        self.curve_seeds[key] = best
+        return best
+
+    def _register_base(self, point, p, x0):
+        """A forward seed as a base of curves: the first ones kept, then the latest."""
+        jp = self.joint_pv(point, p)
+        z = set(self.diag.Z)
+        bases = self.curve_bases.setdefault(p, [])
+        bases.append(
+            ({n: v for n, v in jp["param_vals"].items() if n not in z}, tuple((jp["held_vals"] or {}).values()), x0)
+        )
+        if len(bases) > 64:
+            del bases[8]
+
     def cont_cond(self, point, p, ci):
-        """Condition ci continued along the parameters of ci from the first condition."""
+        """Condition ci continued along the parameters of ci from the first condition; in curve mode a point off the
+        forward seed is reached on a line from a seed, along Z and the parameters where the two differ."""
         run = self.run
         pv = self.joint_pv(point, p)
         key = ("cont", self.solve_key(p, pv, ci), self.cont_t)
         sol = self.solve_cache.get(key)
+        moved, rest = {}, None
+        if self.diag is not None:
+            rest = self.diag_ref.get(self.base_key(point, p))
+            if rest is None and self.curve:
+                cb = self.curve_base(point, p)
+                if cb is None:
+                    return None
+                moved, rest = cb
+                if state.env("CURVEDIAG"):
+                    print(f"[curvediag] line moves {len(moved)} parameters", flush=True)
         if sol is None:
-            if self.diag is not None:
-                rest = self.diag_ref.get(self.base_key(point, p))
-            else:
+            if self.diag is None:
                 ref = self.solve_cond(point, p, self.fwd_cond)
                 rest = None if ref is None else ref["sol"]["val_by"]
             if rest is None:
@@ -482,13 +670,16 @@ class RestingStates:
             pv0 = dict(pv["param_vals"])
             for n in priv:
                 pv0[n] = 0
+            pv0.update(moved)
+            dirs = {n: pv["param_vals"][n] for n in priv}
+            dirs.update({n: (pv["param_vals"][n] - v) % p for n, v in moved.items()})
             try:
                 sol = continue_resting_state(
                     self.models[ci],
                     list(self.real_state_names),
                     list(self.solve_param_names),
                     pv0,
-                    {n: pv["param_vals"][n] for n in priv},
+                    dirs,
                     rest,
                     p,
                     self.cont_t,
@@ -522,6 +713,11 @@ class RestingStates:
                 continue
             ser[sl, 0] = ptc[sl] % p
             ptc[sl] = 0
+        for nm, v in moved.items():
+            sl = run.slot(nm)
+            if sl is not None:
+                ser[sl, 0] = (ptc[sl] - v) % p
+                ptc[sl] = v % p
         for nm in self.zero_of(ci):
             sl = run.slot(nm)
             if sl is not None:
